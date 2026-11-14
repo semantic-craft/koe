@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use koe_engine::context::{AskMessage, AskRole, AskSession, AskStatus, SourceLine, SourcePointer};
-use koe_engine::domain::{RecordingAggregate, RecordingLifecyclePhase, SegmentId, SummaryFormat};
+use koe_engine::domain::{RecordingAggregate, SegmentId};
 use koe_engine::minutes::{encode_meeting_minutes_json, parse_persisted_meeting_minutes_json};
 use koe_engine::product::*;
 use serde::{Deserialize, Serialize};
@@ -167,8 +167,10 @@ struct RecordDto {
     minutes: Option<String>,
     bookmarks: Vec<u64>,
     highlighted_segments: Vec<u32>,
-    coarse_place: Option<String>,
-    selected_format: String,
+    #[serde(default, skip_serializing)]
+    coarse_place: Option<serde::de::IgnoredAny>,
+    #[serde(default, skip_serializing)]
+    selected_format: Option<serde::de::IgnoredAny>,
     analysis: AnalysisDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     live_summary: Option<AnalysisDto>,
@@ -551,8 +553,8 @@ impl RecordDto {
                 .collect(),
             minutes: a.minutes.as_ref().map(encode_meeting_minutes_json),
             bookmarks: a.bookmarks.clone(),
-            coarse_place: a.coarse_place.clone(),
-            selected_format: a.selected_format.as_str().to_string(),
+            coarse_place: None,
+            selected_format: None,
             analysis: AnalysisDto::from_analysis(&record.analysis),
             live_summary: (record.live_summary != AnalysisState::Idle)
                 .then(|| AnalysisDto::from_analysis(&record.live_summary)),
@@ -571,6 +573,7 @@ impl RecordDto {
     }
 
     fn into_record(self) -> Result<ProductRecord, StoreError> {
+        let _ = (self.coarse_place, self.selected_format);
         let retention = RecordRetention::from_persisted(self.archived, self.trashed_at_ms)
             .map_err(|e| invalid(e.to_string()))?;
         let origin = match self.origin.as_str() {
@@ -643,9 +646,6 @@ impl RecordDto {
                 None
             }
         };
-        a.coarse_place = self.coarse_place;
-        a.selected_format = SummaryFormat::parse(&self.selected_format)
-            .ok_or_else(|| invalid("invalid summary format"))?;
         for timestamp in self.bookmarks {
             a.add_bookmark(if a.duration_ms > 0 {
                 timestamp.min(a.duration_ms)
@@ -653,14 +653,6 @@ impl RecordDto {
                 timestamp
             });
         }
-        a.phase = match analysis {
-            AnalysisState::Pending { .. } => RecordingLifecyclePhase::Transcribing,
-            AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. } => {
-                RecordingLifecyclePhase::Failed
-            }
-            AnalysisState::Ready { .. } => RecordingLifecyclePhase::Ready,
-            AnalysisState::Idle => RecordingLifecyclePhase::Local,
-        };
         let final_keys = self
             .final_keys
             .into_iter()

@@ -32,7 +32,6 @@ pub mod crypto;
 pub mod domain;
 pub mod frame;
 pub mod koepack;
-pub mod library;
 pub mod minutes;
 pub mod models;
 pub mod ogg_opus;
@@ -41,12 +40,11 @@ pub mod session;
 pub mod slice_marks;
 pub mod transport;
 pub mod wav;
-pub mod wifi;
 
 pub use koepack::{
-    decode_koepack, encode_koepack, merge_minutes_history, MaterialPack, MaterialPackError,
-    MinutesHistoryMergeOutcome, PackMaterialMeta, PackMinutes, PortableMinutesEntry,
-    KOEPACK_FORMAT_NAME, KOEPACK_MAGIC, KOEPACK_MAX_MANIFEST_BYTES, KOEPACK_MAX_MINUTES_HISTORY,
+    decode_koepack, MaterialPack, MaterialPackError, PackMaterialMeta, PackMinutes,
+    PortableMinutesEntry, KOEPACK_FORMAT_NAME, KOEPACK_MAGIC, KOEPACK_MAX_MANIFEST_BYTES,
+    KOEPACK_MAX_MINUTES_HISTORY,
 };
 pub use context::{
     cited_labels, is_delegation_request, is_followup_question, rank_texts, relabel_citations,
@@ -56,8 +54,8 @@ pub use context::{
 };
 pub use domain::{
     MeetingMinutes, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
-    MinuteTermAdoption, MinuteTopic, RecordingAggregate, RecordingLifecyclePhase, SegmentId,
-    SummaryFormat, UtteranceSegment, UtteranceSpine,
+    MinuteTermAdoption, MinuteTopic, RecordingAggregate, SegmentId, UtteranceSegment,
+    UtteranceSpine,
 };
 pub use hash::{is_valid_sha256_hex, sha256_hex};
 pub use minutes::{
@@ -65,8 +63,4 @@ pub use minutes::{
     MinutesValidationError,
 };
 pub use product::CompanionRoutingMode;
-pub use session::{CustodyReceipt, RawCompanionSignal};
-pub use wifi::{
-    normalize_wifi_chunk, WifiBatchPhase, WifiBatchProgress, WifiEndpoint, WIFI_DEFAULT_WS_PORT,
-    WIFI_KEEPALIVE_INTERVAL_MS, WIFI_KEEPALIVE_PAYLOAD, WIFI_UDP_PORT, WIFI_WS_FINISH_TEXT,
-};
+pub use session::{CustodyReceipt, RawCompanionSignal, RecordingEntry};

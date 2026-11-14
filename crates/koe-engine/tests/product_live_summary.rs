@@ -1,4 +1,4 @@
-use koe_engine::domain::{MeetingMinutes, RecordingLifecyclePhase, UtteranceSpine};
+use koe_engine::domain::{MeetingMinutes, UtteranceSpine};
 use koe_engine::minutes::parse_meeting_minutes_json;
 use koe_engine::product::*;
 
@@ -44,10 +44,6 @@ fn live_minutes_complete_after_appended_finals_without_stopping_asr_or_proposing
             key: asr.clone(),
             stage: AnalysisStage::Transcribing
         }
-    );
-    assert_eq!(
-        record.aggregate.phase,
-        RecordingLifecyclePhase::Transcribing
     );
     assert!(w.items().is_empty());
     w.accept_transcript(&asr, "three", "alpha continues again", 2000, 3000, "asr")
@@ -139,7 +135,6 @@ fn restored_live_request_is_validated_and_interrupted_independently() {
     assert!(restored.interrupt_pending());
     let record = restored.record("a").unwrap();
     assert_eq!(record.analysis, AnalysisState::Idle);
-    assert_eq!(record.aggregate.phase, RecordingLifecyclePhase::Local);
     assert_eq!(
         record.live_summary,
         AnalysisState::Interrupted { key: live }

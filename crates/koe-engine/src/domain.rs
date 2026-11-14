@@ -157,16 +157,13 @@ impl UtteranceSegment {
 /// Append-only, revision-tracked utterance spine (`S1..Sn`) for a recording or live session.
 ///
 /// Editing a segment's text increments both the segment's `revision` and the spine's
-/// `revision`, invalidates stale translations on that segment, and sets `stale = true`
-/// so downstream minutes and context reducers know to re-evaluate.
+/// `revision` and invalidates any translation on that segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UtteranceSpine {
     session_id: String,
     segments: Vec<UtteranceSegment>,
     revision: u64,
     key_to_id: BTreeMap<String, SegmentId>,
-    confirmed_by_connection: BTreeMap<String, String>,
-    stale: bool,
 }
 
 impl Default for UtteranceSpine {
@@ -184,8 +181,6 @@ impl UtteranceSpine {
             segments: Vec::new(),
             revision: 0,
             key_to_id: BTreeMap::new(),
-            confirmed_by_connection: BTreeMap::new(),
-            stale: false,
         }
     }
 
@@ -199,17 +194,6 @@ impl UtteranceSpine {
     #[must_use]
     pub const fn revision(&self) -> u64 {
         self.revision
-    }
-
-    /// Returns `true` if a manual edit or speaker replacement has invalidated derived artifacts.
-    #[must_use]
-    pub const fn is_stale(&self) -> bool {
-        self.stale
-    }
-
-    /// Clears the stale flag after downstream minutes/context regeneration completes.
-    pub fn clear_stale(&mut self) {
-        self.stale = false;
     }
 
     /// Returns the total number of segments (`S1..Sn`).
@@ -234,16 +218,6 @@ impl UtteranceSpine {
     #[must_use]
     pub fn get(&self, id: SegmentId) -> Option<&UtteranceSegment> {
         self.segments.get(id.zero_based_index())
-    }
-
-    /// Returns all segments whose time interval overlaps `[start_ms, end_ms]`.
-    #[must_use]
-    pub fn segments_in_range(&self, start_ms: u64, end_ms: u64) -> Vec<&UtteranceSegment> {
-        let hi = end_ms.max(start_ms);
-        self.segments
-            .iter()
-            .filter(|seg| seg.end_ms >= start_ms && seg.start_ms <= hi)
-            .collect()
     }
 
     /// Appends a finalized utterance segment and returns its newly assigned [`SegmentId`].
@@ -355,49 +329,10 @@ impl UtteranceSpine {
         Some(id)
     }
 
-    /// Accepts cumulative ASR text for `connection_id`, stripping any previously confirmed
-    /// prefix and appending only the newly spoken suffix as a new [`SegmentId`].
-    pub fn accept_cumulative(
-        &mut self,
-        connection_id: &str,
-        text: &str,
-        source_language: &str,
-        translation: Option<&str>,
-        target_language: Option<&str>,
-        provider: &str,
-    ) -> Option<SegmentId> {
-        let clean = text.trim();
-        if clean.is_empty() {
-            return None;
-        }
-        let prev = self
-            .confirmed_by_connection
-            .get(connection_id)
-            .map_or("", String::as_str);
-        if clean == prev {
-            return self.segments.last().map(|s| s.id);
-        }
-        let delta = if !prev.is_empty() && clean.starts_with(prev) {
-            clean[prev.len()..].trim()
-        } else {
-            clean
-        };
-        self.confirmed_by_connection
-            .insert(connection_id.to_string(), clean.to_string());
-        if delta.is_empty() {
-            return self.segments.last().map(|s| s.id);
-        }
-        let id = self.append_segment(delta, 0, 0, source_language, provider)?;
-        if let Some(tr) = translation.map(str::trim).filter(|s| !s.is_empty()) {
-            let _ = self.set_translation(id, tr, target_language.unwrap_or(""));
-        }
-        Some(id)
-    }
-
     /// Updates the source text of segment `id`, latching its initial unedited ASR text into
     /// `original_text` (or clearing `original_text` when reverted to that original text),
-    /// increments both segment and spine revisions, clears any existing translation on that
-    /// segment, and marks the spine stale.
+    /// increments both segment and spine revisions, and clears any existing translation on that
+    /// segment.
     pub fn update_segment_text(&mut self, id: SegmentId, new_text: impl Into<String>) -> bool {
         let clean = new_text.into().trim().to_string();
         if clean.is_empty() {
@@ -416,7 +351,6 @@ impl UtteranceSpine {
         seg.translation = None;
         seg.target_language = None;
         self.revision = self.revision.saturating_add(1);
-        self.stale = true;
         true
     }
 
@@ -437,7 +371,7 @@ impl UtteranceSpine {
 
     /// Updates the source text and timestamps of segment `id`. When the source text changes,
     /// clears any existing translation on that segment. Increments segment and spine revisions
-    /// and marks the spine stale whenever text, `start_ms`, or `end_ms` changes.
+    /// whenever text, `start_ms`, or `end_ms` changes.
     pub fn update_segment(
         &mut self,
         id: SegmentId,
@@ -469,7 +403,6 @@ impl UtteranceSpine {
         seg.end_ms = end_ms;
         seg.revision = seg.revision.saturating_add(1);
         self.revision = self.revision.saturating_add(1);
-        self.stale = true;
         true
     }
 
@@ -487,7 +420,6 @@ impl UtteranceSpine {
         seg.speaker = normalized;
         seg.revision = seg.revision.saturating_add(1);
         self.revision = self.revision.saturating_add(1);
-        self.stale = true;
         true
     }
 
@@ -574,7 +506,6 @@ impl UtteranceSpine {
         }
         if updated > 0 {
             self.revision = self.revision.saturating_add(1);
-            self.stale = true;
         }
         updated
     }
@@ -596,22 +527,6 @@ impl UtteranceSpine {
                 _ => format!("[{}] {}", seg.id, seg.text),
             })
             .collect()
-    }
-
-    /// Returns borrowed source text slices in `S1..Sn` order.
-    #[must_use]
-    pub fn source_texts(&self) -> Vec<&str> {
-        self.segments.iter().map(|s| s.text.as_str()).collect()
-    }
-
-    /// Clears all segments while advancing `revision` by 1 and resetting `stale = false`.
-    pub fn clear(&mut self) -> u64 {
-        self.segments.clear();
-        self.key_to_id.clear();
-        self.confirmed_by_connection.clear();
-        self.stale = false;
-        self.revision = self.revision.saturating_add(1);
-        self.revision
     }
 }
 
@@ -729,118 +644,6 @@ pub struct MinuteCustomSection {
     pub points: Vec<MinutePoint>,
 }
 
-/// Lifecycle phase of a [`RecordingAggregate`] across hardware sync, local storage, and AI synthesis.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum RecordingLifecyclePhase {
-    /// Audio slices are actively streaming or copying from the D3200 bean.
-    #[default]
-    Copying,
-    /// Audio container (`.opus`/`.wav`) is stored locally and ready for transcription.
-    Local,
-    /// ASR transcription and structured synthesis are in progress.
-    Transcribing,
-    /// Utterance spine and structured minutes are ready for reading.
-    Ready,
-    /// Transfer or transcription failed and can be retried.
-    Failed,
-}
-
-impl RecordingLifecyclePhase {
-    /// Returns the canonical wire token (`"copying"`, `"local"`, `"transcribing"`, `"ready"`, `"failed"`).
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Copying => "copying",
-            Self::Local => "local",
-            Self::Transcribing => "transcribing",
-            Self::Ready => "ready",
-            Self::Failed => "failed",
-        }
-    }
-
-    /// Returns `true` when the phase has reached a settled outcome (`Ready` or `Failed`).
-    #[must_use]
-    pub const fn is_terminal(&self) -> bool {
-        matches!(self, Self::Ready | Self::Failed)
-    }
-
-    /// Returns `true` when a transcription or re-synthesis pass can be launched from this phase.
-    #[must_use]
-    pub const fn can_transcribe(&self) -> bool {
-        matches!(self, Self::Local | Self::Ready | Self::Failed)
-    }
-}
-
-/// User-selectable structured summary presentation format for a [`RecordingAggregate`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum SummaryFormat {
-    /// Decision-oriented executive memo (`"决议备忘"`).
-    #[default]
-    DecisionMemo,
-    /// Owner and deadline focused action list (`"待办清单"`).
-    ActionList,
-    /// Ishikawa root-cause fishbone breakdown (`"鱼骨溯源"`).
-    RootCauseFishbone,
-    /// Cicada side-by-side bilingual brief (`"双语简报"`).
-    BilingualBrief,
-    /// Personal journal and reflection synthesis (`"个人随记"`).
-    PersonalReflection,
-    /// Concise bulleted quick note (`"要点速记"`).
-    QuickNote,
-}
-
-impl SummaryFormat {
-    /// All supported [`SummaryFormat`] variants in display order.
-    pub const ALL: [Self; 6] = [
-        Self::DecisionMemo,
-        Self::ActionList,
-        Self::RootCauseFishbone,
-        Self::BilingualBrief,
-        Self::PersonalReflection,
-        Self::QuickNote,
-    ];
-
-    /// Returns the canonical wire token for this summary format.
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::DecisionMemo => "decision_memo",
-            Self::ActionList => "action_list",
-            Self::RootCauseFishbone => "root_cause_fishbone",
-            Self::BilingualBrief => "bilingual_brief",
-            Self::PersonalReflection => "personal_reflection",
-            Self::QuickNote => "quick_note",
-        }
-    }
-
-    /// Returns the localized Chinese label for this summary format.
-    #[must_use]
-    pub const fn label_zh(&self) -> &'static str {
-        match self {
-            Self::DecisionMemo => "决议备忘",
-            Self::ActionList => "待办清单",
-            Self::RootCauseFishbone => "鱼骨溯源",
-            Self::BilingualBrief => "双语简报",
-            Self::PersonalReflection => "个人随记",
-            Self::QuickNote => "要点速记",
-        }
-    }
-
-    /// Parses a wire token or Chinese label into a [`SummaryFormat`].
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "decision_memo" | "决议备忘" => Some(Self::DecisionMemo),
-            "action_list" | "待办清单" => Some(Self::ActionList),
-            "root_cause_fishbone" | "鱼骨溯源" => Some(Self::RootCauseFishbone),
-            "bilingual_brief" | "双语简报" => Some(Self::BilingualBrief),
-            "personal_reflection" | "个人随记" => Some(Self::PersonalReflection),
-            "quick_note" | "要点速记" => Some(Self::QuickNote),
-            _ => None,
-        }
-    }
-}
-
 /// Unified domain aggregate root for a single recording across capture, transcript spine,
 /// and structured minutes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -849,16 +652,10 @@ pub struct RecordingAggregate {
     pub recording_id: String,
     /// Hardware D3200 file identifier (`0` for local-mic recordings).
     pub file_id: u32,
-    /// Current lifecycle phase.
-    pub phase: RecordingLifecyclePhase,
-    /// Optional coarse geographic place tag (such as `"北京市·海淀区"`).
-    pub coarse_place: Option<String>,
     /// Sorted, deduplicated hardware double-tap or manual bookmark timestamps in milliseconds.
     pub bookmarks: Vec<u64>,
     /// Canonical `S1..Sn` utterance spine.
     pub spine: UtteranceSpine,
-    /// Active summary presentation format selected by the user.
-    pub selected_format: SummaryFormat,
     /// Optional structured meeting minutes (`v2`).
     pub minutes: Option<MeetingMinutes>,
     /// UTC creation timestamp in Unix seconds.
@@ -868,7 +665,7 @@ pub struct RecordingAggregate {
 }
 
 impl RecordingAggregate {
-    /// Creates a new [`RecordingAggregate`] in [`RecordingLifecyclePhase::Copying`] with an empty spine.
+    /// Creates a new [`RecordingAggregate`] with an empty spine.
     #[must_use]
     pub fn new(
         recording_id: impl Into<String>,
@@ -881,42 +678,9 @@ impl RecordingAggregate {
         Self {
             recording_id: rec_id,
             file_id,
-            phase: RecordingLifecyclePhase::Copying,
-            coarse_place: None,
             bookmarks: Vec::new(),
             spine,
-            selected_format: SummaryFormat::DecisionMemo,
             minutes: None,
-            created_at_epoch_sec,
-            duration_ms,
-        }
-    }
-
-    /// Reconstructs a [`RecordingAggregate`] from an existing [`UtteranceSpine`] and optional
-    /// [`MeetingMinutes`].
-    #[must_use]
-    pub fn from_spine_and_minutes(
-        recording_id: impl Into<String>,
-        file_id: u32,
-        created_at_epoch_sec: u64,
-        duration_ms: u64,
-        spine: UtteranceSpine,
-        minutes: Option<MeetingMinutes>,
-    ) -> Self {
-        let phase = if minutes.is_some() || !spine.is_empty() {
-            RecordingLifecyclePhase::Ready
-        } else {
-            RecordingLifecyclePhase::Local
-        };
-        Self {
-            recording_id: recording_id.into(),
-            file_id,
-            phase,
-            coarse_place: None,
-            bookmarks: Vec::new(),
-            spine,
-            selected_format: SummaryFormat::DecisionMemo,
-            minutes,
             created_at_epoch_sec,
             duration_ms,
         }
@@ -930,30 +694,6 @@ impl RecordingAggregate {
         self.bookmarks.push(position_ms);
         self.bookmarks.sort_unstable();
         true
-    }
-
-    /// Updates the lifecycle phase of this recording.
-    pub fn set_phase(&mut self, phase: RecordingLifecyclePhase) {
-        self.phase = phase;
-    }
-
-    /// Switches the active [`SummaryFormat`].
-    pub fn set_selected_format(&mut self, format: SummaryFormat) {
-        self.selected_format = format;
-    }
-
-    /// Attaches validated [`MeetingMinutes`] and transitions the aggregate to
-    /// [`RecordingLifecyclePhase::Ready`].
-    pub fn attach_minutes(&mut self, minutes: MeetingMinutes) {
-        self.minutes = Some(minutes);
-        self.phase = RecordingLifecyclePhase::Ready;
-    }
-
-    /// Sets or clears the coarse geographic place tag, trimming whitespace.
-    pub fn update_coarse_place(&mut self, place: Option<String>) {
-        self.coarse_place = place
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty());
     }
 }
 
@@ -998,7 +738,6 @@ mod tests {
         assert_eq!(s2.to_string(), "S2");
         assert_eq!(spine.len(), 2);
         assert_eq!(spine.revision(), 2);
-        assert!(!spine.is_stale());
         assert_eq!(spine.get(s1).unwrap().duration_ms(), 2_400);
 
         assert!(spine.set_translation(s1, "The base salary is 3910 CNY.", "en"));
@@ -1009,20 +748,15 @@ mod tests {
         let rev_after_tr = spine.revision();
 
         assert!(spine.update_segment_text(s1, "基本工资调整为4200元。"));
-        assert!(spine.is_stale());
         assert!(spine.revision() > rev_after_tr);
         let updated_s1 = spine.get(s1).unwrap();
         assert_eq!(updated_s1.revision, 2);
         assert_eq!(updated_s1.translation, None);
         assert_eq!(updated_s1.target_language, None);
 
-        spine.clear_stale();
-        assert!(!spine.is_stale());
-
         assert!(spine.set_speaker(s1, Some("发言人 1".to_string())));
         assert!(spine.set_speaker(s2, Some("发言人 1".to_string())));
         assert_eq!(spine.replace_speaker_name("发言人 1", "张工"), 2);
-        assert!(spine.is_stale());
         assert_eq!(
             spine.format_cited_sources(),
             vec![
@@ -1033,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn spine_accept_final_and_cumulative_deduplicate_prefixes() {
+    fn spine_accept_final_updates_in_place_by_composite_key() {
         let mut spine = UtteranceSpine::new("live-session");
         let id1 = spine
             .accept_final(
@@ -1061,53 +795,19 @@ mod tests {
         assert_eq!(spine.len(), 1);
         assert_eq!(spine.get(id1).unwrap().text, "第一句定稿");
         assert_eq!(spine.get(id1).unwrap().revision, 2);
-
-        let c1 = spine
-            .accept_cumulative("conn-a", "今天讨论预算", "zh", None, None, "qwen")
-            .unwrap();
-        assert_eq!(c1.ordinal(), 2);
-        assert_eq!(spine.get(c1).unwrap().text, "今天讨论预算");
-
-        let c2 = spine
-            .accept_cumulative(
-                "conn-a",
-                "今天讨论预算 和排期安排",
-                "zh",
-                Some("and schedule"),
-                Some("en"),
-                "qwen",
-            )
-            .unwrap();
-        assert_eq!(c2.ordinal(), 3);
-        assert_eq!(spine.get(c2).unwrap().text, "和排期安排");
         assert_eq!(
-            spine.get(c2).unwrap().translation.as_deref(),
-            Some("and schedule")
+            spine.get(id1).unwrap().translation.as_deref(),
+            Some("Final one")
         );
     }
 
     #[test]
-    fn recording_aggregate_tracks_lifecycle_bookmarks_and_minutes() {
+    fn recording_aggregate_tracks_bookmarks_and_minutes() {
         let mut agg = RecordingAggregate::new("rec-20261108", 20261108, 1_762_590_000, 120_000);
-        assert_eq!(agg.phase, RecordingLifecyclePhase::Copying);
-        assert_eq!(agg.phase.as_str(), "copying");
-        assert!(!agg.phase.is_terminal());
-        assert!(!agg.phase.can_transcribe());
-
-        agg.set_phase(RecordingLifecyclePhase::Local);
-        assert!(agg.phase.can_transcribe());
         assert!(agg.add_bookmark(900));
         assert!(agg.add_bookmark(300));
         assert!(!agg.add_bookmark(300));
         assert_eq!(agg.bookmarks, vec![300, 900]);
-
-        agg.update_coarse_place(Some("  北京市·海淀区  ".to_string()));
-        assert_eq!(agg.coarse_place.as_deref(), Some("北京市·海淀区"));
-
-        for fmt in SummaryFormat::ALL {
-            assert_eq!(SummaryFormat::parse(fmt.as_str()), Some(fmt));
-            assert_eq!(SummaryFormat::parse(fmt.label_zh()), Some(fmt));
-        }
 
         let s1 = agg
             .spine
@@ -1180,32 +880,7 @@ mod tests {
             review_items: Vec::new(),
         };
 
-        agg.set_selected_format(SummaryFormat::RootCauseFishbone);
-        assert_eq!(agg.selected_format, SummaryFormat::RootCauseFishbone);
-        agg.attach_minutes(mins.clone());
-        assert_eq!(agg.phase, RecordingLifecyclePhase::Ready);
-        assert!(agg.phase.is_terminal());
-        assert_eq!(agg.minutes, Some(mins.clone()));
-
-        let empty = RecordingAggregate::from_spine_and_minutes(
-            "rec-empty",
-            0,
-            1_762_590_000,
-            0,
-            UtteranceSpine::new("rec-empty"),
-            None,
-        );
-        assert_eq!(empty.phase, RecordingLifecyclePhase::Local);
-
-        let restored = RecordingAggregate::from_spine_and_minutes(
-            "rec-restored",
-            20261108,
-            1_762_590_000,
-            120_000,
-            agg.spine.clone(),
-            Some(mins.clone()),
-        );
-        assert_eq!(restored.phase, RecordingLifecyclePhase::Ready);
-        assert_eq!(restored.minutes, Some(mins));
+        agg.minutes = Some(mins.clone());
+        assert_eq!(agg.minutes, Some(mins));
     }
 }

@@ -1,6 +1,5 @@
 use super::*;
 use crate::context::{AskRole, AskStatus};
-use crate::domain::RecordingLifecyclePhase;
 
 impl ProductWorkspace {
     /// Exports owned value state for a storage codec without exposing mutable live state.
@@ -196,7 +195,6 @@ impl ProductWorkspace {
             }
             if let AnalysisState::Pending { key, .. } = &record.analysis {
                 record.analysis = AnalysisState::Interrupted { key: key.clone() };
-                record.aggregate.phase = RecordingLifecyclePhase::Failed;
                 changed = true;
             }
         }

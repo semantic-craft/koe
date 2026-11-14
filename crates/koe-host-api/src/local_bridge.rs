@@ -18,20 +18,18 @@ use std::{
         mpsc,
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use koe_runtime::{
-    CompanionClientCommand, CompanionStreamEvent, KoeRuntime, McpToolCallState, McpToolError,
-    resolve_bridge_socket_path,
+    CompanionClientCommand, CompanionStreamEvent, KoeRuntime, McpToolError,
+    drive_mcp_tool_blocking, resolve_bridge_socket_path,
 };
 use serde_json::{Value, json};
 
 use crate::{now, sessions};
 
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
-const ASK_TIMEOUT: Duration = Duration::from_secs(190);
-const ASK_POLL_SLEEP: Duration = Duration::from_millis(25);
 const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
 const ACCEPT_POLL_SLEEP: Duration = Duration::from_millis(25);
 
@@ -535,17 +533,8 @@ fn handle_rpc_call(
                     .entries
                     .get_mut(&handle)
                     .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?;
-                let t = now(0);
-                entry.runtime.poll_timers(0, t);
-                let snap = entry.runtime.snapshot(t);
+                let payload = entry.runtime.doctor_snapshot(now(0));
                 let events = entry.runtime.drain_companion_events();
-                let payload = json!({
-                    "workspaceReadable": true,
-                    "generation": snap["generation"],
-                    "device": snap["device"],
-                    "provider": snap["provider"],
-                    "error": snap["error"]
-                });
                 entry.subscribers.broadcast(&events);
                 payload
             };
@@ -572,60 +561,50 @@ fn handle_mcp_tool_call(
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    let step_res = {
-        let mut table = sessions()
-            .lock()
-            .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
-        let entry = table
-            .entries
-            .get_mut(&handle)
-            .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?;
-        let res = entry.runtime.call_mcp_tool_step(name, &arguments, now(0));
-        let events = entry.runtime.drain_companion_events();
-        entry.subscribers.broadcast(&events);
-        res
-    };
+    let outcome = drive_mcp_tool_blocking(
+        (),
+        |()| {
+            let mut table = sessions().lock().map_err(|_| McpToolError {
+                code: -32603,
+                message: "会话锁不可用".to_string(),
+            })?;
+            let entry = table.entries.get_mut(&handle).ok_or_else(|| McpToolError {
+                code: -32000,
+                message: "Koe 会话已关闭".to_string(),
+            })?;
+            let res = entry.runtime.call_mcp_tool_step(name, &arguments, now(0));
+            let events = entry.runtime.drain_companion_events();
+            entry.subscribers.broadcast(&events);
+            res
+        },
+        |(), question, _elapsed_ms| {
+            if shutdown.load(Ordering::Acquire) {
+                return Ok(Some(Err("Koe 会话正在关闭".into())));
+            }
+            let mut table = sessions().lock().map_err(|_| McpToolError {
+                code: -32603,
+                message: "会话锁不可用".to_string(),
+            })?;
+            let Some(entry) = table.entries.get_mut(&handle) else {
+                return Ok(Some(Err("Koe 会话已关闭".into())));
+            };
+            let res = entry.runtime.poll_mcp_ask(question, 0, now(0));
+            let evs = entry.runtime.drain_companion_events();
+            entry.subscribers.broadcast(&evs);
+            Ok(res)
+        },
+    );
 
-    match step_res {
+    match outcome {
         Err(McpToolError { code, message }) => Err((code, message)),
-        Ok(McpToolCallState::Completed(Ok(value))) => Ok(json!({
+        Ok(Ok(value)) => Ok(json!({
             "isError": false,
             "value": value
         })),
-        Ok(McpToolCallState::Completed(Err(error))) => Ok(json!({
+        Ok(Err(error)) => Ok(json!({
             "isError": true,
             "error": error
         })),
-        Ok(McpToolCallState::PendingAsk { question }) => {
-            let deadline = Instant::now() + ASK_TIMEOUT;
-            loop {
-                if shutdown.load(Ordering::Acquire) {
-                    return Ok(json!({"isError": true, "error": "Koe 会话正在关闭"}));
-                }
-                if Instant::now() >= deadline {
-                    return Ok(json!({"isError": true, "error": "问答未在期限内完成"}));
-                }
-                thread::sleep(ASK_POLL_SLEEP);
-                let poll_res = {
-                    let mut table = sessions()
-                        .lock()
-                        .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
-                    let Some(entry) = table.entries.get_mut(&handle) else {
-                        return Ok(json!({"isError": true, "error": "Koe 会话已关闭"}));
-                    };
-                    let res = entry.runtime.poll_mcp_ask(&question, 0, now(0));
-                    let evs = entry.runtime.drain_companion_events();
-                    entry.subscribers.broadcast(&evs);
-                    res
-                };
-                if let Some(done) = poll_res {
-                    return Ok(match done {
-                        Ok(value) => json!({"isError": false, "value": value}),
-                        Err(error) => json!({"isError": true, "error": error}),
-                    });
-                }
-            }
-        }
     }
 }
 
@@ -852,6 +831,7 @@ fn jsonrpc_error(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::atomic::AtomicU64;
+    use std::time::Instant;
 
     use crate::HostSessionGuard;
 

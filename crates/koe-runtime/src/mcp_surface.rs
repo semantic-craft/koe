@@ -1,6 +1,12 @@
+use std::time::{Duration, Instant};
+
 use serde_json::{json, Map, Value};
 
 use super::*;
+
+const MCP_ASK_TIMEOUT: Duration = Duration::from_secs(190);
+const MCP_ASK_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const MCP_ASK_TIMEOUT_MESSAGE: &str = "问答未在期限内完成";
 
 /// JSON-RPC parameter or tool-routing error returned before domain execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1107,6 +1113,51 @@ fn optional_scope(obj: &Map<String, Value>) -> Result<SearchScope, McpToolError>
     }
 }
 
+/// Drives a blocking MCP tool invocation, polling asynchronous `ask` jobs until settled or timed out.
+pub fn drive_mcp_tool_blocking<Ctx, StepFn, PollFn>(
+    ctx: Ctx,
+    step: StepFn,
+    poll: PollFn,
+) -> Result<Result<Value, String>, McpToolError>
+where
+    StepFn: FnOnce(&mut Ctx) -> Result<McpToolCallState, McpToolError>,
+    PollFn: FnMut(&mut Ctx, &str, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
+{
+    drive_mcp_tool_blocking_with_limits(ctx, MCP_ASK_TIMEOUT, MCP_ASK_POLL_INTERVAL, step, poll)
+}
+
+fn drive_mcp_tool_blocking_with_limits<Ctx, StepFn, PollFn>(
+    mut ctx: Ctx,
+    timeout: Duration,
+    poll_interval: Duration,
+    step: StepFn,
+    mut poll: PollFn,
+) -> Result<Result<Value, String>, McpToolError>
+where
+    StepFn: FnOnce(&mut Ctx) -> Result<McpToolCallState, McpToolError>,
+    PollFn: FnMut(&mut Ctx, &str, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
+{
+    match step(&mut ctx)? {
+        McpToolCallState::Completed(res) => Ok(res),
+        McpToolCallState::PendingAsk { question } => {
+            let deadline = Instant::now() + timeout;
+            let mut previous = Instant::now();
+            loop {
+                if Instant::now() >= deadline {
+                    return Ok(Err(MCP_ASK_TIMEOUT_MESSAGE.into()));
+                }
+                std::thread::sleep(poll_interval);
+                let current = Instant::now();
+                let elapsed_ms = current.duration_since(previous).as_millis() as u64;
+                previous = current;
+                if let Some(done) = poll(&mut ctx, &question, elapsed_ms)? {
+                    return Ok(done);
+                }
+            }
+        }
+    }
+}
+
 fn evidence_json(evidence: &Evidence) -> Value {
     json!({
         "recordId": evidence.source.record_id,
@@ -1115,4 +1166,116 @@ fn evidence_json(evidence: &Evidence) -> Value {
         "quote": evidence.quote,
         "startMs": evidence.start_ms
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drive_mcp_tool_blocking_handles_immediate_polling_and_errors() {
+        let immediate = drive_mcp_tool_blocking(
+            (),
+            |()| Ok(McpToolCallState::Completed(Ok(json!({ "ok": true })))),
+            |(), _, _| unreachable!("poll must not run after immediate completion"),
+        )
+        .expect("protocol result");
+        assert_eq!(immediate.expect("tool value")["ok"], true);
+
+        let domain_err = drive_mcp_tool_blocking(
+            (),
+            |()| Ok(McpToolCallState::Completed(Err("domain failed".into()))),
+            |(), _, _| unreachable!("poll must not run after immediate domain error"),
+        )
+        .expect("protocol result");
+        assert_eq!(domain_err.unwrap_err(), "domain failed");
+
+        let step_err = drive_mcp_tool_blocking(
+            (),
+            |()| Err(McpToolError::invalid_params("bad step")),
+            |(), _, _| Ok(None),
+        )
+        .unwrap_err();
+        assert_eq!(
+            step_err,
+            McpToolError {
+                code: -32602,
+                message: "bad step".into()
+            }
+        );
+
+        #[derive(Default)]
+        struct PollCtx {
+            stepped: bool,
+            polls: usize,
+            seen_question: String,
+        }
+
+        let mut poll_ctx = PollCtx::default();
+        let polled = drive_mcp_tool_blocking(
+            &mut poll_ctx,
+            |ctx| {
+                ctx.stepped = true;
+                Ok(McpToolCallState::PendingAsk {
+                    question: "结论是什么？".into(),
+                })
+            },
+            |ctx, question, elapsed_ms| {
+                assert!(ctx.stepped);
+                ctx.polls += 1;
+                ctx.seen_question = question.to_string();
+                assert!(elapsed_ms >= 1);
+                if ctx.polls < 2 {
+                    Ok(None)
+                } else {
+                    Ok(Some(Ok(json!({ "answer": "已完成" }))))
+                }
+            },
+        )
+        .expect("protocol result");
+        assert!(poll_ctx.stepped);
+        assert_eq!(poll_ctx.seen_question, "结论是什么？");
+        assert_eq!(poll_ctx.polls, 2);
+        assert_eq!(polled.expect("settled answer")["answer"], "已完成");
+
+        let poll_err = drive_mcp_tool_blocking(
+            (),
+            |()| {
+                Ok(McpToolCallState::PendingAsk {
+                    question: "q".into(),
+                })
+            },
+            |(), _, _| {
+                Err(McpToolError {
+                    code: -32603,
+                    message: "poll failure".into(),
+                })
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            poll_err,
+            McpToolError {
+                code: -32603,
+                message: "poll failure".into()
+            }
+        );
+
+        let timed_out = drive_mcp_tool_blocking_with_limits(
+            0usize,
+            Duration::from_millis(5),
+            Duration::from_millis(2),
+            |_| {
+                Ok(McpToolCallState::PendingAsk {
+                    question: "超时测试".into(),
+                })
+            },
+            |polls, _, _| {
+                *polls += 1;
+                Ok(None)
+            },
+        )
+        .expect("protocol result");
+        assert_eq!(timed_out.unwrap_err(), MCP_ASK_TIMEOUT_MESSAGE);
+    }
 }

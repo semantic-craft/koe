@@ -1,5 +1,4 @@
 use super::*;
-use crate::domain::RecordingLifecyclePhase;
 
 /// Maximum Unicode scalar value count for a normalized speaker label.
 pub const MAX_SPEAKER_NAME_CHARS: usize = 40;
@@ -182,21 +181,19 @@ impl ProductRecord {
         summaries
     }
 
-    /// Rejects transcript/speaker edits on trashed, archived, copying, or transcribing records.
+    /// Rejects transcript/speaker edits on trashed, archived, or transcribing records.
     pub fn ensure_transcript_editable(&self) -> Result<(), ProductError> {
         self.ensure_live()?;
         if self.is_archived() {
             return Err(ProductError::RecordArchived);
         }
-        if self.aggregate.phase == RecordingLifecyclePhase::Copying
-            || matches!(
-                self.analysis,
-                AnalysisState::Pending {
-                    stage: AnalysisStage::Transcribing,
-                    ..
-                }
-            )
-        {
+        if matches!(
+            self.analysis,
+            AnalysisState::Pending {
+                stage: AnalysisStage::Transcribing,
+                ..
+            }
+        ) {
             return Err(ProductError::Busy);
         }
         Ok(())
@@ -213,10 +210,8 @@ impl ProductRecord {
         ) {
             if let Some(input_revision) = self.minutes_revision {
                 self.analysis = AnalysisState::Ready { input_revision };
-                self.aggregate.phase = RecordingLifecyclePhase::Ready;
             } else {
                 self.analysis = AnalysisState::Idle;
-                self.aggregate.phase = RecordingLifecyclePhase::Local;
             }
         }
     }

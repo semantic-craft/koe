@@ -16,27 +16,7 @@ impl KoeRuntime {
                 r.aggregate.recording_id.clone(),
             ))
         });
-        let device = &self.device.session;
-        let live_record_id = device
-            .active_file_id
-            .and_then(|fid| self.captures.active.get(&fid))
-            .or_else(|| self.captures.active.values().next())
-            .map(String::as_str);
-        let live_duration_ms = if !self.companion.standby_stream_owned
-            && (device.device_recording_active
-                || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime))
-        {
-            let opus_ms = ((device.opus_buffer.len() / OPUS_FRAME_BYTES) as u64) * 20;
-            let pcm_ms = live_record_id
-                .and_then(|id| self.captures.sessions.get(id))
-                .map_or(0, |c| c.captured_pcm_bytes / 32);
-            let record_ms = live_record_id
-                .and_then(|id| self.workspace().record(id))
-                .map_or(0, |r| r.aggregate.duration_ms);
-            opus_ms.max(pcm_ms).max(record_ms)
-        } else {
-            0
-        };
+        let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
         let now = if now > 0 { now } else { self.last_now_sec };
         let today = local_date(now);
         let rows: Vec<_> = records.iter().filter(|r| r.is_live()).map(|record| {
@@ -78,14 +58,13 @@ impl KoeRuntime {
                 })
                 .then_with(|| a.aggregate.recording_id.cmp(&b.aggregate.recording_id))
         });
-        let effective_now_sec = if now > 0 { now } else { self.last_now_sec };
         let trash_rows: Vec<_> = trashed_records
             .iter()
             .filter_map(|record| {
                 let trashed_at_ms = record.retention().trashed_at_ms()?;
                 let expires_at_ms = record.retention().expires_at_ms()?;
-                let reference_now_ms = if effective_now_sec > 0 {
-                    effective_now_sec.saturating_mul(1000)
+                let reference_now_ms = if now > 0 {
+                    now.saturating_mul(1000)
                 } else {
                     trashed_at_ms
                 };
@@ -380,9 +359,7 @@ impl KoeRuntime {
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
     }
 
-    pub(crate) fn record_detail_json(&self, id: &str) -> Result<Value, String> {
-        let record = self.workspace().record(id).ok_or("记录不存在")?;
-        record.ensure_live().map_err(|e| e.to_string())?;
+    fn live_bean_capture_progress(&self) -> (Option<&str>, u64) {
         let device = &self.device.session;
         let live_record_id = device
             .active_file_id
@@ -395,15 +372,22 @@ impl KoeRuntime {
         {
             let opus_ms = ((device.opus_buffer.len() / OPUS_FRAME_BYTES) as u64) * 20;
             let pcm_ms = live_record_id
-                .and_then(|rid| self.captures.sessions.get(rid))
+                .and_then(|id| self.captures.sessions.get(id))
                 .map_or(0, |c| c.captured_pcm_bytes / 32);
             let record_ms = live_record_id
-                .and_then(|rid| self.workspace().record(rid))
+                .and_then(|id| self.workspace().record(id))
                 .map_or(0, |r| r.aggregate.duration_ms);
             opus_ms.max(pcm_ms).max(record_ms)
         } else {
             0
         };
+        (live_record_id, live_duration_ms)
+    }
+
+    pub(crate) fn record_detail_json(&self, id: &str) -> Result<Value, String> {
+        let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
+        let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
         Ok(self.detail(record, live_record_id, live_duration_ms))
     }
 
