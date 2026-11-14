@@ -177,9 +177,7 @@ const fn sort_u32_array<const N: usize>(mut arr: [u32; N]) -> [u32; N] {
         let mut j = i + 1;
         while j < N {
             if arr[j] < arr[i] {
-                let tmp = arr[i];
-                arr[i] = arr[j];
-                arr[j] = tmp;
+                arr.swap(i, j);
             }
             j += 1;
         }
