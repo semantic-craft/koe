@@ -1,10 +1,9 @@
 use std::{
     io::{self, BufRead, Read, Write},
     path::Path,
-    time::{Duration, Instant},
 };
 
-use koe_runtime::{KoeRuntime, McpToolCallState, McpToolError};
+use koe_runtime::{drive_mcp_tool_blocking, KoeRuntime, McpToolError};
 use serde_json::{json, Value};
 
 use crate::bridge_client::BridgeClient;
@@ -70,25 +69,11 @@ pub(crate) fn call_offline_tool(
     name: &str,
     args: &Value,
 ) -> Result<Result<Value, String>, McpToolError> {
-    match runtime.call_mcp_tool_step(name, args, super::now())? {
-        McpToolCallState::Completed(result) => Ok(result),
-        McpToolCallState::PendingAsk { question } => {
-            let deadline = Instant::now() + Duration::from_secs(190);
-            let mut previous = Instant::now();
-            loop {
-                if Instant::now() >= deadline {
-                    return Ok(Err("问答未在期限内完成".into()));
-                }
-                std::thread::sleep(Duration::from_millis(25));
-                let current = Instant::now();
-                let elapsed_ms = current.duration_since(previous).as_millis() as u64;
-                previous = current;
-                if let Some(done) = runtime.poll_mcp_ask(&question, elapsed_ms, super::now()) {
-                    return Ok(done);
-                }
-            }
-        }
-    }
+    drive_mcp_tool_blocking(
+        runtime,
+        |rt| rt.call_mcp_tool_step(name, args, super::now()),
+        |rt, question, elapsed_ms| Ok(rt.poll_mcp_ask(question, elapsed_ms, super::now())),
+    )
 }
 
 fn handle(

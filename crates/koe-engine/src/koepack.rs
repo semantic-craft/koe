@@ -1,14 +1,13 @@
-//! Portable `.koepack v1/v2` material pack codec and deterministic minutes history merging.
+//! Portable `.koepack v1/v2` material pack decoder.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::domain::UtteranceSpine;
 use crate::hash::{is_valid_sha256_hex, sha256_hex};
-use crate::minutes::{extract_json_object, parse_meeting_minutes_json, JsonValue};
+use crate::minutes::{parse_meeting_minutes_json, JsonValue};
 
 /// First-line ASCII magic header for every `.koepack` archive (`"KOEPACK1"`).
 pub const KOEPACK_MAGIC: &str = "KOEPACK1";
@@ -89,48 +88,6 @@ impl PortableMinutesEntry {
         parse_meeting_minutes_json(&self.text, &spine)
             .map_err(|e| MaterialPackError::InvalidMinutesEvidence(format!("{e:?}")))?;
         Ok(())
-    }
-
-    /// Serializes this entry to its portable JSON object representation.
-    #[must_use]
-    pub fn to_json_value(&self) -> JsonValue {
-        let mut map = BTreeMap::new();
-        map.insert(
-            "createdAt".to_string(),
-            JsonValue::String(self.created_at_iso.clone()),
-        );
-        if let Some(ref edited) = self.edited_at_iso {
-            map.insert("editedAt".to_string(), JsonValue::String(edited.clone()));
-        }
-        map.insert(
-            "instruction".to_string(),
-            JsonValue::String(self.instruction.clone()),
-        );
-        map.insert("isDraft".to_string(), JsonValue::Bool(self.is_draft));
-        map.insert("model".to_string(), JsonValue::String(self.model.clone()));
-        map.insert(
-            "sourceHash".to_string(),
-            JsonValue::String(self.source_hash.clone()),
-        );
-        map.insert(
-            "sources".to_string(),
-            JsonValue::Array(
-                self.sources
-                    .iter()
-                    .cloned()
-                    .map(JsonValue::String)
-                    .collect(),
-            ),
-        );
-        if let Some(ref tpl) = self.template_id {
-            map.insert("templateId".to_string(), JsonValue::String(tpl.clone()));
-        }
-        map.insert(
-            "templateVersion".to_string(),
-            JsonValue::Number(f64::from(self.template_version)),
-        );
-        map.insert("text".to_string(), JsonValue::String(self.text.clone()));
-        JsonValue::Object(map)
     }
 
     /// Decodes and validates a [`PortableMinutesEntry`] from a JSON value.
@@ -236,95 +193,6 @@ impl PortableMinutesEntry {
         entry.validate()?;
         Ok(entry)
     }
-
-    /// Computes the canonical JSON identity string ignoring key order inside `self.text`.
-    #[must_use]
-    pub fn portable_identity(&self) -> String {
-        let mut val = self.to_json_value();
-        if let JsonValue::Object(ref mut map) = val {
-            let parsed_body = JsonValue::parse(extract_json_object(&self.text))
-                .unwrap_or_else(|_| JsonValue::String(self.text.clone()));
-            map.insert("text".to_string(), parsed_body);
-        }
-        val.to_json_string()
-    }
-
-    /// Returns the timestamp (`edited_at_iso` if present, otherwise `created_at_iso`) used for history ordering.
-    #[must_use]
-    pub fn sort_timestamp(&self) -> &str {
-        self.edited_at_iso
-            .as_deref()
-            .unwrap_or(self.created_at_iso.as_str())
-    }
-}
-
-/// Result of deterministic bounded minutes history merging.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MinutesHistoryMergeOutcome {
-    /// Preserved active minutes entry on the receiving device.
-    pub current: PortableMinutesEntry,
-    /// Merged bounded history list (up to `limit` entries, with `incoming` appended at the end on conflict).
-    pub history: Vec<PortableMinutesEntry>,
-    /// `true` when `current.portable_identity() != incoming.portable_identity()`.
-    pub had_conflict: bool,
-}
-
-/// Deterministic bounded union of local and imported minutes histories.
-#[must_use]
-pub fn merge_minutes_history(
-    current: &PortableMinutesEntry,
-    incoming: &PortableMinutesEntry,
-    existing: &[PortableMinutesEntry],
-    incoming_history: &[PortableMinutesEntry],
-    limit: usize,
-) -> MinutesHistoryMergeOutcome {
-    let current_id = current.portable_identity();
-    let incoming_id = incoming.portable_identity();
-    let conflict = current_id != incoming_id;
-
-    let mut unique: BTreeMap<String, PortableMinutesEntry> = BTreeMap::new();
-    for item in existing.iter().chain(incoming_history.iter()) {
-        let id = item.portable_identity();
-        if id == current_id || (conflict && id == incoming_id) {
-            continue;
-        }
-        unique.insert(id, item.clone());
-    }
-
-    let mut ordered: Vec<(String, PortableMinutesEntry)> = unique.into_iter().collect();
-    ordered.sort_by(|(id_a, a), (id_b, b)| {
-        let time_cmp = a.sort_timestamp().cmp(b.sort_timestamp());
-        if time_cmp != std::cmp::Ordering::Equal {
-            time_cmp
-        } else {
-            id_a.cmp(id_b)
-        }
-    });
-
-    if limit == 0 {
-        return MinutesHistoryMergeOutcome {
-            current: current.clone(),
-            history: Vec::new(),
-            had_conflict: conflict,
-        };
-    }
-
-    let remaining = limit.saturating_sub(usize::from(conflict));
-    let skip_count = ordered.len().saturating_sub(remaining);
-    let mut history: Vec<PortableMinutesEntry> = ordered
-        .into_iter()
-        .skip(skip_count)
-        .map(|(_, item)| item)
-        .collect();
-    if conflict {
-        history.push(incoming.clone());
-    }
-
-    MinutesHistoryMergeOutcome {
-        current: current.clone(),
-        history,
-        had_conflict: conflict,
-    }
 }
 
 /// Material identity metadata inside a `.koepack` manifest.
@@ -366,7 +234,7 @@ pub struct MaterialPack {
     pub minutes: Option<PackMinutes>,
 }
 
-/// Errors returned by [`encode_koepack`] and [`decode_koepack`].
+/// Errors returned by [`decode_koepack`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaterialPackError {
     /// First line is not `KOEPACK1` or `format != "koe-material-pack"`.
@@ -418,95 +286,6 @@ impl fmt::Display for MaterialPackError {
 }
 
 impl std::error::Error for MaterialPackError {}
-
-/// Encodes an audio-less [`MaterialPack`] into the `KOEPACK1\n<len>\n<json>` wire format.
-pub fn encode_koepack(pack: &MaterialPack) -> Result<Vec<u8>, MaterialPackError> {
-    if pack.exported_at_iso.trim().is_empty()
-        || pack.material.title.trim().is_empty()
-        || !is_valid_sha256_hex(&pack.material.content_hash)
-    {
-        return Err(MaterialPackError::MissingIdentity);
-    }
-
-    let effective_version = if pack.minutes.is_some() { 2 } else { 1 };
-    if pack.version == 1 && pack.minutes.is_some() {
-        return Err(MaterialPackError::MinutesInV1Pack);
-    }
-
-    let mut root = BTreeMap::new();
-    root.insert(
-        "format".to_string(),
-        JsonValue::String(KOEPACK_FORMAT_NAME.to_string()),
-    );
-    root.insert(
-        "version".to_string(),
-        JsonValue::Number(f64::from(effective_version)),
-    );
-    root.insert(
-        "exportedAt".to_string(),
-        JsonValue::String(pack.exported_at_iso.clone()),
-    );
-
-    let mut mat = BTreeMap::new();
-    mat.insert(
-        "contentHash".to_string(),
-        JsonValue::String(pack.material.content_hash.clone()),
-    );
-    mat.insert(
-        "title".to_string(),
-        JsonValue::String(pack.material.title.trim().to_string()),
-    );
-    mat.insert(
-        "source".to_string(),
-        JsonValue::String(if pack.material.source.trim().is_empty() {
-            "localImport".to_string()
-        } else {
-            pack.material.source.clone()
-        }),
-    );
-    if let Some(id) = pack.material.device_file_id {
-        mat.insert("deviceFileId".to_string(), JsonValue::Number(f64::from(id)));
-    }
-    if let Some(ref rec) = pack.material.recorded_at_iso {
-        mat.insert("recordedAt".to_string(), JsonValue::String(rec.clone()));
-    }
-    if let Some(ref ext) = pack.material.audio_extension {
-        mat.insert("audioExtension".to_string(), JsonValue::String(ext.clone()));
-    }
-    root.insert("material".to_string(), JsonValue::Object(mat));
-
-    if let Some(ref mins) = pack.minutes {
-        if mins.history.len() > KOEPACK_MAX_MINUTES_HISTORY {
-            return Err(MaterialPackError::InvalidMinutesHistory);
-        }
-        mins.current.validate()?;
-        let mut hist_vals = Vec::with_capacity(mins.history.len());
-        for item in &mins.history {
-            item.validate()?;
-            hist_vals.push(item.to_json_value());
-        }
-        let mut mins_obj = BTreeMap::new();
-        mins_obj.insert("current".to_string(), mins.current.to_json_value());
-        mins_obj.insert("history".to_string(), JsonValue::Array(hist_vals));
-        root.insert("minutes".to_string(), JsonValue::Object(mins_obj));
-    }
-
-    let mut audio_obj = BTreeMap::new();
-    audio_obj.insert("included".to_string(), JsonValue::Bool(false));
-    root.insert("audio".to_string(), JsonValue::Object(audio_obj));
-
-    let manifest_json = JsonValue::Object(root).to_json_string();
-    let manifest_bytes = manifest_json.as_bytes();
-    if manifest_bytes.len() > KOEPACK_MAX_MANIFEST_BYTES {
-        return Err(MaterialPackError::CorruptHeader);
-    }
-
-    let prefix = format!("{KOEPACK_MAGIC}\n{}\n", manifest_bytes.len());
-    let mut out = Vec::with_capacity(prefix.len() + manifest_bytes.len());
-    out.extend_from_slice(prefix.as_bytes());
-    out.extend_from_slice(manifest_bytes);
-    Ok(out)
-}
 
 /// Decodes and validates an audio-less `.koepack` (`v1`/`v2`) archive from `bytes`.
 pub fn decode_koepack(bytes: &[u8]) -> Result<MaterialPack, MaterialPackError> {
@@ -658,6 +437,8 @@ pub fn decode_koepack(bytes: &[u8]) -> Result<MaterialPack, MaterialPackError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn sample_minutes_json(title: &str, cite: &str) -> String {
@@ -666,8 +447,102 @@ mod tests {
         )
     }
 
+    fn test_entry_to_json(entry: &PortableMinutesEntry) -> JsonValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "createdAt".to_string(),
+            JsonValue::String(entry.created_at_iso.clone()),
+        );
+        if let Some(ref edited) = entry.edited_at_iso {
+            map.insert("editedAt".to_string(), JsonValue::String(edited.clone()));
+        }
+        map.insert(
+            "instruction".to_string(),
+            JsonValue::String(entry.instruction.clone()),
+        );
+        map.insert("isDraft".to_string(), JsonValue::Bool(entry.is_draft));
+        map.insert("model".to_string(), JsonValue::String(entry.model.clone()));
+        map.insert(
+            "sourceHash".to_string(),
+            JsonValue::String(entry.source_hash.clone()),
+        );
+        map.insert(
+            "sources".to_string(),
+            JsonValue::Array(entry.sources.iter().cloned().map(JsonValue::String).collect()),
+        );
+        if let Some(ref tpl) = entry.template_id {
+            map.insert("templateId".to_string(), JsonValue::String(tpl.clone()));
+        }
+        map.insert(
+            "templateVersion".to_string(),
+            JsonValue::Number(f64::from(entry.template_version)),
+        );
+        map.insert("text".to_string(), JsonValue::String(entry.text.clone()));
+        JsonValue::Object(map)
+    }
+
+    fn build_test_koepack(pack: &MaterialPack) -> Vec<u8> {
+        let mut root = BTreeMap::new();
+        root.insert(
+            "format".to_string(),
+            JsonValue::String(KOEPACK_FORMAT_NAME.to_string()),
+        );
+        root.insert(
+            "version".to_string(),
+            JsonValue::Number(f64::from(pack.version)),
+        );
+        root.insert(
+            "exportedAt".to_string(),
+            JsonValue::String(pack.exported_at_iso.clone()),
+        );
+
+        let mut mat = BTreeMap::new();
+        mat.insert(
+            "contentHash".to_string(),
+            JsonValue::String(pack.material.content_hash.clone()),
+        );
+        mat.insert(
+            "title".to_string(),
+            JsonValue::String(pack.material.title.clone()),
+        );
+        mat.insert(
+            "source".to_string(),
+            JsonValue::String(pack.material.source.clone()),
+        );
+        if let Some(id) = pack.material.device_file_id {
+            mat.insert("deviceFileId".to_string(), JsonValue::Number(f64::from(id)));
+        }
+        if let Some(ref rec) = pack.material.recorded_at_iso {
+            mat.insert("recordedAt".to_string(), JsonValue::String(rec.clone()));
+        }
+        if let Some(ref ext) = pack.material.audio_extension {
+            mat.insert("audioExtension".to_string(), JsonValue::String(ext.clone()));
+        }
+        root.insert("material".to_string(), JsonValue::Object(mat));
+
+        if let Some(ref mins) = pack.minutes {
+            let mut mins_obj = BTreeMap::new();
+            mins_obj.insert("current".to_string(), test_entry_to_json(&mins.current));
+            mins_obj.insert(
+                "history".to_string(),
+                JsonValue::Array(mins.history.iter().map(test_entry_to_json).collect()),
+            );
+            root.insert("minutes".to_string(), JsonValue::Object(mins_obj));
+        }
+
+        let mut audio_obj = BTreeMap::new();
+        audio_obj.insert("included".to_string(), JsonValue::Bool(false));
+        root.insert("audio".to_string(), JsonValue::Object(audio_obj));
+
+        let manifest_json = JsonValue::Object(root).to_json_string();
+        let manifest_bytes = manifest_json.as_bytes();
+        let mut out = format!("{KOEPACK_MAGIC}\n{}\n", manifest_bytes.len()).into_bytes();
+        out.extend_from_slice(manifest_bytes);
+        out
+    }
+
     #[test]
-    fn koepack_v2_round_trips_and_merges_minutes_history_deterministically() {
+    fn koepack_v2_decodes_valid_pack_and_rejects_trailing_bytes() {
         let sources = vec!["我们今天讨论 Koe 资料包。".to_string()];
         let source_hash = sha256_hex(sources.join("\n").as_bytes());
         let content_hash = sha256_hex(b"dummy-audio-bytes");
@@ -685,7 +560,6 @@ mod tests {
             is_draft: false,
         };
 
-        let current = make_entry("本地当前版", "2026-11-07T10:00:00Z");
         let incoming = make_entry("导入新版", "2026-11-07T11:00:00Z");
         let hist: Vec<PortableMinutesEntry> = (0..10)
             .map(|i| make_entry(&format!("历史-{i}"), &format!("2026-11-07T09:{i:02}:00Z")))
@@ -703,32 +577,20 @@ mod tests {
                 audio_extension: Some(".wav".to_string()),
             },
             minutes: Some(PackMinutes {
-                current: incoming.clone(),
-                history: hist.clone(),
+                current: incoming,
+                history: hist,
             }),
         };
 
-        let encoded = encode_koepack(&pack).expect("encode valid v2 pack");
+        let encoded = build_test_koepack(&pack);
         let decoded = decode_koepack(&encoded).expect("decode valid v2 pack");
         assert_eq!(decoded, pack);
 
-        let mut trailing = encoded.clone();
+        let mut trailing = encoded;
         trailing.push(b'x');
         assert_eq!(
             decode_koepack(&trailing),
             Err(MaterialPackError::TrailingBytes)
         );
-
-        let merged = merge_minutes_history(
-            &current,
-            &incoming,
-            &hist[..5],
-            &hist[5..],
-            KOEPACK_MAX_MINUTES_HISTORY,
-        );
-        assert!(merged.had_conflict);
-        assert_eq!(merged.current, current);
-        assert_eq!(merged.history.len(), KOEPACK_MAX_MINUTES_HISTORY);
-        assert_eq!(merged.history.last(), Some(&incoming));
     }
 }

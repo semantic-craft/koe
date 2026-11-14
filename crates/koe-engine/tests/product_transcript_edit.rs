@@ -1,4 +1,4 @@
-use koe_engine::domain::{RecordingLifecyclePhase, SegmentId, UtteranceSpine};
+use koe_engine::domain::{SegmentId, UtteranceSpine};
 use koe_engine::minutes::parse_meeting_minutes_json;
 use koe_engine::product::*;
 
@@ -303,10 +303,6 @@ fn multi_cycle_edits_keep_stale_minutes_alive_and_detach_inflight_summarization(
     assert_eq!(aborted_edit.minutes_freshness, MinutesFreshness::Absent);
     assert_eq!(ws.record("rec-1").unwrap().analysis, AnalysisState::Idle);
     assert_eq!(
-        ws.record("rec-1").unwrap().aggregate.phase,
-        RecordingLifecyclePhase::Local
-    );
-    assert_eq!(
         ws.fail_analysis(&aborted_initial, "cancelled"),
         Err(ProductError::StaleRequest)
     );
@@ -404,10 +400,6 @@ fn multi_cycle_edits_keep_stale_minutes_alive_and_detach_inflight_summarization(
         }
     );
     assert_eq!(
-        ws.record("rec-1").unwrap().aggregate.phase,
-        RecordingLifecyclePhase::Ready
-    );
-    assert_eq!(
         ws.complete_summary(&inflight_key, stale_inflight_mins),
         Err(ProductError::StaleRequest)
     );
@@ -421,7 +413,7 @@ fn multi_cycle_edits_keep_stale_minutes_alive_and_detach_inflight_summarization(
 }
 
 #[test]
-fn trashed_archived_copying_and_transcribing_records_reject_transcript_edits() {
+fn trashed_archived_and_transcribing_records_reject_transcript_edits() {
     let mut ws = seeded_workspace();
     let s1 = source("rec-1", 1);
     ws.set_segment_speaker(&s1, Some("发言人 1")).unwrap();
@@ -474,11 +466,5 @@ fn trashed_archived_copying_and_transcribing_records_reject_transcript_edits() {
     );
 
     ws.restore_record("rec-1").unwrap();
-    let mut state = ws.export_state();
-    state.records[0].aggregate.phase = RecordingLifecyclePhase::Copying;
-    let mut copying_ws = ProductWorkspace::restore(state).unwrap();
-    assert_eq!(
-        copying_ws.edit_segment_text(&s1, "拷贝中禁止修改"),
-        Err(ProductError::Busy)
-    );
+    assert!(ws.edit_segment_text(&s1, "恢复后允许修改").is_ok());
 }

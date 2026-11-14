@@ -802,3 +802,91 @@ fn zero_duration_preserves_bookmarks_across_reopen_and_subsequent_finish_clamps(
     assert_eq!(updated.aggregate.duration_ms, 27_660);
     assert_eq!(updated.aggregate.bookmarks, vec![12_000, 27_660]);
 }
+
+#[test]
+fn persisted_legacy_coarse_place_and_selected_format_load_cleanly_and_omit_on_save() {
+    let dir = Directory::new();
+    {
+        let mut store = ProductStore::open(&dir.0).unwrap();
+        store
+            .transact(|w| {
+                w.insert_record(
+                    "rec-legacy".into(),
+                    "Legacy Record".into(),
+                    RecordOrigin::Bean,
+                    77,
+                    1_794_444_325,
+                    15_000,
+                )?;
+                let seg = w.append_transcript(
+                    "rec-legacy",
+                    "legacy utterance",
+                    0,
+                    2_000,
+                    "manual",
+                )?;
+                w.finish_capture("rec-legacy", 15_000, &[4_000])?;
+                w.add_highlight(SourceRef {
+                    record_id: "rec-legacy".into(),
+                    segment_id: seg,
+                })?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert_eq!(raw["version"], 1);
+    let rec_obj = raw["records"][0].as_object_mut().unwrap();
+    rec_obj.insert(
+        "coarse_place".into(),
+        serde_json::Value::String("北京市·海淀区".into()),
+    );
+    rec_obj.insert(
+        "selected_format".into(),
+        serde_json::Value::String("decision_memo".into()),
+    );
+    fs::write(&json_path, serde_json::to_string(&raw).unwrap()).unwrap();
+
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    {
+        let record = store.workspace().record("rec-legacy").unwrap();
+        assert_eq!(record.title, "Legacy Record");
+        assert_eq!(record.origin, RecordOrigin::Bean);
+        assert_eq!(record.aggregate.file_id, 77);
+        assert_eq!(record.aggregate.created_at_epoch_sec, 1_794_444_325);
+        assert_eq!(record.aggregate.duration_ms, 15_000);
+        assert_eq!(record.aggregate.bookmarks, vec![0, 4_000]);
+        assert_eq!(record.aggregate.spine.len(), 1);
+        assert_eq!(
+            record.aggregate.spine.segments()[0].text,
+            "legacy utterance"
+        );
+        assert_eq!(record.highlighted_segments.len(), 1);
+    }
+
+    store
+        .transact(|w| w.rename_record("rec-legacy", "Legacy Record Updated"))
+        .unwrap();
+    drop(store);
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    let saved_obj = saved["records"][0].as_object().unwrap();
+    assert!(!saved_obj.contains_key("coarse_place"));
+    assert!(!saved_obj.contains_key("selected_format"));
+
+    let reloaded = ProductStore::open(&dir.0).unwrap();
+    let record = reloaded.workspace().record("rec-legacy").unwrap();
+    assert_eq!(record.title, "Legacy Record Updated");
+    assert_eq!(record.aggregate.file_id, 77);
+    assert_eq!(record.aggregate.duration_ms, 15_000);
+    assert_eq!(record.aggregate.bookmarks, vec![0, 4_000]);
+    assert_eq!(
+        record.aggregate.spine.segments()[0].text,
+        "legacy utterance"
+    );
+    assert_eq!(record.highlighted_segments.len(), 1);
+}

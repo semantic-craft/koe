@@ -54,8 +54,8 @@ use device::DeviceRuntime;
 use koe_client_providers::ProviderWorker;
 use koe_client_services::{product_store::ProductStore, recording_assets};
 use koe_engine::{domain::SegmentId, product::*};
-pub use mcp_surface::{McpToolCallState, McpToolError};
-use serde_json::Value;
+pub use mcp_surface::{drive_mcp_tool_blocking, McpToolCallState, McpToolError};
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -874,6 +874,18 @@ impl KoeRuntime {
     /// Structured read-only projection for native and CLI clients.
     pub fn snapshot(&self, now: u64) -> Value {
         self.project(now)
+    }
+    /// Advances timers and returns the diagnostic projection shared by CLI and local bridge.
+    pub fn doctor_snapshot(&mut self, now: u64) -> Value {
+        self.poll_timers(0, now);
+        let snap = self.snapshot(now);
+        json!({
+            "workspaceReadable": true,
+            "generation": snap["generation"],
+            "device": snap["device"],
+            "provider": snap["provider"],
+            "error": snap["error"]
+        })
     }
 }
 

@@ -1,5 +1,4 @@
 use koe_client_base::hash::sha256_hex;
-use koe_engine::session::{TransferPhaseTag, TransferRuntimeState};
 
 use super::*;
 
@@ -36,19 +35,7 @@ impl KoeRuntime {
             .filter(|r| r.origin == RecordOrigin::Bean && r.aggregate.file_id > 0)
             .map(|r| r.aggregate.file_id);
         if let Some(fid) = bean_file_id {
-            let session = &self.device.session;
-            let transfer_busy = session.active_file_id == Some(fid)
-                || matches!(
-                    session.runtime_state,
-                    TransferRuntimeState::PullingOffline { file_id, .. }
-                        | TransferRuntimeState::Suspended { file_id, .. }
-                        | TransferRuntimeState::StreamingRealtime { file_id, .. }
-                        if file_id == fid
-                )
-                || (matches!(
-                    session.transfer.phase,
-                    TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
-                ) && session.transfer.file_id == fid);
+            let transfer_busy = self.device.session.is_file_in_flight(fid);
             let capture_busy = self.captures.active.contains_key(&fid)
                 || self.captures.records_by_file_id.contains_key(&fid);
             let finalized_busy = self.device.finalized.iter().any(|r| r.entry.id == fid);

@@ -1,8 +1,7 @@
 use super::*;
 use koe_engine::{
-    library::RecordingEntry,
     ogg_opus::OggOpus,
-    session::FinalizedRecording,
+    session::{FinalizedRecording, RecordingEntry},
     wav::{OpusWave, WAV_SAMPLE_RATE},
 };
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::{MeetingMinutes, RecordingLifecyclePhase, UtteranceSpine};
+use crate::domain::{MeetingMinutes, UtteranceSpine};
 use crate::minutes::{validate_minutes_citations, validate_minutes_grounding};
 
 impl ProductWorkspace {
@@ -61,8 +61,7 @@ impl ProductWorkspace {
             self.purged_bean_file_ids.remove(&file_id);
             self.reclaimed_standby_file_ids.remove(&file_id);
         }
-        let mut aggregate = RecordingAggregate::new(id.clone(), file_id, created_at, duration_ms);
-        aggregate.phase = RecordingLifecyclePhase::Local;
+        let aggregate = RecordingAggregate::new(id.clone(), file_id, created_at, duration_ms);
         self.records.insert(
             id,
             ProductRecord {
@@ -221,7 +220,6 @@ impl ProductWorkspace {
             key: key.clone(),
             stage,
         };
-        record.aggregate.phase = RecordingLifecyclePhase::Transcribing;
         self.changed();
         Ok(key)
     }
@@ -299,7 +297,6 @@ impl ProductWorkspace {
         }
         record.require_pending(key, AnalysisStage::Transcribing)?;
         record.analysis = AnalysisState::Idle;
-        record.aggregate.phase = RecordingLifecyclePhase::Local;
         record.completed_request = Some(key.clone());
         self.changed();
         Ok(())
@@ -441,7 +438,6 @@ impl ProductWorkspace {
             .collect();
         record.aggregate.minutes = Some(minutes);
         record.minutes_revision = Some(key.input_revision);
-        record.aggregate.phase = RecordingLifecyclePhase::Ready;
         record.analysis = AnalysisState::Ready {
             input_revision: key.input_revision,
         };
@@ -479,7 +475,6 @@ impl ProductWorkspace {
             key: key.clone(),
             message: nonempty(message)?,
         };
-        record.aggregate.phase = RecordingLifecyclePhase::Failed;
         self.changed();
         Ok(())
     }
@@ -506,10 +501,8 @@ impl ProductRecord {
                 key: key.clone(),
                 message: "原文已变化，请重新整理".to_string(),
             };
-            self.aggregate.phase = RecordingLifecyclePhase::Failed;
         } else if !matches!(self.analysis, AnalysisState::Pending { .. }) {
             self.analysis = AnalysisState::Idle;
-            self.aggregate.phase = RecordingLifecyclePhase::Local;
         }
     }
 

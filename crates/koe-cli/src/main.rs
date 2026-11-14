@@ -226,16 +226,7 @@ fn run() -> Result<(), String> {
     runtime.poll_timers(0, now());
     let output = match options.command.as_str() {
         "status" => runtime.snapshot(now()),
-        "doctor" => {
-            let snapshot = runtime.snapshot(now());
-            json!({
-                "workspaceReadable": true,
-                "generation": snapshot["generation"],
-                "device": snapshot["device"],
-                "provider": snapshot["provider"],
-                "error": snapshot["error"]
-            })
-        }
+        "doctor" => runtime.doctor_snapshot(now()),
         "search" => run_search(
             &options.words.join(" "),
             &options.scope(),

@@ -6,8 +6,7 @@ use koe_engine::{
     commands::DeviceCommands,
     crypto::{AesCtrStreamDecrypt, DeviceCrypto},
     frame::{ProtocolFrame, RX_MAGIC},
-    library::RecordingEntry,
-    session::{FinalizedRecording, REAL_OPUS_20MS_440HZ_PACKET},
+    session::{FinalizedRecording, RecordingEntry, REAL_OPUS_20MS_440HZ_PACKET},
     transport::{OPUS_FRAME_BYTES, SLICE_RECORD_BYTES, UNFINISHED_FILE_SIZE},
 };
 use serde_json::{json, Value};
@@ -265,7 +264,7 @@ fn collar_standby_auto_starts_streams_without_creating_records_and_deletes_scrat
         "collar_standby must automatically issue 18/81 start_realtime_record_81 on connect"
     );
     assert!(
-        outbound.contains(&DeviceCommands::start_record()),
+        outbound.contains(&DeviceCommands::start_app_recording()),
         "collar_standby must automatically issue 18/82 start_record on connect"
     );
 
@@ -347,7 +346,7 @@ fn collar_standby_auto_starts_streams_without_creating_records_and_deletes_scrat
 
     let _ = connect_simulated_bean(&mut reopened, "ble-conn-2", NOW + 10);
     let mut reconnect_tx = reopened.drain_outbound_ble_frames();
-    assert!(!reconnect_tx.contains(&DeviceCommands::start_record()));
+    assert!(!reconnect_tx.contains(&DeviceCommands::start_app_recording()));
     reopened.dispatch_json(r#"{"type":"prepare_voice_input"}"#, NOW + 10);
     reconnect_tx.extend(reopened.drain_outbound_ble_frames());
     let delete_pos = reconnect_tx
@@ -356,7 +355,7 @@ fn collar_standby_auto_starts_streams_without_creating_records_and_deletes_scrat
         .expect("next idle connect must delete standby scratch file 7001 from bean flash");
     let start_pos = reconnect_tx
         .iter()
-        .position(|f| f == &DeviceCommands::start_record())
+        .position(|f| f == &DeviceCommands::start_app_recording())
         .expect("next connect in collar_standby must restart standby after scratch cleanup");
     assert!(
         delete_pos < start_pos,
@@ -503,7 +502,7 @@ fn meeting_and_collar_retains_record_while_streaming_and_device_release_persists
     assert!(
         !runtime
             .drain_outbound_ble_frames()
-            .contains(&DeviceCommands::start_record()),
+            .contains(&DeviceCommands::start_app_recording()),
         "meeting_and_collar must not auto-start recording until explicitly started"
     );
 
@@ -1480,7 +1479,7 @@ fn collar_standby_connect_in_paused_state_waits_for_initial_catalog_and_protects
         "after initial catalog completes, standby must send 18/81"
     );
     assert!(
-        cat_ack_tx.contains(&DeviceCommands::start_record()),
+        cat_ack_tx.contains(&DeviceCommands::start_app_recording()),
         "after initial catalog completes, standby must send 18/82 start_record"
     );
     assert!(
@@ -2334,13 +2333,13 @@ fn persisted_collar_standby_waits_for_explicit_activation_after_reopen() {
     let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
     connect_simulated_bean(&mut runtime, "cold-standby", NOW);
     let frames = runtime.drain_outbound_ble_frames();
-    assert!(!frames.contains(&DeviceCommands::start_record()));
+    assert!(!frames.contains(&DeviceCommands::start_app_recording()));
     assert!(!frames.contains(&DeviceCommands::start_realtime_record_81()));
     assert!(!runtime.is_standby_ready());
     assert!(runtime.snapshot(NOW)["activeCapture"].is_null());
     let prepared: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"prepare_voice_input"}"#, NOW)).unwrap();
     assert!(prepared["error"].is_null(), "{prepared}");
-    assert!(runtime.drain_outbound_ble_frames().contains(&DeviceCommands::start_record()));
+    assert!(runtime.drain_outbound_ble_frames().contains(&DeviceCommands::start_app_recording()));
     assert_eq!(runtime.workspace().companion_mode(), CompanionRoutingMode::CollarStandby);
 }
 
