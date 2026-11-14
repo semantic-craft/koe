@@ -19,18 +19,6 @@ pub use network::{
     DASHSCOPE_CHAT_ENDPOINT, DASHSCOPE_CHAT_MODEL,
 };
 
-pub use koe_client_core::copilot_google::{
-    extract_segment_citations, format_epoch_sec_rfc3339, parse_rfc3339_to_epoch_sec,
-    CopilotAuthStyle, CopilotError, CopilotMessage, CopilotPhase, CopilotPresetChip,
-    CopilotProviderConfig, CopilotRole, CopilotSession, CopilotToolCall, GeminiNotebook,
-    GoogleServiceKind, GoogleSuiteStore, GoogleTaskId, GoogleTaskRecord, GoogleTaskStatus,
-    GoogleTasksSyncReport, GoogleWireRequest, KeepChecklistItem, KeepNote, KeepNoteColor,
-    KeepNoteDraft, KeepNoteId, NotebookAudioOverview, NotebookAudioOverviewStatus, NotebookId,
-    NotebookQaTurn, NotebookRpcOp, NotebookSource, NotebookSourceKind, NotebookTransportKind,
-    ToolCallId, COPILOT_PRESET_CHIPS, COPILOT_SYSTEM_PROMPT, DEEPSEEK_CHAT_COMPLETIONS_URL,
-    DEFAULT_DEEPSEEK_MODEL, GEMINI_NOTEBOOK_BATCHEXECUTE_URL, GEMINI_NOTEBOOK_GRPC_SERVICE,
-    GOOGLE_KEEP_V1_BASE_URL, GOOGLE_TASKS_V1_BASE_URL, MAX_COPILOT_TOOL_ROUNDS,
-};
 pub use koe_engine::minutes::{
     encode_qwen_stream_finish_task_json, encode_qwen_stream_run_task_json, QwenStreamAccumulator,
     QwenStreamStep, QWEN_FILETRANS_DEFAULT_MODEL, QWEN_STREAMING_DEFAULT_MODEL,
@@ -485,21 +473,6 @@ pub struct DashScopeConfigSnapshot {
     pub active_hotword_count: usize,
     /// Whether `DASHSCOPE_API_KEY` is present and non-empty in the environment (boolean only).
     pub api_key_configured: bool,
-}
-
-/// Value snapshot of the active Ask AI Copilot provider configuration (redacting secrets).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CopilotProviderSnapshot {
-    /// Active provider display name (`"deepseek"`, `"openai-local"`, `"mcp-native"`).
-    pub provider_name: String,
-    /// OpenAI-compatible chat completions endpoint URL.
-    pub endpoint_url: String,
-    /// Target model identifier (`"deepseek-chat"`, `"qwen2.5-coder:14b"`, etc.).
-    pub model: String,
-    /// Whether an API key is configured in memory or environment (never exposes the secret).
-    pub has_api_key: bool,
-    /// Total messages recorded in the active [`CopilotSession`].
-    pub session_message_count: usize,
 }
 
 #[cfg(test)]

@@ -81,7 +81,7 @@ Use `--workspace <directory>` for another library and `--record <ID>` to scope `
 | Layer | Paths | Responsibility |
 | --- | --- | --- |
 | Domain and protocol | [koe-engine](crates/koe-engine/), [koe-opus](crates/koe-opus/) | `ProductWorkspace`, per-record aggregates, review and source rules, retrieval, D3200 protocol, and an isolated libopus wrapper |
-| Client services | [base](crates/koe-client-base/), [core](crates/koe-client-core/), [providers](crates/koe-client-providers/), [services](crates/koe-client-services/) | File locking, atomic persistence, data formats, network transport, audio import, and workspace storage |
+| Client services | [base](crates/koe-client-base/), [providers](crates/koe-client-providers/), [services](crates/koe-client-services/) | File locking, atomic persistence, data formats, network transport, audio import, and workspace storage |
 | Runtime and API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Device and asynchronous task coordination, persistence, version 2 snapshots and commands |
 | Native host and CLI | [apple-shared](platforms/apple-shared/), [macos](platforms/macos/), [koe-cli](crates/koe-cli/) | SwiftUI, windows, CoreBluetooth, file selection, playback, and the shared-runtime command line |
 

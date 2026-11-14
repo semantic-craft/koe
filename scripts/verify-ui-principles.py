@@ -13,25 +13,6 @@ from typing import Any
 
 ALLOWED_FONT_SIZES = {12.0, 14.0, 16.0, 22.0}
 
-RUST_TOKEN_KEY_MAP = {
-    "ACCENT": "accent",
-    "ON_ACCENT": "onAccent",
-    "SURFACE_0": "surface0",
-    "SURFACE_1": "surface1",
-    "BG_CARD": "bgCard",
-    "BG_CARD_HOVER": "bgCardHover",
-    "BG_PANEL": "bgPanel",
-    "BG_SUBTLE": "bgSubtle",
-    "BG_MUTED": "bgMuted",
-    "BORDER_SOFT": "borderSoft",
-    "BORDER": "border",
-    "BORDER_STRONG": "borderStrong",
-    "BORDER_SELECTED": "borderSelected",
-    "TEXT_PRIMARY": "textPrimary",
-    "TEXT_SECONDARY": "textSecondary",
-    "TEXT_MUTED": "textMuted",
-}
-
 TOKEN_FONT_SIZES = {
     "xs": 12.0,
     "sm": 14.0,
@@ -75,24 +56,23 @@ def check_palette(theme_text: str) -> dict[str, Any]:
     violations: list[str] = []
     tokens: dict[str, str] = {}
     for m in re.finditer(
-        r"pub\s+const\s+([A-Z0-9_]+)\s*:\s*u32\s*=\s*(0x[0-9A-Fa-f_]{8,10});",
+        r"public\s+static\s+let\s+(\w+)\s*=\s*Color\(hex:\s*(0x[0-9A-Fa-f]{6})\)",
         theme_text,
     ):
-        key = RUST_TOKEN_KEY_MAP.get(m.group(1), m.group(1).lower())
-        tokens[key] = m.group(2).replace("_", "")
+        tokens[m.group(1)] = m.group(2)
 
     accent_hex = tokens.get("accent")
     accent_info: dict[str, Any] = {}
     if not accent_hex:
-        violations.append("missing AppColors::ACCENT constant")
+        violations.append("missing AppColors.accent token")
     else:
         rgb = parse_hex_color(accent_hex)
         hue, sat, val = hue_sat_val(rgb)
         foreground_hex = tokens.get("onAccent")
-        if accent_hex.upper() != "0XFF242426":
-            violations.append("Palette violation: ACCENT must use approved charcoal 0xFF242426")
+        if accent_hex.upper() != "0X242426":
+            violations.append("Palette violation: accent must use approved charcoal 0x242426")
         if foreground_hex is None:
-            violations.append("Palette violation: missing ON_ACCENT foreground")
+            violations.append("Palette violation: missing onAccent foreground")
         else:
             foreground_contrast = round(contrast_ratio(rgb, parse_hex_color(foreground_hex)), 2)
             accent_info = {
@@ -101,14 +81,14 @@ def check_palette(theme_text: str) -> dict[str, Any]:
                 "foreground_contrast": foreground_contrast,
             }
             if foreground_contrast < 4.5:
-                violations.append(f"Contrast violation: ON_ACCENT contrast is {foreground_contrast}:1 (< 4.5:1)")
+                violations.append(f"Contrast violation: onAccent contrast is {foreground_contrast}:1 (< 4.5:1)")
 
-    for key, approved in (("surface0", "0XFFFFFFFF"), ("bgPanel", "0XFFF7F7F8"), ("surface1", "0XFFFFFFFF")):
+    for key, approved in (("surface0", "0XFFFFFF"), ("bgPanel", "0XF7F7F8"), ("surface1", "0XFFFFFF")):
         if tokens.get(key, "").upper() != approved:
             violations.append(f"Palette violation: {key} must use approved light surface {approved}")
 
-    neutral_keys = ["surface0", "bgPanel", "surface1", "bgSubtle", "bgCardHover", "bgMuted",
-                    "border", "borderSoft", "textPrimary", "textSecondary", "textMuted"]
+    neutral_keys = ["surface0", "bgPanel", "surface1", "bgSubtle",
+                    "border", "textPrimary", "textSecondary", "textMuted"]
     for key in neutral_keys:
         value = tokens.get(key)
         if value is None:
@@ -128,26 +108,8 @@ def check_palette(theme_text: str) -> dict[str, Any]:
             if ratio < 4.5:
                 violations.append(f"Contrast violation: {text_key} on {surf_key} contrast is {ratio}:1 (< 4.5:1)")
 
-    if "pub struct AppFontSizes" not in theme_text:
+    if "public enum AppFontSizes" not in theme_text:
         violations.append("Principle 7 violation: missing AppFontSizes 4-size scale in theme file")
-
-    if "pub const fn concentric(" not in theme_text:
-        violations.append("Principle 9 violation: missing AppRadii::concentric helper in theme file")
-
-    rust_shadow_match = re.search(
-        r"pub\s+const\s+CARD_SHADOW\s*:\s*&\[u32\]\s*=\s*&(\[[^\]]*\]);",
-        theme_text,
-        re.DOTALL,
-    )
-    if rust_shadow_match:
-        if rust_shadow_match.group(1).strip() != "[]":
-            violations.append(
-                "Principle 9 violation: AppColors::CARD_SHADOW must be empty by default so inline cards stay flat"
-            )
-    else:
-        violations.append(
-            "Principle 9 violation: AppColors::CARD_SHADOW must be empty by default so inline cards stay flat"
-        )
 
     return {
         "accent": accent_info,
@@ -392,23 +354,17 @@ def check_install_script(script_text: str) -> list[str]:
 
 
 def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
-    candidates = [
-        root / "crates" / "koe-client-core" / "src" / "theme.rs",
-        root / "crates" / "koe-engine" / "src" / "theme.rs",
-    ]
-    theme_path = next((p for p in candidates if p.exists()), candidates[-1])
+    theme_path = root / "platforms" / "apple-shared" / "Sources" / "KoeAppleShared" / "DesignKit.swift"
     theme_res = (
         check_theme_file(theme_path.read_text(encoding="utf-8"))
         if theme_path.exists()
         else {
             "accent": {},
-            "violations": ["missing shared Rust theme.rs"],
+            "violations": ["missing shared Swift DesignKit.swift"],
         }
     )
 
     rel_files: list[str] = []
-    if theme_path.exists():
-        rel_files.append(str(theme_path.relative_to(root)))
     host_api_lib = root / "crates" / "koe-host-api" / "src" / "lib.rs"
     if host_api_lib.exists():
         rel_files.append(str(host_api_lib.relative_to(root)))

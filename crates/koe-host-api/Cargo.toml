@@ -13,7 +13,6 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 koe-client-base = { path = "../koe-client-base" }
-koe-client-core = { path = "../koe-client-core" }
 koe-client-providers = { path = "../koe-client-providers" }
 koe-client-services = { path = "../koe-client-services" }
 koe-engine = { path = "../koe-engine" }
