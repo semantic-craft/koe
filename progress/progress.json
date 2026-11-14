@@ -243,7 +243,7 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "61211e9cf1bd628e5b4705ba8195eb252a389b33",
+    "main": "07d1e64995765755086a367d57e0587c78663c75",
     "open_pulls": [],
     "pulls": [
       {
@@ -469,6 +469,14 @@
         "merged": true,
         "number": 690,
         "state": "closed"
+      },
+      {
+        "base": "d6ac1151654f22f00d44b018757acdbcc79fc195",
+        "head": "dec2d834ba37978d705550d9de32bc8032a97879",
+        "merge_commit": "07d1e64995765755086a367d57e0587c78663c75",
+        "merged": true,
+        "number": 695,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -482,7 +490,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-13T17:30:40.610617Z",
+  "observed_at": "2026-11-14T02:36:20.843301Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1557,12 +1565,17 @@
               "kind": "file",
               "note": "来源标准、范围、回归证据与尚未验证的边界。",
               "ref": "docs/acceptance/code-quality-2026-11-14.md"
+            },
+            {
+              "kind": "pull",
+              "note": "独立审查及完整本地、远端门禁通过，合并树与受检候选一致。",
+              "ref": 695
             }
           ],
           "id": "code-quality-cleanup",
-          "next": "合并清理并核对发布；退出暂停帧与 ABI 失败降级规则需要独立行为验证。物理验收状态不变。",
+          "next": "本轮仅内部清理，不另发安装包；现行正式版仍为 2.0.0。退出暂停帧与 ABI 失败降级规则需要独立行为验证，物理验收状态不变。",
           "status": "done",
-          "summary": "删除无消费者的旧 MCP/ACP、Google/Copilot、分析队列、偏好和 memory hub，移除空余 core crate。UI 门禁改查真实 Swift 配色；完整 scripts/check 与独立审查通过。尚未合并或发布该清理。",
+          "summary": "删除无消费者的旧 MCP/ACP、Google/Copilot、分析队列、偏好和 memory hub，移除空余 core crate。UI 门禁改查真实 Swift 配色；完整 scripts/check、独立审查和远端 CI 通过，PR #695 已 squash 合并为 07d1e64。",
           "title": "废弃子系统清理与实际 UI 门禁"
         }
       ],
@@ -1661,7 +1674,8 @@
       680,
       681,
       688,
-      690
+      690,
+      695
     ]
   }
 }
