@@ -243,6 +243,16 @@ impl KoeRuntime {
             && !self.companion.standby_stream_owned;
         let device_recording =
             device.device_recording_active && !self.companion.standby_stream_owned;
+        let teardown_stop_frames_hex = if self.is_standby_ready()
+            || device_recording
+            || self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+        {
+            vec![koe_client_base::prng::to_hex_upper(
+                &koe_engine::commands::DeviceCommands::pause_record(),
+            )]
+        } else {
+            Vec::new()
+        };
         let device_json = json!({
             "phase": device_phase,
             "state": device_state,
@@ -270,6 +280,7 @@ impl KoeRuntime {
             "autoConnect": self.workspace().ble_auto_connect(),
             "companionMode": self.workspace().companion_mode().as_str(),
             "standbyReady": self.is_standby_ready(),
+            "teardownStopFramesHex": teardown_stop_frames_hex,
             "guide": self.device.guide_json()
         });
         let microphone = self.microphone_status();

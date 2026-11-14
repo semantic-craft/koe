@@ -91,16 +91,21 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 
-    public func disconnect() {
+    func teardownLocalBleLink() {
         central?.stopScan()
         if let active = peripheral {
             central?.cancelPeripheralConnection(active)
         }
         if let pending = reconnectingPeripheral {
             central?.cancelPeripheralConnection(pending)
+            reconnectingPeripheral = nil
         }
         resetLinkState()
         isScanRequested = false
+    }
+
+    public func disconnect() {
+        teardownLocalBleLink()
         store?.send("device_disconnect")
     }
 

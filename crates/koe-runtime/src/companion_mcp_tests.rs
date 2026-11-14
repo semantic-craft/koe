@@ -2343,3 +2343,62 @@ fn persisted_collar_standby_waits_for_explicit_activation_after_reopen() {
     assert!(runtime.drain_outbound_ble_frames().contains(&DeviceCommands::start_record()));
     assert_eq!(runtime.workspace().companion_mode(), CompanionRoutingMode::CollarStandby);
 }
+
+#[test]
+fn teardown_stop_frames_projected_for_collar_standby_and_recording() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let expected_pause_hex = koe_client_base::prng::to_hex_upper(&DeviceCommands::pause_record());
+    assert_eq!(expected_pause_hex, "08EE00000018820B00029D");
+
+    assert_eq!(
+        runtime.snapshot(NOW)["device"]["teardownStopFramesHex"],
+        json!([])
+    );
+
+    let standby_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+            NOW,
+        ),
+    )
+    .unwrap();
+    assert!(standby_snap["error"].is_null(), "{standby_snap}");
+    assert_eq!(
+        standby_snap["device"]["teardownStopFramesHex"],
+        json!([expected_pause_hex])
+    );
+
+    let disabled_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+            NOW,
+        ),
+    )
+    .unwrap();
+    assert!(disabled_snap["error"].is_null(), "{disabled_snap}");
+    assert_eq!(disabled_snap["device"]["teardownStopFramesHex"], json!([]));
+
+    let _ = connect_simulated_bean(&mut runtime, "ble-teardown", NOW);
+    assert_eq!(
+        runtime.snapshot(NOW)["device"]["teardownStopFramesHex"],
+        json!([])
+    );
+
+    let recording_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(&json!({"type": "device_start"}).to_string(), NOW + 1),
+    )
+    .unwrap();
+    assert!(recording_snap["error"].is_null(), "{recording_snap}");
+    assert_eq!(recording_snap["device"]["recording"], true);
+    assert_eq!(
+        recording_snap["device"]["teardownStopFramesHex"],
+        json!([expected_pause_hex])
+    );
+
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[2]), NOW + 2);
+    runtime.poll_timers(2_100, NOW + 5);
+    let stopped_snap = runtime.snapshot(NOW + 5);
+    assert_eq!(stopped_snap["device"]["recording"], false);
+    assert_eq!(stopped_snap["device"]["teardownStopFramesHex"], json!([]));
+}

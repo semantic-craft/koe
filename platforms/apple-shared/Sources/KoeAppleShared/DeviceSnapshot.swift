@@ -44,13 +44,14 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public let autoConnect: Bool
     public let companionMode: String
     public let standbyReady: Bool
+    public let teardownStopFramesHex: [String]
 
     private enum CodingKeys: String, CodingKey {
         case phase, state, statusDetail, connected, busy, recording, stopping, deviceName
         case batteryPercent, charging, boxBatteryPercent, boxCharging
         case serialNumber, firmwareVersion, storageLabel, files, progress, guide
         case transferPhase, liveDurationMs, liveBytes, liveRecordId
-        case autoConnect, companionMode, standbyReady
+        case autoConnect, companionMode, standbyReady, teardownStopFramesHex
     }
 
     static let empty = DeviceSnapshot(
@@ -78,7 +79,8 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         liveRecordId: nil,
         autoConnect: true,
         companionMode: "disabled",
-        standbyReady: false
+        standbyReady: false,
+        teardownStopFramesHex: []
     )
 }
 
@@ -112,5 +114,6 @@ extension DeviceSnapshot {
         autoConnect = try c.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         companionMode = try c.decodeIfPresent(String.self, forKey: .companionMode) ?? "disabled"
         standbyReady = try c.decodeIfPresent(Bool.self, forKey: .standbyReady) ?? false
+        teardownStopFramesHex = try c.decodeIfPresent([String].self, forKey: .teardownStopFramesHex) ?? []
     }
 }

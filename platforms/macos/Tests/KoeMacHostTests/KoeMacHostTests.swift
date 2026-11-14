@@ -233,9 +233,11 @@ struct KoeMacHostTests {
         defer { store.shutdown() }
 
         let savedUUID = "22222222-3333-4444-5555-666666666666"
+        let expectedPauseFrame = Data([0x08, 0xEE, 0x00, 0x00, 0x00, 0x18, 0x82, 0x0B, 0x00, 0x02, 0x9D])
         UserDefaults.standard.set(savedUUID, forKey: key)
         store.send("set_ble_auto_connect", ["enabled": true])
         store.send("set_companion_mode", ["mode": "collar_standby"])
+        #expect(store.snapshot.device.teardownStopFramesHex == ["08EE00000018820B00029D"])
 
         let bridge = BluetoothBridge(store: store)
         bridge.reportedReady = true
@@ -245,10 +247,13 @@ struct KoeMacHostTests {
         #expect(!bridge.reportedReady)
         #expect(!bridge.isScanRequested)
         #expect(UserDefaults.standard.string(forKey: key) == savedUUID)
-        #expect(bridge.lastTeardownStopFrames == [BluetoothBridge.pauseRecordFrame])
+        #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
 
         bridge.lastTeardownStopFrames = []
+        bridge.reportedReady = true
         bridge.releaseControl()
+        #expect(!bridge.reportedReady)
+        #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
         #expect(store.snapshot.device.autoConnect == false)
         #expect(store.snapshot.device.companionMode == "collar_standby")
         #expect(UserDefaults.standard.string(forKey: key) == nil)
