@@ -127,22 +127,28 @@ struct MemoryRow: View {
     private func review(_ decision: String) { store.send("review_item", ["itemId": item.id, "decision": decision]) }
 }
 
-private struct ItemEditor: View {
+public struct ItemEditor: View {
     let store: HostSessionStore
     let id: String
     let isTask: Bool
     @State private var text: String
     @State private var due: String
     @Environment(\.dismiss) private var dismiss
-    init(store: HostSessionStore, id: String, initialText: String, initialDue: String?, isTask: Bool) {
+    public init(store: HostSessionStore, id: String, initialText: String, initialDue: String?, isTask: Bool) {
         self.store = store; self.id = id; self.isTask = isTask
         _text = State(initialValue: initialText)
         _due = State(initialValue: initialDue ?? "")
     }
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(isTask ? "编辑待办" : "编辑记忆").font(.system(size: AppFontSizes.md, weight: .semibold))
-            TextEditor(text: $text).font(.system(size: AppFontSizes.sm)).frame(height: 120)
+            TextEditor(text: $text)
+                .font(.system(size: AppFontSizes.sm))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 120)
+                .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+                .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(AppColors.border))
             if isTask {
                 TextField("截止日期，例如 2026-11-20（可留空）", text: $due)
                     .textFieldStyle(.roundedBorder).onSubmit { save() }
@@ -156,7 +162,12 @@ private struct ItemEditor: View {
                 KoeActionButton("保存", isPrimary: true) { save() }
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(24).frame(width: 470).preferredColorScheme(.light)
+        }
+        .padding(24)
+        .frame(width: 470)
+        .background(AppColors.surface0)
+        .foregroundStyle(AppColors.textPrimary)
+        .preferredColorScheme(.light)
     }
     private func save() {
         store.send("edit_item", ["itemId": id, "text": text, "due": due.isEmpty ? NSNull() : due as Any])
