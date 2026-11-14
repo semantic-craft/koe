@@ -1,13 +1,15 @@
 import SwiftUI
 
-struct AllDayDemoView: View {
+public struct AllDayDemoView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scene = 0
     @State private var step = 0
     @State private var replay = 0
     private var isMeeting: Bool { scene == 1 }
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
                 Text("全天听记与语音输入").font(.system(size: AppFontSizes.lg, weight: .semibold))
@@ -58,6 +60,9 @@ struct AllDayDemoView: View {
             }
         }
         .padding(28).frame(width: 660)
+        .background(AppColors.surface0)
+        .foregroundStyle(AppColors.textPrimary)
+        .preferredColorScheme(.light)
         .task(id: "\(scene)-\(replay)") {
             step = 0
             for next in 1...3 {

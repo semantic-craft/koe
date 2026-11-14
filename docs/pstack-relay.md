@@ -158,9 +158,9 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Evidence**: issue #662
 
 ### [ ] Slice ULD: 浅色版剩余弹窗验收
-- **Outcome**: 核验连接引导与审核编辑弹窗浅色配色，更新 #654。
-- **Done Predicate**: python3 progress/progress.py check
-- **Evidence**: issue #654; pending visual checks
+- **Outcome**: 核验连接引导、审核编辑弹窗、全天听记演示与退出面板浅色配色，更新 #654。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check；签名版安装窗口完成实机视觉复核后结案 #654。
+- **Evidence**: issue #654; LightModalAppearanceTests (.darkAqua/.aqua offscreen bitmap PASS for ConnectGuideSheet, ItemEditor, AllDayDemoView, NativeQuitPanel); Projects/_artifacts/koe/uld-20261114; pending signed /Applications/Koe.app visual check at next ./scripts/install-macos.sh window
 
 ### [x] Slice OL: 录音豆本机实时识别与全局字幕
 - **Playbook**: `Feature` + `figure-it-out`

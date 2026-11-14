@@ -86,7 +86,7 @@ final class NativeQuitCoordinator {
 
 @MainActor
 final class NativeQuitPanel: NSObject {
-    private let panel: NSPanel
+    let panel: NSPanel
     private let message = NSTextField(wrappingLabelWithString: "")
     private let cancel: () -> Void
 
@@ -96,6 +96,8 @@ final class NativeQuitPanel: NSObject {
                         styleMask: [.titled], backing: .buffered, defer: false)
         super.init()
         panel.title = "正在退出 Koe"
+        panel.appearance = NSAppearance(named: .aqua)
+        panel.backgroundColor = .white
         panel.isReleasedWhenClosed = false
         let button = NSButton(title: "取消退出", target: self, action: #selector(cancelQuit))
         button.keyEquivalent = "\u{1b}"
