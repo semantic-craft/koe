@@ -711,25 +711,7 @@ impl KoeRuntime {
                 lease.capture = None;
             }
             self.stop_bean_dictation();
-            if self.companion.standby_stream_owned
-                || self.companion.pending_standby_stop
-                || self.companion.active_standby_file_id.is_some()
-            {
-                if let Some(fid) = self
-                    .device
-                    .session
-                    .active_file_id
-                    .filter(|&id| id > 0)
-                    .or_else(|| self.companion.active_standby_file_id.take())
-                {
-                    if self.can_own_as_standby_scratch(fid) {
-                        let _ = self.mark_standby_scratch_file(fid);
-                    }
-                }
-                self.companion.active_standby_file_id = None;
-                self.companion.standby_stream_owned = false;
-                self.companion.pending_standby_stop = false;
-            }
+            self.retire_active_standby_stream();
             self.companion.pre_standby_catalog_ids.clear();
             self.companion.pre_standby_catalog_complete = false;
             self.companion.deleted_in_connection.clear();

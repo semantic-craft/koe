@@ -3,10 +3,6 @@ import Foundation
 import KoeAppleShared
 
 extension BluetoothBridge {
-    nonisolated public static let pauseRecordFrame = Data([
-        0x08, 0xEE, 0x00, 0x00, 0x00, 0x18, 0x82, 0x0B, 0x00, 0x02, 0x9D
-    ])
-
     private func writeImmediateFrames(_ frames: [Data], on active: CBPeripheral?, via writeChar: CBCharacteristic?) {
         guard let active, active.state == .connected, let writeChar else { return }
         let mode: CBCharacteristicWriteType = writeChar.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
@@ -21,31 +17,29 @@ extension BluetoothBridge {
         }
     }
 
-    private func stopActiveStandbyBeforeTeardown() {
-        guard let device = store?.snapshot.device,
-              device.standbyReady || device.recording || (device.connected && device.companionMode == "collar_standby") else {
-            return
+    func writeProjectedTeardownStopFramesIfReady(for device: DeviceSnapshot) {
+        let stopFrames = device.teardownStopFramesHex.compactMap(Self.decodeHex)
+        if reportedReady && !stopFrames.isEmpty {
+            lastTeardownStopFrames = stopFrames
+            writeImmediateFrames(stopFrames, on: peripheral, via: writeCharacteristic)
         }
+    }
+
+    private func stopActiveStandbyBeforeTeardown() {
+        guard let device = store?.snapshot.device, reportedReady || device.connected else { return }
+        let fallback = device.teardownStopFramesHex.compactMap(Self.decodeHex)
+        guard !fallback.isEmpty else { return }
         store?.send("device_stop")
         let drained = (store?.drainOutboundBleFramesHex() ?? []).compactMap(Self.decodeHex)
-        let frames = drained.isEmpty ? [Self.pauseRecordFrame] : drained
+        let frames = drained.isEmpty ? fallback : drained
         lastTeardownStopFrames = frames
         writeImmediateFrames(frames, on: peripheral, via: writeCharacteristic)
     }
 
     public func releaseControl() {
         stopActiveStandbyBeforeTeardown()
-        central?.stopScan()
-        if let active = peripheral {
-            central?.cancelPeripheralConnection(active)
-        }
-        if let pending = reconnectingPeripheral {
-            central?.cancelPeripheralConnection(pending)
-            reconnectingPeripheral = nil
-        }
+        teardownLocalBleLink()
         UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
-        resetLinkState()
-        isScanRequested = false
         lastObservedAutoConnect = false
         store?.send("device_release")
     }
@@ -56,21 +50,9 @@ extension BluetoothBridge {
         if !device.autoConnect {
             UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
             if reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
-                if reportedReady && (device.standbyReady || device.recording || device.companionMode == "collar_standby") {
-                    lastTeardownStopFrames = [Self.pauseRecordFrame]
-                    writeImmediateFrames([Self.pauseRecordFrame], on: peripheral, via: writeCharacteristic)
-                }
-                central?.stopScan()
-                if let active = peripheral {
-                    central?.cancelPeripheralConnection(active)
-                }
-                if let pending = reconnectingPeripheral {
-                    central?.cancelPeripheralConnection(pending)
-                    reconnectingPeripheral = nil
-                }
-                resetLinkState()
-                isScanRequested = false
-                if device.phase == "scanning" || device.phase == "connecting" {
+                writeProjectedTeardownStopFramesIfReady(for: device)
+                teardownLocalBleLink()
+                if device.phase != "disconnected" {
                     store?.send("device_disconnect")
                 }
             }
@@ -78,20 +60,8 @@ extension BluetoothBridge {
         }
         if !device.connected && device.phase == "disconnected" {
             if reportedReady {
-                if device.companionMode == "collar_standby" {
-                    lastTeardownStopFrames = [Self.pauseRecordFrame]
-                    writeImmediateFrames([Self.pauseRecordFrame], on: peripheral, via: writeCharacteristic)
-                }
-                central?.stopScan()
-                if let active = peripheral {
-                    central?.cancelPeripheralConnection(active)
-                }
-                if let pending = reconnectingPeripheral {
-                    central?.cancelPeripheralConnection(pending)
-                    reconnectingPeripheral = nil
-                }
-                resetLinkState()
-                isScanRequested = false
+                writeProjectedTeardownStopFramesIfReady(for: device)
+                teardownLocalBleLink()
                 return
             }
             if isHostActivated && wasAutoConnectDisabled && !isScanRequested && peripheral == nil && reconnectingPeripheral == nil {

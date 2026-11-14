@@ -26,12 +26,12 @@
 pub use koe_client_base::hash;
 pub use koe_client_base::prng;
 
-pub mod cicada;
 pub mod commands;
 pub mod context;
 pub mod crypto;
 pub mod domain;
 pub mod frame;
+pub mod koepack;
 pub mod library;
 pub mod minutes;
 pub mod models;
@@ -43,53 +43,26 @@ pub mod transport;
 pub mod wav;
 pub mod wifi;
 
-pub use cicada::{
-    analysis_source_blocks, build_translation_instruction, clamp_summary_on_punctuation,
-    decode_koepack, encode_koepack, enforce_rolling_topic_budget, format_caption_journal_key,
-    live_minute_citations, merge_minutes_history, pending_translation_segments,
-    refine_spine_in_place, translation_system_prompt, validate_live_minutes_json,
-    CaptionJournalStatus, CaptionTranslationTicket, CicadaEvent, CicadaOutcome, CicadaReducer,
-    CicadaState, LiveCaptionsQueue, MaterialPack, MaterialPackError, MinutesHistoryMergeOutcome,
-    PackMaterialMeta, PackMinutes, PortableMinutesEntry, RollingMinutesScheduler,
-    RollingMinutesTicket, RollingRequestStatus, RollingTickDecision, CICADA_EDITABLE_TOPICS,
-    CICADA_HOUR_WINDOW_MS, CICADA_LIVE_MAX_TOPICS, CICADA_MAX_CALLS_PER_HOUR,
-    CICADA_MAX_SINGLE_WINDOW_CHARS, CICADA_MAX_TOTAL_SOURCE_CHARS, CICADA_MAX_WAITING_CAPTIONS,
-    CICADA_ROLLING_CHAR_THRESHOLD, CICADA_ROLLING_INTERVAL_SEC, CICADA_SILENCE_AUTO_STOP_MS,
-    CICADA_SOURCE_BLOCK_MAX_RUNES, CICADA_TOPIC_SUMMARY_CHAR_LIMIT,
-    CICADA_TRANSLATION_SYSTEM_PROMPT, KOEPACK_FORMAT_NAME, KOEPACK_MAGIC,
-    KOEPACK_MAX_MANIFEST_BYTES, KOEPACK_MAX_MINUTES_HISTORY,
+pub use koepack::{
+    decode_koepack, encode_koepack, merge_minutes_history, MaterialPack, MaterialPackError,
+    MinutesHistoryMergeOutcome, PackMaterialMeta, PackMinutes, PortableMinutesEntry,
+    KOEPACK_FORMAT_NAME, KOEPACK_MAGIC, KOEPACK_MAX_MANIFEST_BYTES, KOEPACK_MAX_MINUTES_HISTORY,
 };
 pub use context::{
-    apply_place_update, apply_sweep_line_diarization, attribute_speaker_turns_sweep_line,
-    build_morning_brief, cited_labels, commitment_instruction, commitment_source,
-    compare_timeline_entries, compute_project_progress, delete_project_and_unlink,
-    evaluate_diary_export, export_context_markdown, filter_open_mine_todos, format_coarse_place,
-    is_delegation_request, is_followup_question, names_todo, pack_context_source_lines,
-    parse_commitment_response, parse_due_str, query_terms, rank_texts, reconcile_system_todo_sync,
-    relabel_citations, render_source_lines, select_focus_project, sort_context_timeline,
-    sort_todos, stem_latin_token, sync_derived_context_items, AskMessage, AskPromptPlan, AskRole,
-    AskScope, AskSession, AskStatus, AskStepOutcome, CommitmentChanges, ContextEvent,
-    ContextOutcome, ContextReducer, ContextSearchIndex, ContextState, DiaryDraft, DiaryEntry,
-    DiaryError, DiaryExportDecision, DiaryGenerationBlocked, DiaryPeriod, MorningBrief,
-    PlaceCaptureSource, Project, ProjectProgress, ProjectStatus, RecordingOrigin,
-    RecordingPlaceTag, ScoringMode, SearchHit, SourceLine, SourcePointer, SpeakerAttributionResult,
-    SpeakerDiarizationInterval, SystemSyncOutcome, SystemTaskSnapshot, SystemTodoLink,
-    TimelineEntry, TodoClarification, TodoUpdateAction, ASK_MAX_CORPUS_CHARS, ASK_SYSTEM_PROMPT,
-    ASK_TOP_K_LIMIT, COMMITMENT_SYSTEM_PROMPT, DELEGATION_CLOSED_NOTICE, DIARY_SYSTEM_PROMPT,
-    RANK_BACKGROUND_THRESHOLD_CHARS, STOP_PAIRS,
+    cited_labels, is_delegation_request, is_followup_question, rank_texts, relabel_citations,
+    render_source_lines, AskMessage, AskPromptPlan, AskRole, AskScope, AskSession, AskStatus,
+    AskStepOutcome, ContextSearchIndex, ScoringMode, SearchHit, SourceLine, SourcePointer,
+    ASK_MAX_CORPUS_CHARS, ASK_SYSTEM_PROMPT, ASK_TOP_K_LIMIT, DELEGATION_CLOSED_NOTICE,
 };
 pub use domain::{
-    AiProviderCommand, ContextItem, ContextKind, ContextSource, EditorialCardRole, KoePackSummary,
     MeetingMinutes, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
     MinuteTermAdoption, MinuteTopic, RecordingAggregate, RecordingLifecyclePhase, SegmentId,
-    SummaryFormat, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
-    VisualSummaryCard,
+    SummaryFormat, UtteranceSegment, UtteranceSpine,
 };
 pub use hash::{is_valid_sha256_hex, sha256_hex};
 pub use minutes::{
-    contains_calculation_phrase, contains_percentage, parse_persisted_meeting_minutes_json,
-    validate_calculation_grounding, validate_minutes_citations, validate_minutes_grounding,
-    MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState, MinutesValidationError,
+    parse_persisted_meeting_minutes_json, validate_minutes_citations, validate_minutes_grounding,
+    MinutesValidationError,
 };
 pub use product::CompanionRoutingMode;
 pub use session::{CustodyReceipt, RawCompanionSignal};

@@ -1,23 +1,9 @@
 use std::time::{Duration, Instant};
 
 use koe_client_providers::{
-    ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask, ProviderWorker, StreamingAsrPump,
+    ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask, ProviderWorker,
     DASHSCOPE_ASR_MODEL,
 };
-
-#[test]
-fn reset_discards_previous_recording_audio_and_attachment() {
-    let mut pump = StreamingAsrPump::new("old-task");
-    pump.cloud_ws_attached = true;
-    pump.ingest_pcm16_chunk(&vec![1; 640], &[]);
-    pump.reset_for_new_recording();
-    assert!(pump.pop_outbound_ws_frame().is_none());
-    assert!(!pump.cloud_ws_attached);
-    assert_eq!(pump.total_pcm_bytes(), 0);
-    assert_eq!(pump.queued_frame_count(), 0);
-    assert_eq!(pump.latest_rms(), 0);
-    assert_ne!(pump.task_id, "old-task");
-}
 
 fn wait_result(worker: &mut ProviderWorker) -> koe_client_providers::ProviderEvent {
     let deadline = Instant::now() + Duration::from_secs(5);
