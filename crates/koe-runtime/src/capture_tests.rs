@@ -1132,9 +1132,10 @@ fn assert_realtime_error_head_finishes_all_day(after_stop: bool, with_audio: boo
         let reopened = KoeRuntime::open(&dir.0).unwrap();
         assert_eq!(reopened.snapshot(NOW + 3)["allDay"]["state"], "idle");
         assert!(!reopened.is_device_file_synced(950));
-        let record = reopened.workspace().record(&id).unwrap();
-        assert_eq!(record.all_day.as_ref().unwrap().run_id, "bean-error-run");
+        let reopen_record = reopened.workspace().record(&id);
         if let Some(pcm) = expected_audio {
+            let record = reopen_record.unwrap();
+            assert_eq!(record.all_day.as_ref().unwrap().run_id, "bean-error-run");
             assert_eq!(
                 recording_assets::transcription_pcm(&dir.0, &id).unwrap(),
                 pcm
@@ -1143,6 +1144,8 @@ fn assert_realtime_error_head_finishes_all_day(after_stop: bool, with_audio: boo
                 record.aggregate.spine.segments()[0].text,
                 "保存收到的录音。"
             );
+        } else {
+            assert!(reopened.workspace().record(&id).is_none());
         }
     }
 }
@@ -1279,3 +1282,6 @@ fn all_day_end_releases_explicit_companion_routing_for_next_physical_recording()
     assert_eq!(runtime.snapshot(NOW + 3)["activeCapture"]["mode"], "quick_note");
     assert!(!runtime.is_standby_ready());
 }
+
+#[path = "all_day_disconnect_tests.rs"]
+mod all_day_disconnect_tests;

@@ -163,12 +163,15 @@ impl DeviceRuntime {
     pub fn disconnect(&mut self) {
         self.explicitly_disconnected = true;
         self.connection = None;
+        self.awaiting_stop = false;
+        self.pending_start_ms = 0;
         self.outbound.clear();
         self.auto_pull_attempted.clear();
         self.handshake_retry_ms = 0;
         self.handshake_retried = false;
         self.status_poll_elapsed_ms = 0;
         self.session.on_disconnected();
+        self.collect_finalized();
         self.modal = DeviceModalState::Hidden;
         self.guide_user_requested = false;
     }

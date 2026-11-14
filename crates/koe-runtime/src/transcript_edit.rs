@@ -15,7 +15,7 @@ impl KoeRuntime {
                 .values()
                 .any(|rid| rid == id)
             || self.captures.sessions.contains_key(id)
-            || self.captures.targets.iter().flatten().any(|rid| rid == id);
+            || self.captures.targets.iter().any(|(_, rid)| rid == id);
         if in_captures {
             return Some("这条录音正在同步或保存中，请等待完成后再");
         }

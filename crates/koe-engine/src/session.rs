@@ -238,10 +238,12 @@ pub enum CaptureEvent {
         /// 16 kHz mono PCM16 little-endian samples.
         pcm16: Vec<u8>,
     },
-    /// A finalized artifact is now available in the finalized recording queue.
+    /// A stream transfer ended, indicating whether a finalized artifact entered the queue.
     Finished {
         /// Device file identity at finalization time.
         file_id: u32,
+        /// Whether non-empty audio was pushed to `finalized_queue`.
+        saved: bool,
     },
 }
 
@@ -834,7 +836,11 @@ impl TransportSession {
         self.catalog_started_for_subscribe = false;
         self.skip_existing_slices_on_start = false;
         self.companion_signals.clear();
-        self.reset_active_transfer();
+        if self.active_is_realtime {
+            let _ = self.finalize_active_transfer(0);
+        } else {
+            self.reset_active_transfer();
+        }
         self.connection_phase = ConnectionPhaseTag::Disconnected;
     }
 
@@ -846,6 +852,8 @@ impl TransportSession {
         self.ecdh_private_key = None;
         self.session_key = None;
         self.clear_file_decryption();
+        self.device_recording_active = false;
+        self.pending_realtime_subscribe = false;
         self.connection_phase = ConnectionPhaseTag::Disconnected;
         self.catalog_load_phase = CatalogLoadPhase::Idle;
         self.catalog_page_elapsed_ms = 0;
@@ -886,7 +894,7 @@ impl TransportSession {
             TransferRuntimeState::Failed { .. } => {
                 self.transfer.quiet_draining = false;
             }
-            _ if self.active_is_realtime && !self.opus_buffer.is_empty() => {
+            _ if self.active_is_realtime => {
                 let _ = self.finalize_active_transfer(0);
             }
             _ => {
@@ -1077,10 +1085,7 @@ impl TransportSession {
         }
         let is_new_stream = self.active_file_id != Some(file_id) || !self.active_is_realtime;
         if self.active_file_id != Some(file_id) {
-            if self.active_is_realtime
-                && self.active_file_id.is_some()
-                && !self.opus_buffer.is_empty()
-            {
+            if self.active_is_realtime && self.active_file_id.is_some() {
                 let _ = self.finalize_active_transfer(now_epoch_sec);
             }
             self.bind_file_decryption(file_id);
@@ -2093,7 +2098,6 @@ impl TransportSession {
                             if self.active_is_realtime
                                 && self.active_file_id.is_some()
                                 && self.active_file_id != Some(head.secret.file_id)
-                                && !self.opus_buffer.is_empty()
                             {
                                 if let Some(fin) = self.finalize_active_transfer(now_epoch_sec) {
                                     outcome.finalized = Some(fin);
@@ -2485,8 +2489,10 @@ impl TransportSession {
     pub fn finalize_active_transfer(&mut self, now_epoch_sec: u64) -> Option<FinalizedRecording> {
         let fid = self.active_file_id?;
         if self.opus_buffer.is_empty() {
-            self.capture_events
-                .push_back(CaptureEvent::Finished { file_id: fid });
+            self.capture_events.push_back(CaptureEvent::Finished {
+                file_id: fid,
+                saved: false,
+            });
             self.reset_active_transfer();
             return None;
         }
@@ -2525,8 +2531,10 @@ impl TransportSession {
             base_slice_offset: self.stream_base_slices,
         };
         self.finalized_queue.push_back(finalized.clone());
-        self.capture_events
-            .push_back(CaptureEvent::Finished { file_id: fid });
+        self.capture_events.push_back(CaptureEvent::Finished {
+            file_id: fid,
+            saved: true,
+        });
         self.last_finalized = Some(finalized.clone());
         let retained_live_pcm = std::mem::take(&mut self.live_pcm16_16khz);
         self.reset_active_transfer();
@@ -3426,7 +3434,10 @@ mod tests {
         );
         assert_eq!(
             Vec::from(session.take_capture_events()),
-            vec![CaptureEvent::Finished { file_id: 4001 }]
+            vec![CaptureEvent::Finished {
+                file_id: 4001,
+                saved: true,
+            }]
         );
         assert_eq!(session.transfer.phase, TransferPhaseTag::Idle);
     }
@@ -3577,7 +3588,10 @@ mod tests {
         );
         assert_eq!(
             Vec::from(session.take_capture_events()),
-            vec![CaptureEvent::Finished { file_id: 7001 }]
+            vec![CaptureEvent::Finished {
+                file_id: 7001,
+                saved: false,
+            }]
         );
     }
 
