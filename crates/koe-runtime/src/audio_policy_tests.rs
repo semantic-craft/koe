@@ -361,10 +361,10 @@ fn cloud_allowed_positive_control_sends_real_pcm() {
         let _id = start_waiting_audio(&mut runtime, &dir.0, live, &endpoint);
         ready.recv_timeout(Duration::from_secs(5)).unwrap();
         if live {
-            runtime
-                .device
-                .captures
-                .push_back(CaptureEvent::Finished { file_id: 999 });
+            runtime.device.captures.push_back(CaptureEvent::Finished {
+                file_id: 999,
+                saved: false,
+            });
             runtime.process_capture_events(NOW).unwrap();
         }
         release.send(()).unwrap();

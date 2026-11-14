@@ -472,3 +472,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "local_bridge_dictation_tests.rs"]
+mod local_bridge_dictation_tests;

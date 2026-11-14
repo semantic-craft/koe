@@ -548,6 +548,35 @@ impl KoeRuntime {
         self.set_source_dictation(self.bean_dictation_source(), active);
     }
 
+    /// Synchronizes companion PCM capture gating at wall-clock `now` and bumps generation.
+    pub fn set_companion_capture_active_at(
+        &mut self,
+        active: bool,
+        reason: Option<String>,
+        now: u64,
+    ) {
+        if now > 0 {
+            self.last_now_sec = now;
+        }
+        if self.is_quitting() || !self.external_pcm_unleased() {
+            return;
+        }
+        self.set_companion_capture_active(active, reason);
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    /// Updates dictation state at wall-clock `now` and bumps generation without snapshot serialization.
+    pub fn set_dictation_active_at(&mut self, active: bool, now: u64) {
+        if now > 0 {
+            self.last_now_sec = now;
+        }
+        if self.is_quitting() || !self.external_pcm_unleased() {
+            return;
+        }
+        self.set_dictation_active(active);
+        self.generation = self.generation.saturating_add(1);
+    }
+
     fn set_companion_pcm_gate(&mut self, active: bool, skip_start_tap: bool, tail: CompanionTail) {
         self.companion.pending_tap_holdback_extra = 0;
         if self.companion.capture_active && !active {

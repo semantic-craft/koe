@@ -59,7 +59,7 @@ impl KoeRuntime {
             .values()
             .chain(self.captures.records_by_file_id.values())
             .chain(self.captures.sessions.keys())
-            .chain(self.captures.targets.iter().flatten())
+            .chain(self.captures.targets.iter().map(|(_, rid)| rid))
         {
             files.insert(format!("{id}.wav"));
             files.insert(format!("{id}.opus"));

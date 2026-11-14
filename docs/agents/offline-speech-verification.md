@@ -10,7 +10,17 @@ cargo run -p koe-cli --example verify_offline -- /absolute/fresh-qwen-workspace 
 cargo run -p koe-cli --example verify_offline -- /absolute/fresh-day-workspace /absolute/speech.wav sensevoice-small --all-day
 ```
 
-模型首次准备需要网络。重复验证可把已下载的固定模型文件放入新工作区 `speech-models/`；产品仍会校验大小和 SHA-256，再加载。
+`crates/koe-cli/examples/verify_offline_socket.rs` 进一步经 C ABI（`HostSessionGuard`）与真实 `koe.sock`（`UnixStream`）驱动同一链路，可在 macOS 内核禁外网沙盒下离线运行：
+
+```sh
+cargo build --release -p koe-cli --example verify_offline_socket
+sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip))' \
+  target/release/examples/verify_offline_socket /short/ws-sv /absolute/speech.wav sensevoice-small --all-day
+sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip))' \
+  target/release/examples/verify_offline_socket /short/ws-qw /absolute/speech.wav qwen3-asr-0.6b
+```
+
+模型首次准备需要网络。重复验证可把已下载的固定模型文件放入新工作区 `speech-models/`；产品仍会校验大小和 SHA-256，再加载。显式工作区路径须保证 `<workspace>/koe.sock` 短于 Unix 套接字路径上限。
 
 文件流程验证导入、实际识别、持久化、关闭和重开后文字一致。全天流程重复回放输入 WAV，累计 303 秒，检查五分钟边界后有两条包含原文的记录；只圈定最初 15 秒为听写，确认文字事件没有越出范围。最后重开工作区并比对两条记录原文。
 
@@ -24,6 +34,9 @@ cargo run -p koe-cli --example verify_offline -- /absolute/fresh-day-workspace /
 
 ## 本轮独立复核
 
-实现提交 `1779461` 通过独立真实 SenseVoice CPU 验收。文件得到「这是一段个人工作记录。」；303 秒回放保存为 300 秒、3 秒两条 WAV，分别包含 20 段和 1 段原文。唯一听写事件属于首条记录的 0–15000 ms，其分段身份、时间和文字与持久化结果一致。两条记录重开后原文一致。
+实现提交 `1779461` 通过独立真实 SenseVoice CPU 验收。随后 `verify_offline_socket` 在 `sandbox-exec` 禁全部外网 IP（正对照连接 `1.1.1.1:443` 返回 `Operation not permitted`）条件下，通过 `HostSessionGuard`（C ABI v2）与真实 `koe.sock` 完成两项离线验收：
 
-此次文字桥验收直接读取 Runtime 事件队列，未覆盖 Unix socket 和真实外部输入法。D3200 同批次音频与双击恰逢五分钟边界的物理时序仍需按 #662 验证。
+- `sensevoice-small --all-day`：经已订阅的同一 `UnixStream` 发送 `set_dictation_active` 圈定首段 0–15000 ms；在首段与自动切分后的第二段（`ordinal = 2`）各执行一次暂停与单调时钟恢复（持久化多 `epoch` 时间轴）；注入 `product-workspace.json` 目录占位故障确认 `microphone.phase == "saving"` 暴露保存错误，恢复文件后调用 `retry_microphone_save` 收口为 300 秒（20 段）与 3 秒（1 段）两条 WAV 记录；后台导入音频并执行 `transcribe`，确认 `koe.sock` 零泄漏后台 `transcript_final` 事件，唯一听写事件与持久化分段完全一致；销毁会话确认 `koe.sock` 清理，重开后 `meetingAudioPolicy` 保持 `local_only`，未手动调用 `prepare_speech_model` 即自动重新加载模型至 `ready`。
+- `qwen3-asr-0.6b`：在相同禁外网沙盒与 `koe.sock` 订阅下完成 15 秒麦克风听写圈定、后台导入文件离线识别（零事件泄漏）、会话销毁套接字清理，以及重开后 `local_only` 保持与模型自动就绪（`reopenAutoReady: true`）。
+
+未在真实物理环境验证的项目：超过 5 分钟的真实麦克风与 D3200 连续说话、锁屏续录、物理蓝牙断连重连、真实外部输入法进程联调，以及本机大语言模型整理与问答；上述真机与本机 LLM 场景仍按 [#662](https://github.com/semantic-craft/koe/issues/662) 跟踪。

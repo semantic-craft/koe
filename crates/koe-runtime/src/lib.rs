@@ -566,9 +566,17 @@ impl KoeRuntime {
                 self.device.refresh();
             }
             Command::DeviceDisconnect => {
-                self.retire_active_standby_stream();
+                if self.companion.standby_stream_owned || self.companion.pending_standby_stop {
+                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+                        if self.can_own_as_standby_scratch(fid) {
+                            let _ = self.mark_standby_scratch_file(fid);
+                        }
+                    }
+                }
                 self.companion.deleted_in_connection.clear();
                 self.device.disconnect();
+                self.save_captures(now)?;
+                self.retire_active_standby_stream();
                 self.drive_companion(now);
             }
             Command::DeviceRelease => {
@@ -577,12 +585,20 @@ impl KoeRuntime {
                     w.set_ble_auto_connect(false);
                     Ok(())
                 })?;
-                self.retire_active_standby_stream();
+                if self.companion.standby_stream_owned || self.companion.pending_standby_stop {
+                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+                        if self.can_own_as_standby_scratch(fid) {
+                            let _ = self.mark_standby_scratch_file(fid);
+                        }
+                    }
+                }
                 self.companion.deleted_in_connection.clear();
                 self.companion.capture_active = false;
                 self.companion.post_tap_skip_slices = 0;
                 self.companion.tail_holdback.clear();
                 self.device.disconnect();
+                self.save_captures(now)?;
+                self.retire_active_standby_stream();
                 self.drive_companion(now);
                 self.notice = Some("已释放录音豆蓝牙控制权".into());
             }

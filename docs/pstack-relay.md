@@ -152,10 +152,16 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Verified**: ①机器已验：Koe `d6f9406`/`19d75d5`/`2.0.0 (9)` 与 Responsay `b6a061e`/`13e679c1`/`1.27.1 (203)` 完成真实 D3200 11.56s 非静音 PCM 采集、软件起止 ACK、一键进入语音输入冷启动与 BLE 待命就绪、自动选源 `soundcore Work` 及千问实时识别终稿，且 2026-11-14 16:12/16:24 系统日志记录 `Responsay[9949]` 听写会话与 Spotlight 写入；②用户真机确认通过（2026-11-14 16:42+08:00）：在 Koe `2.0.0 (9)`（CDHash `03d00433f4df301176fa31f3179257669f12e1c2`）+ Responsay `1.28.0 (204)`（CDHash `bec89f4026439f6e88b416990824af65c7d9c068`）上，识别文本正常直插原目标光标（`originalCursor`）且 D3200 实体按键双击启停听写（`physicalDoubleTap`）通过；`Responsay #810` 已关闭。
 - **Remaining / Watchouts**: 物理蓝牙断连恢复与三种快捷键录制器本轮未单独再作机器回放；物理 `Fn` / 右 `Option` 系统按键触发继续由 [Responsay #822](https://github.com/semantic-craft/responsay-macos/issues/822) 跟踪。恢复普通模式时 Koe 仍会正常保存设备录音。
 
-### [ ] Slice ADH: 全天听记真实硬件验收
+### [x] Slice ADH: 全天听记真实硬件验收
 - **Outcome**: 按 #662 验证签名版真实麦克风和 D3200 跨五分钟、双击听写、缓存模型断网、外部输入法和退出恢复；只修实际失败，不重复已完成的模型与全天管线。
 - **Done Predicate**: python3 progress/progress.py check；#662 每项填写实际版本、结果与回读产物，未运行项保持未验收。
-- **Evidence**: issue #662
+- **Evidence**: issue #662; crates/koe-cli/examples/verify_offline_socket.rs; Projects/_artifacts/koe/adh-20261114/{sensevoice-sandbox-socket.json,qwen3-sandbox-offline.json,interrogate-red.log,full-check.log}
+
+### [ ] Slice ADH_CONT: 全天听记与浅色弹窗空闲真机验收
+- **Playbook**: `Feature`
+- **Outcome**: 在桌面空闲窗口更新签名版 /Applications/Koe.app，按 #662 执行超过五分钟的真实麦克风与 D3200 连续说话、锁屏续录、物理蓝牙断连重连及外部输入法实机联调（未配置本机 LLM 等未跑项如实保持未验收），同时顺带目视复核 #654 四个浅色弹窗并结案 #654。
+- **Done Predicate**: 空闲窗口运行 ./scripts/install-macos.sh 后完成 #662 可执行真机项与 #654 实机弹窗复核，且 origin/main 通过 python3 progress/progress.py check --live。
+- **Evidence**: `PENDING`
 
 ### [ ] Slice ULD: 浅色版剩余弹窗验收
 - **Outcome**: 核验连接引导、审核编辑弹窗、全天听记演示与退出面板浅色配色，更新 #654。

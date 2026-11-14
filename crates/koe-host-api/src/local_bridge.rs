@@ -95,6 +95,26 @@ impl SubscriberHub {
         }
     }
 
+    fn send_to(&self, id: u64, line: String) {
+        if line.is_empty() {
+            return;
+        }
+        if let Ok(mut list) = self.subscribers.lock() {
+            list.retain(|entry| {
+                if entry.id != id {
+                    return true;
+                }
+                let ok = entry.tx.try_send(line.clone()).is_ok();
+                if !ok {
+                    if let Some(sock) = &entry.socket {
+                        let _ = sock.shutdown(Shutdown::Both);
+                    }
+                }
+                ok
+            });
+        }
+    }
+
     fn close_all(&self) {
         if let Ok(mut list) = self.subscribers.lock() {
             for entry in list.drain(..) {
@@ -430,6 +450,27 @@ fn serve_client(
 
         if matches!(
             method,
+            "companion/set_dictation_active" | "set_dictation_active"
+        ) {
+            if let Some(active) = extract_dictation_active(&request) {
+                apply_dictation_active(handle, active);
+                if let Some(id) = request.get("id").cloned() {
+                    let resp = jsonrpc_result(id, json!({"ok": true}));
+                    if writeln!(writer, "{resp}").is_err() || writer.flush().is_err() {
+                        break;
+                    }
+                }
+            } else if let Some(id) = request.get("id").cloned() {
+                let resp = jsonrpc_error(id, -32602, "缺少 active 布尔字段");
+                if writeln!(writer, "{resp}").is_err() || writer.flush().is_err() {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if matches!(
+            method,
             "companion/set_capture_active" | "set_capture_active"
         ) {
             if let Some((active, reason)) = extract_capture_active(&request) {
@@ -693,31 +734,30 @@ fn serve_companion_subscription(
             }
             continue;
         }
-        if let Ok(CompanionClientCommand::SetDictationActive { active }) =
-            serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
+        if let Some(active) = match serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
         {
-            if let Ok(mut table) = sessions().lock() {
-                if let Some(entry) = table.entries.get_mut(&handle) {
-                    if !entry.runtime.external_pcm_unleased() {
-                        continue;
-                    }
-                    entry.runtime.dispatch_json(
-                        &serde_json::json!({"type":"set_dictation_active","active":active})
-                            .to_string(),
-                        0,
-                    );
-                }
+            Ok(CompanionClientCommand::SetDictationActive { active }) => Some(active),
+            _ => extract_dictation_active(&cmd_val),
+        } {
+            apply_dictation_active(handle, active);
+            if let Some(id) = cmd_val.get("id").cloned() {
+                subs.send_to(sub_id, jsonrpc_result(id, json!({"ok": true})).to_string());
             }
             continue;
         }
-        if let Ok(CompanionClientCommand::SetCaptureActive { active, reason }) =
-            serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
+        if let Some((active, reason)) =
+            match serde_json::from_value::<CompanionClientCommand>(cmd_val.clone()) {
+                Ok(CompanionClientCommand::SetCaptureActive { active, reason }) => {
+                    Some((active, reason))
+                }
+                _ => extract_capture_active(&cmd_val),
+            }
         {
             apply_capture_active(handle, active, reason);
+            if let Some(id) = cmd_val.get("id").cloned() {
+                subs.send_to(sub_id, jsonrpc_result(id, json!({"ok": true})).to_string());
+            }
             continue;
-        }
-        if let Some((active, reason)) = extract_capture_active(&cmd_val) {
-            apply_capture_active(handle, active, reason);
         }
     }
 
@@ -725,10 +765,22 @@ fn serve_companion_subscription(
     let _ = writer_thread.join();
 }
 
+fn apply_dictation_active(handle: u64, active: bool) {
+    if let Ok(mut table) = sessions().lock() {
+        if let Some(entry) = table.entries.get_mut(&handle) {
+            entry.runtime.set_dictation_active_at(active, now(0));
+            let events = entry.runtime.drain_companion_events();
+            entry.subscribers.broadcast(&events);
+        }
+    }
+}
+
 fn apply_capture_active(handle: u64, active: bool, reason: Option<String>) {
     if let Ok(mut table) = sessions().lock() {
         if let Some(entry) = table.entries.get_mut(&handle) {
-            entry.runtime.set_companion_capture_active(active, reason);
+            entry
+                .runtime
+                .set_companion_capture_active_at(active, reason, now(0));
             let events = entry.runtime.drain_companion_events();
             entry.subscribers.broadcast(&events);
         }
@@ -741,6 +793,21 @@ fn extract_auto_gate(request: &Value) -> Option<bool> {
         .and_then(|p| p.get("autoGate"))
         .and_then(Value::as_bool)
         .or_else(|| request.get("autoGate").and_then(Value::as_bool))
+}
+
+fn extract_dictation_active(request: &Value) -> Option<bool> {
+    let method = request.get("method").and_then(Value::as_str)?;
+    if !matches!(
+        method,
+        "set_dictation_active" | "companion/set_dictation_active"
+    ) {
+        return None;
+    }
+    let container = request
+        .get("params")
+        .filter(|v| v.is_object())
+        .unwrap_or(request);
+    container.get("active").and_then(Value::as_bool)
 }
 
 fn extract_capture_active(request: &Value) -> Option<(bool, Option<String>)> {
@@ -783,14 +850,14 @@ fn jsonrpc_error(id: Value, code: i64, message: &str) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::atomic::AtomicU64;
 
     use crate::HostSessionGuard;
 
     use super::*;
 
-    fn temp_workspace() -> PathBuf {
+    pub(crate) fn temp_workspace() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         std::env::temp_dir().join(format!(
             "koe-bridge-{}-{}",

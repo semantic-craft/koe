@@ -1,14 +1,19 @@
 use super::*;
 use crate::speech::DictationSource;
 use koe_engine::session::CaptureEvent;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Default)]
 pub(super) struct Captures {
     pub(super) active: BTreeMap<u32, String>,
     pub(super) records_by_file_id: BTreeMap<u32, String>,
     pub(super) sessions: BTreeMap<String, crate::speech::SpeechSession>,
-    pub targets: VecDeque<Option<String>>,
+    pub targets: VecDeque<(u32, String)>,
+}
+
+fn has_recording_asset(root: &Path, id: &str) -> Result<bool, String> {
+    Ok(recording_assets::audio_path(root, id)?.exists()
+        || recording_assets::opus_path(root, id)?.exists())
 }
 
 impl KoeRuntime {
@@ -53,15 +58,15 @@ impl KoeRuntime {
                             {
                                 self.finish_speech(&id);
                                 self.captures.active.remove(&file_id);
-                                self.captures.targets.push_back(Some(id));
+                                self.captures.targets.push_back((file_id, id));
                                 self.device.finalized.push(recording);
                                 self.save_device_recordings(now)?;
                             }
                         }
                     }
                 }
-                CaptureEvent::Finished { file_id } => {
-                    if self.is_standby_file(file_id) {
+                CaptureEvent::Finished { file_id, saved } => {
+                    if self.treats_file_as_standby(file_id) {
                         self.captures.active.remove(&file_id);
                     } else {
                         let id = self.captures.active.remove(&file_id);
@@ -69,7 +74,55 @@ impl KoeRuntime {
                             self.finish_speech(id);
                             self.set_source_dictation(DictationSource::Bean, false);
                         }
-                        self.captures.targets.push_back(id);
+                        if saved {
+                            if let Some(id) = id {
+                                self.captures.targets.push_back((file_id, id));
+                            }
+                        } else {
+                            let salvageable_from_catalog = id.as_ref().is_some_and(|rid| {
+                                self.device.is_connected()
+                                    && self
+                                        .workspace()
+                                    .record(rid)
+                                    .is_some_and(|r| r.all_day.is_none())
+                                    && self.device.session.catalog.iter().any(|e| {
+                                        e.file_id == file_id
+                                            && e.has_duration()
+                                            && e.end_time != Some(0)
+                                    })
+                            });
+                            if !salvageable_from_catalog {
+                                self.captures.records_by_file_id.remove(&file_id);
+                                if let Some(id) = id {
+                                    if !self.captures.sessions.contains_key(&id)
+                                        && !has_recording_asset(&self.root, &id).unwrap_or(true)
+                                        && self.workspace().record(&id).is_some_and(|r| {
+                                            r.aggregate.duration_ms == 0
+                                                && r.aggregate.spine.is_empty()
+                                        })
+                                    {
+                                        let now_ms = now.max(1).saturating_mul(1000);
+                                        self.commit(|w| {
+                                            let was_purged = w.is_bean_file_purged(file_id);
+                                            w.trash_record(&id, now_ms)?;
+                                            let _ = w.purge_record(&id)?;
+                                            if !was_purged {
+                                                w.clear_purged_bean_file_id(file_id);
+                                            }
+                                            Ok(())
+                                        })?;
+                                        if matches!(
+                                            &self.live_minutes_scope,
+                                            Some(crate::live_minutes::LiveMinutesScope::Record(rid))
+                                                if rid == &id
+                                        ) {
+                                            self.live_minutes_scope = None;
+                                        }
+                                        self.detach_records_from_session(&BTreeSet::from([id]));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

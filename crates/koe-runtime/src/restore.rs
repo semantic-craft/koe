@@ -128,6 +128,15 @@ impl KoeRuntime {
                             || self.companion.pending_standby_stop)));
             if is_standby_recording {
                 self.device.finalized.remove(0);
+                if is_realtime
+                    && self
+                        .captures
+                        .targets
+                        .front()
+                        .is_some_and(|(fid, _)| *fid == entry_id)
+                {
+                    self.captures.targets.pop_front();
+                }
                 self.captures.active.remove(&entry_id);
                 self.captures.records_by_file_id.remove(&entry_id);
                 if self.companion.active_standby_file_id == Some(entry_id) {
@@ -156,13 +165,17 @@ impl KoeRuntime {
             let recording = &self.device.finalized[0];
             let entry = recording.entry.clone();
             let digest = sha256_hex(&recording.ogg_opus_bytes);
-            let capture_id = self
-                .captures
-                .records_by_file_id
-                .get(&entry.id)
-                .cloned()
-                .or_else(|| self.captures.active.get(&entry.id).cloned())
-                .or_else(|| self.captures.targets.front().cloned().flatten());
+            let capture_id = if is_realtime {
+                self.captures
+                    .targets
+                    .front()
+                    .filter(|(fid, _)| *fid == entry.id)
+                    .map(|(_, rid)| rid.clone())
+                    .or_else(|| self.captures.records_by_file_id.get(&entry.id).cloned())
+                    .or_else(|| self.captures.active.get(&entry.id).cloned())
+            } else {
+                self.captures.records_by_file_id.get(&entry.id).cloned()
+            };
             let id = capture_id
                 .clone()
                 .unwrap_or_else(|| format!("bean-{}-{}", entry.id, &digest[..16]));
@@ -219,8 +232,20 @@ impl KoeRuntime {
                 self.device.session.confirm_disk_custody(receipt);
             }
             self.device.finalized.remove(0);
-            self.captures.records_by_file_id.remove(&entry.id);
-            self.captures.targets.pop_front();
+            if is_realtime
+                && self
+                    .captures
+                    .targets
+                    .front()
+                    .is_some_and(|(fid, _)| *fid == entry.id)
+            {
+                self.captures.targets.pop_front();
+            }
+            if !self.captures.active.contains_key(&entry.id)
+                && !self.captures.targets.iter().any(|(fid, _)| *fid == entry.id)
+            {
+                self.captures.records_by_file_id.remove(&entry.id);
+            }
             self.error = None;
             self.notice = Some(
                 if has_audio {
