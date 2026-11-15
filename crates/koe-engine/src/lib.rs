@@ -62,5 +62,5 @@ pub use minutes::{
     parse_persisted_meeting_minutes_json, validate_minutes_citations, validate_minutes_grounding,
     MinutesValidationError,
 };
-pub use product::CompanionRoutingMode;
+pub use product::{CompanionRoutingMode, RecordMode};
 pub use session::{CustodyReceipt, RawCompanionSignal, RecordingEntry};

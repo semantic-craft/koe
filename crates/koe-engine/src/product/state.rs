@@ -36,6 +36,21 @@ impl ProductWorkspace {
         let mut records = BTreeMap::new();
         for record in state.records {
             let id = record.aggregate.recording_id.clone();
+            let mode = record.mode;
+            let project = match record.project {
+                None => None,
+                Some(raw) => {
+                    let trimmed = raw.trim();
+                    if trimmed.is_empty()
+                        || trimmed != raw
+                        || raw.chars().any(char::is_control)
+                        || trimmed.chars().count() > MAX_PROJECT_NAME_CHARS
+                    {
+                        return Err(ProductError::InvalidEvidence);
+                    }
+                    Some(raw)
+                }
+            };
             let lanes = record.capture_lanes;
             let all_day = record.all_day;
             let speech_engine = record.speech_engine;
@@ -53,6 +68,12 @@ impl ProductWorkspace {
                 record.completed_request,
             )?;
             record.restore_live_summary(live_summary)?;
+            record.mode = if all_day.is_some() {
+                RecordMode::AllDay
+            } else {
+                mode
+            };
+            record.project = project;
             record.all_day = all_day;
             record.speech_engine = speech_engine;
             record.restore_capture_lanes(lanes)?;

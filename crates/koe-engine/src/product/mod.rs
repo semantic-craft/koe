@@ -20,6 +20,15 @@ pub use transcript_edit::{
 };
 mod trash;
 pub use trash::{PurgeReceipt, RecordRetention, TRASH_RETENTION_MS};
+mod day_timeline;
+pub use day_timeline::{
+    ADJOINING_EVENT_MERGE_GAP_SEC, DayEventBlock, DayPauseSpan, DayTimeline, DayTimelineSpan,
+    DayUnrecordedGap, MIN_INTRA_RECORD_PAUSE_MS, MIN_UNRECORDED_GAP_SEC, build_day_timeline,
+};
+mod meeting_coverage;
+pub use meeting_coverage::{ConsolidationStage, MeetingCoverage, compute_meeting_coverage};
+mod markdown_export;
+pub use markdown_export::{MarkdownExportOptions, format_day_markdown, format_record_markdown};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -78,6 +87,80 @@ impl CompanionRoutingMode {
             _ => None,
         }
     }
+}
+
+/// Maximum Unicode scalar value count for an optional QuickNote project name.
+pub const MAX_PROJECT_NAME_CHARS: usize = 64;
+
+/// Workspace mode under which a recording or note was created.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecordMode {
+    /// Quick thought, idea, or inbox voice/text note (`随心闪记`).
+    #[default]
+    QuickNote,
+    /// Slice of a continuous daily capture run (`全天听记`).
+    AllDay,
+    /// Dedicated live meeting session (`实时纪要`).
+    Meeting,
+    /// Ephemeral or auxiliary voice dictation (`语音输入`).
+    Dictation,
+}
+
+impl RecordMode {
+    /// Stable snake_case wire and storage identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::QuickNote => "quick_note",
+            Self::AllDay => "all_day",
+            Self::Meeting => "meeting",
+            Self::Dictation => "dictation",
+        }
+    }
+
+    /// User-facing Chinese workspace label.
+    #[must_use]
+    pub const fn label_zh(self) -> &'static str {
+        match self {
+            Self::QuickNote => "随心闪记",
+            Self::AllDay => "全天听记",
+            Self::Meeting => "实时纪要",
+            Self::Dictation => "语音输入",
+        }
+    }
+
+    /// Parses a snake_case record mode identifier.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "quick_note" => Some(Self::QuickNote),
+            "all_day" => Some(Self::AllDay),
+            "meeting" => Some(Self::Meeting),
+            "dictation" => Some(Self::Dictation),
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn normalize_project(project: Option<&str>) -> Result<Option<String>, ProductError> {
+    let Some(raw) = project else {
+        return Ok(None);
+    };
+    if raw.chars().any(char::is_control) {
+        return Err(ProductError::InvalidInput(
+            "项目名称不能包含控制字符".to_string(),
+        ));
+    }
+    let clean = raw.trim();
+    if clean.is_empty() {
+        return Ok(None);
+    }
+    if clean.chars().count() > MAX_PROJECT_NAME_CHARS {
+        return Err(ProductError::InvalidInput(format!(
+            "项目名称不能超过 {MAX_PROJECT_NAME_CHARS} 个字符"
+        )));
+    }
+    Ok(Some(clean.to_string()))
 }
 
 /// A source in exactly one recording's utterance spine.
@@ -232,6 +315,10 @@ pub struct ProductRecord {
     pub title: String,
     /// Actual capture/import source.
     pub origin: RecordOrigin,
+    /// Workspace mode under which this recording was produced.
+    pub mode: RecordMode,
+    /// Optional normalized project attribution (`None` represents QuickNote Inbox `"收件箱"`).
+    pub project: Option<String>,
     /// Authoritative analysis state.
     pub analysis: AnalysisState,
     /// Independent minutes refresh while transcription continues.
