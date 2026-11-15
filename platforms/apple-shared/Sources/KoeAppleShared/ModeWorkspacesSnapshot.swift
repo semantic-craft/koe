@@ -430,7 +430,7 @@ extension HostSessionStore {
         case "device_open_guide":
             send(.deviceOpenGuide)
         default:
-            break
+            send(command)
         }
     }
 }

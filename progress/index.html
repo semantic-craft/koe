@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-15T11:01:57.093222Z</p>
-<p>Main: <code>main: 97ad6fc18a2844ac978ee47d2709f2de9014af3b</code></p>
+<p>Observed: 2026-11-15T23:51:10.710862Z</p>
+<p>Main: <code>main: 0a86c1f4a944135fb1f7adf1916243b1ab552dd4</code></p>
 <section id="mode-workspaces-definition"><h2>四模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>四种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。本项交付业务定义文档与交互稿，正式页面已由 PR #712 实现。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -46,7 +46,7 @@
 </ul><p>Next: 升级后的真实录音长期使用继续在 #588 记录。</p></article>
 <article id="flutter-migration"><h3>移除旧 Flutter 资料迁移入口</h3><span class="badge">done</span><p>已随全天听记集成（#661，PR #663 / e513032）移除旧目录迁入界面与专属导入实现；保留当前工作区、已迁记录及持久 MigrationReceipt 的只读兼容。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/661">issue 661: 用户明确不需要旧版资料迁移。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/restore.rs">file crates/koe-runtime/src/restore.rs: 当前工作区与已有记录恢复仍保留。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/capture.rs">file crates/koe-runtime/src/capture.rs: 当前工作区与已有记录恢复仍保留。</a></li>
 </ul><p>Next: 已交付移除；当前工作区恢复按 #662 硬件验收核对。</p></article>
 <article id="provider-persistence"><h3>服务凭据与非敏感配置持久化</h3><span class="badge">done</span><p>非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；新密钥先登记待回收引用再创建安全项，崩溃孤儿在启动或重试时按精确引用回收（PR #714）。macOS 平台适配与开发隔离已接通，自动门禁、独立评审与 PR CI 通过，已 squash 合并。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 实现已合并，包含配置与安全存储故障回归。</a></li>
@@ -255,6 +255,7 @@
 </ul><p>Next: 先验证当前 macOS 产品流程，再选择下一阶段功能。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/720">#720</a> <code>e4bc8c9091b5818e8eb1721707794636dfcc2044</code></li>
 </ul><h2>Recent releases</h2><ul>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.0.0">v2.0.0</a> 2026-11-13T16:25:00Z (draft: False, prerelease: False)</li>
 </ul></section></html>

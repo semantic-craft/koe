@@ -2,7 +2,7 @@ use super::*;
 use chrono::{DateTime, Local};
 use koe_engine::{
     context::{AskRole, AskStatus},
-    session::{ConnectionPhaseTag, TransferPhaseTag},
+    session::TransferPhaseTag,
     transport::OPUS_FRAME_BYTES,
 };
 use serde_json::json;
@@ -150,128 +150,6 @@ impl KoeRuntime {
             "recordId": ask_record,
             "phase": self.ask_phase(),
             "messages": messages,
-        })
-    }
-
-    pub(super) fn device_json(&self) -> Value {
-        let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
-        self.device_json_with_live(live_record_id, live_duration_ms)
-    }
-
-    fn device_json_with_live(&self, live_record_id: Option<&str>, live_duration_ms: u64) -> Value {
-        let device = &self.device.session;
-        let (device_phase, device_state) = match device.connection_phase {
-            ConnectionPhaseTag::Disconnected => ("disconnected", "未连接"),
-            ConnectionPhaseTag::Scanning => ("scanning", "正在查找录音豆"),
-            ConnectionPhaseTag::Connecting => ("connecting", "正在连接"),
-            ConnectionPhaseTag::Handshaking => ("handshaking", "正在握手"),
-            ConnectionPhaseTag::Connected => ("connected", "已连接"),
-        };
-        let connected = self.device.is_connected();
-        let telemetry = device.telemetry.as_ref();
-        let battery_pct = telemetry.and_then(|t| t.battery);
-        let box_battery_pct = telemetry.and_then(|t| t.box_battery);
-        let status_detail = match device.connection_phase {
-            ConnectionPhaseTag::Disconnected => {
-                "将麦克风放入充电仓，短按下方按钮开启广播".to_string()
-            }
-            ConnectionPhaseTag::Scanning => "正在等待录音豆蓝牙广播…".to_string(),
-            ConnectionPhaseTag::Connecting => "正在建立蓝牙连接…".to_string(),
-            ConnectionPhaseTag::Handshaking => "正在完成安全握手与电量同步…".to_string(),
-            ConnectionPhaseTag::Connected => match (battery_pct, box_battery_pct) {
-                (Some(mic), Some(case_pct)) => format!("麦克风 {mic}%  充电仓 {case_pct}%"),
-                (Some(mic), None) => format!("麦克风 {mic}%"),
-                _ => "已就绪".to_string(),
-            },
-        };
-        let device_name = self
-            .device
-            .device_name
-            .clone()
-            .unwrap_or_else(|| "Soundcore Work".to_string());
-        let files: Vec<_> = device
-            .catalog
-            .iter()
-            .filter(|f| {
-                !self.is_standby_file(f.file_id)
-                    && !self.workspace().is_reclaimed_standby_file(f.file_id)
-            })
-            .map(|f| {
-                json!({
-                    "id": f.file_id,
-                    "title": format!("录音 {}", f.file_id),
-                    "durationMs": f.duration_ms,
-                })
-            })
-            .collect();
-        let progress = if device.transfer.expected_wire_bytes > 0 {
-            (f64::from(device.transfer.received_wire_bytes)
-                / f64::from(device.transfer.expected_wire_bytes))
-            .clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let transfer_phase = if device.is_offline_pull_suspended() {
-            "suspended"
-        } else if self.companion.standby_stream_owned
-            && matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
-        {
-            "collar_standby"
-        } else {
-            match device.transfer.phase {
-                TransferPhaseTag::Idle | TransferPhaseTag::QueryingCatalog => "idle",
-                TransferPhaseTag::StreamingRealtime => "streaming_realtime",
-                TransferPhaseTag::PullingOffline => "pulling_offline",
-                TransferPhaseTag::Failed => "failed",
-            }
-        };
-        let device_busy = (matches!(
-            device.transfer.phase,
-            TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
-        ) || device.device_recording_active
-            || self.device.awaiting_stop)
-            && !self.companion.standby_stream_owned;
-        let device_recording =
-            device.device_recording_active && !self.companion.standby_stream_owned;
-        let teardown_stop_frames_hex = if self.is_standby_ready()
-            || device_recording
-            || self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-        {
-            vec![koe_client_base::prng::to_hex_upper(
-                &koe_engine::commands::DeviceCommands::pause_record(),
-            )]
-        } else {
-            Vec::new()
-        };
-        json!({
-            "phase": device_phase,
-            "state": device_state,
-            "statusDetail": status_detail,
-            "connected": connected,
-            "busy": device_busy,
-            "stopping": self.device.awaiting_stop,
-            "recording": device_recording,
-            "transferPhase": transfer_phase,
-            "transferErrorCode": device.transfer.error_code,
-            "audioDecryptReady": device.active_file_key.is_some() && device.active_nonce.is_some(),
-            "liveDurationMs": live_duration_ms,
-            "liveBytes": device.transfer.received_wire_bytes,
-            "liveRecordId": live_record_id,
-            "deviceName": device_name,
-            "batteryPercent": battery_pct,
-            "charging": telemetry.is_some_and(|t| t.charging),
-            "boxBatteryPercent": box_battery_pct,
-            "boxCharging": telemetry.is_some_and(|t| t.box_charging),
-            "serialNumber": telemetry.map(|t| t.serial_number.clone()).unwrap_or_default(),
-            "firmwareVersion": telemetry.map(|t| t.firmware_version.clone()).unwrap_or_default(),
-            "storageLabel": telemetry.map(|t| t.storage_label()).unwrap_or_else(|| "—".to_string()),
-            "files": files,
-            "progress": progress,
-            "autoConnect": self.workspace().ble_auto_connect(),
-            "companionMode": self.workspace().companion_mode().as_str(),
-            "standbyReady": self.is_standby_ready(),
-            "teardownStopFramesHex": teardown_stop_frames_hex,
-            "guide": self.device.guide_json(),
         })
     }
 

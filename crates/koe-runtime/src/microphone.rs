@@ -586,13 +586,17 @@ impl KoeRuntime {
                     .all(|l| l.asset.as_ref().is_none_or(|a| a.is_empty()))
             {
                 if m.phase == Phase::Cancelling {
-                    self.cancel_capture_speech(&m.current_record_id);
-                    if self.workspace().record(&m.current_record_id).is_some() {
+                    let purged_id = m.current_record_id.clone();
+                    self.cancel_capture_speech(&purged_id);
+                    if self.workspace().record(&purged_id).is_some() {
                         self.commit(|w| {
-                            w.trash_record(&m.current_record_id, 1)?;
-                            w.purge_record(&m.current_record_id).map(|_| ())
+                            w.trash_record(&purged_id, 1)?;
+                            w.purge_record(&purged_id).map(|_| ())
                         })?;
                     }
+                    self.detach_records_from_session(&std::collections::BTreeSet::from([
+                        purged_id,
+                    ]));
                 }
                 for l in m.lanes.values_mut() {
                     if let Some(asset) = &mut l.asset {

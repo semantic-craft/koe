@@ -48,7 +48,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case selectPlaybackLane(lane: String)
     case seek(positionMs: UInt64)
 
-    case prepareVoiceInput
     case setVoiceInputSession(enabled: Bool, openResponsay: Bool = false)
     case openResponsayApp
     case startCaptureMode(mode: CaptureMode, stayOnPage: Bool = false)
@@ -61,10 +60,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case deviceCloseGuide
     case deviceRefresh
     case deviceDownload(fileId: UInt32)
-    case deviceStart
-    case deviceStop
-    case deviceDisconnect
-    case deviceRelease
     case setCompanionMode(mode: String)
     case setBleAutoConnect(enabled: Bool)
 
@@ -128,7 +123,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .playback: "playback"
         case .selectPlaybackLane: "select_playback_lane"
         case .seek: "seek"
-        case .prepareVoiceInput: "prepare_voice_input"
         case .setVoiceInputSession: "set_voice_input_session"
         case .openResponsayApp: "open_responsay_app"
         case .startCaptureMode: "start_capture_mode"
@@ -140,10 +134,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .deviceCloseGuide: "device_close_guide"
         case .deviceRefresh: "device_refresh"
         case .deviceDownload: "device_download"
-        case .deviceStart: "device_start"
-        case .deviceStop: "device_stop"
-        case .deviceDisconnect: "device_disconnect"
-        case .deviceRelease: "device_release"
         case .setCompanionMode: "set_companion_mode"
         case .setBleAutoConnect: "set_ble_auto_connect"
         case .configureSpeech: "configure_speech"
@@ -161,9 +151,8 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         try c.encode(commandType, forKey: .type)
         switch self {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
-             .prepareVoiceInput, .openResponsayApp,
+             .openResponsayApp,
              .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh,
-             .deviceStart, .deviceStop, .deviceDisconnect, .deviceRelease,
              .cancelSpeechModel, .clearProviderCredential:
             break
         case let .navigate(section):

@@ -1439,3 +1439,54 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
         ad_trashed["liveMinutes"]
     );
 }
+
+#[test]
+fn cancelled_microphone_meeting_capture_detaches_live_minutes_scope_and_selection() {
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+
+    let started = dispatch_ok(
+        &mut runtime,
+        json!({"type": "start_capture_mode", "mode": "meeting", "stayOnPage": true}),
+        NOW,
+    );
+    let mic = &started["microphone"];
+    let meeting_id = mic["recordId"].as_str().unwrap().to_owned();
+    let meeting_session = mic["sessionId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        started["liveMinutes"]["scope"],
+        json!({"kind": "record", "id": meeting_id})
+    );
+    assert_eq!(
+        started["workspaces"]["liveMinutes"]["selectedRecordId"],
+        json!(meeting_id)
+    );
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "capture_action", "action": "cancel"}),
+        NOW + 1,
+    );
+    let cancelled = dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "microphone_stopped",
+            "recordId": meeting_id,
+            "sessionId": meeting_session,
+            "lane": "microphone",
+            "sequence": 0,
+            "epoch": 0
+        }),
+        NOW + 1,
+    );
+    assert!(
+        cancelled["liveMinutes"].is_null(),
+        "cancelling microphone meeting capture must detach liveMinutes scope, got: {}",
+        cancelled["liveMinutes"]
+    );
+    assert!(
+        cancelled["workspaces"]["liveMinutes"]["selectedRecordId"].is_null(),
+        "cancelling microphone meeting capture must clear selectedRecordId, got: {}",
+        cancelled["workspaces"]["liveMinutes"]["selectedRecordId"]
+    );
+}

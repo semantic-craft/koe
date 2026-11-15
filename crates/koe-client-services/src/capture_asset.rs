@@ -119,7 +119,6 @@ impl CaptureAsset {
             self.file.write_all(&header).map_err(io_error)?;
             self.file.set_len(44 + u64::from(size)).map_err(io_error)?;
             self.file.sync_all().map_err(io_error)?;
-            // A hard link publishes atomically without replacing another recording.
             fs::hard_link(&self.staging, &self.target).map_err(io_error)?;
             self.published = true;
         }

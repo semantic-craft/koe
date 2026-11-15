@@ -228,10 +228,6 @@ fn is_cjk_ideograph(c: char) -> bool {
     ('\u{4E00}'..='\u{9FFF}').contains(&c)
 }
 
-/// Lightweight suffix stemmer for lowercased ASCII alphabetic tokens.
-///
-/// Strips common English suffixes (`"ings"`, `"ing"`, `"edly"`, `"ed"`, `"ies"`, `"es"`,
-/// `"s"`, `"ly"`, `"tion"`, `"ment"`) when the remaining stem is at least 3 characters.
 #[must_use]
 fn stem_latin_token(token: &str) -> &str {
     if token.len() < 4 || !token.bytes().all(|b| b.is_ascii_lowercase()) {

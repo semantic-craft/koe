@@ -1,5 +1,5 @@
 //! PCM16 little-endian RIFF/WAVE header construction and raw 160-byte Opus
-//! frame slicing utilities matching `lib/audio/opus_wave.dart`.
+//! frame slicing utilities.
 //!
 //! # Examples
 //!

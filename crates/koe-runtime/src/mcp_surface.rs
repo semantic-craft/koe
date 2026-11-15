@@ -32,10 +32,7 @@ pub enum McpToolCallState {
     /// Synchronous tool completion (`Ok(payload)` or `Err(domain_error)` mapped to `isError: true`).
     Completed(Result<Value, String>),
     /// Asynchronous `ask` job submitted; poll with [`KoeRuntime::poll_mcp_ask`] until `Some`.
-    PendingAsk {
-        /// Original question string submitted by the caller.
-        question: String,
-    },
+    PendingAsk,
 }
 
 impl KoeRuntime {
@@ -340,15 +337,17 @@ impl KoeRuntime {
                     .collect();
                 let live_count = live_records.len();
                 let live_non_archived: Vec<&ProductRecord> = live_records
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .filter(|r| !r.is_archived())
                     .collect();
-                let today_record_ids: Vec<&str> = live_non_archived
+                let today_record_ids: Vec<&str> = live_records
                     .iter()
                     .filter(|r| {
-                        today.is_some()
-                            && crate::projection::local_date(r.aggregate.created_at_epoch_sec)
-                                == today
+                        today.is_some_and(|t| {
+                            crate::projection::local_date(r.aggregate.created_at_epoch_sec)
+                                == Some(t)
+                        })
                     })
                     .map(|r| r.aggregate.recording_id.as_str())
                     .collect();
@@ -422,13 +421,7 @@ impl KoeRuntime {
                 let limit = optional_limit(obj, 20)?;
                 let offset = optional_u64(obj, "offset")?.unwrap_or(0) as usize;
 
-                let mut records: Vec<_> = self.workspace().records().values().collect();
-                records.sort_by_key(|r| {
-                    std::cmp::Reverse((
-                        r.aggregate.created_at_epoch_sec,
-                        r.aggregate.recording_id.clone(),
-                    ))
-                });
+                let records = self.sorted_records();
                 let filtered: Vec<_> = records
                     .into_iter()
                     .filter(|r| {
@@ -483,7 +476,7 @@ impl KoeRuntime {
             }
             "ask" => {
                 ensure_allowed_keys(obj, &["question", "record_id"])?;
-                let question = required_str(obj, "question")?.to_string();
+                let question = required_str(obj, "question")?;
                 let scope = optional_scope(obj)?;
                 if question.trim().is_empty() {
                     return Ok(McpToolCallState::Completed(Err("请输入问题".into())));
@@ -491,14 +484,14 @@ impl KoeRuntime {
                 if let Err(err) = self.prepare_mcp_write(now) {
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
-                let start_res = self.start_ask(scope, &question, now);
+                let start_res = self.start_ask(scope, question, now);
                 self.generation = self.generation.saturating_add(1);
                 if let Err(err) = start_res {
                     self.error = Some(err.clone());
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
                 match self.resolve_settled_ask() {
-                    None => Ok(McpToolCallState::PendingAsk { question }),
+                    None => Ok(McpToolCallState::PendingAsk),
                     Some(done) => Ok(McpToolCallState::Completed(done)),
                 }
             }
@@ -848,12 +841,7 @@ impl KoeRuntime {
     }
 
     /// Advances background timers for an in-flight MCP `ask` call and returns `Some` once settled.
-    pub fn poll_mcp_ask(
-        &mut self,
-        _question: &str,
-        elapsed_ms: u64,
-        now: u64,
-    ) -> Option<Result<Value, String>> {
+    pub fn poll_mcp_ask(&mut self, elapsed_ms: u64, now: u64) -> Option<Result<Value, String>> {
         self.poll_timers(elapsed_ms, now);
         self.resolve_settled_ask()
     }
@@ -905,7 +893,7 @@ impl KoeRuntime {
 
     fn mcp_create_note(&mut self, title: String, text: &str, now: u64) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        let created = self.create_quick_note(title, text, now);
+        let created = self.create_quick_note(title, text, false, now);
         self.generation = self.generation.saturating_add(1);
         match created {
             Ok(id) => self.record_detail_json(&id),
@@ -924,43 +912,38 @@ impl KoeRuntime {
         now: u64,
     ) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        let result = match kind {
-            "highlight" => self.highlight_segment(record_id, segment_id).map(|()| {
-                json!({
-                    "ok": true,
-                    "kind": "highlight",
-                    "recordId": record_id,
-                    "segmentId": segment_id
-                })
-            }),
-            "task" | "memory" => {
-                let item_kind = if kind == "task" {
-                    ItemKind::Task
-                } else {
-                    ItemKind::Memory
-                };
-                self.accept_segment_item(item_kind, record_id, segment_id)
-                    .map(|item_id| {
-                        json!({
-                            "ok": true,
-                            "kind": kind,
-                            "itemId": item_id,
-                            "recordId": record_id,
-                            "segmentId": segment_id
-                        })
-                    })
-            }
+        let item_id = match kind {
+            "highlight" => self.highlight_segment(record_id, segment_id).map(|()| None),
+            "task" => self
+                .accept_segment_item(ItemKind::Task, record_id, segment_id)
+                .map(Some),
+            "memory" => self
+                .accept_segment_item(ItemKind::Memory, record_id, segment_id)
+                .map(Some),
             _ => unreachable!(),
         };
         self.generation = self.generation.saturating_add(1);
-        if let Err(error) = &result {
-            self.error = Some(error.clone());
-        } else if let Some(obj) = result.as_ref().ok().and_then(Value::as_object) {
-            let mut enriched = obj.clone();
-            enriched.insert("generation".to_string(), json!(self.generation));
-            return Ok(Value::Object(enriched));
+        match item_id {
+            Ok(None) => Ok(json!({
+                "ok": true,
+                "kind": "highlight",
+                "recordId": record_id,
+                "segmentId": segment_id,
+                "generation": self.generation
+            })),
+            Ok(Some(item_id)) => Ok(json!({
+                "ok": true,
+                "kind": kind,
+                "itemId": item_id,
+                "recordId": record_id,
+                "segmentId": segment_id,
+                "generation": self.generation
+            })),
+            Err(error) => {
+                self.error = Some(error.clone());
+                Err(error)
+            }
         }
-        result
     }
 
     fn mcp_rename_speaker(
@@ -1095,7 +1078,7 @@ pub fn drive_mcp_tool_blocking<Ctx, StepFn, PollFn>(
 ) -> Result<Result<Value, String>, McpToolError>
 where
     StepFn: FnOnce(&mut Ctx) -> Result<McpToolCallState, McpToolError>,
-    PollFn: FnMut(&mut Ctx, &str, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
+    PollFn: FnMut(&mut Ctx, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
 {
     drive_mcp_tool_blocking_with_limits(ctx, MCP_ASK_TIMEOUT, MCP_ASK_POLL_INTERVAL, step, poll)
 }
@@ -1109,11 +1092,11 @@ fn drive_mcp_tool_blocking_with_limits<Ctx, StepFn, PollFn>(
 ) -> Result<Result<Value, String>, McpToolError>
 where
     StepFn: FnOnce(&mut Ctx) -> Result<McpToolCallState, McpToolError>,
-    PollFn: FnMut(&mut Ctx, &str, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
+    PollFn: FnMut(&mut Ctx, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
 {
     match step(&mut ctx)? {
         McpToolCallState::Completed(res) => Ok(res),
-        McpToolCallState::PendingAsk { question } => {
+        McpToolCallState::PendingAsk => {
             let deadline = Instant::now() + timeout;
             let mut previous = Instant::now();
             loop {
@@ -1124,7 +1107,7 @@ where
                 let current = Instant::now();
                 let elapsed_ms = current.duration_since(previous).as_millis() as u64;
                 previous = current;
-                if let Some(done) = poll(&mut ctx, &question, elapsed_ms)? {
+                if let Some(done) = poll(&mut ctx, elapsed_ms)? {
                     return Ok(done);
                 }
             }
@@ -1151,7 +1134,7 @@ mod tests {
         let immediate = drive_mcp_tool_blocking(
             (),
             |()| Ok(McpToolCallState::Completed(Ok(json!({ "ok": true })))),
-            |(), _, _| unreachable!("poll must not run after immediate completion"),
+            |(), _| unreachable!("poll must not run after immediate completion"),
         )
         .expect("protocol result");
         assert_eq!(immediate.expect("tool value")["ok"], true);
@@ -1159,7 +1142,7 @@ mod tests {
         let domain_err = drive_mcp_tool_blocking(
             (),
             |()| Ok(McpToolCallState::Completed(Err("domain failed".into()))),
-            |(), _, _| unreachable!("poll must not run after immediate domain error"),
+            |(), _| unreachable!("poll must not run after immediate domain error"),
         )
         .expect("protocol result");
         assert_eq!(domain_err.unwrap_err(), "domain failed");
@@ -1167,7 +1150,7 @@ mod tests {
         let step_err = drive_mcp_tool_blocking(
             (),
             |()| Err(McpToolError::invalid_params("bad step")),
-            |(), _, _| Ok(None),
+            |(), _| Ok(None),
         )
         .unwrap_err();
         assert_eq!(
@@ -1182,7 +1165,6 @@ mod tests {
         struct PollCtx {
             stepped: bool,
             polls: usize,
-            seen_question: String,
         }
 
         let mut poll_ctx = PollCtx::default();
@@ -1190,14 +1172,11 @@ mod tests {
             &mut poll_ctx,
             |ctx| {
                 ctx.stepped = true;
-                Ok(McpToolCallState::PendingAsk {
-                    question: "结论是什么？".into(),
-                })
+                Ok(McpToolCallState::PendingAsk)
             },
-            |ctx, question, elapsed_ms| {
+            |ctx, elapsed_ms| {
                 assert!(ctx.stepped);
                 ctx.polls += 1;
-                ctx.seen_question = question.to_string();
                 assert!(elapsed_ms >= 1);
                 if ctx.polls < 2 {
                     Ok(None)
@@ -1208,18 +1187,13 @@ mod tests {
         )
         .expect("protocol result");
         assert!(poll_ctx.stepped);
-        assert_eq!(poll_ctx.seen_question, "结论是什么？");
         assert_eq!(poll_ctx.polls, 2);
         assert_eq!(polled.expect("settled answer")["answer"], "已完成");
 
         let poll_err = drive_mcp_tool_blocking(
             (),
-            |()| {
-                Ok(McpToolCallState::PendingAsk {
-                    question: "q".into(),
-                })
-            },
-            |(), _, _| {
+            |()| Ok(McpToolCallState::PendingAsk),
+            |(), _| {
                 Err(McpToolError {
                     code: -32603,
                     message: "poll failure".into(),
@@ -1239,12 +1213,8 @@ mod tests {
             0usize,
             Duration::from_millis(5),
             Duration::from_millis(2),
-            |_| {
-                Ok(McpToolCallState::PendingAsk {
-                    question: "超时测试".into(),
-                })
-            },
-            |polls, _, _| {
+            |_| Ok(McpToolCallState::PendingAsk),
+            |polls, _| {
                 *polls += 1;
                 Ok(None)
             },

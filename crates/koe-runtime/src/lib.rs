@@ -369,7 +369,7 @@ impl KoeRuntime {
                 text,
                 stay_on_page,
             } => {
-                let id = self.create_quick_note(title, &text, now)?;
+                let id = self.create_quick_note(title, &text, true, now)?;
                 if !stay_on_page {
                     self.open_record(&id, None)?;
                 }
@@ -747,6 +747,7 @@ impl KoeRuntime {
         &mut self,
         title: String,
         text: &str,
+        select_in_ui: bool,
         now: u64,
     ) -> Result<String, String> {
         if text.trim().is_empty() {
@@ -760,7 +761,9 @@ impl KoeRuntime {
             }
             Ok(())
         })?;
-        self.selection.selected_quick_note_record = Some(id.clone());
+        if select_in_ui {
+            self.selection.selected_quick_note_record = Some(id.clone());
+        }
         self.notice = Some("记录已保存".into());
         Ok(id)
     }

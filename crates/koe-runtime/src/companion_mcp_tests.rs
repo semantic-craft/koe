@@ -805,9 +805,7 @@ fn mcp_sixteen_tools_cover_full_workspace_and_reject_unknown_or_destructive_acti
     let job_id = runtime.next_job;
     runtime.next_job += 1;
     runtime.pending.insert(job_id, PendingWork::Ask(ask_op));
-    assert!(runtime
-        .poll_mcp_ask("十六千赫兹原始采样", 10, NOW + 7)
-        .is_none());
+    assert!(runtime.poll_mcp_ask(10, NOW + 7).is_none());
     runtime.completed.push_back(ProviderEvent {
         operation_id: job_id,
         record_id: "ask".into(),
@@ -816,7 +814,7 @@ fn mcp_sixteen_tools_cover_full_workspace_and_reject_unknown_or_destructive_acti
         }),
     });
     let polled_ask = runtime
-        .poll_mcp_ask("十六千赫兹原始采样", 10, NOW + 8)
+        .poll_mcp_ask(10, NOW + 8)
         .expect("completed ask must settle on poll_mcp_ask")
         .unwrap();
     assert_eq!(polled_ask["phase"], "ready");
@@ -1310,7 +1308,7 @@ fn poll_mcp_ask_ignores_unrelated_runtime_error_and_create_note_increments_gener
         }),
     });
     let settled = runtime
-        .poll_mcp_ask("单次提交", 0, NOW + 2)
+        .poll_mcp_ask(0, NOW + 2)
         .expect("completed ask must settle")
         .expect("unrelated runtime.error must not fail settled ask");
     assert_eq!(settled["phase"], "ready");
@@ -1333,7 +1331,7 @@ fn poll_mcp_ask_ignores_unrelated_runtime_error_and_create_note_increments_gener
         result: Err("模型服务暂时不可用".into()),
     });
     let failed_err = runtime
-        .poll_mcp_ask("单次提交", 0, NOW + 4)
+        .poll_mcp_ask(0, NOW + 4)
         .expect("failed ask must settle")
         .unwrap_err();
     assert!(failed_err.contains("模型服务暂时不可用"), "{failed_err}");
@@ -2403,7 +2401,7 @@ fn teardown_stop_frames_projected_for_collar_standby_and_recording() {
 }
 
 #[test]
-fn mcp_create_note_selects_new_quick_note_matching_ui_command() {
+fn mcp_create_note_preserves_foreground_quick_note_selection() {
     let sandbox = Sandbox::new();
     let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
 
@@ -2443,11 +2441,73 @@ fn mcp_create_note_selects_new_quick_note_matching_ui_command() {
     };
     let note_2_id = mcp_created["id"].as_str().unwrap().to_owned();
     assert_ne!(note_2_id, note_1_id);
+    assert_eq!(
+        runtime.workspace().record(&note_2_id).unwrap().mode,
+        koe_engine::product::RecordMode::QuickNote
+    );
 
     let after_mcp = runtime.snapshot(NOW + 1);
+    let card_ids: Vec<&str> = after_mcp["workspaces"]["quickNote"]["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    assert!(
+        card_ids.contains(&note_2_id.as_str()),
+        "MCP create_note must project into QuickNote cards: {card_ids:?}"
+    );
     assert_eq!(
         after_mcp["workspaces"]["quickNote"]["selectedRecordId"],
-        json!(note_2_id),
-        "MCP create_note must select the newly created Quick Note"
+        json!(note_1_id),
+        "MCP create_note must preserve foreground Quick Note selection"
     );
+}
+
+#[test]
+fn mcp_get_today_brief_counts_archived_live_records_today_while_excluding_from_recent() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let created: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({
+                "type": "create_note",
+                "title": "归档今日记录",
+                "text": "归档保护仍是今日有效记录",
+                "stayOnPage": true
+            })
+            .to_string(),
+            NOW,
+        ),
+    )
+    .unwrap();
+    assert!(created["error"].is_null(), "{created}");
+    let note_id = created["records"][0]["id"].as_str().unwrap().to_owned();
+
+    let archived: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({
+                "type": "set_record_archived",
+                "recordId": note_id,
+                "archived": true
+            })
+            .to_string(),
+            NOW,
+        ),
+    )
+    .unwrap();
+    assert!(archived["error"].is_null(), "{archived}");
+
+    let brief = match runtime
+        .call_mcp_tool_step("get_today_brief", &json!({}), NOW)
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("get_today_brief expected Completed(Ok), got {other:?}"),
+    };
+    assert_eq!(brief["todayRecordIds"], json!([note_id]));
+    assert_eq!(brief["counts"]["todayRecords"], 1);
+    assert_eq!(brief["counts"]["liveRecords"], 1);
+    assert_eq!(brief["recentRecords"], json!([]));
 }

@@ -57,8 +57,6 @@ extension SegmentSnapshot {
     }
 }
 
-public typealias KoeColors = AppColors
-
 public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
