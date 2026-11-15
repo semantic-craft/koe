@@ -6,15 +6,27 @@ struct CapturedPCM: Sendable {
     let capturedStartNs: UInt64
 }
 
+/// Binds every lane callback to one Rust capture session epoch.
+struct CaptureSession: Equatable, Sendable {
+    let recordId: String
+    let sessionId: String
+    let epoch: UInt64
+    init(_ snapshot: MicrophoneSnapshot) {
+        recordId = snapshot.recordId
+        sessionId = snapshot.sessionId
+        epoch = snapshot.epoch
+    }
+}
+
 struct CaptureIdentity: Equatable, Sendable {
     let recordId: String
     let sessionId: String
     let lane: String
     let epoch: UInt64
-    init(_ snapshot: MicrophoneSnapshot) {
+    init(_ snapshot: MicrophoneSnapshot, lane: String) {
         recordId = snapshot.recordId
         sessionId = snapshot.sessionId
-        lane = snapshot.lane
+        self.lane = lane
         epoch = snapshot.epoch
     }
 }
@@ -26,18 +38,23 @@ protocol MicrophoneSource: AnyObject {
     func stop()
 }
 
+/// Bounded per-lane queue: overflow stops that lane instead of silently dropping audio.
 final class MicrophoneMailbox: @unchecked Sendable {
     struct Block { let sequence: UInt64; let pcm: CapturedPCM }
+    let limit: Int
     private let lock = NSLock()
     private var blocks: [Block] = []
     private var sequence: UInt64
     private var closed = false
     private var failure: String?
-    init(nextSequence: UInt64) { sequence = nextSequence }
+    init(nextSequence: UInt64, limit: Int = 64) {
+        sequence = nextSequence
+        self.limit = limit
+    }
     func append(_ pcm: CapturedPCM) {
         lock.lock(); defer { lock.unlock() }
         guard !closed else { return }
-        guard !pcm.samples.isEmpty, pcm.samples.count <= 8192, blocks.count < 64 else {
+        guard !pcm.samples.isEmpty, pcm.samples.count <= 8192, blocks.count < limit else {
             failure = "音频处理未能跟上采集，已停止并保留已接收的音频。"
             closed = true
             return

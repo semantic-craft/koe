@@ -68,7 +68,34 @@ public struct CaptureView: View {
                         ForEach(capture.inputs) { input in macInputCard(input) }
                     }
                 }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("系统音频").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                    systemAudioToggle
+                }
             }
+        }
+    }
+
+    private var systemAudioToggle: some View {
+        let on = capture.includeSystemAudio
+        return HStack(spacing: 8) {
+            Button { store.send("set_capture_system_audio", ["enabled": !on]) } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "speaker.wave.2").foregroundStyle(on ? AppColors.accent : AppColors.textSecondary)
+                    Text("同时采集系统音频").font(.system(size: AppFontSizes.sm, weight: .medium))
+                    Spacer()
+                    Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(on ? AppColors.accent : AppColors.textMuted)
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(on ? AppColors.accentSoft : AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+                .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(on ? AppColors.accent : AppColors.border))
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            .disabled(isRecordingLocked || !capture.canIncludeSystemAudio)
+            .accessibilityLabel("同时采集系统音频")
+            .accessibilityValue(on ? "已开启" : "已关闭")
+            InfoTip("使用 Mac 麦克风进行随心闪记或实时纪要时，另存一路本机播放的声音（不含 Koe 自身）。全天听记、语音输入和录音豆只录麦克风。首次使用需在系统设置中允许 Koe 录制系统音频；任一路失败会标记采集不完整并保留另一路。")
         }
     }
 

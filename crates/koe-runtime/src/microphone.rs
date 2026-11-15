@@ -79,6 +79,21 @@ impl Microphone {
     fn refresh_error(&mut self) {
         self.save_error = self.lanes.values().find_map(|l| l.save_error.clone());
     }
+    /// A lane failure only ends the session once no lane can still deliver audio.
+    fn all_lanes_failed_or_stopped(&self) -> bool {
+        self.lanes
+            .values()
+            .all(|l| l.producer_stopped || l.interruption.is_some())
+    }
+    fn lanes_ready(&self) -> bool {
+        self.lanes
+            .values()
+            .all(|l| l.asset.is_some() || l.producer_stopped)
+            && self.lanes.values().any(|l| l.asset.is_some())
+    }
+    fn lanes_paused(&self) -> bool {
+        self.lanes.values().all(|l| l.paused || l.producer_stopped)
+    }
 }
 impl KoeRuntime {
     pub(super) fn start_microphone(
@@ -205,7 +220,7 @@ impl KoeRuntime {
         }
         l.paused = true;
         m.level = 0.0;
-        if m.lanes.values().all(|l| l.paused) {
+        if m.lanes_paused() {
             m.phase = Phase::Paused;
             self.set_source_dictation(DictationSource::Microphone, false);
         }
@@ -234,7 +249,7 @@ impl KoeRuntime {
         m.clock_ns = Some(clock_ns);
         m.epoch_offset_ns = offset;
         m.phase = Phase::Recording;
-        for l in m.lanes.values_mut() {
+        for l in m.lanes.values_mut().filter(|l| !l.producer_stopped) {
             l.paused = false;
         }
         if m.mode == Some(CaptureMode::Dictation) {
@@ -278,14 +293,16 @@ impl KoeRuntime {
         }
         if !(8000..=96000).contains(&rate) {
             l.interruption = Some("音频格式不受支持，未保存该路录音".into());
-            m.phase = Phase::Stopping;
+            if m.all_lanes_failed_or_stopped() {
+                m.phase = Phase::Stopping;
+            }
             return Err("音频采样率不受支持".into());
         }
         l.sample_rate = Some(rate);
         match CaptureAsset::create(&self.root, &l.asset_id, rate) {
             Ok(asset) => {
                 l.asset = Some(asset);
-                if m.lanes.values().all(|l| l.asset.is_some()) {
+                if m.phase == Phase::Starting && m.lanes_ready() {
                     m.phase = Phase::Recording;
                 }
                 Ok(())
@@ -488,7 +505,8 @@ impl KoeRuntime {
         if !matches!(
             m.phase,
             Phase::Cancelling | Phase::Saving | Phase::CapacityReached
-        ) {
+        ) && m.all_lanes_failed_or_stopped()
+        {
             m.phase = Phase::Stopping;
         }
     }
@@ -518,8 +536,16 @@ impl KoeRuntime {
             l.interruption.get_or_insert_with(|| "音源意外停止".into());
         }
         l.producer_stopped = true;
-        if m.phase != Phase::Cancelling {
+        if matches!(m.phase, Phase::Stopping | Phase::CapacityReached)
+            || (m.phase != Phase::Cancelling && m.all_lanes_failed_or_stopped())
+        {
             m.phase = Phase::Stopping;
+        } else if m.phase == Phase::Starting && m.lanes_ready() {
+            m.phase = Phase::Recording;
+        } else if m.phase == Phase::Pausing && m.lanes_paused() {
+            m.phase = Phase::Paused;
+            self.set_source_dictation(DictationSource::Microphone, false);
+            return Ok(());
         }
         if !m.lanes.values().all(|l| l.producer_stopped) {
             return Ok(());
@@ -774,7 +800,7 @@ impl KoeRuntime {
             duration_ms: duration_ms + m.segment_offset_ns / 1_000_000,
             input_label,
             input_badge,
-            interruption: m.lanes["microphone"].interruption.as_deref(),
+            interruption: m.lanes.values().find_map(|l| l.interruption.as_deref()),
         })
     }
     pub(super) fn microphone_json(&self, status: Option<&MicrophoneStatus<'_>>) -> Value {
@@ -784,6 +810,7 @@ impl KoeRuntime {
         let lanes: BTreeMap<_,_> = m.lanes.iter().map(|(name,l)| (name, json!({"nextSequence":l.next_sequence,"sampleRate":l.sample_rate,"durationMs":l.asset.as_ref().map_or(0,|a|a.duration_ms()),"stopped":l.producer_stopped,"error":l.save_error,"interruption":l.interruption,"started":l.sample_rate.is_some()}))).collect();
         let mic = &m.lanes["microphone"];
         json!({"recordId":m.record_id,"sessionId":m.session_id,"epoch":m.epoch,"clockNs":m.clock_ns,"lane":"microphone","inputId":m.input_id,"inputLabel":status.input_label,"inputBadge":status.input_badge,
-            "phase":status.phase,"nextSequence":mic.next_sequence,"durationMs":status.duration_ms,"level":m.level,"error":m.save_error,"interruption":status.interruption,"lanes":lanes})
+            "phase":status.phase,"nextSequence":mic.next_sequence,"durationMs":status.duration_ms,"level":m.level,"error":m.save_error,"interruption":status.interruption,
+            "includeSystem":m.lanes.contains_key("system"),"lanes":lanes})
     }
 }

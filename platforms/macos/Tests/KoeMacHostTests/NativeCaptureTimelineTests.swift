@@ -11,7 +11,7 @@ struct SavedCapture: Decodable {
                 let startNs: UInt64
                 let sampleCount: UInt64
             }
-            let sampleRate: UInt32
+            let sampleRate: UInt32?
             let interruption: String?
             let timeline: [Span]
         }
@@ -243,6 +243,62 @@ extension NativeCaptureIntegrationTests {
             XCTAssertNotNil(try SavedCapture.read(root).captureLanes[0].interruption)
             store.send("request_quit")
             XCTAssertEqual(store.snapshot.lifecycle?.quitPhase, "ready")
+        }
+    }
+}
+
+extension NativeCaptureIntegrationTests {
+    func testDualLaneStaggeredRatesSurvivePauseResumeQuitDrainAndReopen() async throws {
+        try await dualFixture { store, microphone, system, capture, root in
+            store.send("start_microphone", ["inputId": "fixture", "includeSystem": true])
+            microphone.permission?(true)
+            await Task.yield()
+            XCTAssertEqual(store.snapshot.microphone?.phase, "starting")
+            XCTAssertEqual(microphone.starts, 0, "audio must wait until every requested lane answered")
+            system.firstOffsetNs = 5_000_000
+            system.authorization?(.authorized)
+            await self.awaitRecording(store)
+            let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
+            system.receive(Array(repeating: 2, count: 480))
+            microphone.receive?(Array(repeating: 1, count: 160))
+            capture.apply()
+            microphone.tail = Array(repeating: 3, count: 160)
+            system.tail = Array(repeating: 4, count: 480)
+            store.send("pause_microphone")
+            XCTAssertEqual(store.snapshot.microphone?.phase, "paused")
+            XCTAssertEqual(store.snapshot.microphone?.lanes["microphone"]?.nextSequence, 2)
+            XCTAssertEqual(store.snapshot.microphone?.lanes["system"]?.nextSequence, 2)
+            microphone.clockNs = 9_000_000_000
+            system.firstOffsetNs = 0
+            capture.resume()
+            XCTAssertEqual(system.authorizations, 2)
+            microphone.permission?(true)
+            system.authorization?(.authorized)
+            await self.awaitState { store.snapshot.microphone?.epoch == 1 && system.starts == 2 && microphone.starts == 2 }
+            microphone.receive?(Array(repeating: 5, count: 160))
+            system.receive(Array(repeating: 6, count: 480))
+            microphone.tail = Array(repeating: 7, count: 160)
+            system.tail = Array(repeating: 8, count: 480)
+            store.send("request_quit")
+            XCTAssertEqual(store.snapshot.lifecycle?.quitPhase, "ready")
+            XCTAssertNil(store.snapshot.microphone)
+            store.shutdown()
+
+            let reopened = HostSessionStore(workspacePath: root.path)
+            defer { reopened.shutdown() }
+            XCTAssertEqual(reopened.snapshot.records.map(\.id), [id])
+            func values(_ asset: String) throws -> [Int16] {
+                let bytes = try self.pcm(root, asset)
+                return stride(from: 0, to: bytes.count, by: 2).map { Int16(bytes[$0]) | Int16(bytes[$0 + 1]) << 8 }
+            }
+            XCTAssertEqual(try values(id), [1, 3, 5, 7].flatMap { Array(repeating: Int16($0), count: 160) })
+            XCTAssertEqual(try values("\(id)-system"), [2, 4, 6, 8].flatMap { Array(repeating: Int16($0), count: 480) })
+            let record = try SavedCapture.read(root)
+            XCTAssertEqual(record.captureLanes.map(\.sampleRate), [16_000, 48_000])
+            XCTAssertTrue(record.captureLanes.allSatisfy { $0.interruption == nil })
+            XCTAssertEqual(record.captureLanes.map { $0.timeline.map(\.epoch) }, [[0, 1], [0, 1]])
+            XCTAssertEqual(record.captureLanes[1].timeline[0].startNs, 5_000_000)
+            XCTAssertEqual(record.captureLanes[0].timeline[1].startNs, record.captureLanes[1].timeline[1].startNs)
         }
     }
 }

@@ -220,6 +220,118 @@ fn cancellation_waits_for_both_producers_and_allows_a_new_session() {
     begin(&mut r);
 }
 
+fn timed(r: &mut KoeRuntime, t: &Value, lane: &str, mut v: Value, epoch: u64) -> Value {
+    v["epoch"] = json!(epoch);
+    let s = event(r, t, lane, v);
+    assert!(s["error"].is_null(), "{lane}: {}", s["error"]);
+    s
+}
+
+fn timed_chunk(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64, epoch: u64, ns: u64, n: i16) {
+    let count = if lane == "system" { 480 } else { 160 };
+    let s = event(
+        r,
+        t,
+        lane,
+        json!({"type":"microphone_chunk","sequence":seq,"samples":vec![n;count],
+            "timing":{"epoch":epoch,"capturedStartNs":ns}}),
+    );
+    assert!(s["error"].is_null(), "{lane} chunk {seq}: {}", s["error"]);
+}
+
+#[test]
+fn single_lane_permission_failure_keeps_other_lane_recording_and_marks_incomplete() {
+    for (denied, healthy) in [("system", "microphone"), ("microphone", "system")] {
+        let p = Sandbox::new();
+        let mut r = KoeRuntime::open(&p.0).unwrap();
+        let t = begin(&mut r);
+        let prepared = send(
+            &mut r,
+            json!({"type":"microphone_prepared","recordId":t["recordId"],"sessionId":t["sessionId"],
+                "epoch":0,"clockNs":1_000_000_000u64}),
+        );
+        assert!(prepared["error"].is_null(), "{}", prepared["error"]);
+        let rate = if healthy == "system" { 48000 } else { 16000 };
+        let started = event(
+            &mut r,
+            &t,
+            healthy,
+            json!({"type":"microphone_started","sampleRate":rate}),
+        );
+        assert!(started["error"].is_null(), "{}", started["error"]);
+        timed(
+            &mut r,
+            &t,
+            denied,
+            json!({"type":"microphone_failed","message":"permission denied"}),
+            0,
+        );
+        let s = timed(
+            &mut r,
+            &t,
+            denied,
+            json!({"type":"microphone_stopped","sequence":0}),
+            0,
+        );
+        assert_eq!(
+            s["microphone"]["phase"], "recording",
+            "{denied} denial must not stop the healthy {healthy} lane"
+        );
+        assert_eq!(s["microphone"]["interruption"], "permission denied");
+        timed_chunk(&mut r, &t, healthy, 0, 0, 1_000_000_000, 3);
+        assert!(send(&mut r, json!({"type":"pause_microphone"}))["error"].is_null());
+        let s = timed(
+            &mut r,
+            &t,
+            healthy,
+            json!({"type":"microphone_paused","sequence":1}),
+            0,
+        );
+        assert_eq!(s["microphone"]["phase"], "paused");
+        let resumed = send(
+            &mut r,
+            json!({"type":"resume_microphone","clockNs":5_000_000_000u64}),
+        );
+        assert!(resumed["error"].is_null(), "{}", resumed["error"]);
+        timed_chunk(&mut r, &t, healthy, 1, 1, 5_000_000_000, 4);
+        assert!(send(&mut r, json!({"type":"stop_microphone"}))["error"].is_null());
+        timed(
+            &mut r,
+            &t,
+            healthy,
+            json!({"type":"microphone_stopped","sequence":2}),
+            1,
+        );
+        let id = t["recordId"].as_str().unwrap();
+        let record = r.workspace().record(id).expect("surviving lane is saved");
+        let survivor = record
+            .capture_lanes
+            .iter()
+            .find(|l| l.lane == healthy)
+            .unwrap();
+        let failed = record
+            .capture_lanes
+            .iter()
+            .find(|l| l.lane == denied)
+            .unwrap();
+        assert_eq!(survivor.timeline.len(), 2);
+        assert!(survivor.interruption.is_none());
+        assert_eq!(failed.interruption.as_deref(), Some("permission denied"));
+        assert!(failed.asset_id.is_none());
+        let asset = survivor.asset_id.clone().unwrap();
+        let count = if healthy == "system" { 480 } else { 160 };
+        assert_eq!(
+            audio(&p, &asset),
+            [
+                vec![3i16.to_le_bytes(); count].concat(),
+                vec![4i16.to_le_bytes(); count].concat()
+            ]
+            .concat()
+        );
+        assert_eq!(r.snapshot(100)["detail"]["status"], "采集不完整");
+    }
+}
+
 #[test]
 fn empty_failed_capture_preserves_actionable_permission_reason() {
     let p = Sandbox::new();

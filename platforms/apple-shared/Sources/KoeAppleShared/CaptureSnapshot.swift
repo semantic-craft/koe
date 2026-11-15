@@ -49,10 +49,12 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
     public let activeSource: String?
     public let canStart: Bool
     public let inputs: [AudioInputSnapshot]
+    public var includeSystemAudio: Bool = false
+    public var canIncludeSystemAudio: Bool = false
 
     private enum CodingKeys: String, CodingKey {
         case selectedSource, selectedInputId, selectedLabel, selectedBadge
-        case selectionMode, activeSource, canStart, inputs
+        case selectionMode, activeSource, canStart, inputs, includeSystemAudio, canIncludeSystemAudio
     }
 
     public static let empty = CaptureStudioSnapshot(
@@ -96,5 +98,7 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
         activeSource = try c.decodeIfPresent(String.self, forKey: .activeSource)
         canStart = try c.decodeIfPresent(Bool.self, forKey: .canStart) ?? true
         inputs = try c.decodeIfPresent([AudioInputSnapshot].self, forKey: .inputs) ?? []
+        includeSystemAudio = try c.decodeIfPresent(Bool.self, forKey: .includeSystemAudio) ?? false
+        canIncludeSystemAudio = try c.decodeIfPresent(Bool.self, forKey: .canIncludeSystemAudio) ?? false
     }
 }
