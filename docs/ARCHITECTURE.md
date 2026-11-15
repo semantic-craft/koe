@@ -73,7 +73,7 @@ Runtime 持有一个采集操作，以 `record_id / session_id / microphone / se
 
 `CaptureAsset` 增量写入 `.capture` 文件。第一次有效音频写入后建立记录，识别结果可在停止前持久保存。封口、音频持久屏障及工作区提交完成后才移除暂存文件。保存失败保留采集所有权并阻止退出，恢复存储后可重试；取消退出不清除待保存音频。权限被拒或空音频不生成成功记录。
 
-暂停会停止生产、等待回调并排空尾块，Rust 确认后才显示已暂停；恢复重新核对权限，以新 epoch 接续原序号，采样率变化明确中断并保留已收音频。启动时恢复具有记录身份的 `.capture` 音频，提交工作区后释放暂存文件；未完成云请求保留中断状态。系统双路仍未接入。系统权限、真实输入切换、回放与签名版退出重开见 [#616](https://github.com/semantic-craft/koe/issues/616)。
+暂停会停止生产、等待回调并排空尾块，Rust 确认后才显示已暂停；恢复重新核对权限，以新 epoch 接续原序号，采样率变化明确中断并保留已收音频。启动时恢复具有记录身份的 `.capture` 音频，提交工作区后释放暂存文件；未完成云请求保留中断状态。系统音频双路见下节。系统权限、真实输入切换、回放与签名版退出重开见 [#616](https://github.com/semantic-craft/koe/issues/616)。
 
 ### Rust 双路时间轴与暂停协议
 
@@ -83,9 +83,15 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 `pause_microphone` 进入 `pausing`，仍接收当前代次尾块；各路停止回调生产、排空队列后发送带最终 `sequence/epoch` 的 `microphone_paused`。全部确认才进入 `paused`。`resume_microphone(clockNs)` 以已接受音频的共同末尾作为新活动时间起点，移除暂停间隔并递增 epoch。块和终止/失败事件均受代次约束，带时钟会话的 `microphone_stopped/microphone_failed` 必须携带当前 epoch；旧源迟到回调不能终止恢复后的录音。
 
-活动快照和记录时长由 Rust 输出共同末尾；分路 `durationMs` 仍表示实际样本时长。稀疏时间轴随 `capture_lanes` 经 codec 和工作区重建验证，保存重试及重开后保留。原生单路麦克风已接真实采样时刻和暂停恢复。分路回放由 Rust 输出样本计划，原生执行共同空档与末尾。Core Audio process tap、原生双路权限及输出变化仍未接通，真实验收保留在 [#620](https://github.com/semantic-craft/koe/issues/620)。
+活动快照和记录时长由 Rust 输出共同末尾；分路 `durationMs` 仍表示实际样本时长。稀疏时间轴随 `capture_lanes` 经 codec 和工作区重建验证，保存重试及重开后保留。原生单路麦克风已接真实采样时刻和暂停恢复。分路回放由 Rust 输出样本计划，原生执行共同空档与末尾。
 
-系统音频授权仍有未解决的边界。[Apple 官方样例](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps)在启动含 tap 的聚合设备时触发授权，但本轮 SDK 与样例调查未找到独立的授权完成或取消回调。`AudioDeviceStart` 成功与静音都不能当作授权完成，录屏权限也不能替代系统音频权限；系统双路入口保持未启用。
+### Mac 系统音频双路
+
+录音管理的「同时采集系统音频」开关由 Rust 持有（`set_capture_system_audio`，默认关闭，录音中拒绝切换）。开关打开后，用 Mac 麦克风开始的随心闪记和实时纪要会建立 `microphone` 和 `system` 两路；全天听记、语音输入和录音豆只录麦克风。任一路授权被拒、启动失败或运行中报错时，Rust 只记录这一路的中断原因，会话继续由其他路录制、暂停/继续和保存，记录显示「采集不完整」；所有路都失败或停止时才收尾整场。磁盘写入失败仍立即停止整场。转写目前只使用麦克风路。
+
+`NativeCapture` 为每路维护独立的有界队列、序号、fence 和暂停/停止屏障。所有请求的权限都有结果后，才确认共同时钟；被拒的路发送 failed 和 stopped，其余路正常启动。取消或退出会中止仍在进行的系统音频授权检测。`NativeSystemAudioSource` 用私有 `CATapDescription` 全局单声道 tap 排除 Koe 自身进程，挂在私有聚合设备上，时钟跟随默认输出设备并开启漂移补偿；按 tap 格式（8–96 kHz 的 Float32/Int16）转为单声道 PCM16，每块不超过 4096 帧，首样本时刻取自 `mHostTime`。默认输出设备、音频服务、设备在线状态、采样率或 tap 格式变化时，这一路明确报错并保留已收音频，不留下静默缺口。系统需为 macOS 14.2 或更高版本。
+
+系统音频授权没有公开的完成回调。[Apple 官方样例](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps)在启动含 tap 的聚合设备时触发授权。Koe 的判据（`NativeSystemAudioProbe`）只使用公开 API：私有全局 tap 加私有聚合设备，接收本进程通过默认输出 AudioUnit 播放的 -100 dBFS Barker-13 检测信号。tap 收到有限的非零样本才算已授权；tap 创建成功、`AudioDeviceStart` 成功或数字静音都不算授权，录屏权限也不能替代系统音频权限。检测信号已渲染、屏幕上没有系统权限弹窗（仅读取 `CGWindowListCopyWindowInfo` 的窗口所属进程名和层级）且 tap 持续返回零值时，才判定拒绝；弹窗期间最多等待 60 秒，弹窗关闭后得出的拒绝会换一个新 tap 再检测一次。检测信号没有渲染或 tap 没有回调时，结果为不可用而非拒绝。签名版的真实授权组合、输出切换和听感验收尚未完成，记录在 [progress/](../progress/) 中。
 
 ### 转写、整理与重试
 
@@ -113,11 +119,11 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 `ProviderConfiguration` 保存非敏感参数、`CredentialBinding` 和待删除引用。`Uninitialized` 允许一次旧版兼容读取，`Saved(reference)` 只读取指定新项，`Cleared` 阻止旧值复活。Swift 的 `NativeCredentials` 只执行创建、读取、删除和显式授权，Rust 决定绑定、错误状态与事务顺序。
 
-保存先创建不可变安全项并校验读回，再原子提交配置与引用。确定的工作区写入失败删除新项，原配置保持；落盘结果不确定时保留新项并停用云端凭据，必须关闭重开，重试读取不能解除该状态。替换与清除将旧引用写入待删除清单，删除失败会明确报告，并在重启或显式重试时继续。崩溃发生在新项创建与工作区提交之间可能留下未引用安全项；不得按全服务枚举删除，以免影响其他工作区，后续回收见 [#604](https://github.com/semantic-craft/koe/issues/604)。
+保存新密钥时先登记、后写入：平台 `prepare` 只生成新引用、不触达存储，Rust 把它写入 `pending_credentials` 并提交工作区后，才创建不可变安全项并校验读回，最后一次提交把引用设为 `Saved`、退休旧引用并移出待回收清单。因此任意时刻终止只会留下已提交的绑定或本工作区登记过的待回收引用；启动与重试清理时按精确引用删除待回收项和退休项，不枚举安全存储，其他工作区仍引用的项和 `engines-v1` 旧包不受影响。创建或读回失败时尽力删除新项并移出清单；最后提交确定失败时同样回收，落盘结果不确定时本会话保留新项并停用云端凭据，必须关闭重开，由磁盘事实决定保留或回收，重试读取不能解除该状态。替换与清除将旧引用写入待删除清单，删除失败会明确报告，并在重启或显式重试时继续；显式授权重试也覆盖待回收引用。
 
 新项使用 `com.semanticcraft.koe.provider.credentials` 服务和 UUID account。旧版 `com.semanticcraft.soundcore.credentials` / `engines-v1` 仅仅读取 `qwen`，保留旧整包和其中的其他服务值；不读取旧 JSON 文件中的秘密。新项缺失、不可读与显式清除分别显示，不自动回退旧项。
 
-仅非 Debug、无凭据来源覆盖、无显式工作区且满足 Developer ID、`com.anker.ankerRecorder` 与 Team `LQAVR62TK2` 签名要求的 macOS 宿主使用系统 Keychain。其他运行默认隔离，原生开发默认目录为 `KoeWorkspaceDevelopment`。启动读写禁止系统授权弹窗，设置中的显式重试每次最多授权一个当前项或待删除项，并恢复原有系统交互开关。真实跨签名安装升级与静默读回由 [#603](https://github.com/semantic-craft/koe/issues/603) 验收，隔离测试不替代该证据。
+仅非 Debug、无凭据来源覆盖、无显式工作区且满足 Developer ID、`com.anker.ankerRecorder` 与 Team `LQAVR62TK2` 签名要求的 macOS 宿主使用系统 Keychain。其他运行默认隔离，原生开发默认目录为 `KoeWorkspaceDevelopment`。启动读写禁止系统授权弹窗，设置中的显式重试每次最多授权一个当前项或待删除项，并恢复原有系统交互开关。真实跨签名安装升级与静默读回已在 Developer ID 签名版多次覆盖升级中确认，此后随日常使用检验（[#603](https://github.com/semantic-craft/koe/issues/603) 已关闭）；隔离测试不替代该证据。
 
 ### 问答和证据
 
