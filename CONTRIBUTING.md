@@ -33,6 +33,8 @@
 /Applications/Koe.app/Contents/MacOS/Koe --smoke-test
 ```
 
+涉及本机语音模型与 `koe.sock` 禁外网沙盒验证（`verify_offline` / `verify_offline_socket`）时，见 [docs/agents/offline-speech-verification.md](docs/agents/offline-speech-verification.md)。
+
 ## 交付
 
 - 只经分支 + PR 交付，只用 squash 合并；不直接推 `main`，不 force push，不改写已推送的历史。
@@ -62,4 +64,4 @@
 
 ## AI 编程助手
 
-仓库根目录的 [AGENTS.md](AGENTS.md)（`CLAUDE.md` 指向它）是给编程 agent 的入口，规则与本文一致。用 agent 提交的 PR 同样要写三项验收。
+仓库根目录的 [AGENTS.md](AGENTS.md) 是给编程 agent 的入口，规则与本文一致。用 agent 提交的 PR 同样要写三项验收。

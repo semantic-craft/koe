@@ -1,7 +1,7 @@
 # ADR 0002：会议纪要功能的产品决定
 
 - 状态：已采纳（用户 2026-10-22 定，「照推荐全部定，开工」）
-- 相关：方案 [handoffs/meeting-notes-brief.md](../../handoffs/meeting-notes-brief.md)（#369）；总工单 第 1 期 #370 至第 6 期 #375；[ROADMAP](../../ROADMAP.md)「会议纪要」一项；平台与数据规则 #110；Android 规格 #331
+- 相关：会议纪要方案（#369）；总工单 第 1 期 #370 至第 6 期 #375；[ROADMAP](../../ROADMAP.md)「会议纪要」一项；平台与数据规则 #110；Android 规格 #331
 
 ## 背景
 

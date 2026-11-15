@@ -249,7 +249,7 @@
         "updated_at": "2026-11-15T08:24:53Z"
       }
     ],
-    "main": "5a6ecaba266b27d6c138a930e36d8d5424d39080",
+    "main": "db7787fca0b074383addbe1279cdb831c4eedf07",
     "open_pulls": [],
     "pulls": [
       {
@@ -461,6 +461,14 @@
         "state": "closed"
       },
       {
+        "base": "4ef9dbb6714bc8807bc0696226c9229c42a04d0e",
+        "head": "cf2f2e7d706f606f280d3f83c8385c8952bb9020",
+        "merge_commit": "bb5deef431ed7f505cb139ae4e09be74eef8551d",
+        "merged": true,
+        "number": 682,
+        "state": "closed"
+      },
+      {
         "base": "3740707c5f547371d906f3f63efdccd4c0b69ff3",
         "head": "68a22424e64eac6055953f708110b2292f695411",
         "merge_commit": "dec581345c91573bab3119089ca9138bcbcc43a1",
@@ -482,6 +490,14 @@
         "merge_commit": "07d1e64995765755086a367d57e0587c78663c75",
         "merged": true,
         "number": 695,
+        "state": "closed"
+      },
+      {
+        "base": "b82b7b9076a1c37cb0514cc11d7faecf4b34fc17",
+        "head": "e6d6d27e5c9b7f98f702e91d1b59e4dadf2fc74d",
+        "merge_commit": "8bdf485e0835a62320aff7af5e752f99b95423e4",
+        "merged": true,
+        "number": 697,
         "state": "closed"
       },
       {
@@ -592,7 +608,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-15T09:40:43.628252Z",
+  "observed_at": "2026-11-15T10:47:37.653405Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1089,7 +1105,7 @@
             {
               "kind": "file",
               "note": "纯函数领口伴侣状态机、双向脉冲边沿与双击敲击闷响门控（跳过前 3 片 60 ms、裁剪尾 12 片 240 ms）。",
-              "ref": "crates/koe-engine/src/companion.rs"
+              "ref": "crates/koe-runtime/src/companion.rs"
             },
             {
               "kind": "file",
@@ -1316,9 +1332,9 @@
               "ref": 672
             },
             {
-              "kind": "file",
+              "kind": "pull",
               "note": "真实D3200音频和Studio Display实时原文、录后Qwen纪要及来源通过；其余真机场景仍未验收。",
-              "ref": "docs/acceptance/device-668-2026-11-13.md"
+              "ref": 674
             },
             {
               "kind": "note",
@@ -1379,9 +1395,9 @@
               "ref": 681
             },
             {
-              "kind": "file",
+              "kind": "pull",
               "note": "Studio Display物理采集合成语音并调用真实云端，录中更新、停止补齐与来源通过；实体异写和时间更新的内容准确性失败。非自然人语音验收，不关闭#668。",
-              "ref": "docs/acceptance/cloud-minutes-668-2026-11-13.md"
+              "ref": 682
             }
           ],
           "id": "continuous-live-minutes",
@@ -1759,9 +1775,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "来源标准、范围、回归证据与尚未验证的边界。",
-              "ref": "docs/acceptance/code-quality-2026-11-14.md"
+              "kind": "pull",
+              "note": "CQ2 收敛清理：独立 koepack 模块并移除未接入产品的旧领域归约器与蓝牙停止帧胶水；范围标准与未覆盖边界同见 PR #695 与 #697。",
+              "ref": 697
             },
             {
               "kind": "pull",
@@ -1871,9 +1887,11 @@
       677,
       680,
       681,
+      682,
       688,
       690,
       695,
+      697,
       701,
       702,
       704,
