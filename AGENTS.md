@@ -1,7 +1,5 @@
 # Koe 开发入口
 
-- **PStack 动态接力约定（跨对话最优上下文推进）**：全景方向与滚动切片在 [docs/pstack-relay.md](docs/pstack-relay.md)，决策账本在 `.scratch/pstack-relay/decisions.tsv`。下一棒提示词**禁止死板预写**，必须根据当前会话真实完成的代码、新发现的约束与剩余路线动态合成。每次完成一个可验证单元（或上下文接近最优阈值需切分窗口）时，运行 `scripts/pstack-relay advance <SLICE_ID> --evidence "<sha/receipt>" --learned "<本轮沉淀的事实与改动>" --next-goal "<基于当前现场动态合成的下一棒目标>" --next-done "<下一棒可证伪验收命令>" --watchouts "<架构红线与防呆提醒>" --copy`（若因上下文上限提前交棒则加 `--partial` 自动裂变续接切片），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块。
-
 Koe 是对标 [`metasequoiaime/msime`](https://github.com/metasequoiaime/msime)「纯 Rust 内核 + 全原生平台宿主」四层分离架构的 macOS 应用（iOS 为后续宿主），脱离飞书直接管理安克 soundcore Work（D3200）录音豆，完成 BLE 连接、录音取回、真实云端流式转写、结构化纪要与个人上下文索引。架构权威规范见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，产品身份以根 [Cargo.toml](Cargo.toml) 和 [README.md](README.md) 为准，当前路线见 [ROADMAP.md](ROADMAP.md)。
 
 开发进度在 `progress/`（`progress.json` 与生成的自包含 `index.html`），更新时按 progress-page 技能运行 `python3 progress/progress.py refresh|render|check`，生成物不手改。

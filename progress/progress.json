@@ -592,11 +592,6 @@
               "kind": "pull",
               "note": "Slice PCMHW 标记完成并记录机器证据、用户真机确认与未重跑边界。",
               "ref": 701
-            },
-            {
-              "kind": "file",
-              "note": "接力队列完成状态与终验口径。",
-              "ref": "docs/pstack-relay.md"
             }
           ],
           "id": "mode-workspaces-real-input",
@@ -1228,11 +1223,6 @@
               "kind": "file",
               "note": "重复记录先红后绿，键盘尾音、取消与旧 epoch 回归。",
               "ref": "crates/koe-runtime/src/companion_mcp_tests.rs"
-            },
-            {
-              "kind": "file",
-              "note": "PCMHW 记录真实收音部分验收、环境限制和恢复普通模式时保存 05:28 设备录音的副作用。未注入合成 PCM，隔离实例清理通过。",
-              "ref": "docs/pstack-relay.md"
             }
           ],
           "id": "responsay-external-pcm",
