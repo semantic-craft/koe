@@ -728,4 +728,3 @@ fn mode_picker_projects_bean_badge_guidance_and_one_click_switch() {
         "请先将录音豆放入充电仓长按 2 秒连接，或切换为电脑麦克风后再选模式。"
     );
 }
-
