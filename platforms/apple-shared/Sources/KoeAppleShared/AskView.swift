@@ -85,7 +85,7 @@ struct AskView: View {
         let isSelected = store.snapshot.ask.scope == scope
             && (scope != "record" || store.snapshot.ask.recordId == recordId)
         return Button {
-            store.send("set_ask_scope", ["scope": scope, "recordId": recordId.map { $0 as Any } ?? NSNull()])
+            store.send(.setAskScope(scope: scope, recordId: recordId))
         } label: {
             Text(title).lineLimit(1).font(.system(size: AppFontSizes.xs))
                 .foregroundStyle(isSelected ? AppColors.accent : AppColors.textMuted)
@@ -110,8 +110,11 @@ struct AskView: View {
     private func submit() {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, store.snapshot.ask.phase != "pending" else { return }
-        store.send("ask", ["question": question, "scope": store.snapshot.ask.scope,
-                           "recordId": store.snapshot.ask.recordId.map { $0 as Any } ?? NSNull()])
+        store.send(.ask(
+            question: question,
+            scope: store.snapshot.ask.scope,
+            recordId: store.snapshot.ask.recordId
+        ))
         if store.snapshot.error == nil && store.nativeError == nil { draft = "" }
     }
 }

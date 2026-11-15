@@ -43,11 +43,11 @@ struct QuickNoteCardInspectorView: View {
                     KoeBadge(card.status, tint: AppColors.textSecondary)
                     Spacer()
                     KoeActionButton("问本次内容", systemImage: "bubble.left.and.text.bubble.right") {
-                        store.send("set_ask_scope", ["scope": "record", "recordId": card.id])
-                        store.send("navigate", ["section": "ask"])
+                        store.send(.setAskScope(scope: "record", recordId: card.id))
+                        store.send(.navigate(section: "ask"))
                     }
                     KoeActionButton("完整校对与播放", systemImage: "slider.horizontal.below.rectangle") {
-                        store.send("select_record", ["recordId": card.id])
+                        store.send(.selectRecord(recordId: card.id))
                     }
                 }
 
@@ -57,7 +57,7 @@ struct QuickNoteCardInspectorView: View {
                             ForEach(projects) { project in
                                 Button(project.name) {
                                     projectDraft = project.name
-                                    store.send("set_record_project", ["recordId": card.id, "project": project.name])
+                                    store.send(.setRecordProject(recordId: card.id, project: project.name))
                                 }
                             }
                         } label: {
@@ -81,7 +81,7 @@ struct QuickNoteCardInspectorView: View {
                     if card.project != nil {
                         KoeActionButton("移回收件箱", systemImage: "tray.and.arrow.down") {
                             projectDraft = ""
-                            store.send("set_record_project", ["recordId": card.id])
+                            store.send(.setRecordProject(recordId: card.id))
                         }
                     }
 
@@ -137,7 +137,7 @@ struct QuickNoteCardInspectorView: View {
 
     private func segmentRow(index: Int, segment: SegmentSnapshot) -> some View {
         Button {
-            store.send("open_source", ["recordId": card.id, "segmentId": segment.id])
+            store.send(.openSource(recordId: card.id, segmentId: segment.id))
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -188,7 +188,7 @@ struct QuickNoteCardInspectorView: View {
                                 card.gist == nil && card.topics.isEmpty ? "生成理解" : "重新整理",
                                 systemImage: "sparkles"
                             ) {
-                                store.send("summarize", ["recordId": card.id])
+                                store.send(.summarize(recordId: card.id))
                             }
                         }
                     }
@@ -237,10 +237,10 @@ struct QuickNoteCardInspectorView: View {
                         if let firstSegment = card.segments.first {
                             HStack(spacing: 8) {
                                 KoeActionButton("从首段建待办", systemImage: "checklist") {
-                                    store.send("create_task", ["recordId": card.id, "segmentId": firstSegment.id])
+                                    store.send(.createTask(recordId: card.id, segmentId: firstSegment.id))
                                 }
                                 KoeActionButton("从首段存记忆", systemImage: "bookmark") {
-                                    store.send("save_memory", ["recordId": card.id, "segmentId": firstSegment.id])
+                                    store.send(.saveMemory(recordId: card.id, segmentId: firstSegment.id))
                                 }
                             }
                         }
@@ -257,7 +257,7 @@ struct QuickNoteCardInspectorView: View {
     private func assignTypedProject() {
         let trimmed = projectDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        store.send("set_record_project", ["recordId": card.id, "project": trimmed])
+        store.send(.setRecordProject(recordId: card.id, project: trimmed))
     }
 }
 
@@ -270,7 +270,7 @@ struct WorkspaceReviewItemRow: View {
             HStack(alignment: .top, spacing: 8) {
                 if item.kind == "task" && item.state == "accepted" {
                     Button {
-                        store.send("complete_task", ["itemId": item.id, "completed": !item.completed])
+                        store.send(.completeTask(itemId: item.id, completed: !item.completed))
                     } label: {
                         Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: AppFontSizes.sm))
@@ -303,10 +303,10 @@ struct WorkspaceReviewItemRow: View {
                 if item.state == "proposed" {
                     HStack(spacing: 6) {
                         KoeActionButton("采纳", isPrimary: true) {
-                            store.send("review_item", ["itemId": item.id, "decision": "accept"])
+                            store.send(.reviewItem(itemId: item.id, decision: "accept"))
                         }
                         KoeActionButton("忽略") {
-                            store.send("review_item", ["itemId": item.id, "decision": "dismiss"])
+                            store.send(.reviewItem(itemId: item.id, decision: "dismiss"))
                         }
                     }
                 }

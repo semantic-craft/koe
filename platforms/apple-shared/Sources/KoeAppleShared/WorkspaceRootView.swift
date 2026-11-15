@@ -57,7 +57,7 @@ public struct KoeWorkspaceRootView: View {
                 ZStack {
                     Color.black.opacity(0.58)
                         .ignoresSafeArea()
-                        .onTapGesture { store.send("device_close_guide") }
+                        .onTapGesture { store.send(.deviceCloseGuide) }
                     ConnectGuideSheet(store: store)
                 }
             }
@@ -66,21 +66,21 @@ public struct KoeWorkspaceRootView: View {
     }
     private var toolbar: some View {
         HStack(spacing: 12) {
-            Button { store.send("back") } label: {
+            Button { store.send(.back) } label: {
                 Image(systemName: "chevron.left").frame(width: 30, height: 34).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!store.snapshot.canGoBack).help("返回上一页")
             Text(sectionTitle).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
             Spacer()
             if let detail = store.snapshot.detail, store.snapshot.section == "detail" {
                 KoeActionButton("问这条记录", systemImage: "sparkles") {
-                    store.send("set_ask_scope", ["scope": "record", "recordId": detail.id])
-                    store.send("navigate", ["section": "ask"])
+                    store.send(.setAskScope(scope: "record", recordId: detail.id))
+                    store.send(.navigate(section: "ask"))
                 }
                 KoeActionButton("导出") { exportAction(detail.id) }
             }
             if store.snapshot.section == "records" {
                 KoeActionButton("回收站", systemImage: "trash") {
-                    store.send("navigate", ["section": "trash"])
+                    store.send(.navigate(section: "trash"))
                 }
             }
             KoeActionButton("新建记录", systemImage: "plus") { showNewNote = true }
@@ -142,10 +142,10 @@ private struct UndoTrashBar: View {
                 .lineLimit(1)
             Spacer()
             KoeActionButton("撤销", systemImage: "arrow.uturn.backward") {
-                store.send("restore_record", ["recordId": undo.recordId])
+                store.send(.restoreRecord(recordId: undo.recordId))
             }
             Button {
-                store.send("dismiss_undo_trash")
+                store.send(.dismissUndoTrash)
             } label: {
                 Text("关闭")
                     .font(.system(size: AppFontSizes.xs))
@@ -192,7 +192,7 @@ private struct NewNoteSheet: View {
     }
     private func save() {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        store.send("create_note", ["title": title, "text": text])
+        store.send(.createNote(title: title, text: text))
         if store.snapshot.error == nil && store.nativeError == nil { dismiss() }
     }
 }

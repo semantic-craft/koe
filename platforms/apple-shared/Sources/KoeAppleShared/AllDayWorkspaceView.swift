@@ -106,7 +106,7 @@ public struct AllDayWorkspaceView: View {
                         ForEach(dates, id: \.self) { date in
                             let selected = date == allDay.selectedDate
                             Button {
-                                store.send("select_all_day_date", ["date": date])
+                                store.send(.selectAllDayDate(date: date))
                             } label: {
                                 Text(date)
                                     .font(.system(size: AppFontSizes.xs, weight: selected ? .medium : .regular))

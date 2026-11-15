@@ -16,7 +16,7 @@ struct StaleMinutesBanner: View {
                 }
                 Spacer()
                 KoeActionButton("重新整理纪要", systemImage: "arrow.clockwise", isPrimary: true) {
-                    store.send("summarize", ["recordId": recordId])
+                    store.send(.summarize(recordId: recordId))
                 }.disabled(isProcessing)
             }
         }
@@ -44,7 +44,7 @@ struct TranscriptDetailView: View {
                 )
                 if detail.audioPath != nil {
                     KoeActionButton("转写并整理", isPrimary: true) {
-                        store.send("transcribe", ["recordId": detail.id])
+                        store.send(.transcribe(recordId: detail.id))
                     }.disabled(detail.isProcessing)
                 }
             } else {
@@ -60,7 +60,7 @@ struct TranscriptDetailView: View {
                 if detail.canRetranscribe {
                     VStack(alignment: .leading, spacing: 8) {
                         KoeActionButton("重新转写完整录音", systemImage: "arrow.clockwise") {
-                            store.send("transcribe", ["recordId": detail.id])
+                            store.send(.transcribe(recordId: detail.id))
                         }.disabled(detail.isProcessing)
                         Text("保留原记录和来源，在新副本中重新转写完整录音。")
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
@@ -188,7 +188,7 @@ struct TranscriptDetailView: View {
     private func segmentHeader(_ segment: SegmentSnapshot) -> some View {
         HStack(spacing: 10) {
             Button {
-                if segment.timed != false { store.send("seek", ["positionMs": segment.startMs]) }
+                if segment.timed != false { store.send(.seek(positionMs: segment.startMs)) }
             } label: {
                 Text(segment.timed == false ? "无时码" : TimeLabel.duration(segment.startMs))
                     .monospacedDigit()
@@ -216,9 +216,9 @@ struct TranscriptDetailView: View {
                         .disabled(!detail.canEditTranscript)
                     Divider()
                 }
-                Button("标记重点") { sourceCommand("add_highlight", segment.id) }
-                Button("设为待办") { sourceCommand("create_task", segment.id) }
-                Button("记住") { sourceCommand("save_memory", segment.id) }
+                Button("标记重点") { store.send(.addHighlight(recordId: detail.id, segmentId: segment.id)) }
+                Button("设为待办") { store.send(.createTask(recordId: detail.id, segmentId: segment.id)) }
+                Button("记住") { store.send(.saveMemory(recordId: detail.id, segmentId: segment.id)) }
             } label: { Image(systemName: "ellipsis").frame(width: 26, height: 26) }
                 .menuStyle(.borderlessButton).frame(width: 28)
         }
@@ -267,9 +267,9 @@ struct TranscriptDetailView: View {
                     editingSegmentId = nil
                 }
             }
-            Button("标记重点") { sourceCommand("add_highlight", segment.id) }
-            Button("设为待办") { sourceCommand("create_task", segment.id) }
-            Button("记住") { sourceCommand("save_memory", segment.id) }
+            Button("标记重点") { store.send(.addHighlight(recordId: detail.id, segmentId: segment.id)) }
+            Button("设为待办") { store.send(.createTask(recordId: detail.id, segmentId: segment.id)) }
+            Button("记住") { store.send(.saveMemory(recordId: detail.id, segmentId: segment.id)) }
         }
         .buttonStyle(.borderless).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
     }
@@ -284,7 +284,7 @@ struct TranscriptDetailView: View {
     }
 
     private func applySegmentText(_ segmentId: String, text: String) {
-        store.send("edit_segment_text", ["recordId": detail.id, "segmentId": segmentId, "text": text])
+        store.send(.editSegmentText(recordId: detail.id, segmentId: segmentId, text: text))
         if store.snapshot.error == nil && store.nativeError == nil && editingSegmentId == segmentId {
             editingSegmentId = nil
         }
@@ -295,7 +295,7 @@ struct TranscriptDetailView: View {
     }
 
     private func applySegmentSpeaker(_ segmentId: String, speaker: String) {
-        store.send("set_segment_speaker", ["recordId": detail.id, "segmentId": segmentId, "speaker": speaker])
+        store.send(.setSegmentSpeaker(recordId: detail.id, segmentId: segmentId, speaker: speaker))
         if store.snapshot.error == nil && store.nativeError == nil { namingSegmentId = nil }
     }
 
@@ -304,14 +304,10 @@ struct TranscriptDetailView: View {
     }
 
     private func mergeSpeaker(from fromSpeaker: String, to toSpeaker: String) {
-        store.send("rename_speaker", ["recordId": detail.id, "fromSpeaker": fromSpeaker, "toSpeaker": toSpeaker])
+        store.send(.renameSpeaker(recordId: detail.id, fromSpeaker: fromSpeaker, toSpeaker: toSpeaker))
         if store.snapshot.error == nil && store.nativeError == nil {
             renamingBatchSpeaker = nil
             batchSpeakerDraft = ""
         }
-    }
-
-    private func sourceCommand(_ command: String, _ segment: String) {
-        store.send(command, ["recordId": detail.id, "segmentId": segment])
     }
 }

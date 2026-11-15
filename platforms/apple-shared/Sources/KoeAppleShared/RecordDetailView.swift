@@ -71,10 +71,10 @@ struct RecordDetailView: View {
                         detail.archived ? "取消归档" : "归档保护",
                         systemImage: detail.archived ? "lock.open" : "lock"
                     ) {
-                        store.send("set_record_archived", ["recordId": detail.id, "archived": !detail.archived])
+                        store.send(.setRecordArchived(recordId: detail.id, archived: !detail.archived))
                     }
                     KoeActionButton("移到回收站", systemImage: "trash") {
-                        store.send("trash_record", ["recordId": detail.id])
+                        store.send(.trashRecord(recordId: detail.id))
                     }
                     .disabled(detail.archived || detail.isProcessing)
                     .help(detail.archived ? "已开启归档保护，取消归档后可移入回收站" : "")
@@ -102,7 +102,7 @@ struct RecordDetailView: View {
         if detail.summary.isEmpty {
             EmptyState(icon: "text.alignleft", title: "纪要还没有生成", detail: "原始内容已经保留。整理后，这里会显示结论和对应的原话。")
             KoeActionButton("整理纪要", systemImage: "sparkles", isPrimary: true) {
-                store.send("summarize", ["recordId": detail.id])
+                store.send(.summarize(recordId: detail.id))
             }.disabled(detail.segments.isEmpty || detail.isProcessing)
         } else {
             if detail.minutesStale {
@@ -141,12 +141,12 @@ struct RecordDetailView: View {
                         Text(item.text).font(.system(size: AppFontSizes.xs)).lineSpacing(4).strikethrough(item.completed)
                         if item.state == "proposed" {
                             HStack(spacing: 14) {
-                                Button("确认待办") { store.send("review_item", ["itemId": item.id, "decision": "accept"]) }
-                                Button("忽略") { store.send("review_item", ["itemId": item.id, "decision": "dismiss"]) }
+                                Button("确认待办") { store.send(.reviewItem(itemId: item.id, decision: "accept")) }
+                                Button("忽略") { store.send(.reviewItem(itemId: item.id, decision: "dismiss")) }
                             }
                         } else {
                             Button(item.completed ? "恢复为未完成" : "标为完成") {
-                                store.send("complete_task", ["itemId": item.id, "completed": !item.completed])
+                                store.send(.completeTask(itemId: item.id, completed: !item.completed))
                             }
                         }
                     }.font(.system(size: AppFontSizes.xs)).buttonStyle(.borderless)
@@ -159,7 +159,7 @@ struct RecordDetailView: View {
                     VStack(alignment: .leading, spacing: 9) {
                         Text(item.text).font(.system(size: AppFontSizes.xs)).lineSpacing(4)
                         Button(item.state == "proposed" ? "记住这条" : "移除") {
-                            store.send("review_item", ["itemId": item.id, "decision": item.state == "proposed" ? "accept" : "dismiss"])
+                            store.send(.reviewItem(itemId: item.id, decision: item.state == "proposed" ? "accept" : "dismiss"))
                         }.font(.system(size: AppFontSizes.xs)).buttonStyle(.borderless)
                     }
                 }
@@ -167,7 +167,7 @@ struct RecordDetailView: View {
         }
     }
     private func rename(_ id: String) {
-        store.send("rename_record", ["recordId": id, "title": titleDraft])
+        store.send(.renameRecord(recordId: id, title: titleDraft))
         if store.snapshot.error == nil { renaming = false }
     }
 }

@@ -31,7 +31,7 @@ extension CaptureMode {
 
 extension HostSessionStore {
     public func startCapture(_ mode: CaptureMode, stayOnPage: Bool = false) {
-        send("start_capture_mode", ["mode": mode.rawValue, "stayOnPage": stayOnPage])
+        send(.startCaptureMode(mode: mode, stayOnPage: stayOnPage))
         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
     }
 
@@ -39,7 +39,7 @@ extension HostSessionStore {
         if action == .resume {
             NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
         } else {
-            send("capture_action", ["action": action.rawValue])
+            send(.captureAction(action: action))
             NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
         }
     }
@@ -68,7 +68,7 @@ struct ActiveCaptureBar: View {
             if (capture.mode == .meeting || capture.mode == .allDay)
                 && store.snapshot.section != "live_minutes" {
                 KoeActionButton("查看实时纪要", systemImage: "doc.text") {
-                    store.send("navigate", ["section": "live_minutes"])
+                    store.send(.navigate(section: "live_minutes"))
                 }
             }
             ForEach(capture.actions, id: \.self) { action in

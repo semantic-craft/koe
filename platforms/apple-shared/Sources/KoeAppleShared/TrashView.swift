@@ -51,7 +51,7 @@ struct TrashView: View {
             presenting: purgeTarget
         ) { target in
             Button("彻底删除", role: .destructive) {
-                store.send("purge_record", ["recordId": target.id])
+                store.send(.purgeRecord(recordId: target.id))
                 purgeTarget = nil
             }
             Button("取消", role: .cancel) {
@@ -66,7 +66,7 @@ struct TrashView: View {
             titleVisibility: .visible
         ) {
             Button("清空回收站", role: .destructive) {
-                store.send("empty_trash")
+                store.send(.emptyTrash)
             }
             Button("取消", role: .cancel) {}
         } message: {
@@ -105,7 +105,7 @@ struct TrashView: View {
             Spacer(minLength: 12)
             HStack(spacing: 8) {
                 KoeActionButton("恢复", systemImage: "arrow.uturn.backward") {
-                    store.send("restore_record", ["recordId": item.id])
+                    store.send(.restoreRecord(recordId: item.id))
                 }
                 KoeActionButton("彻底删除") {
                     purgeTarget = item

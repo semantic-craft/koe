@@ -34,7 +34,7 @@ public struct CaptureView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 8) {
                             Text("当前录音音源").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-                            Button { store.send("select_capture_source", ["source": "auto"]) } label: {
+                            Button { store.send(.selectCaptureSource(source: "auto")) } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: isAuto ? "checkmark.circle.fill" : "sparkles")
                                     Text("自动优先")
@@ -79,7 +79,7 @@ public struct CaptureView: View {
     private var systemAudioToggle: some View {
         let on = capture.includeSystemAudio
         return HStack(spacing: 8) {
-            Button { store.send("set_capture_system_audio", ["enabled": !on]) } label: {
+            Button { store.send(.setCaptureSystemAudio(enabled: !on)) } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "speaker.wave.2").foregroundStyle(on ? AppColors.accent : AppColors.textSecondary)
                     Text("同时采集系统音频").font(.system(size: AppFontSizes.sm, weight: .medium))
@@ -102,7 +102,7 @@ public struct CaptureView: View {
     private var beanSourceCard: some View {
         let selected = capture.selectedSource == "bean"
         return HStack(spacing: 12) {
-            Button { store.send("select_capture_source", ["source": "bean"]) } label: {
+            Button { store.send(.selectCaptureSource(source: "bean")) } label: {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
                         Image(systemName: "waveform.badge.mic").foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
@@ -130,7 +130,7 @@ public struct CaptureView: View {
             .disabled(isRecordingLocked)
             if !device.connected {
                 KoeActionButton("连接", systemImage: "antenna.radiowaves.left.and.right") {
-                    store.send("device_open_guide")
+                    store.send(.deviceOpenGuide)
                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
                 }.disabled(device.busy || isRecordingLocked)
             }
@@ -149,7 +149,7 @@ public struct CaptureView: View {
         case "built_in": "laptopcomputer"
         default: "mic"
         }
-        return Button { store.send("select_capture_source", ["source": input.sourceKey]) } label: {
+        return Button { store.send(.selectCaptureSource(source: input.sourceKey)) } label: {
             HStack(spacing: 10) {
                 Image(systemName: iconName).foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
                 Text(input.name).font(.system(size: AppFontSizes.sm, weight: .medium))
@@ -169,7 +169,7 @@ public struct CaptureView: View {
 
     private var fallbackSystemDefaultCard: some View {
         let selected = capture.selectedSource == "system_default"
-        return Button { store.send("select_capture_source", ["source": "system_default"]) } label: {
+        return Button { store.send(.selectCaptureSource(source: "system_default")) } label: {
             HStack(spacing: 10) {
                 Image(systemName: "mic").foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
                 Text("系统默认麦克风").font(.system(size: AppFontSizes.sm, weight: .medium))
@@ -196,7 +196,7 @@ public struct CaptureView: View {
                             .foregroundStyle(AppColors.textMuted)
                         Spacer()
                         KoeActionButton("取回") {
-                            store.send("device_download", ["fileId": file.id])
+                            store.send(.deviceDownload(fileId: file.id))
                             NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                         }.disabled(device.busy)
                     }

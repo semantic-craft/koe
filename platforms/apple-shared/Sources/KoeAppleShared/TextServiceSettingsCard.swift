@@ -33,8 +33,8 @@ struct TextServiceSettingsCard: View {
                     KoeActionButton("保存服务配置", isPrimary: true) { configure() }
                 }
                 HStack {
-                    KoeActionButton("清除密钥") { apiKey = ""; store.send("clear_provider_credential") }
-                    KoeActionButton("重试读取安全配置") { store.send("retry_provider_credentials", ["authorize": true]) }
+                    KoeActionButton("清除密钥") { apiKey = ""; store.send(.clearProviderCredential) }
+                    KoeActionButton("重试读取安全配置") { store.send(.retryProviderCredentials(authorize: true)) }
                 }
                 if let message = credentialMessage {
                     Text(message).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
@@ -59,13 +59,13 @@ struct TextServiceSettingsCard: View {
     }
 
     private func configure() {
-        var fields: [String: Any] = [
-            "model": model,
-            "chatEndpoint": chatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-            "asrEndpoint": asrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        ]
-        if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["apiKey"] = apiKey }
-        store.send("configure_provider", fields)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.send(.configureProvider(
+            apiKey: trimmedKey.isEmpty ? nil : apiKey,
+            model: model,
+            asrEndpoint: asrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+            chatEndpoint: chatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
         apiKey = ""
     }
 }

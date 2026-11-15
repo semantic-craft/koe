@@ -188,7 +188,7 @@ public struct QuickNoteWorkspaceView: View {
                 ForEach(visibleCards) { card in
                     let selected = activeCard?.id == card.id
                     Button {
-                        store.send("select_quick_note_record", ["recordId": card.id])
+                        store.send(.selectQuickNoteRecord(recordId: card.id))
                     } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
@@ -250,11 +250,11 @@ public struct QuickNoteWorkspaceView: View {
     private func saveQuickTextNote() {
         let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        store.send("create_note", [
-            "title": draftTitle,
-            "text": trimmed,
-            "stayOnPage": true
-        ])
+        store.send(.createNote(
+            title: draftTitle,
+            text: trimmed,
+            stayOnPage: true
+        ))
         guard store.snapshot.error == nil && store.nativeError == nil else { return }
         draftTitle = ""
         draftText = ""

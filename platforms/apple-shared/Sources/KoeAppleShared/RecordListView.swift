@@ -133,7 +133,7 @@ struct RecordRow: View {
 
     var body: some View {
         Button {
-            store.send("select_record", ["recordId": record.id])
+            store.send(.selectRecord(recordId: record.id))
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: record.durationMs > 0 ? "waveform" : "doc.text")
@@ -175,10 +175,10 @@ struct RecordRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(record.archived ? "取消归档保护" : "归档保护") {
-                store.send("set_record_archived", ["recordId": record.id, "archived": !record.archived])
+                store.send(.setRecordArchived(recordId: record.id, archived: !record.archived))
             }
             Button("移到回收站") {
-                store.send("trash_record", ["recordId": record.id])
+                store.send(.trashRecord(recordId: record.id))
             }
             .disabled(record.archived || record.status == "转写中" || record.status == "整理中")
         }

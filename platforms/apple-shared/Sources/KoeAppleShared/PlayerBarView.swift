@@ -5,7 +5,7 @@ public struct PlayerBarView: View {
     public init(store: HostSessionStore) { self.store = store }
     public var body: some View {
         HStack(spacing: 16) {
-            Button { store.send("playback", ["isPlaying": !store.snapshot.playback.isPlaying]) } label: {
+            Button { store.send(.playback(isPlaying: !store.snapshot.playback.isPlaying)) } label: {
                 Image(systemName: store.snapshot.playback.isPlaying ? "pause.fill" : "play.fill")
                     .foregroundStyle(AppColors.accent).frame(width: 34, height: 34).contentShape(Rectangle())
             }.buttonStyle(.plain).help(store.snapshot.playback.isPlaying ? "暂停" : "播放")
@@ -14,7 +14,7 @@ public struct PlayerBarView: View {
             if store.snapshot.playback.lanes.count > 1 {
                 Picker("音源", selection: Binding(
                     get: { store.snapshot.playback.lane ?? "" },
-                    set: { store.send("select_playback_lane", ["lane": $0]) }
+                    set: { store.send(.selectPlaybackLane(lane: $0)) }
                 )) {
                     ForEach(store.snapshot.playback.lanes) { lane in
                         Text(lane.label).tag(lane.id).disabled(!lane.available)
@@ -25,7 +25,7 @@ public struct PlayerBarView: View {
                 .font(.system(size: AppFontSizes.xs)).monospacedDigit().foregroundStyle(AppColors.textMuted)
             Slider(value: Binding(
                 get: { Double(store.snapshot.playback.positionMs) },
-                set: { store.send("seek", ["positionMs": UInt64($0)]) }
+                set: { store.send(.seek(positionMs: UInt64($0))) }
             ), in: 0...Double(max(store.snapshot.detail?.durationMs ?? 0, 1)))
                 .accessibilityLabel("播放位置")
             Text(TimeLabel.duration(store.snapshot.detail?.durationMs ?? 0))

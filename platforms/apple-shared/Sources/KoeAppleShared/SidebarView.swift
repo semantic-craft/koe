@@ -78,7 +78,7 @@ public struct SidebarView: View {
     private func navigationRow(_ id: String, title: String, icon: String, count: Int? = nil) -> some View {
         let selected = isSelected(id)
         return Button {
-            store.send("navigate", ["section": id])
+            store.send(.navigate(section: id))
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon).frame(width: 18)
@@ -105,7 +105,7 @@ public struct SidebarView: View {
         let selected = isSelected(id)
         let active = isModeSessionActive(id)
         return Button {
-            store.send("navigate", ["section": id])
+            store.send(.navigate(section: id))
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: icon).frame(width: 16)

@@ -97,7 +97,7 @@ struct LiveMinutesSplitBody: View {
     private func transcriptSegmentRow(index: Int, segment: SegmentSnapshot) -> some View {
         Button {
             if let recordId = lm.selectedRecordId {
-                store.send("open_source", ["recordId": recordId, "segmentId": segment.id])
+                store.send(.openSource(recordId: recordId, segmentId: segment.id))
             }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -159,7 +159,7 @@ struct LiveMinutesSplitBody: View {
                             .foregroundStyle(AppColors.textMuted)
                         Spacer()
                         KoeActionButton("打开设置", systemImage: "gearshape") {
-                            store.send("navigate", ["section": "settings"])
+                            store.send(.navigate(section: "settings"))
                         }
                     }
                 }

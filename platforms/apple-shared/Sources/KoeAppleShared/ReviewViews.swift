@@ -37,7 +37,7 @@ struct TaskRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if item.state == "accepted" {
-                Button { store.send("complete_task", ["itemId": item.id, "completed": !item.completed]) } label: {
+                Button { store.send(.completeTask(itemId: item.id, completed: !item.completed)) } label: {
                     Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(item.completed ? AppColors.success : AppColors.textMuted)
                         .frame(width: 28, height: 28).contentShape(Rectangle())
@@ -67,7 +67,7 @@ struct TaskRow: View {
                 ItemEditor(store: store, id: item.id, initialText: item.text, initialDue: item.due, isTask: true)
             }
     }
-    private func review(_ decision: String) { store.send("review_item", ["itemId": item.id, "decision": decision]) }
+    private func review(_ decision: String) { store.send(.reviewItem(itemId: item.id, decision: decision)) }
 }
 
 struct MemoryView: View {
@@ -124,7 +124,7 @@ struct MemoryRow: View {
                 ItemEditor(store: store, id: item.id, initialText: item.text, initialDue: nil, isTask: false)
             }
     }
-    private func review(_ decision: String) { store.send("review_item", ["itemId": item.id, "decision": decision]) }
+    private func review(_ decision: String) { store.send(.reviewItem(itemId: item.id, decision: decision)) }
 }
 
 public struct ItemEditor: View {
@@ -170,7 +170,7 @@ public struct ItemEditor: View {
         .preferredColorScheme(.light)
     }
     private func save() {
-        store.send("edit_item", ["itemId": id, "text": text, "due": due.isEmpty ? NSNull() : due as Any])
+        store.send(.editItem(itemId: id, text: text, due: due.isEmpty ? nil : due))
         if store.snapshot.error == nil && store.nativeError == nil { dismiss() }
     }
 }

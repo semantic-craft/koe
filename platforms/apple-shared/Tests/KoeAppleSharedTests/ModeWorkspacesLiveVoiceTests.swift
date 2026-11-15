@@ -66,7 +66,7 @@ struct ModeWorkspacesLiveVoiceTests {
         )
         #expect(exportReq.suggestedFilename == "架构-周会.md")
         let exportURL = directory.appendingPathComponent(exportReq.suggestedFilename)
-        store.send("export_workspace_markdown", exportReq.commandPayload(path: exportURL.path))
+        store.send(exportReq.command(path: exportURL.path))
         #expect(store.snapshot.error == nil)
         #expect(FileManager.default.fileExists(atPath: exportURL.path))
 

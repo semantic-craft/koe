@@ -65,15 +65,15 @@ struct TodayView: View {
                     Spacer()
                     if picker?.canSwitchToBean == true {
                         KoeActionButton("切换为录音豆", systemImage: "wave.3.right") {
-                            store.send("select_capture_source", ["source": "bean"])
+                            store.send(.selectCaptureSource(source: "bean"))
                         }
                     } else if picker?.canConnectBean == true {
                         KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right") {
-                            store.send("device_open_guide")
+                            store.send(.deviceOpenGuide)
                         }
                     }
                     KoeActionButton("设置音源", systemImage: "slider.horizontal.3") {
-                        store.send("navigate", ["section": "capture"])
+                        store.send(.navigate(section: "capture"))
                     }
                 }
                 Text(guidanceText)
@@ -91,13 +91,13 @@ struct TodayView: View {
                     "浏览所有记录 (\(liveRecordCount))",
                     systemImage: "tray.full"
                 ) {
-                    store.send("navigate", ["section": "records"])
+                    store.send(.navigate(section: "records"))
                 }
                 KoeActionButton(
                     "待确认行动 (\(pendingActionCount))",
                     systemImage: "checklist"
                 ) {
-                    store.send("navigate", ["section": "tasks"])
+                    store.send(.navigate(section: "tasks"))
                 }
                 Spacer(minLength: 12)
                 Text("进入左侧工作区仅查看内容，不会自动开始录音。")
@@ -163,7 +163,7 @@ private struct ModePickerCardView: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     KoeActionButton("进入工作区", systemImage: "arrow.right", isPrimary: card.isSessionActive) {
-                        store.send("navigate", ["section": card.id])
+                        store.send(.navigate(section: card.id))
                     }
                 }
             }
