@@ -30,7 +30,6 @@ python3 scripts/test_ci.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
 python3 progress/progress.py check
-./scripts/pstack-relay selftest
 
 note "compile & clippy: rust workspace"
 cargo check --workspace --all-targets --offline --quiet

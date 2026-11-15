@@ -17,7 +17,6 @@
 <article id="mode-workspaces-real-input"><h3>真实识别与光标上屏</h3><span class="badge">done</span><p>Koe 2.0.0（9）与 Responsay 1.27.1（203）及后续安装的 Responsay 1.28.0（204）已完成闭环验收。正式菜单成功弹出录音浮窗，真实录音豆声学收音经 Koe 和千问实时服务取得测试句终稿；2026-11-14 16:12 与 16:23 系统日志记录 Responsay[9949] 真实听写会话与 Spotlight 写入，用户在 Koe 2.0.0（9）与 Responsay 1.28.0（204）真机确认原光标插入（originalCursor）与D3200 实体双击启停（physicalDoubleTap）均已通过，semantic-craft/responsay-macos#810 已关闭，Slice PCMHW 已于 PR #701 结案。物理蓝牙断连恢复与三种快捷键录制器本轮未单独再作机器回放。</p><ul>
 <li>note https://github.com/semantic-craft/responsay-macos/issues/810: 机器实测与 2026-11-14 用户真机确认（originalCursor 与 physicalDoubleTap）均已闭环，#810 已关闭。</li>
 <li><a href="https://github.com/semantic-craft/koe/pull/701">pull 701: Slice PCMHW 标记完成并记录机器证据、用户真机确认与未重跑边界。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: 接力队列完成状态与终验口径。</a></li>
 </ul><p>Next: Koe 与 Responsay PCMHW/#810 已结案；物理 Fn / 右 Option 系统按键继续按 Responsay #822 追踪。</p></article>
 </section>
 <section id="rust-product"><h2>当前产品实现</h2>
@@ -149,7 +148,6 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/675">issue 675: 外部音频协议实现范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/local-text-bridge.md">file docs/local-text-bridge.md: external_pcm_v1 能力、采集身份与停止确认契约。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/companion_mcp_tests.rs">file crates/koe-runtime/src/companion_mcp_tests.rs: 重复记录先红后绿，键盘尾音、取消与旧 epoch 回归。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: PCMHW 记录真实收音部分验收、环境限制和恢复普通模式时保存 05:28 设备录音的副作用。未注入合成 PCM，隔离实例清理通过。</a></li>
 </ul><p>Next: Responsay #810 与 PCMHW 已结案；物理断连恢复与三种快捷键未重跑，Fn / 右 Option 继续 #822。</p></article>
 <article id="continuous-live-minutes"><h3>录制中的持续实时纪要</h3><span class="badge">done</span><p>Rust 独立持有转写与实时纪要请求，绑定来源快照；追加原文保留已覆盖纪要，修订使旧来源失效。停止后完成最终整理，界面统一称实时纪要。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/678">issue 678: 保留原生布局与Rust业务状态，验收全自动。</a></li>
