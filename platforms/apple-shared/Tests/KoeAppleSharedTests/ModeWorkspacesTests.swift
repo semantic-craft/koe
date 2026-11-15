@@ -193,4 +193,123 @@ struct ModeWorkspacesTests {
         #expect(decodedAllDay.spans[2].durationMs == 3_600_000)
         #expect(decodedAllDay.dailyReview?.overview == "完成上午架构评审")
     }
+
+    @Test("QuickNote filter selection, active card resolution, and customizable Markdown export preserve raw transcript first")
+    @MainActor
+    func quickNoteFilteringSelectionAndWorkspaceExport() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        store.send("create_note", ["title": "产品/路线图", "text": "第一阶段聚焦四模式工作区。"])
+        let roadmapId = try #require(store.snapshot.detail?.id)
+        store.send("create_note", ["title": "买咖啡豆", "text": "下班顺路买浅烘咖啡豆。"])
+        let inboxId = try #require(store.snapshot.detail?.id)
+
+        store.send("set_record_project", ["recordId": roadmapId, "project": "2026 规划"])
+        store.send("select_quick_note_record", ["recordId": inboxId])
+
+        let quickNote = try #require(store.snapshot.workspaces?.quickNote)
+        #expect(quickNote.filteredCards(for: .all).count == 2)
+        #expect(quickNote.filteredCards(for: .inbox).map(\.id) == [inboxId])
+        #expect(quickNote.filteredCards(for: .project("2026 规划")).map(\.id) == [roadmapId])
+        #expect(quickNote.resolvedSelectedCard(for: .all)?.id == inboxId)
+        #expect(quickNote.resolvedSelectedCard(for: .project("2026 规划"))?.id == roadmapId)
+
+        let roadmapCard = try #require(quickNote.cards.first(where: { $0.id == roadmapId }))
+        let request = WorkspaceExportRequest.forQuickNote(
+            roadmapCard,
+            includeAnalysis: false,
+            includeSources: false
+        )
+        #expect(request.suggestedFilename == "产品-路线图.md")
+        let exportURL = directory.appendingPathComponent(request.suggestedFilename)
+        store.send("export_workspace_markdown", request.commandPayload(path: exportURL.path))
+        #expect(store.snapshot.error == nil)
+        let exported = try String(contentsOf: exportURL, encoding: .utf8)
+        #expect(exported.contains("# 产品/路线图"))
+        #expect(exported.contains("## 原文"))
+        #expect(exported.contains("第一阶段聚焦四模式工作区。"))
+        #expect(!exported.contains("## AI 整理"))
+        #expect(!exported.contains("## 来源引用"))
+
+        _ = QuickNoteWorkspaceView(store: store).body
+    }
+
+    @Test("AllDay span presentation labels, clock-safe resume notification, and day Markdown export stay truthful")
+    @MainActor
+    func allDaySpanLabelsResumeSafetyAndDayExport() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let spansJSON = """
+        [
+          {
+            "kind": "event",
+            "id": "ev-cross",
+            "title": "跨切片方案同步",
+            "startEpochSec": 1763172000,
+            "endEpochSec": 1763172480,
+            "durationMs": 480000,
+            "recordIds": ["s-1", "s-2"],
+            "primaryRecordId": "s-1",
+            "firstSegment": null,
+            "preview": "连续两段切片合并展示",
+            "summaryPoints": [],
+            "speakers": ["Bob"],
+            "segmentCount": 6
+          },
+          {
+            "kind": "pause",
+            "id": "pause-1",
+            "recordId": "s-1",
+            "startEpochSec": 1763172200,
+            "endEpochSec": 1763172260,
+            "durationMs": 60000
+          },
+          {
+            "kind": "unrecorded_gap",
+            "id": "gap-1",
+            "startEpochSec": 1763172480,
+            "endEpochSec": 1763176080,
+            "durationMs": 3600000
+          }
+        ]
+        """
+        let spans = try JSONDecoder().decode([AllDaySpanSnapshot].self, from: Data(spansJSON.utf8))
+        #expect(spans[0].sliceBadgeText == "跨 2 个切片")
+        #expect(spans[1].statusSummaryLabel.hasPrefix("已暂停录音"))
+        #expect(spans[2].statusSummaryLabel.hasPrefix("未录音空档"))
+        let middleDot = String(UnicodeScalar(0x00B7)!)
+        #expect(spans.allSatisfy { !$0.statusSummaryLabel.contains(middleDot) })
+
+        var resumePosted = false
+        let token = NotificationCenter.default.addObserver(
+            forName: Notification.Name("KoeResumeMicrophone"),
+            object: nil,
+            queue: nil
+        ) { _ in
+            resumePosted = true
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        store.performCaptureAction(.resume)
+        #expect(resumePosted)
+
+        let dayRequest = WorkspaceExportRequest.forAllDay(
+            date: "2026-11-15",
+            includeAnalysis: true,
+            includeSources: true
+        )
+        #expect(dayRequest.suggestedFilename == "全天听记-2026-11-15.md")
+        let dayURL = directory.appendingPathComponent(dayRequest.suggestedFilename)
+        store.send("export_workspace_markdown", dayRequest.commandPayload(path: dayURL.path))
+        #expect(store.snapshot.error == nil)
+        let dayMarkdown = try String(contentsOf: dayURL, encoding: .utf8)
+        #expect(dayMarkdown.contains("2026-11-15"))
+
+        _ = AllDayWorkspaceView(store: store).body
+    }
 }

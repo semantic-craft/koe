@@ -38,6 +38,30 @@ public struct AllDaySpanSnapshot: Codable, Equatable, Identifiable, Sendable {
         speakers = try c.decodeIfPresent([String].self, forKey: .speakers) ?? []
         segmentCount = try c.decodeIfPresent(Int.self, forKey: .segmentCount) ?? 0
     }
+
+    public var timeRangeLabel: String {
+        let start = Date(timeIntervalSince1970: Double(startEpochSec))
+            .formatted(.dateTime.hour().minute())
+        let end = Date(timeIntervalSince1970: Double(endEpochSec))
+            .formatted(.dateTime.hour().minute())
+        return "\(start) - \(end)"
+    }
+
+    public var sliceBadgeText: String? {
+        recordIds.count > 1 ? "跨 \(recordIds.count) 个切片" : nil
+    }
+
+    public var statusSummaryLabel: String {
+        let duration = TimeLabel.duration(durationMs)
+        switch kind {
+        case "pause":
+            return "已暂停录音  \(timeRangeLabel)  时长 \(duration)"
+        case "unrecorded_gap":
+            return "未录音空档  \(timeRangeLabel)  时长 \(duration)"
+        default:
+            return "\(timeRangeLabel)  时长 \(duration)"
+        }
+    }
 }
 
 public struct AllDayDecisionSnapshot: Codable, Equatable, Identifiable, Sendable {

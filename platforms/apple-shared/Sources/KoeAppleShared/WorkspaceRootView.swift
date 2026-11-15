@@ -112,8 +112,8 @@ public struct KoeWorkspaceRootView: View {
         switch store.snapshot.section {
         case "voice_input": VoiceInputView(store: store)
         case "capture": CaptureView(store: store)
-        case "notes": NotesView(store: store)
-        case "all_day": AllDayPlaceholderView(store: store)
+        case "notes": QuickNoteWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)
+        case "all_day": AllDayWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)
         case "records": RecordListView(store: store)
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)

@@ -31,4 +31,16 @@ final class NativeFileActions {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         store.send("export_record", ["recordId": recordId, "path": url.path])
     }
+
+    func exportWorkspace(_ request: WorkspaceExportRequest) {
+        guard let store else { return }
+        let panel = NSSavePanel()
+        panel.title = request.date != nil ? "导出当日记录" : "导出闪记"
+        panel.nameFieldStringValue = request.suggestedFilename
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        store.send("export_workspace_markdown", request.commandPayload(path: url.path))
+    }
 }

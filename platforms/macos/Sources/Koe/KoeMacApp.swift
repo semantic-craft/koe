@@ -296,7 +296,8 @@ struct KoeNativeSceneApp: App {
             KoeWorkspaceRootView(
                 store: appDelegate.ensureSessionStore(),
                 onImport: { appDelegate.files.importFile() },
-                onExport: { appDelegate.files.exportRecord($0) }
+                onExport: { appDelegate.files.exportRecord($0) },
+                onExportWorkspace: { appDelegate.files.exportWorkspace($0) }
             )
             .onAppear {
                 KoeWindowPresenter.presentPrimaryWorkspaceWindow()

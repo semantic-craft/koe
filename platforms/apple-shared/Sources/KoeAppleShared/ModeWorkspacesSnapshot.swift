@@ -20,6 +20,56 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         self.includeAnalysis = includeAnalysis
         self.includeSources = includeSources
     }
+
+    public static func forQuickNote(
+        _ card: QuickNoteCardSnapshot,
+        includeAnalysis: Bool = true,
+        includeSources: Bool = true
+    ) -> WorkspaceExportRequest {
+        let baseTitle = card.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = (baseTitle.isEmpty ? "随心闪记" : baseTitle)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        return WorkspaceExportRequest(
+            recordId: card.id,
+            date: nil,
+            suggestedFilename: "\(sanitized).md",
+            includeAnalysis: includeAnalysis,
+            includeSources: includeSources
+        )
+    }
+
+    public static func forAllDay(
+        date: String,
+        includeAnalysis: Bool = true,
+        includeSources: Bool = true
+    ) -> WorkspaceExportRequest {
+        let safeDate = date.replacingOccurrences(of: "/", with: "-")
+        return WorkspaceExportRequest(
+            recordId: nil,
+            date: date,
+            suggestedFilename: "全天听记-\(safeDate).md",
+            includeAnalysis: includeAnalysis,
+            includeSources: includeSources
+        )
+    }
+
+    public func commandPayload(path: String) -> [String: Any] {
+        var payload: [String: Any] = [
+            "path": path,
+            "includeAnalysis": includeAnalysis,
+            "includeSources": includeSources
+        ]
+        if let recordId { payload["recordId"] = recordId }
+        if let date { payload["date"] = date }
+        return payload
+    }
+}
+
+public enum QuickNoteFilterSelection: Equatable, Sendable {
+    case all
+    case inbox
+    case project(String)
 }
 
 public enum RecordFilterCategory: String, CaseIterable, Identifiable, Sendable {
@@ -238,6 +288,25 @@ public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
         mcpReadNote: "外部 Agent 可通过只读 MCP 检索已保存闪记原文与已采纳行动，不会自动改写记录。",
         cards: []
     )
+
+    public func filteredCards(for filter: QuickNoteFilterSelection) -> [QuickNoteCardSnapshot] {
+        switch filter {
+        case .all:
+            return cards
+        case .inbox:
+            return cards.filter(\.isInbox)
+        case .project(let name):
+            return cards.filter { $0.project == name }
+        }
+    }
+
+    public func resolvedSelectedCard(for filter: QuickNoteFilterSelection) -> QuickNoteCardSnapshot? {
+        let visible = filteredCards(for: filter)
+        if let selectedRecordId, let matched = visible.first(where: { $0.id == selectedRecordId }) {
+            return matched
+        }
+        return visible.first
+    }
 }
 
 extension HostSessionStore {
