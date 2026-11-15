@@ -35,7 +35,7 @@ final class NativeFileActions {
     func exportWorkspace(_ request: WorkspaceExportRequest) {
         guard let store else { return }
         let panel = NSSavePanel()
-        panel.title = request.date != nil ? "导出当日记录" : "导出闪记"
+        panel.title = request.date != nil ? "导出当日记录" : "导出记录 Markdown"
         panel.nameFieldStringValue = request.suggestedFilename
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }

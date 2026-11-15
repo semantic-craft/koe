@@ -54,6 +54,25 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         )
     }
 
+    public static func forMeeting(
+        recordId: String,
+        title: String?,
+        includeAnalysis: Bool = true,
+        includeSources: Bool = true
+    ) -> WorkspaceExportRequest {
+        let raw = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = (raw.isEmpty ? "实时纪要" : raw)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        return WorkspaceExportRequest(
+            recordId: recordId,
+            date: nil,
+            suggestedFilename: "\(sanitized).md",
+            includeAnalysis: includeAnalysis,
+            includeSources: includeSources
+        )
+    }
+
     public func commandPayload(path: String) -> [String: Any] {
         var payload: [String: Any] = [
             "path": path,
@@ -325,5 +344,22 @@ extension HostSessionStore {
             ])
         }
         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+    }
+
+    public func performVoiceInputStepAction(_ command: String) {
+        switch command {
+        case "enable_voice_input", "set_voice_input_session":
+            send("set_voice_input_session", [
+                "enabled": true,
+                "openResponsay": false
+            ])
+            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+        case "open_responsay_app":
+            send("open_responsay_app")
+        case "device_open_guide":
+            send("device_open_guide")
+        default:
+            break
+        }
     }
 }

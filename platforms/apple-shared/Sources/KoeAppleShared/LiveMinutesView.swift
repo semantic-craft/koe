@@ -1,189 +1,259 @@
 import SwiftUI
 
-struct LiveMinutesView: View {
-    let store: HostSessionStore
+public struct LiveMinutesView: View {
+    public let store: HostSessionStore
+    private let onExportWorkspace: (WorkspaceExportRequest) -> Void
 
-    private var minutes: LiveMinutesSnapshot? { store.snapshot.liveMinutes }
+    @State private var includeAnalysis = true
+    @State private var includeSources = true
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top) {
-                PageHeading(title: "实时纪要", subtitle: subtitle)
-                Spacer()
-                if let minutes {
-                    KoeBadge(phaseLabel(minutes.phase), tint: minutes.phase == .recording ? AppColors.danger : AppColors.textSecondary)
+    public init(
+        store: HostSessionStore,
+        onExportWorkspace: @escaping (WorkspaceExportRequest) -> Void = { _ in }
+    ) {
+        self.store = store
+        self.onExportWorkspace = onExportWorkspace
+    }
+
+    private var lm: LiveMinutesWorkspaceSnapshot {
+        LiveMinutesWorkspaceSnapshot.resolved(from: store.snapshot)
+    }
+
+    private var activeActions: [CaptureAction] {
+        guard lm.isActive else { return [] }
+        let actions = store.snapshot.activeCapture?.actions ?? []
+        return actions.isEmpty ? [.end] : actions
+    }
+
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                headerAndControlStrip
+
+                if let recordId = lm.selectedRecordId {
+                    selectedMeetingActionStrip(recordId: recordId)
+                }
+
+                if let coverage = lm.coverage {
+                    coverageBar(coverage)
+                }
+
+                if !lm.pastMeetings.isEmpty {
+                    pastMeetingsStrip
+                }
+
+                if !lm.isActive && lm.selectedRecordId == nil && lm.pastMeetings.isEmpty {
+                    KoeCard {
+                        EmptyState(
+                            icon: "waveform.path.ecg",
+                            title: "暂无进行中或往期会议",
+                            detail: "开启实时纪要后，这里会并排呈现实时转写与有原文依据的结构化纪要。"
+                        )
+                    }
+                } else {
+                    LiveMinutesSplitBody(lm: lm, store: store)
                 }
             }
-            HStack(alignment: .top, spacing: 16) {
-                panel("实时原文", icon: "waveform") { transcript }
-                panel("AI 纪要", icon: "doc.text") { summaries }
-            }
+            .padding(30)
+            .frame(maxWidth: 1180, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(22)
-        .frame(maxWidth: 1320, maxHeight: .infinity, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
         .accessibilityIdentifier("live-minutes-page")
     }
 
-    private var subtitle: String {
-        switch minutes?.scope.kind {
-        case .allDay: "全天听记会持续转写和整理，停止后补齐最后的内容。"
-        case .record, .beanStarting: "原文确认后持续整理纪要，停止录音后补齐最后的内容。"
-        case nil: "从今天开始录音，这里会显示本次采集的原文和纪要。"
-        }
-    }
-
-    private func phaseLabel(_ phase: LiveMinutesSnapshot.Phase) -> String {
-        switch phase {
-        case .starting: "正在启动"
-        case .recording: "正在录音"
-        case .paused: "已暂停"
-        case .finishing: "正在收尾"
-        case .ended: "录音已结束"
-        }
-    }
-
-    private func panel<Content: View>(_ title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Label(title, systemImage: icon)
-                .font(.system(size: AppFontSizes.md, weight: .semibold))
-                .padding(16)
-            Rectangle().fill(AppColors.border).frame(height: 1)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20, content: content)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: .infinity, alignment: .topLeading)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(AppColors.surface1, in: RoundedRectangle(cornerRadius: AppRadii.cardOuter))
-        .overlay(RoundedRectangle(cornerRadius: AppRadii.cardOuter).stroke(AppColors.border).allowsHitTesting(false))
-    }
-
-    @ViewBuilder private var transcript: some View {
-        if let minutes {
-            if minutes.parts.isEmpty {
-                hint(minutes.phase == .ended ? "本次录音没有可显示的原文。" : "等待录音原文。")
-            }
-            ForEach(minutes.parts) { part in
-                VStack(alignment: .leading, spacing: 14) {
-                    partHeader(part, showRecordLink: true)
-                    if part.segments.isEmpty && part.drafts.isEmpty {
-                        hint(minutes.phase == .ended ? "这段录音没有转写原文。" : "等待转写结果。")
-                    }
-                    ForEach(part.segments) { segment in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(spacing: 8) {
-                                Text(TimeLabel.duration(segment.startMs)).monospacedDigit()
-                                if let speaker = segment.speaker { Text(speaker) }
-                            }
-                            .font(.system(size: AppFontSizes.xs))
-                            .foregroundStyle(AppColors.textMuted)
-                            paragraph(segment.text)
-                        }
-                    }
-                    ForEach(part.drafts.indices, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 5) {
-                            KoeBadge("识别中")
-                            paragraph(part.drafts[index])
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
-                    }
+    private var headerAndControlStrip: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                PageHeading(
+                    title: "实时纪要",
+                    subtitle: "会议与深度讨论期间并排对照实时原文与有据纪要，结束后保留完整纪要与行动。"
+                )
+                HStack(spacing: 10) {
+                    KoeBadge(lm.sourceLabel, tint: AppColors.textSecondary)
+                    KoeBadge(
+                        lm.phaseBadgeLabel,
+                        tint: lm.isActive ? AppColors.success : AppColors.textSecondary
+                    )
                 }
             }
-        } else {
-            hint("还没有本次录音的原文。")
-            KoeActionButton("前往今天", systemImage: "sun.max") {
-                store.send("navigate", ["section": "today"])
-            }
-        }
-    }
-
-    @ViewBuilder private var summaries: some View {
-        if let minutes {
-            if minutes.parts.isEmpty {
-                if !minutes.configured {
-                    hint("尚未配置文字整理服务。")
-                    settingsButton
-                } else if minutes.phase == .ended {
-                    hint("本次录音没有可整理的原文。")
+            Spacer(minLength: 12)
+            HStack(spacing: 8) {
+                if !lm.isActive {
+                    KoeActionButton("开始实时纪要", systemImage: "waveform.path.ecg", isPrimary: true) {
+                        store.startCapture(.meeting, stayOnPage: true)
+                    }
+                    .disabled(!store.snapshot.capture.canStart)
                 } else {
-                    hint("等待已确认的原文，纪要会在录音中持续更新。")
-                }
-            }
-            ForEach(minutes.parts) { part in
-                VStack(alignment: .leading, spacing: 12) {
-                    partHeader(part, showRecordLink: false)
-                    if let label = analysisLabel(part.analysis) {
-                        hint(part.error.map { "\(label)：\($0)" } ?? label)
-                    }
-                    if part.minutesStale && part.analysis != .stale {
-                        hint("下方纪要基于旧原文。")
-                    }
-                    if part.analysis == .unconfigured { settingsButton }
-                    ForEach(part.summary.indices, id: \.self) { index in
-                        let section = part.summary[index]
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(section.title).font(.system(size: AppFontSizes.sm, weight: .semibold))
-                            paragraph(section.text)
-                            ForEach(section.sources) { source in
-                                SourceLink(source: source, store: store)
-                            }
+                    ForEach(activeActions, id: \.self) { action in
+                        KoeActionButton(
+                            actionLabel(action),
+                            systemImage: actionIcon(action),
+                            isPrimary: action == .end || action == .resume
+                        ) {
+                            store.performCaptureAction(action)
                         }
                     }
                 }
             }
-        } else {
-            hint("有录音原文后，这里会显示整理结果。")
         }
     }
 
-    private func analysisLabel(_ state: LiveMinutesSnapshot.Part.Analysis) -> String? {
-        switch state {
-        case .unconfigured: "尚未配置文字整理服务。"
-        case .awaitingTranscript: "等待已确认的原文。"
-        case .waiting: "等待下一轮整理。"
-        case .queued: "等待整理。"
-        case .summarizing: "正在整理纪要。"
-        case .ready: nil
-        case .stale: "下方纪要尚未包含最新原文，正在等待更新。"
-        case .failed: "处理失败"
-        case .interrupted: "处理已中断。"
-        }
-    }
+    private func selectedMeetingActionStrip(recordId: String) -> some View {
+        KoeCard {
+            HStack(spacing: 10) {
+                Text(lm.selectedTitle ?? "当前会议")
+                    .font(.system(size: AppFontSizes.md, weight: .semibold))
+                    .lineLimit(1)
 
-    private func partHeader(_ part: LiveMinutesSnapshot.Part, showRecordLink: Bool) -> some View {
-        HStack(alignment: .center) {
-            Text(part.ordinal.map { "第 \($0) 段" } ?? part.title)
-                .font(.system(size: AppFontSizes.sm, weight: .semibold))
-                .lineLimit(1)
-            if showRecordLink {
+                if lm.minutesStale {
+                    KoeBadge("原文已改，待更新", tint: AppColors.warning)
+                }
+
                 Spacer(minLength: 8)
-                KoeActionButton("查看记录", systemImage: "arrow.up.right") {
-                    store.send("select_record", ["recordId": part.recordId])
+
+                KoeActionButton(
+                    lm.liveSections.isEmpty && lm.finalSections.isEmpty ? "生成完整纪要" : "重新整理",
+                    systemImage: "sparkles"
+                ) {
+                    store.send("summarize", ["recordId": recordId])
+                }
+                .disabled(!lm.canSummarize)
+
+                KoeActionButton("问本场会议", systemImage: "bubble.left.and.text.bubble.right") {
+                    store.send("set_ask_scope", ["scope": "record", "recordId": recordId])
+                    store.send("navigate", ["section": "ask"])
+                }
+
+                KoeActionButton("完整校对与播放", systemImage: "slider.horizontal.below.rectangle") {
+                    store.send("select_record", ["recordId": recordId])
+                }
+
+                Toggle("附带 AI 整理", isOn: $includeAnalysis)
+                    .font(.system(size: AppFontSizes.xs))
+                    .toggleStyle(.checkbox)
+                Toggle("附带来源标签", isOn: $includeSources)
+                    .font(.system(size: AppFontSizes.xs))
+                    .toggleStyle(.checkbox)
+
+                KoeActionButton("导出纪要", systemImage: "square.and.arrow.up") {
+                    onExportWorkspace(
+                        WorkspaceExportRequest.forMeeting(
+                            recordId: recordId,
+                            title: lm.selectedTitle,
+                            includeAnalysis: includeAnalysis,
+                            includeSources: includeSources
+                        )
+                    )
                 }
             }
         }
     }
 
-    private var settingsButton: some View {
-        KoeActionButton("打开设置", systemImage: "gearshape") {
-            store.send("navigate", ["section": "settings"])
+    private func coverageBar(_ cov: MeetingCoverageSnapshot) -> some View {
+        HStack(spacing: 12) {
+            coverageMetricCard(
+                title: "转写覆盖",
+                primary: "\(cov.transcriptPercent)%",
+                detail: "\(TimeLabel.duration(cov.transcribedDurationMs)) / \(TimeLabel.duration(cov.audioDurationMs)) 音频已转写"
+            )
+            coverageMetricCard(
+                title: "纪要覆盖",
+                primary: "\(cov.minutesPercent)%",
+                detail: "\(cov.groundedSegments) / \(cov.totalSegments) 句原文已引用"
+            )
+            coverageMetricCard(
+                title: "结束后整理",
+                primary: cov.consolidationLabel,
+                detail: "仅引用已确认原文，不虚构未录区间"
+            )
         }
     }
 
-    private func hint(_ text: String) -> some View {
-        Text(text).font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
+    private func coverageMetricCard(title: String, primary: String, detail: String) -> some View {
+        KoeCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textMuted)
+                Text(primary)
+                    .font(.system(size: AppFontSizes.md, weight: .semibold))
+                    .foregroundStyle(AppColors.textPrimary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textSecondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+        }
     }
 
-    private func paragraph(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: AppFontSizes.sm))
-            .lineSpacing(4)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+    private var pastMeetingsStrip: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("往期会议")
+                .font(.system(size: AppFontSizes.sm, weight: .semibold))
+                .foregroundStyle(AppColors.textSecondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(lm.pastMeetings) { meeting in
+                        let selected = lm.selectedRecordId == meeting.id
+                        Button {
+                            store.send("select_live_minutes_record", ["recordId": meeting.id])
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 6) {
+                                    Text(meeting.title)
+                                        .font(.system(size: AppFontSizes.sm, weight: selected ? .semibold : .medium))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    KoeBadge(meeting.status, tint: AppColors.textSecondary)
+                                }
+                                Text("\(TimeLabel.date(meeting.createdAtEpochSec))  \(TimeLabel.duration(meeting.durationMs))")
+                                    .font(.system(size: AppFontSizes.xs))
+                                    .foregroundStyle(AppColors.textMuted)
+                                    .monospacedDigit()
+                                Text("\(meeting.segmentCount) 段原文  \(meeting.decisionCount) 项决定")
+                                    .font(.system(size: AppFontSizes.xs))
+                                    .foregroundStyle(AppColors.textMuted)
+                            }
+                            .padding(12)
+                            .frame(width: 248, alignment: .leading)
+                            .background(
+                                selected ? AppColors.accentSoft : AppColors.surface1,
+                                in: RoundedRectangle(cornerRadius: AppRadii.cardOuter)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppRadii.cardOuter)
+                                    .stroke(selected ? AppColors.accent : AppColors.border)
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func actionLabel(_ action: CaptureAction) -> String {
+        switch action {
+        case .pause: "暂停"
+        case .resume: "继续"
+        case .end: "结束会议"
+        case .retryStop: "重试停止"
+        case .endDictation: "结束语音输入"
+        case .retrySave: "重试保存"
+        case .cancel: "取消录音"
+        }
+    }
+
+    private func actionIcon(_ action: CaptureAction) -> String {
+        switch action {
+        case .pause: "pause.fill"
+        case .resume: "play.fill"
+        default: "stop.fill"
+        }
     }
 }

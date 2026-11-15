@@ -175,6 +175,49 @@ public struct LiveMinutesWorkspaceSnapshot: Codable, Equatable, Sendable {
         actionItems: [],
         pastMeetings: []
     )
+
+    public var phaseBadgeLabel: String {
+        switch phase {
+        case "starting": "正在启动"
+        case "recording": "会议记录中"
+        case "paused": "已暂停"
+        case "finishing": "正在收尾"
+        case "ended": "已结束"
+        default: "待开始"
+        }
+    }
+
+    public static func resolved(from snapshot: HostSnapshot) -> LiveMinutesWorkspaceSnapshot {
+        if let projected = snapshot.workspaces?.liveMinutes {
+            return projected
+        }
+        guard let legacy = snapshot.liveMinutes else {
+            return .empty
+        }
+        let lastPart = legacy.parts.last
+        let mergedSegments = legacy.parts.flatMap(\.segments)
+        let mergedDrafts = legacy.parts.flatMap(\.drafts)
+        let mergedSections = legacy.parts.flatMap(\.summary)
+        return LiveMinutesWorkspaceSnapshot(
+            isActive: legacy.phase != .ended,
+            phase: legacy.phase.rawValue,
+            configured: legacy.configured,
+            sourceLabel: snapshot.capture.selectedLabel,
+            activeRecordId: legacy.phase == .ended ? nil : lastPart?.recordId,
+            selectedRecordId: lastPart?.recordId,
+            selectedTitle: lastPart?.title,
+            minutesStale: legacy.parts.contains(where: \.minutesStale),
+            canSummarize: false,
+            error: legacy.parts.compactMap(\.error).first,
+            coverage: nil,
+            segments: mergedSegments,
+            drafts: mergedDrafts,
+            liveSections: mergedSections,
+            finalSections: legacy.phase == .ended ? mergedSections : [],
+            actionItems: [],
+            pastMeetings: []
+        )
+    }
 }
 
 public struct VoiceInputStepSnapshot: Codable, Equatable, Identifiable, Sendable {
@@ -218,4 +261,44 @@ public struct VoiceInputWorkspaceSnapshot: Codable, Equatable, Sendable {
         boundaryNote: "Koe 负责维护录音豆低延迟待命音频流与桥接通道；快捷键监听、语音识别与系统光标上屏由 Responsay 管理。",
         steps: []
     )
+
+    public func evaluateCursorTest(
+        text: String,
+        baselineSequence: UInt64,
+        baselineDictationText: String?
+    ) -> VoiceInputTestEvaluation {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return VoiceInputTestEvaluation(
+                state: .idle,
+                statusBadge: "待测试",
+                detail: "将光标置于下方输入框，按 Fn / 右 Option 或双击录音豆正面说话。"
+            )
+        }
+        let dictationChanged = lastDictationText != nil && lastDictationText != baselineDictationText
+        if captureActive || companionSequence > baselineSequence || dictationChanged {
+            return VoiceInputTestEvaluation(
+                state: .streamVerified,
+                statusBadge: "已观测伴侣流",
+                detail: "输入期间检测到录音豆伴侣流事件推进。"
+            )
+        }
+        return VoiceInputTestEvaluation(
+            state: .manualInputOnly,
+            statusBadge: "仅检测到手动输入",
+            detail: "输入框已有文字，但期间未观测到录音豆伴侣语音流变化；语音识别链路仍待真机说话验证。"
+        )
+    }
+}
+
+public struct VoiceInputTestEvaluation: Equatable, Sendable {
+    public enum State: String, Equatable, Sendable {
+        case idle
+        case manualInputOnly
+        case streamVerified
+    }
+
+    public let state: State
+    public let statusBadge: String
+    public let detail: String
 }

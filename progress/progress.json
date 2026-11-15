@@ -570,15 +570,40 @@
         {
           "evidence": [
             {
+              "kind": "file",
+              "note": "Runtime 解耦侧栏导航与统一 workspaces 投影。",
+              "ref": "crates/koe-runtime/src/mode_workspaces.rs"
+            },
+            {
+              "kind": "file",
+              "note": "随心闪记收件箱/项目归类、原文对照 AI 理解与自定义 Markdown 导出。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/QuickNoteWorkspaceView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "全天听记跨切片事件、暂停与未录音空档时间轴及集中复查。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/AllDayWorkspaceView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "实时纪要三项覆盖率指标、往期会议回看与响应式分栏。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "语音输入六步联动检查与伴侣流感知光标输入测试。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/VoiceInputView.swift"
+            },
+            {
               "kind": "note",
               "note": "仅证明Responsay软件交付；不证明Koe新业务页面或物理效果。",
               "ref": "https://github.com/semantic-craft/responsay-macos/pull/823"
             }
           ],
           "id": "mode-workspaces-pages",
-          "next": "按单个可验证业务切片实施。",
-          "status": "planned",
-          "summary": "项目归类、跨片段语义事件、完整实时纪要覆盖和跨App快捷键设置回执仍待实现。Responsay键家族开关软件已经独立合并并签名安装。",
+          "next": "在签名安装的 /Applications/Koe.app 上配合物理 D3200 与 Responsay 完成四工作区真机交互验收（#668）。",
+          "status": "unverified",
+          "summary": "已实现随心闪记（收件箱/项目归类与原文对照 AI 理解）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议切换）、语音输入（六步联动检查与伴侣流感知测试框）、侧栏纯导航及所有记录按模式/收件箱筛选，并通过 Rust/Swift 测试与自检门禁；真机交互待单独验收。",
           "title": "正式四工作区业务页面"
         },
         {

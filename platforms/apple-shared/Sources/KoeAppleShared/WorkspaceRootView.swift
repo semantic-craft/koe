@@ -118,7 +118,7 @@ public struct KoeWorkspaceRootView: View {
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)
         case "memory": MemoryView(store: store)
-        case "live_minutes": LiveMinutesView(store: store)
+        case "live_minutes": LiveMinutesView(store: store, onExportWorkspace: exportWorkspaceAction)
         case "ask": AskView(store: store)
         case "trash": TrashView(store: store)
         case "settings": SettingsDoctorView(store: store)
