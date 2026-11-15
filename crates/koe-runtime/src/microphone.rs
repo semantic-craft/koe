@@ -402,6 +402,7 @@ impl KoeRuntime {
         let rate = l.sample_rate.unwrap_or(16000);
         m.refresh_error();
         let id = m.current_record_id.clone();
+        let mic_mode = m.mode;
         let created = *m.segment_started_at.get_or_insert(self.last_now_sec);
         let written =
             lane == "microphone" && !matches!(m.phase, Phase::Cancelling | Phase::CapacityReached);
@@ -430,6 +431,8 @@ impl KoeRuntime {
                         if w.record(&id).is_some_and(|r| r.all_day.is_none()) {
                             w.group_all_day(&id, group)?;
                         }
+                    } else if let Some(cm) = mic_mode {
+                        w.set_record_mode(&id, cm.to_record_mode())?;
                     }
                     Ok(())
                 })?;
@@ -621,6 +624,7 @@ impl KoeRuntime {
                 .unwrap_or(0);
             let partial = outcomes.iter().any(|l| l.interruption.is_some());
             let group = self.all_day_group("microphone");
+            let mic_mode = m.mode;
             self.commit(|w| {
                 w.insert_record(
                     m.current_record_id.clone(),
@@ -641,9 +645,16 @@ impl KoeRuntime {
                     {
                         w.group_all_day(&m.current_record_id, group)?;
                     }
+                } else if let Some(cm) = mic_mode {
+                    w.set_record_mode(&m.current_record_id, cm.to_record_mode())?;
                 }
                 w.set_capture_lanes(&m.current_record_id, outcomes)
             })?;
+            if mic_mode == Some(CaptureMode::QuickNote) {
+                self.selected_quick_note_record = Some(m.current_record_id.clone());
+            } else if mic_mode == Some(CaptureMode::Meeting) {
+                self.selected_live_minutes_record = Some(m.current_record_id.clone());
+            }
             for l in m.lanes.values() {
                 if let Some(asset) = &l.asset {
                     asset.release_staging();

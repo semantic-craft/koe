@@ -30,6 +30,9 @@ mod local_asr;
 /// Centralized 16-tool MCP registry and step/poll dispatcher shared by native host and CLI.
 pub mod mcp_surface;
 mod microphone;
+mod mode_workspaces;
+mod mode_workspaces_all_day;
+mod mode_workspaces_live_voice;
 #[cfg(test)]
 mod navigation_tests;
 mod playback;
@@ -96,6 +99,9 @@ pub struct KoeRuntime {
     dictation_capture: Option<dictation_capture::DictationCapture>,
     all_day: all_day::AllDayState,
     live_minutes_scope: Option<live_minutes::LiveMinutesScope>,
+    selected_quick_note_record: Option<String>,
+    selected_all_day_date: Option<String>,
+    selected_live_minutes_record: Option<String>,
     capture_studio: capture_studio::CaptureStudioState,
     host_actions: Vec<voice_input::HostAction>,
     microphone: Option<microphone::Microphone>,
@@ -132,6 +138,9 @@ impl KoeRuntime {
             dictation_capture: None,
             all_day: Default::default(),
             live_minutes_scope: None,
+            selected_quick_note_record: None,
+            selected_all_day_date: None,
+            selected_live_minutes_record: None,
             root,
             generation: 1,
             location: Location::default(),
@@ -254,6 +263,9 @@ impl KoeRuntime {
                     | Command::Navigate { .. }
                     | Command::Back
                     | Command::SelectRecord { .. }
+                    | Command::SelectQuickNoteRecord { .. }
+                    | Command::SelectAllDayDate { .. }
+                    | Command::SelectLiveMinutesRecord { .. }
                     | Command::OpenSource { .. }
                     | Command::DeviceEvent { .. }
                     | Command::SyncAudioInputs { .. }
@@ -274,7 +286,14 @@ impl KoeRuntime {
         }
         match command {
             Command::PrepareVoiceInput => self.prepare_voice_input(now)?,
-            Command::StartCaptureMode { mode } => self.start_capture_mode(mode, now)?,
+            Command::SetVoiceInputSession {
+                enabled,
+                open_responsay,
+            } => self.set_voice_input_session(enabled, open_responsay, now)?,
+            Command::OpenResponsayApp => self.open_responsay_app(),
+            Command::StartCaptureMode { mode, stay_on_page } => {
+                self.start_capture_mode(mode, stay_on_page, now)?
+            }
             Command::CaptureAction { action, clock_ns } => self.capture_action(action, clock_ns)?,
             Command::StartMicrophone {
                 input_id,
@@ -342,9 +361,6 @@ impl KoeRuntime {
                 }
                 self.drive_companion(now);
             }
-            Command::Navigate {
-                section: Page::VoiceInput,
-            } if !self.is_quitting() => self.prepare_voice_input(now)?,
             Command::Navigate { section } => self.go(Location {
                 page: section,
                 ..self.location.clone()
@@ -373,11 +389,13 @@ impl KoeRuntime {
                 let id = format!("note-{now}-{}", self.workspace().revision() + 1);
                 self.commit(|workspace| {
                     workspace.insert_record(id.clone(), title, RecordOrigin::Note, 0, now, 0)?;
+                    workspace.set_record_mode(&id, RecordMode::QuickNote)?;
                     for paragraph in text.lines().map(str::trim).filter(|v| !v.is_empty()) {
                         workspace.append_transcript(&id, paragraph, 0, 0, "manual")?;
                     }
                     Ok(())
                 })?;
+                self.selected_quick_note_record = Some(id.clone());
                 self.open_record(&id, None)?;
                 self.notice = Some("记录已保存".into());
             }
@@ -421,6 +439,16 @@ impl KoeRuntime {
             Command::RenameRecord { record_id, title } => {
                 self.commit(|w| w.rename_record(&record_id, &title))?
             }
+            Command::SetRecordProject { record_id, project } => {
+                self.set_record_project(&record_id, project.as_deref())?
+            }
+            Command::SelectQuickNoteRecord { record_id } => {
+                self.select_quick_note_record(record_id)?
+            }
+            Command::SelectAllDayDate { date } => self.select_all_day_date(&date)?,
+            Command::SelectLiveMinutesRecord { record_id } => {
+                self.select_live_minutes_record(record_id)?
+            }
             Command::SetRecordArchived {
                 record_id,
                 archived,
@@ -433,6 +461,19 @@ impl KoeRuntime {
             Command::ExportRecord { record_id, path } => {
                 self.export_record(&record_id, Path::new(&path))?
             }
+            Command::ExportWorkspaceMarkdown {
+                record_id,
+                date,
+                path,
+                include_analysis,
+                include_sources,
+            } => self.export_workspace_markdown(
+                record_id.as_deref(),
+                date.as_deref(),
+                Path::new(&path),
+                include_analysis,
+                include_sources,
+            )?,
             Command::ReviewItem { item_id, decision } => {
                 let decision = match decision.as_str() {
                     "accept" => ReviewDecision::Accept,

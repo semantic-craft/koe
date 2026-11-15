@@ -101,6 +101,20 @@ impl KoeRuntime {
             self.auto_transcribe.remove(id);
             self.auto_summarize.remove(id);
         }
+        if self
+            .selected_quick_note_record
+            .as_ref()
+            .is_some_and(|id| removed_ids.contains(id))
+        {
+            self.selected_quick_note_record = None;
+        }
+        if self
+            .selected_live_minutes_record
+            .as_ref()
+            .is_some_and(|id| removed_ids.contains(id))
+        {
+            self.selected_live_minutes_record = None;
+        }
         {
             let purged_bean_ids = self.store.workspace().purged_bean_file_ids();
             if !purged_bean_ids.is_empty() {

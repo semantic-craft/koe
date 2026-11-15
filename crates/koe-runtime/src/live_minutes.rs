@@ -251,7 +251,7 @@ impl KoeRuntime {
         }
     }
 
-    fn capture_speech(&self, record: &ProductRecord) -> Option<&speech::SpeechSession> {
+    pub(super) fn capture_speech(&self, record: &ProductRecord) -> Option<&speech::SpeechSession> {
         let source = match record.origin {
             RecordOrigin::Microphone => DictationSource::Microphone,
             RecordOrigin::Bean => DictationSource::Bean,

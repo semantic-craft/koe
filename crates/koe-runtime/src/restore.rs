@@ -206,6 +206,10 @@ impl KoeRuntime {
                 .workspace()
                 .record(&id)
                 .is_some_and(ProductRecord::is_trashed);
+            let realtime_group = (is_new && is_realtime)
+                .then(|| self.all_day_group("bean"))
+                .flatten();
+            let realtime_mode = (is_new && is_realtime).then_some(self.bean_capture_mode).flatten();
             self.commit(|w| {
                 w.insert_record(
                     id.clone(),
@@ -217,6 +221,11 @@ impl KoeRuntime {
                 )?;
                 if w.record(&id).is_some_and(ProductRecord::is_trashed) {
                     w.restore_record(&id)?;
+                }
+                if let Some(group) = realtime_group {
+                    w.group_all_day(&id, group)?;
+                } else if let Some(cm) = realtime_mode {
+                    w.set_record_mode(&id, cm.to_record_mode())?;
                 }
                 w.finish_capture(&id, entry.duration_ms, &entry.marks_ms)
             })?;

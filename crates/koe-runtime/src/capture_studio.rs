@@ -53,7 +53,7 @@ pub(super) struct CaptureSelection {
     pub source: String,
     pub input_id: String,
     pub label: String,
-    badge: &'static str,
+    pub badge: &'static str,
     mode: &'static str,
     active_source: Option<String>,
     pub can_start: bool,
