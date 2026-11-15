@@ -206,6 +206,8 @@ pub(crate) enum Command {
     CreateNote {
         title: String,
         text: String,
+        #[serde(default)]
+        stay_on_page: bool,
     },
     RenameRecord {
         record_id: String,

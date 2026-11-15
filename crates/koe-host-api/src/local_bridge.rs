@@ -126,6 +126,7 @@ impl SubscriberHub {
 
 struct ManualGateGuard {
     handle: u64,
+    subscribed: bool,
     active: bool,
     external_owner: Option<u64>,
 }
@@ -134,6 +135,7 @@ impl ManualGateGuard {
     fn new(handle: u64, active: bool) -> Self {
         Self {
             handle,
+            subscribed: true,
             active,
             external_owner: None,
         }
@@ -142,11 +144,14 @@ impl ManualGateGuard {
 
 impl Drop for ManualGateGuard {
     fn drop(&mut self) {
-        if !self.active && self.external_owner.is_none() {
+        if !self.subscribed && !self.active && self.external_owner.is_none() {
             return;
         }
         if let Ok(mut table) = sessions().lock() {
             if let Some(entry) = table.entries.get_mut(&self.handle) {
+                if self.subscribed {
+                    entry.runtime.release_companion_subscriber();
+                }
                 if self.active {
                     entry.runtime.release_companion_manual_gate();
                 }
@@ -629,9 +634,6 @@ fn serve_companion_subscription(
     let setup = {
         sessions().lock().ok().and_then(|mut table| {
             let entry = table.entries.get_mut(&handle)?;
-            if manual_gate {
-                entry.runtime.acquire_companion_manual_gate();
-            }
             let drained = entry.runtime.drain_companion_events();
             entry.subscribers.broadcast(&drained);
             let hello = entry.runtime.companion_hello();
@@ -641,6 +643,10 @@ fn serve_companion_subscription(
             if external_pcm && !entry.runtime.acquire_external_pcm(sub_id) {
                 subs.unsubscribe(sub_id);
                 return None;
+            }
+            entry.runtime.acquire_companion_subscriber();
+            if manual_gate {
+                entry.runtime.acquire_companion_manual_gate();
             }
             Some((subs, sub_id, rx))
         })
@@ -1123,5 +1129,96 @@ pub(crate) mod tests {
         drop(rpc_client);
         drop(session);
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn companion_bridge_subscriptions_bump_generation_and_project_voice_input_readiness() {
+        let ws = temp_workspace();
+        let _ = fs::remove_dir_all(&ws);
+        let sock_path = resolve_bridge_socket_path(&ws).unwrap();
+        let session = HostSessionGuard::open(&ws).expect("host session should open");
+
+        let initial_gen = crate::koe_host_session_generation(session.handle());
+        let mut ext_client = UnixStream::connect(&sock_path).unwrap();
+        writeln!(
+            ext_client,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "companion/subscribe",
+                "params": { "capability": "external_pcm_v1" }
+            })
+        )
+        .unwrap();
+        ext_client.flush().unwrap();
+        let mut ext_reader = BufReader::new(ext_client.try_clone().unwrap());
+        let mut hello_line = String::new();
+        ext_reader.read_line(&mut hello_line).unwrap();
+        assert!(hello_line.contains("\"hello\""));
+
+        let subscribed_gen = crate::koe_host_session_generation(session.handle());
+        assert!(
+            subscribed_gen > initial_gen,
+            "subscribing via external_pcm_v1 must bump host session generation ({subscribed_gen} <= {initial_gen})"
+        );
+
+        let snap = {
+            let table = sessions().lock().unwrap();
+            table.entries.get(&session.handle()).unwrap().runtime.snapshot(1_800_000_000)
+        };
+        assert_eq!(snap["workspaces"]["voiceInput"]["companionSubscribers"], 1);
+        let step5 = snap["workspaces"]["voiceInput"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "speech_readiness")
+            .unwrap();
+        assert_eq!(step5["status"], "ready");
+
+        let mut obs_client = UnixStream::connect(&sock_path).unwrap();
+        writeln!(obs_client, "{}", json!({"method": "companion/subscribe"})).unwrap();
+        obs_client.flush().unwrap();
+        let mut obs_reader = BufReader::new(obs_client.try_clone().unwrap());
+        let mut hello2 = String::new();
+        obs_reader.read_line(&mut hello2).unwrap();
+        assert!(hello2.contains("\"hello\""));
+
+        let snap_two = {
+            let table = sessions().lock().unwrap();
+            table.entries.get(&session.handle()).unwrap().runtime.snapshot(1_800_000_001)
+        };
+        assert_eq!(snap_two["workspaces"]["voiceInput"]["companionSubscribers"], 2);
+
+        let before_drop_gen = crate::koe_host_session_generation(session.handle());
+        drop(obs_reader);
+        drop(obs_client);
+        drop(ext_reader);
+        drop(ext_client);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            let cur = {
+                let table = sessions().lock().unwrap();
+                table.entries.get(&session.handle()).unwrap().runtime.snapshot(1_800_000_002)
+            };
+            if cur["workspaces"]["voiceInput"]["companionSubscribers"] == 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let after_drop_gen = crate::koe_host_session_generation(session.handle());
+        assert!(
+            after_drop_gen > before_drop_gen,
+            "disconnecting companion subscribers must bump generation"
+        );
+        let snap_zero = {
+            let table = sessions().lock().unwrap();
+            table.entries.get(&session.handle()).unwrap().runtime.snapshot(1_800_000_003)
+        };
+        assert_eq!(snap_zero["workspaces"]["voiceInput"]["companionSubscribers"], 0);
+
+        drop(session);
+        let _ = fs::remove_dir_all(&ws);
     }
 }

@@ -44,8 +44,14 @@ struct LiveMinutesSplitBody: View {
                 }
             }
         }
+        .onAppear {
+            selectedStage = lm.isActive ? .live : .consolidated
+        }
         .onChange(of: lm.isActive) { _, active in
             selectedStage = active ? .live : .consolidated
+        }
+        .onChange(of: lm.selectedRecordId) { _, _ in
+            selectedStage = lm.isActive ? .live : .consolidated
         }
     }
 

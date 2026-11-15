@@ -79,6 +79,7 @@ public struct AllDayDailyReviewSnapshot: Codable, Equatable, Sendable {
 
 public struct AllDayWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let isActive: Bool
+    public let canStart: Bool
     public let isPaused: Bool
     public let canPause: Bool
     public let canResume: Bool
@@ -95,8 +96,74 @@ public struct AllDayWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let reviewDecisions: [AllDayDecisionSnapshot]
     public let dailyReview: AllDayDailyReviewSnapshot?
 
+    private enum CodingKeys: String, CodingKey {
+        case isActive, canStart, isPaused, canPause, canResume, sourceLabel
+        case selectedDate, availableDates, totalRecordedMs, eventCount, pauseCount, gapCount
+        case spans, reviewTasks, reviewMemories, reviewDecisions, dailyReview
+    }
+
+    public init(
+        isActive: Bool,
+        canStart: Bool = true,
+        isPaused: Bool,
+        canPause: Bool,
+        canResume: Bool,
+        sourceLabel: String,
+        selectedDate: String,
+        availableDates: [String],
+        totalRecordedMs: UInt64,
+        eventCount: Int,
+        pauseCount: Int,
+        gapCount: Int,
+        spans: [AllDaySpanSnapshot],
+        reviewTasks: [WorkspaceSourcedItemSnapshot],
+        reviewMemories: [WorkspaceSourcedItemSnapshot],
+        reviewDecisions: [AllDayDecisionSnapshot],
+        dailyReview: AllDayDailyReviewSnapshot?
+    ) {
+        self.isActive = isActive
+        self.canStart = canStart
+        self.isPaused = isPaused
+        self.canPause = canPause
+        self.canResume = canResume
+        self.sourceLabel = sourceLabel
+        self.selectedDate = selectedDate
+        self.availableDates = availableDates
+        self.totalRecordedMs = totalRecordedMs
+        self.eventCount = eventCount
+        self.pauseCount = pauseCount
+        self.gapCount = gapCount
+        self.spans = spans
+        self.reviewTasks = reviewTasks
+        self.reviewMemories = reviewMemories
+        self.reviewDecisions = reviewDecisions
+        self.dailyReview = dailyReview
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isActive = try c.decode(Bool.self, forKey: .isActive)
+        canStart = try c.decodeIfPresent(Bool.self, forKey: .canStart) ?? false
+        isPaused = try c.decode(Bool.self, forKey: .isPaused)
+        canPause = try c.decode(Bool.self, forKey: .canPause)
+        canResume = try c.decode(Bool.self, forKey: .canResume)
+        sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
+        selectedDate = try c.decode(String.self, forKey: .selectedDate)
+        availableDates = try c.decode([String].self, forKey: .availableDates)
+        totalRecordedMs = try c.decode(UInt64.self, forKey: .totalRecordedMs)
+        eventCount = try c.decode(Int.self, forKey: .eventCount)
+        pauseCount = try c.decode(Int.self, forKey: .pauseCount)
+        gapCount = try c.decode(Int.self, forKey: .gapCount)
+        spans = try c.decode([AllDaySpanSnapshot].self, forKey: .spans)
+        reviewTasks = try c.decode([WorkspaceSourcedItemSnapshot].self, forKey: .reviewTasks)
+        reviewMemories = try c.decode([WorkspaceSourcedItemSnapshot].self, forKey: .reviewMemories)
+        reviewDecisions = try c.decode([AllDayDecisionSnapshot].self, forKey: .reviewDecisions)
+        dailyReview = try c.decodeIfPresent(AllDayDailyReviewSnapshot.self, forKey: .dailyReview)
+    }
+
     public static let empty = AllDayWorkspaceSnapshot(
         isActive: false,
+        canStart: true,
         isPaused: false,
         canPause: false,
         canResume: false,
@@ -139,6 +206,7 @@ public struct PastMeetingSnapshot: Codable, Equatable, Identifiable, Sendable {
 
 public struct LiveMinutesWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let isActive: Bool
+    public let canStart: Bool
     public let phase: String
     public let configured: Bool
     public let sourceLabel: String
@@ -156,24 +224,58 @@ public struct LiveMinutesWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let actionItems: [WorkspaceSourcedItemSnapshot]
     public let pastMeetings: [PastMeetingSnapshot]
 
+    private enum CodingKeys: String, CodingKey {
+        case isActive, canStart, phase, configured, sourceLabel, activeRecordId
+        case selectedRecordId, selectedTitle, minutesStale, canSummarize, error, coverage
+        case segments, drafts, liveSections, finalSections, actionItems, pastMeetings
+    }
+
+    public init(
+        isActive: Bool, canStart: Bool = true, phase: String, configured: Bool,
+        sourceLabel: String, activeRecordId: String?, selectedRecordId: String?,
+        selectedTitle: String?, minutesStale: Bool, canSummarize: Bool, error: String?,
+        coverage: MeetingCoverageSnapshot?, segments: [SegmentSnapshot], drafts: [String],
+        liveSections: [SummarySnapshot], finalSections: [SummarySnapshot],
+        actionItems: [WorkspaceSourcedItemSnapshot], pastMeetings: [PastMeetingSnapshot]
+    ) {
+        self.isActive = isActive; self.canStart = canStart; self.phase = phase
+        self.configured = configured; self.sourceLabel = sourceLabel
+        self.activeRecordId = activeRecordId; self.selectedRecordId = selectedRecordId
+        self.selectedTitle = selectedTitle; self.minutesStale = minutesStale
+        self.canSummarize = canSummarize; self.error = error; self.coverage = coverage
+        self.segments = segments; self.drafts = drafts
+        self.liveSections = liveSections; self.finalSections = finalSections
+        self.actionItems = actionItems; self.pastMeetings = pastMeetings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isActive = try c.decode(Bool.self, forKey: .isActive)
+        canStart = try c.decodeIfPresent(Bool.self, forKey: .canStart) ?? false
+        phase = try c.decode(String.self, forKey: .phase)
+        configured = try c.decode(Bool.self, forKey: .configured)
+        sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
+        activeRecordId = try c.decodeIfPresent(String.self, forKey: .activeRecordId)
+        selectedRecordId = try c.decodeIfPresent(String.self, forKey: .selectedRecordId)
+        selectedTitle = try c.decodeIfPresent(String.self, forKey: .selectedTitle)
+        minutesStale = try c.decode(Bool.self, forKey: .minutesStale)
+        canSummarize = try c.decode(Bool.self, forKey: .canSummarize)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        coverage = try c.decodeIfPresent(MeetingCoverageSnapshot.self, forKey: .coverage)
+        segments = try c.decode([SegmentSnapshot].self, forKey: .segments)
+        drafts = try c.decode([String].self, forKey: .drafts)
+        liveSections = try c.decode([SummarySnapshot].self, forKey: .liveSections)
+        finalSections = try c.decode([SummarySnapshot].self, forKey: .finalSections)
+        actionItems = try c.decode([WorkspaceSourcedItemSnapshot].self, forKey: .actionItems)
+        pastMeetings = try c.decode([PastMeetingSnapshot].self, forKey: .pastMeetings)
+    }
+
     public static let empty = LiveMinutesWorkspaceSnapshot(
-        isActive: false,
-        phase: "idle",
-        configured: false,
-        sourceLabel: "系统默认麦克风",
-        activeRecordId: nil,
-        selectedRecordId: nil,
-        selectedTitle: nil,
-        minutesStale: false,
-        canSummarize: false,
-        error: nil,
-        coverage: nil,
-        segments: [],
-        drafts: [],
-        liveSections: [],
-        finalSections: [],
-        actionItems: [],
-        pastMeetings: []
+        isActive: false, canStart: true, phase: "idle", configured: false,
+        sourceLabel: "系统默认麦克风", activeRecordId: nil, selectedRecordId: nil,
+        selectedTitle: nil, minutesStale: false, canSummarize: false, error: nil,
+        coverage: nil, segments: [], drafts: [], liveSections: [], finalSections: [],
+        actionItems: [], pastMeetings: []
     )
 
     public var phaseBadgeLabel: String {
@@ -198,12 +300,14 @@ public struct LiveMinutesWorkspaceSnapshot: Codable, Equatable, Sendable {
         let mergedSegments = legacy.parts.flatMap(\.segments)
         let mergedDrafts = legacy.parts.flatMap(\.drafts)
         let mergedSections = legacy.parts.flatMap(\.summary)
+        let active = legacy.phase != .ended && legacy.phase != .idle
         return LiveMinutesWorkspaceSnapshot(
-            isActive: legacy.phase != .ended,
+            isActive: active,
+            canStart: snapshot.capture.canStart && !active,
             phase: legacy.phase.rawValue,
             configured: legacy.configured,
             sourceLabel: snapshot.capture.selectedLabel,
-            activeRecordId: legacy.phase == .ended ? nil : lastPart?.recordId,
+            activeRecordId: active ? lastPart?.recordId : nil,
             selectedRecordId: lastPart?.recordId,
             selectedTitle: lastPart?.title,
             minutesStale: legacy.parts.contains(where: \.minutesStale),
@@ -240,23 +344,63 @@ public struct VoiceInputWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let batteryPercent: Int?
     public let captureActive: Bool
     public let companionSubscribers: Int
+    public let companionEpoch: String
     public let companionSequence: UInt64
+    public let forwardedAudioFrames: UInt64
     public let lastDictationText: String?
     public let bridgeSocketPath: String?
     public let boundaryNote: String
     public let steps: [VoiceInputStepSnapshot]
 
+    private enum CodingKeys: String, CodingKey {
+        case sessionEnabled, canToggleSession, standbyReady, deviceConnected, deviceName
+        case batteryPercent, captureActive, companionSubscribers, companionEpoch
+        case companionSequence, forwardedAudioFrames, lastDictationText
+        case bridgeSocketPath, boundaryNote, steps
+    }
+
+    public init(
+        sessionEnabled: Bool, canToggleSession: Bool, standbyReady: Bool,
+        deviceConnected: Bool, deviceName: String, batteryPercent: Int?,
+        captureActive: Bool, companionSubscribers: Int, companionEpoch: String = "",
+        companionSequence: UInt64, forwardedAudioFrames: UInt64 = 0,
+        lastDictationText: String?, bridgeSocketPath: String?,
+        boundaryNote: String, steps: [VoiceInputStepSnapshot]
+    ) {
+        self.sessionEnabled = sessionEnabled; self.canToggleSession = canToggleSession
+        self.standbyReady = standbyReady; self.deviceConnected = deviceConnected
+        self.deviceName = deviceName; self.batteryPercent = batteryPercent
+        self.captureActive = captureActive; self.companionSubscribers = companionSubscribers
+        self.companionEpoch = companionEpoch; self.companionSequence = companionSequence
+        self.forwardedAudioFrames = forwardedAudioFrames; self.lastDictationText = lastDictationText
+        self.bridgeSocketPath = bridgeSocketPath; self.boundaryNote = boundaryNote
+        self.steps = steps
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionEnabled = try c.decode(Bool.self, forKey: .sessionEnabled)
+        canToggleSession = try c.decode(Bool.self, forKey: .canToggleSession)
+        standbyReady = try c.decode(Bool.self, forKey: .standbyReady)
+        deviceConnected = try c.decode(Bool.self, forKey: .deviceConnected)
+        deviceName = try c.decode(String.self, forKey: .deviceName)
+        batteryPercent = try c.decodeIfPresent(Int.self, forKey: .batteryPercent)
+        captureActive = try c.decode(Bool.self, forKey: .captureActive)
+        companionSubscribers = try c.decode(Int.self, forKey: .companionSubscribers)
+        companionEpoch = try c.decodeIfPresent(String.self, forKey: .companionEpoch) ?? ""
+        companionSequence = try c.decode(UInt64.self, forKey: .companionSequence)
+        forwardedAudioFrames = try c.decodeIfPresent(UInt64.self, forKey: .forwardedAudioFrames) ?? 0
+        lastDictationText = try c.decodeIfPresent(String.self, forKey: .lastDictationText)
+        bridgeSocketPath = try c.decodeIfPresent(String.self, forKey: .bridgeSocketPath)
+        boundaryNote = try c.decode(String.self, forKey: .boundaryNote)
+        steps = try c.decode([VoiceInputStepSnapshot].self, forKey: .steps)
+    }
+
     public static let empty = VoiceInputWorkspaceSnapshot(
-        sessionEnabled: false,
-        canToggleSession: true,
-        standbyReady: false,
-        deviceConnected: false,
-        deviceName: "Soundcore Work",
-        batteryPercent: nil,
-        captureActive: false,
-        companionSubscribers: 0,
-        companionSequence: 0,
-        lastDictationText: nil,
+        sessionEnabled: false, canToggleSession: true, standbyReady: false,
+        deviceConnected: false, deviceName: "Soundcore Work", batteryPercent: nil,
+        captureActive: false, companionSubscribers: 0, companionEpoch: "",
+        companionSequence: 0, forwardedAudioFrames: 0, lastDictationText: nil,
         bridgeSocketPath: nil,
         boundaryNote: "Koe 负责维护录音豆低延迟待命音频流与桥接通道；快捷键监听、语音识别与系统光标上屏由 Responsay 管理。",
         steps: []
@@ -264,7 +408,8 @@ public struct VoiceInputWorkspaceSnapshot: Codable, Equatable, Sendable {
 
     public func evaluateCursorTest(
         text: String,
-        baselineSequence: UInt64,
+        baselineEpoch: String,
+        baselineAudioFrames: UInt64,
         baselineDictationText: String?
     ) -> VoiceInputTestEvaluation {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -276,7 +421,10 @@ public struct VoiceInputWorkspaceSnapshot: Codable, Equatable, Sendable {
             )
         }
         let dictationChanged = lastDictationText != nil && lastDictationText != baselineDictationText
-        if captureActive || companionSequence > baselineSequence || dictationChanged {
+        let audioAdvanced = companionEpoch == baselineEpoch
+            ? forwardedAudioFrames > baselineAudioFrames
+            : forwardedAudioFrames > 0
+        if captureActive || audioAdvanced || dictationChanged {
             return VoiceInputTestEvaluation(
                 state: .streamVerified,
                 statusBadge: "已观测伴侣流",

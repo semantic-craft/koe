@@ -24,7 +24,7 @@ public struct QuickNoteWorkspaceView: View {
 
     private var canStartOrStopSession: Bool {
         if quickNote.isActive { return true }
-        return store.snapshot.capture.canStart
+        return quickNote.canStart
     }
 
     private var visibleCards: [QuickNoteCardSnapshot] {
@@ -250,15 +250,13 @@ public struct QuickNoteWorkspaceView: View {
     private func saveQuickTextNote() {
         let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        store.send("create_note", ["title": draftTitle, "text": trimmed])
+        store.send("create_note", [
+            "title": draftTitle,
+            "text": trimmed,
+            "stayOnPage": true
+        ])
         guard store.snapshot.error == nil && store.nativeError == nil else { return }
         draftTitle = ""
         draftText = ""
-        if let createdId = store.snapshot.detail?.id {
-            store.send("select_quick_note_record", ["recordId": createdId])
-        }
-        if store.snapshot.section != "notes" {
-            store.send("navigate", ["section": "notes"])
-        }
     }
 }

@@ -13,6 +13,12 @@ use std::collections::BTreeMap;
 pub(super) const QUICK_NOTE_MCP_READ_NOTE: &str =
     "外部 Agent 可通过只读 MCP 检索已保存闪记原文与已采纳行动，不会自动改写记录。";
 
+struct ModePickerCounts {
+    inbox_count: usize,
+    quick_note_total: usize,
+    past_meeting_count: usize,
+}
+
 impl KoeRuntime {
     pub(super) fn set_record_project(
         &mut self,
@@ -55,6 +61,9 @@ impl KoeRuntime {
             if !record.is_live() {
                 return Err("记录不存在".into());
             }
+            if record.mode != RecordMode::Meeting {
+                return Err("该记录不是实时纪要会议".into());
+            }
         }
         self.selected_live_minutes_record = record_id;
         Ok(())
@@ -84,7 +93,7 @@ impl KoeRuntime {
             let trimmed = d.trim();
             let parsed = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
                 .map_err(|_| "日期格式无效".to_string())?;
-            let day_records: Vec<&ProductRecord> = self
+            let mut day_records: Vec<&ProductRecord> = self
                 .workspace()
                 .records()
                 .values()
@@ -94,6 +103,13 @@ impl KoeRuntime {
                         && local_date(r.aggregate.created_at_epoch_sec) == Some(parsed)
                 })
                 .collect();
+            day_records.sort_by_key(|r| {
+                (
+                    r.aggregate.created_at_epoch_sec,
+                    r.all_day.as_ref().map_or(0, |s| s.ordinal),
+                    r.aggregate.recording_id.as_str(),
+                )
+            });
             let timeline = build_day_timeline(&day_records);
             let output = format_day_markdown(trimmed, &timeline, &day_records, &live_items, options);
             write_atomic(path, output.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
@@ -192,9 +208,11 @@ impl KoeRuntime {
             records,
             active_mode,
             capture_selection,
-            quick_note["inboxCount"].as_u64().unwrap_or(0) as usize,
-            quick_note["totalCount"].as_u64().unwrap_or(0) as usize,
-            live_minutes["pastMeetings"].as_array().map_or(0, Vec::len),
+            ModePickerCounts {
+                inbox_count: quick_note["inboxCount"].as_u64().unwrap_or(0) as usize,
+                quick_note_total: quick_note["totalCount"].as_u64().unwrap_or(0) as usize,
+                past_meeting_count: live_minutes["pastMeetings"].as_array().map_or(0, Vec::len),
+            },
         );
         json!({
             "picker": picker,
@@ -205,17 +223,19 @@ impl KoeRuntime {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mode_picker_json(
         &self,
         now: u64,
         records: &[&ProductRecord],
         active_mode: Option<CaptureMode>,
         capture_selection: &CaptureSelection,
-        inbox_count: usize,
-        quick_note_total: usize,
-        past_meeting_count: usize,
+        counts: ModePickerCounts,
     ) -> Value {
+        let ModePickerCounts {
+            inbox_count,
+            quick_note_total,
+            past_meeting_count,
+        } = counts;
         let can_control = !self.is_quitting() && !self.store.requires_reopen();
         let can_start = self.can_start_capture_mode(capture_selection);
         let today = local_date(now);
@@ -238,7 +258,8 @@ impl KoeRuntime {
                 .as_ref()
                 .is_some_and(|m| m.phase == Phase::Paused);
         let meeting_active = active_mode == Some(CaptureMode::Meeting);
-        let voice_active = self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby;
+        let voice_active =
+            self.active_companion_mode() == CompanionRoutingMode::CollarStandby;
         let device_name = self
             .device
             .device_name
@@ -355,7 +376,7 @@ impl KoeRuntime {
         let quick_records: Vec<&ProductRecord> = records
             .iter()
             .copied()
-            .filter(|r| r.is_live() && r.mode == RecordMode::QuickNote)
+            .filter(|r| r.is_live() && !r.is_archived() && r.mode == RecordMode::QuickNote)
             .collect();
         let inbox_count = quick_records
             .iter()
@@ -465,6 +486,7 @@ impl KoeRuntime {
 
         json!({
             "isActive": is_active,
+            "canStart": self.can_start_capture_mode(capture_selection),
             "sourceLabel": source_label,
             "inboxCount": inbox_count,
             "totalCount": quick_records.len(),

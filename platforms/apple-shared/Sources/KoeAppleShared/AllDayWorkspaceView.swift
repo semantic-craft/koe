@@ -73,7 +73,7 @@ public struct AllDayWorkspaceView: View {
                     KoeActionButton("开启全天听记", systemImage: "clock", isPrimary: true) {
                         store.startCapture(.allDay, stayOnPage: true)
                     }
-                    .disabled(!store.snapshot.capture.canStart)
+                    .disabled(!allDay.canStart)
                 } else {
                     if allDay.canPause {
                         KoeActionButton("暂停", systemImage: "pause.fill") {

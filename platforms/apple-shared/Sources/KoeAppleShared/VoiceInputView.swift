@@ -4,9 +4,9 @@ public struct VoiceInputView: View {
     public let store: HostSessionStore
 
     @State private var testText = ""
-    @State private var baselineSequence: UInt64 = 0
+    @State private var baselineEpoch = ""
+    @State private var baselineAudioFrames: UInt64 = 0
     @State private var baselineDictationText: String?
-    @State private var didSeedBaseline = false
 
     public init(store: HostSessionStore) {
         self.store = store
@@ -19,7 +19,8 @@ public struct VoiceInputView: View {
     private var evaluation: VoiceInputTestEvaluation {
         vi.evaluateCursorTest(
             text: testText,
-            baselineSequence: baselineSequence,
+            baselineEpoch: baselineEpoch,
+            baselineAudioFrames: baselineAudioFrames,
             baselineDictationText: baselineDictationText
         )
     }
@@ -41,10 +42,19 @@ public struct VoiceInputView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .onAppear {
-            guard !didSeedBaseline else { return }
-            baselineSequence = vi.companionSequence
-            baselineDictationText = vi.lastDictationText
-            didSeedBaseline = true
+            if testText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                syncBaseline(vi)
+            }
+        }
+        .onChange(of: testText) { _, updated in
+            if updated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                syncBaseline(vi)
+            }
+        }
+        .onChange(of: vi) { _, updated in
+            if testText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                syncBaseline(updated)
+            }
         }
     }
 
@@ -157,8 +167,7 @@ public struct VoiceInputView: View {
                     Spacer()
                     KoeActionButton("重置测试", systemImage: "arrow.counterclockwise") {
                         testText = ""
-                        baselineSequence = vi.companionSequence
-                        baselineDictationText = vi.lastDictationText
+                        syncBaseline(vi)
                     }
                 }
 
@@ -178,6 +187,12 @@ public struct VoiceInputView: View {
                 }
             }
         }
+    }
+
+    private func syncBaseline(_ snapshot: VoiceInputWorkspaceSnapshot) {
+        baselineEpoch = snapshot.companionEpoch
+        baselineAudioFrames = snapshot.forwardedAudioFrames
+        baselineDictationText = snapshot.lastDictationText
     }
 
     private func statusTint(_ status: String) -> Color {

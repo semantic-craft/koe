@@ -82,7 +82,7 @@ public struct LiveMinutesView: View {
                     KoeActionButton("开始实时纪要", systemImage: "waveform.path.ecg", isPrimary: true) {
                         store.startCapture(.meeting, stayOnPage: true)
                     }
-                    .disabled(!store.snapshot.capture.canStart)
+                    .disabled(!lm.canStart)
                 } else {
                     ForEach(activeActions, id: \.self) { action in
                         KoeActionButton(
@@ -231,6 +231,7 @@ public struct LiveMinutesView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(lm.isActive)
                     }
                 }
             }

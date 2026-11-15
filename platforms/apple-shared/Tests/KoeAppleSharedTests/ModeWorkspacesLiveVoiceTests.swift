@@ -145,7 +145,8 @@ struct ModeWorkspacesLiveVoiceTests {
 
         let idleEval = enabledVoice.evaluateCursorTest(
             text: "   ",
-            baselineSequence: enabledVoice.companionSequence,
+            baselineEpoch: enabledVoice.companionEpoch,
+            baselineAudioFrames: enabledVoice.forwardedAudioFrames,
             baselineDictationText: enabledVoice.lastDictationText
         )
         #expect(idleEval.state == .idle)
@@ -153,7 +154,8 @@ struct ModeWorkspacesLiveVoiceTests {
 
         let manualEval = enabledVoice.evaluateCursorTest(
             text: "手动敲入的测试句子",
-            baselineSequence: enabledVoice.companionSequence,
+            baselineEpoch: enabledVoice.companionEpoch,
+            baselineAudioFrames: enabledVoice.forwardedAudioFrames,
             baselineDictationText: enabledVoice.lastDictationText
         )
         #expect(manualEval.state == .manualInputOnly)
@@ -168,7 +170,9 @@ struct ModeWorkspacesLiveVoiceTests {
             batteryPercent: 85,
             captureActive: false,
             companionSubscribers: 1,
+            companionEpoch: "ep-0",
             companionSequence: 4,
+            forwardedAudioFrames: 2,
             lastDictationText: "语音上屏结果",
             bridgeSocketPath: "/tmp/koe.sock",
             boundaryNote: enabledVoice.boundaryNote,
@@ -176,12 +180,125 @@ struct ModeWorkspacesLiveVoiceTests {
         )
         let streamEval = streamedFixture.evaluateCursorTest(
             text: "语音上屏结果",
-            baselineSequence: 1,
+            baselineEpoch: "ep-0",
+            baselineAudioFrames: 0,
             baselineDictationText: nil
         )
         #expect(streamEval.state == .streamVerified)
         #expect(streamEval.statusBadge == "已观测伴侣流")
 
         _ = VoiceInputView(store: store).body
+    }
+
+    @Test("Legacy idle fallback, stayOnPage quick note creation, workspace canStart, and epoch-aware cursor evaluator")
+    @MainActor
+    func legacyIdleStayOnPageCanStartAndEpochCursorEvaluator() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        store.send("navigate", ["section": "notes"])
+        store.send("create_note", [
+            "title": "闪记页直存",
+            "text": "单条指令留在本页",
+            "stayOnPage": true
+        ])
+        #expect(store.snapshot.section == "notes")
+        #expect(store.snapshot.notice == "记录已保存")
+
+        let idleWs = try #require(store.snapshot.workspaces)
+        #expect(idleWs.quickNote.canStart)
+        #expect(idleWs.allDay.canStart)
+        #expect(idleWs.liveMinutes.canStart)
+
+        store.startCapture(.quickNote, stayOnPage: true)
+        let activeWs = try #require(store.snapshot.workspaces)
+        #expect(!activeWs.quickNote.canStart)
+        #expect(!activeWs.allDay.canStart)
+        #expect(!activeWs.liveMinutes.canStart)
+        store.performCaptureAction(.cancel)
+
+        let legacyIdlePayload = """
+        {
+          "version": 2,
+          "generation": 4,
+          "section": "live_minutes",
+          "canGoBack": false,
+          "selectedRecordId": null,
+          "focusSegmentId": null,
+          "records": [],
+          "todayRecordIds": [],
+          "detail": null,
+          "tasks": [],
+          "memories": [],
+          "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
+          "liveMinutes": {
+            "scope": { "kind": "record", "id": null },
+            "phase": "idle",
+            "configured": true,
+            "parts": []
+          },
+          "device": { "state": "未连接", "connected": false, "busy": false, "files": [], "progress": 0.0 },
+          "provider": { "configured": true, "model": "qwen-plus" },
+          "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
+          "error": null,
+          "notice": null
+        }
+        """
+        let idleDecoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(legacyIdlePayload.utf8))
+        let idleResolved = LiveMinutesWorkspaceSnapshot.resolved(from: idleDecoded)
+        #expect(!idleResolved.isActive)
+        #expect(idleResolved.activeRecordId == nil)
+
+        let controlEdgeOnly = VoiceInputWorkspaceSnapshot(
+            sessionEnabled: true,
+            canToggleSession: true,
+            standbyReady: true,
+            deviceConnected: true,
+            deviceName: "Soundcore Work",
+            batteryPercent: 80,
+            captureActive: false,
+            companionSubscribers: 1,
+            companionEpoch: "ep-1",
+            companionSequence: 5,
+            forwardedAudioFrames: 0,
+            lastDictationText: nil,
+            bridgeSocketPath: "/tmp/koe.sock",
+            boundaryNote: idleWs.voiceInput.boundaryNote,
+            steps: idleWs.voiceInput.steps
+        )
+        let edgeEval = controlEdgeOnly.evaluateCursorTest(
+            text: "纯手动输入无音频帧",
+            baselineEpoch: "ep-1",
+            baselineAudioFrames: 0,
+            baselineDictationText: nil
+        )
+        #expect(edgeEval.state == .manualInputOnly)
+
+        let reconnectedStream = VoiceInputWorkspaceSnapshot(
+            sessionEnabled: true,
+            canToggleSession: true,
+            standbyReady: true,
+            deviceConnected: true,
+            deviceName: "Soundcore Work",
+            batteryPercent: 80,
+            captureActive: false,
+            companionSubscribers: 1,
+            companionEpoch: "ep-2",
+            companionSequence: 1,
+            forwardedAudioFrames: 3,
+            lastDictationText: nil,
+            bridgeSocketPath: "/tmp/koe.sock",
+            boundaryNote: idleWs.voiceInput.boundaryNote,
+            steps: idleWs.voiceInput.steps
+        )
+        let reconnectEval = reconnectedStream.evaluateCursorTest(
+            text: "蓝牙重连后语音上屏",
+            baselineEpoch: "ep-1",
+            baselineAudioFrames: 12,
+            baselineDictationText: nil
+        )
+        #expect(reconnectEval.state == .streamVerified)
     }
 }

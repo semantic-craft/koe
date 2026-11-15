@@ -78,6 +78,11 @@ impl KoeRuntime {
         if !self.can_start_capture_mode(&selection) {
             return Err("当前无法开始记录，请检查录音音源或结束当前记录".into());
         }
+        if mode != CaptureMode::Dictation
+            && self.active_companion_mode() == CompanionRoutingMode::CollarStandby
+        {
+            self.set_voice_input_session(false, false, now)?;
+        }
         let bean = selection.source == "bean";
         if mode == CaptureMode::AllDay {
             self.start_all_day(

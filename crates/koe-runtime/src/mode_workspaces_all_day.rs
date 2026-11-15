@@ -166,6 +166,7 @@ impl KoeRuntime {
 
         json!({
             "isActive": is_active,
+            "canStart": can_control && self.can_start_capture_mode(capture_selection),
             "isPaused": is_paused,
             "canPause": can_pause,
             "canResume": can_resume,

@@ -382,7 +382,11 @@ impl KoeRuntime {
                 self.open_record(&record_id, Some(segment_id))?;
                 self.seek_playback(source.start_ms)?;
             }
-            Command::CreateNote { title, text } => {
+            Command::CreateNote {
+                title,
+                text,
+                stay_on_page,
+            } => {
                 if text.trim().is_empty() {
                     return Err("先写下一段内容".into());
                 }
@@ -396,7 +400,9 @@ impl KoeRuntime {
                     Ok(())
                 })?;
                 self.selected_quick_note_record = Some(id.clone());
-                self.open_record(&id, None)?;
+                if !stay_on_page {
+                    self.open_record(&id, None)?;
+                }
                 self.notice = Some("记录已保存".into());
             }
             Command::ImportFile { path } => {

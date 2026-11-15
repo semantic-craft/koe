@@ -1,5 +1,3 @@
-//! Three-metric transcript, grounding, and post-session consolidation coverage for meetings.
-
 use std::collections::BTreeSet;
 
 use super::{AnalysisStage, AnalysisState, ProductRecord};

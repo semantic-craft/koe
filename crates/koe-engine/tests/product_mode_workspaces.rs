@@ -281,10 +281,24 @@ fn day_timeline_merges_adjoining_run_slices_and_emits_truthful_pauses_and_gaps()
     let timeline = build_day_timeline(&records);
 
     assert_eq!(timeline.total_recorded_ms, 630_000);
-    assert_eq!(timeline.event_count, 3);
+    assert_eq!(timeline.event_count, 4);
     assert_eq!(timeline.pause_count, 1);
     assert_eq!(timeline.gap_count, 1);
-    assert_eq!(timeline.spans.len(), 5);
+    assert_eq!(timeline.spans.len(), 6);
+
+    let span_bounds: Vec<(u64, u64)> = timeline
+        .spans
+        .iter()
+        .map(|s| match s {
+            DayTimelineSpan::Event(e) => (e.start_epoch_sec, e.end_epoch_sec),
+            DayTimelineSpan::Pause(p) => (p.start_epoch_sec, p.end_epoch_sec),
+            DayTimelineSpan::UnrecordedGap(g) => (g.start_epoch_sec, g.end_epoch_sec),
+        })
+        .collect();
+    assert!(
+        span_bounds.windows(2).all(|w| w[0].1 <= w[1].0),
+        "timeline spans must be strictly chronological: {span_bounds:?}"
+    );
 
     match &timeline.spans[0] {
         DayTimelineSpan::Event(ev) => {
@@ -304,34 +318,175 @@ fn day_timeline_merges_adjoining_run_slices_and_emits_truthful_pauses_and_gaps()
     match &timeline.spans[1] {
         DayTimelineSpan::Event(ev) => {
             assert_eq!(ev.record_ids, vec!["s3".to_string()]);
+            assert_eq!(ev.start_epoch_sec, 1_800_010_620);
+            assert_eq!(ev.end_epoch_sec, 1_800_010_650);
             assert_eq!(ev.title, "下午排期确认");
         }
-        other => panic!("expected s3 Event at spans[1] without unrecorded gap for 120s seam, got {other:?}"),
+        other => panic!("expected s3 pre-pause Event at spans[1], got {other:?}"),
     }
 
     match &timeline.spans[2] {
         DayTimelineSpan::Pause(pause) => {
             assert_eq!(pause.record_id, "s3");
             assert_eq!(pause.duration_ms, 2_500);
+            assert_eq!(pause.start_epoch_sec, 1_800_010_650);
+            assert_eq!(pause.end_epoch_sec, 1_800_010_653);
         }
         other => panic!("expected intra-record Pause at spans[2], got {other:?}"),
     }
 
     match &timeline.spans[3] {
-        DayTimelineSpan::UnrecordedGap(gap) => {
-            assert!(gap.duration_ms >= MIN_UNRECORDED_GAP_SEC * 1_000);
-            assert_eq!(gap.end_epoch_sec, 1_800_010_980);
+        DayTimelineSpan::Event(ev) => {
+            assert_eq!(ev.record_ids, vec!["s3".to_string()]);
+            assert_eq!(ev.start_epoch_sec, 1_800_010_653);
+            assert_eq!(ev.end_epoch_sec, 1_800_010_683);
         }
-        other => panic!("expected UnrecordedGap at spans[3], got {other:?}"),
+        other => panic!("expected s3 post-pause Event at spans[3], got {other:?}"),
     }
 
     match &timeline.spans[4] {
+        DayTimelineSpan::UnrecordedGap(gap) => {
+            assert!(gap.duration_ms >= MIN_UNRECORDED_GAP_SEC * 1_000);
+            assert_eq!(gap.start_epoch_sec, 1_800_010_683);
+            assert_eq!(gap.end_epoch_sec, 1_800_010_980);
+        }
+        other => panic!("expected UnrecordedGap at spans[4], got {other:?}"),
+    }
+
+    match &timeline.spans[5] {
         DayTimelineSpan::Event(ev) => {
             assert_eq!(ev.record_ids, vec!["s4".to_string()]);
             assert_eq!(ev.title, "晚间复盘");
         }
-        other => panic!("expected s4 Event at spans[4], got {other:?}"),
+        other => panic!("expected s4 Event at spans[5], got {other:?}"),
     }
+}
+
+#[test]
+fn day_timeline_wall_clock_bounds_symmetric_run_merge_and_dual_lane_pause_union() {
+    let mut w = ProductWorkspace::new();
+
+    w.insert_record(
+        "p1".into(),
+        "双路片段 1".into(),
+        RecordOrigin::Microphone,
+        0,
+        1_800_050_000,
+        20_000,
+    )
+    .unwrap();
+    w.group_all_day(
+        "p1",
+        AllDaySegment {
+            run_id: "run-sym".into(),
+            ordinal: 1,
+        },
+    )
+    .unwrap();
+    w.append_transcript("p1", "暂停前第一段对话", 0, 8_000, "local")
+        .unwrap();
+    w.append_transcript("p1", "恢复后第二段对话", 12_000, 19_000, "local")
+        .unwrap();
+
+    let mut mic_spans = Vec::new();
+    let mut sys_spans = Vec::new();
+    for idx in 0..20u64 {
+        let active_offset_samples = idx * 16_000;
+        let wall_start_ns = idx * 10_000_000_000;
+        mic_spans.push(CaptureSpan {
+            epoch: idx,
+            start_ns: wall_start_ns,
+            sample_offset: active_offset_samples,
+            sample_count: 16_000,
+        });
+        sys_spans.push(CaptureSpan {
+            epoch: idx,
+            start_ns: wall_start_ns + if idx > 0 { 1_000_000 } else { 0 },
+            sample_offset: active_offset_samples,
+            sample_count: 16_000,
+        });
+    }
+    w.set_capture_lanes(
+        "p1",
+        vec![
+            CaptureLaneRecord {
+                lane: "microphone".into(),
+                asset_id: Some("p1".into()),
+                sample_rate: Some(16_000),
+                duration_ms: 20_000,
+                interruption: None,
+                timeline: mic_spans,
+            },
+            CaptureLaneRecord {
+                lane: "system".into(),
+                asset_id: Some("p1-system".into()),
+                sample_rate: Some(16_000),
+                duration_ms: 20_000,
+                interruption: None,
+                timeline: sys_spans,
+            },
+        ],
+    )
+    .unwrap();
+
+    w.insert_record(
+        "p2".into(),
+        "双路片段 2".into(),
+        RecordOrigin::Microphone,
+        0,
+        1_800_050_230,
+        30_000,
+    )
+    .unwrap();
+    w.group_all_day(
+        "p2",
+        AllDaySegment {
+            run_id: "run-sym".into(),
+            ordinal: 2,
+        },
+    )
+    .unwrap();
+    w.append_transcript("p2", "紧接上一片继续讨论", 0, 10_000, "local")
+        .unwrap();
+
+    let records = vec![w.record("p1").unwrap(), w.record("p2").unwrap()];
+    let timeline = build_day_timeline(&records);
+
+    assert_eq!(
+        timeline.gap_count, 0,
+        "wall-clock end of p1 is +191s, so p2 at +230s (39s later) must merge with 0 UnrecordedGap"
+    );
+    assert_eq!(
+        timeline.pause_count, 19,
+        "1ms skewed dual-lane pauses must union instead of double-counting (got {})",
+        timeline.pause_count
+    );
+    let last_event = timeline
+        .spans
+        .iter()
+        .rev()
+        .find_map(|s| match s {
+            DayTimelineSpan::Event(e) => Some(e),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        last_event.record_ids.contains(&"p2".to_string()),
+        "p2 must merge symmetrically into the same run after paused p1"
+    );
+    let bounds: Vec<(u64, u64)> = timeline
+        .spans
+        .iter()
+        .map(|s| match s {
+            DayTimelineSpan::Event(e) => (e.start_epoch_sec, e.end_epoch_sec),
+            DayTimelineSpan::Pause(p) => (p.start_epoch_sec, p.end_epoch_sec),
+            DayTimelineSpan::UnrecordedGap(g) => (g.start_epoch_sec, g.end_epoch_sec),
+        })
+        .collect();
+    assert!(
+        bounds.windows(2).all(|w| w[0].1 <= w[1].0),
+        "all timeline spans must be strictly monotonic: {bounds:?}"
+    );
 }
 
 #[test]
@@ -586,4 +741,39 @@ fn markdown_export_prioritizes_raw_transcript_and_respects_analysis_and_source_f
     assert!(day_md.contains("未录音空档"));
     assert!(day_md.contains("## 当日行动与记忆"));
     assert!(day_md.contains("## 当日回顾"));
+
+    w.insert_record(
+        "ml-1".into(),
+        "多段落闪记".into(),
+        RecordOrigin::Note,
+        0,
+        1_800_045_000,
+        0,
+    )
+    .unwrap();
+    w.append_transcript("ml-1", "第一段原文", 0, 0, "manual")
+        .unwrap();
+    let ml_key = w.begin_analysis("ml-1", AnalysisStage::Summarizing).unwrap();
+    let ml_mins = parse_meeting_minutes_json(
+        r#"{"schemaVersion":2,"title":"多段落闪记","overview":"第一段总览 [S1]\n\n- 要点一 [S1]\n- 要点二","topics":[{"text":"列表议题","summary":"段落甲 [S1]\n段落乙","sources":["S1"]}],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#,
+        &w.record("ml-1").unwrap().aggregate.spine,
+    )
+    .unwrap();
+    w.complete_summary(&ml_key, ml_mins).unwrap();
+    let ml_no_src = format_record_markdown(
+        w.record("ml-1").unwrap(),
+        &[],
+        MarkdownExportOptions {
+            include_analysis: true,
+            include_sources: false,
+        },
+    );
+    assert!(
+        ml_no_src.contains("第一段总览\n\n- 要点一\n- 要点二"),
+        "stripping citations must preserve paragraph breaks and Markdown list items: {ml_no_src}"
+    );
+    assert!(
+        ml_no_src.contains("段落甲\n段落乙"),
+        "stripping citations must preserve single line breaks: {ml_no_src}"
+    );
 }

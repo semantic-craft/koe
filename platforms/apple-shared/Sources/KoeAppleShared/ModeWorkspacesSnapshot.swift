@@ -289,6 +289,7 @@ public struct QuickNoteCardSnapshot: Codable, Equatable, Identifiable, Sendable 
 
 public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let isActive: Bool
+    public let canStart: Bool
     public let sourceLabel: String
     public let inboxCount: Int
     public let totalCount: Int
@@ -297,8 +298,49 @@ public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
     public let mcpReadNote: String
     public let cards: [QuickNoteCardSnapshot]
 
+    private enum CodingKeys: String, CodingKey {
+        case isActive, canStart, sourceLabel, inboxCount, totalCount
+        case projects, selectedRecordId, mcpReadNote, cards
+    }
+
+    public init(
+        isActive: Bool,
+        canStart: Bool = true,
+        sourceLabel: String,
+        inboxCount: Int,
+        totalCount: Int,
+        projects: [QuickNoteProjectCountSnapshot],
+        selectedRecordId: String?,
+        mcpReadNote: String,
+        cards: [QuickNoteCardSnapshot]
+    ) {
+        self.isActive = isActive
+        self.canStart = canStart
+        self.sourceLabel = sourceLabel
+        self.inboxCount = inboxCount
+        self.totalCount = totalCount
+        self.projects = projects
+        self.selectedRecordId = selectedRecordId
+        self.mcpReadNote = mcpReadNote
+        self.cards = cards
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isActive = try c.decode(Bool.self, forKey: .isActive)
+        canStart = try c.decodeIfPresent(Bool.self, forKey: .canStart) ?? false
+        sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
+        inboxCount = try c.decode(Int.self, forKey: .inboxCount)
+        totalCount = try c.decode(Int.self, forKey: .totalCount)
+        projects = try c.decode([QuickNoteProjectCountSnapshot].self, forKey: .projects)
+        selectedRecordId = try c.decodeIfPresent(String.self, forKey: .selectedRecordId)
+        mcpReadNote = try c.decode(String.self, forKey: .mcpReadNote)
+        cards = try c.decode([QuickNoteCardSnapshot].self, forKey: .cards)
+    }
+
     public static let empty = QuickNoteWorkspaceSnapshot(
         isActive: false,
+        canStart: true,
         sourceLabel: "系统默认麦克风",
         inboxCount: 0,
         totalCount: 0,

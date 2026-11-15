@@ -451,11 +451,24 @@ fn all_day_workspace_projects_merged_events_pauses_gaps_and_grounded_review() {
     let mut rt = KoeRuntime::open(&sb.0).unwrap();
     let snap: Value = serde_json::from_str(&rt.snapshot_json(NOW + 700)).unwrap();
     let all_day = &snap["workspaces"]["allDay"];
-    assert_eq!(all_day["eventCount"], 2);
+    assert_eq!(all_day["eventCount"], 3);
     assert_eq!(all_day["pauseCount"], 1);
     assert_eq!(all_day["gapCount"], 1);
 
     let spans = all_day["spans"].as_array().unwrap();
+    let span_bounds: Vec<(u64, u64)> = spans
+        .iter()
+        .map(|s| {
+            (
+                s["startEpochSec"].as_u64().unwrap(),
+                s["endEpochSec"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert!(
+        span_bounds.windows(2).all(|w| w[0].1 <= w[1].0),
+        "allDay spans must be strictly chronological: {spans:?}"
+    );
     assert!(spans.iter().any(|s| s["kind"] == "event" && s["recordIds"] == json!(["ad-1", "ad-2"])));
     assert!(spans.iter().any(|s| s["kind"] == "pause" && s["recordId"] == "ad-3"));
     assert!(spans.iter().any(|s| s["kind"] == "unrecorded_gap"));
@@ -685,4 +698,402 @@ fn export_workspace_markdown_supports_record_and_all_day_while_preserving_legacy
     );
     let legacy_md = std::fs::read_to_string(&legacy_path).unwrap();
     assert!(legacy_md.starts_with("# 导出测试闪记\n"));
+}
+
+#[test]
+fn voice_input_reopen_disarms_session_and_retains_dictation_across_companion_drain() {
+    let sb = new_sandbox();
+    {
+        let mut rt = KoeRuntime::open(&sb.0).unwrap();
+        let armed = send_at(
+            &mut rt,
+            NOW,
+            json!({ "type": "set_voice_input_session", "enabled": true, "openResponsay": false }),
+        );
+        assert_eq!(armed["workspaces"]["voiceInput"]["sessionEnabled"], true);
+    }
+
+    let mut reopened = KoeRuntime::open(&sb.0).unwrap();
+    let reopened_snap: Value = serde_json::from_str(&reopened.snapshot_json(NOW + 5)).unwrap();
+    assert_eq!(
+        reopened_snap["workspaces"]["voiceInput"]["sessionEnabled"], false,
+        "reopened runtime must not project disarmed CollarStandby as active"
+    );
+    let voice_card = reopened_snap["workspaces"]["picker"]["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "voice_input")
+        .unwrap();
+    assert_eq!(voice_card["isSessionActive"], false);
+
+    send_at(
+        &mut reopened,
+        NOW + 6,
+        json!({ "type": "configure_speech", "engine": "apple_speech" }),
+    );
+    send_at(
+        &mut reopened,
+        NOW + 6,
+        json!({ "type": "local_asr_readiness", "state": "ready", "message": "本机识别已就绪" }),
+    );
+    let dict_started = send_at(
+        &mut reopened,
+        NOW + 7,
+        json!({ "type": "start_capture_mode", "mode": "dictation", "stayOnPage": true }),
+    );
+    let rec_id = dict_started["microphone"]["recordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let session_id = dict_started["microphone"]["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    send_at(
+        &mut reopened,
+        NOW + 7,
+        json!({
+            "type": "microphone_prepared",
+            "recordId": rec_id,
+            "sessionId": session_id,
+            "epoch": 0,
+            "clockNs": 1_000_000_000_u64
+        }),
+    );
+    send_at(
+        &mut reopened,
+        NOW + 7,
+        json!({
+            "type": "microphone_started",
+            "recordId": rec_id,
+            "sessionId": session_id,
+            "lane": "microphone",
+            "sampleRate": 16000
+        }),
+    );
+    for seq in 0..20_u64 {
+        send_at(
+            &mut reopened,
+            NOW + 7,
+            json!({
+                "type": "microphone_chunk",
+                "recordId": rec_id,
+                "sessionId": session_id,
+                "lane": "microphone",
+                "sequence": seq,
+                "samples": vec![240_i16; 1600],
+                "timing": {
+                    "epoch": 0,
+                    "capturedStartNs": 1_000_000_000_u64 + seq * 100_000_000_u64
+                }
+            }),
+        );
+    }
+    let asr_ops: Value = serde_json::from_str(&reopened.drain_local_asr_json()).unwrap();
+    let op_id = asr_ops[0]["operationId"].as_u64().unwrap();
+    send_at(
+        &mut reopened,
+        NOW + 8,
+        json!({
+            "type": "local_asr_result",
+            "operationId": op_id,
+            "text": "伴侣听写漏极保留文本",
+            "startMs": 0,
+            "endMs": 1200,
+            "isFinal": true
+        }),
+    );
+
+    let drained = reopened.drain_companion_events();
+    assert!(!drained.is_empty(), "expected TranscriptFinal in companion stream");
+
+    let post_drain: Value = serde_json::from_str(&reopened.snapshot_json(NOW + 9)).unwrap();
+    assert_eq!(
+        post_drain["workspaces"]["voiceInput"]["lastDictationText"],
+        "伴侣听写漏极保留文本",
+        "drain_companion_events must not wipe lastDictationText before snapshot_json"
+    );
+    assert!(
+        post_drain["workspaces"]["voiceInput"]["companionEpoch"]
+            .as_str()
+            .is_some_and(|e| !e.is_empty()),
+        "voiceInput must project companionEpoch"
+    );
+}
+
+#[test]
+fn create_note_stay_on_page_session_exclusivity_can_start_and_archived_quick_note_filtering() {
+    let (mut rt, _sb) = runtime();
+
+    send_at(&mut rt, NOW, json!({ "type": "navigate", "section": "notes" }));
+    let saved = send_at(
+        &mut rt,
+        NOW + 1,
+        json!({
+            "type": "create_note",
+            "title": "页内保存闪记",
+            "text": "直接留在随心闪记页",
+            "stayOnPage": true
+        }),
+    );
+    assert_eq!(saved["section"], "notes", "stayOnPage must keep user on notes");
+    assert_eq!(saved["notice"], "记录已保存");
+    let created_id = saved["workspaces"]["quickNote"]["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(saved["workspaces"]["quickNote"]["canStart"], true);
+    assert_eq!(saved["workspaces"]["allDay"]["canStart"], true);
+    assert_eq!(saved["workspaces"]["liveMinutes"]["canStart"], true);
+
+    let back_to_picker = send_at(&mut rt, NOW + 1, json!({ "type": "back" }));
+    assert_eq!(
+        back_to_picker["section"], "today",
+        "stayOnPage must not push Detail onto back stack"
+    );
+    assert_eq!(back_to_picker["canGoBack"], false);
+    send_at(&mut rt, NOW + 1, json!({ "type": "navigate", "section": "notes" }));
+
+    let archived = send_at(
+        &mut rt,
+        NOW + 2,
+        json!({ "type": "set_record_archived", "recordId": created_id, "archived": true }),
+    );
+    assert_eq!(
+        archived["workspaces"]["quickNote"]["totalCount"], 0,
+        "archived QuickNote must be excluded from active QuickNote workspace"
+    );
+    assert_eq!(archived["workspaces"]["quickNote"]["cards"], json!([]));
+
+    let armed = send_at(
+        &mut rt,
+        NOW + 3,
+        json!({ "type": "set_voice_input_session", "enabled": true, "openResponsay": false }),
+    );
+    assert_eq!(armed["workspaces"]["voiceInput"]["sessionEnabled"], true);
+
+    let started = send_at(
+        &mut rt,
+        NOW + 4,
+        json!({ "type": "start_capture_mode", "mode": "quick_note", "stayOnPage": true }),
+    );
+    assert_eq!(
+        started["workspaces"]["voiceInput"]["sessionEnabled"], false,
+        "starting QuickNote capture must auto-disarm CollarStandby"
+    );
+    let active_cards: Vec<&Value> = started["workspaces"]["picker"]["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["isSessionActive"] == true)
+        .collect();
+    assert_eq!(active_cards.len(), 1, "at most one mode card may be active");
+    assert_eq!(active_cards[0]["id"], "notes");
+    assert_eq!(started["workspaces"]["quickNote"]["canStart"], false);
+    assert_eq!(started["workspaces"]["allDay"]["canStart"], false);
+    assert_eq!(started["workspaces"]["liveMinutes"]["canStart"], false);
+}
+
+#[test]
+fn live_minutes_isolation_consolidation_gate_chronological_day_export_and_cloud_retry_provenance() {
+    let sb = new_sandbox();
+    {
+        let mut store = ProductStore::open(&sb.0).unwrap();
+        store
+            .transact(|w| {
+                w.insert_record(
+                    "qn-only".into(),
+                    "非会议闪记".into(),
+                    RecordOrigin::Note,
+                    0,
+                    NOW,
+                    0,
+                )?;
+                w.set_record_mode("qn-only", RecordMode::QuickNote)?;
+                w.append_transcript("qn-only", "闪记文本", 0, 0, "manual")?;
+
+                w.insert_record(
+                    "mtg-stale".into(),
+                    "待重算会议".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    NOW + 10,
+                    60_000,
+                )?;
+                w.set_record_mode("mtg-stale", RecordMode::Meeting)?;
+                w.set_record_project("mtg-stale", Some("专项评审"))?;
+                let s1 = w.append_transcript("mtg-stale", "初始会议句子", 0, 20_000, "asr")?;
+                let key = w.begin_analysis("mtg-stale", AnalysisStage::Summarizing)?;
+                let mins = parse_meeting_minutes_json(
+                    r#"{"schemaVersion":2,"title":"待重算会议","overview":"初版纪要","topics":[{"text":"议题","summary":"初版摘要","sources":["S1"]}],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#,
+                    &w.record("mtg-stale").unwrap().aggregate.spine,
+                )
+                .unwrap();
+                w.complete_summary(&key, mins)?;
+                w.edit_segment_text(
+                    &SourceRef {
+                        record_id: "mtg-stale".into(),
+                        segment_id: s1,
+                    },
+                    "修改后的会议句子",
+                )?;
+
+                w.insert_record(
+                    "z-morning".into(),
+                    "早间记录".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    NOW + 20,
+                    60_000,
+                )?;
+                w.group_all_day(
+                    "z-morning",
+                    AllDaySegment {
+                        run_id: "day-sort".into(),
+                        ordinal: 1,
+                    },
+                )?;
+                w.append_transcript("z-morning", "早上八点讨论", 0, 10_000, "asr")?;
+                let kz = w.begin_analysis("z-morning", AnalysisStage::Summarizing)?;
+                let mz = parse_meeting_minutes_json(
+                    r#"{"schemaVersion":2,"title":"早间记录","overview":"早间复盘总览","topics":[],"decisions":[{"text":"早间先定目标","sources":["S1"]}],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#,
+                    &w.record("z-morning").unwrap().aggregate.spine,
+                )
+                .unwrap();
+                w.complete_summary(&kz, mz)?;
+
+                w.insert_record(
+                    "a-afternoon".into(),
+                    "午后记录".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    NOW + 400,
+                    60_000,
+                )?;
+                w.group_all_day(
+                    "a-afternoon",
+                    AllDaySegment {
+                        run_id: "day-sort".into(),
+                        ordinal: 2,
+                    },
+                )?;
+                w.append_transcript("a-afternoon", "下午两点讨论", 0, 10_000, "asr")?;
+                let ka = w.begin_analysis("a-afternoon", AnalysisStage::Summarizing)?;
+                let ma = parse_meeting_minutes_json(
+                    r#"{"schemaVersion":2,"title":"午后记录","overview":"午后推进总览","topics":[],"decisions":[{"text":"午后确认排期","sources":["S1"]}],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#,
+                    &w.record("a-afternoon").unwrap().aggregate.spine,
+                )
+                .unwrap();
+                w.complete_summary(&ka, ma)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    let mut wav = koe_engine::wav::OpusWave::wav_header_with_rate(640, 16000).to_vec();
+    wav.extend(vec![0u8; 640]);
+    std::fs::create_dir_all(sb.0.join("audio")).unwrap();
+    std::fs::write(sb.0.join("audio").join("mtg-stale.wav"), &wav).unwrap();
+
+    let mut rt = KoeRuntime::open(&sb.0).unwrap();
+    let reject = send_raw_at(
+        &mut rt,
+        NOW + 500,
+        json!({ "type": "select_live_minutes_record", "recordId": "qn-only" }),
+    );
+    assert!(
+        !reject["error"].is_null(),
+        "select_live_minutes_record must reject non-Meeting records"
+    );
+
+    let idle_snap: Value = serde_json::from_str(&rt.snapshot_json(NOW + 501)).unwrap();
+    let lm_idle = &idle_snap["workspaces"]["liveMinutes"];
+    assert_eq!(lm_idle["selectedRecordId"], "mtg-stale");
+    assert_eq!(lm_idle["coverage"]["consolidationStage"], "stale");
+    assert_eq!(
+        lm_idle["finalSections"],
+        json!([]),
+        "finalSections must remain empty when consolidationStage != ready"
+    );
+
+    let active_mtg = send_at(
+        &mut rt,
+        NOW + 502,
+        json!({ "type": "start_capture_mode", "mode": "meeting", "stayOnPage": true }),
+    );
+    let active_id = active_mtg["workspaces"]["liveMinutes"]["activeRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        !active_mtg["workspaces"]["liveMinutes"]["pastMeetings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == active_id),
+        "pastMeetings must exclude activeRecordId while meeting is in progress"
+    );
+    let _ = finish_mic_capture(&mut rt, &active_mtg, NOW + 502);
+
+    let selected_date = idle_snap["workspaces"]["allDay"]["selectedDate"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let day_export_path = sb.0.join("sorted-day.md");
+    send_at(
+        &mut rt,
+        NOW + 505,
+        json!({
+            "type": "export_workspace_markdown",
+            "date": selected_date,
+            "path": day_export_path,
+            "includeAnalysis": true,
+            "includeSources": false
+        }),
+    );
+    let day_md = std::fs::read_to_string(&day_export_path).unwrap();
+    let morning_dec = day_md.find("早间先定目标").unwrap();
+    let afternoon_dec = day_md.find("午后确认排期").unwrap();
+    assert!(
+        morning_dec < afternoon_dec,
+        "All-Day decisions must export in chronological order rather than BTreeMap ID order: {day_md}"
+    );
+    let morning_ov = day_md.find("早间复盘总览").unwrap();
+    let afternoon_ov = day_md.find("午后推进总览").unwrap();
+    assert!(
+        morning_ov < afternoon_ov,
+        "All-Day overviews must export in chronological order: {day_md}"
+    );
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    send_at(
+        &mut rt,
+        NOW + 510,
+        json!({
+            "type": "configure_provider",
+            "apiKey": "policy-fixture",
+            "model": "fixture",
+            "asrEndpoint": format!("ws://{}", listener.local_addr().unwrap())
+        }),
+    );
+    send_at(
+        &mut rt,
+        NOW + 510,
+        json!({ "type": "configure_speech", "engine": "cloud" }),
+    );
+    send_at(
+        &mut rt,
+        NOW + 510,
+        json!({ "type": "set_meeting_audio_policy", "policy": "cloud_allowed" }),
+    );
+    let retried = send_at(
+        &mut rt,
+        NOW + 511,
+        json!({ "type": "transcribe", "recordId": "mtg-stale" }),
+    );
+    let retry_id = retried["selectedRecordId"].as_str().unwrap();
+    assert!(retry_id.starts_with("mtg-stale-retry-"));
+    assert_eq!(retried["detail"]["mode"], "meeting");
+    assert_eq!(retried["detail"]["project"], "专项评审");
 }

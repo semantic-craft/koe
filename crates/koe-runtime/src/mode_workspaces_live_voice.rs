@@ -2,7 +2,6 @@ use super::*;
 use crate::{
     capture_studio::CaptureSelection,
     command::CaptureMode,
-    companion::CompanionStreamEvent,
     live_minutes::{LiveMinutesScope, TranscriptLine},
     microphone::{MicrophoneStatus, Phase},
     projection::{origin, status},
@@ -68,6 +67,7 @@ impl KoeRuntime {
 
         let past_meetings: Vec<Value> = meeting_records
             .iter()
+            .filter(|r| Some(r.aggregate.recording_id.as_str()) != active_record_id.as_deref())
             .map(|r| {
                 let rec_id = r.aggregate.recording_id.as_str();
                 let duration_ms = if Some(rec_id) == live_record_id {
@@ -93,7 +93,11 @@ impl KoeRuntime {
         } else {
             self.selected_live_minutes_record
                 .as_deref()
-                .filter(|id| self.workspace().record(id).is_some_and(ProductRecord::is_live))
+                .filter(|id| {
+                    self.workspace()
+                        .record(id)
+                        .is_some_and(|r| r.is_live() && r.mode == RecordMode::Meeting)
+                })
                 .map(str::to_owned)
                 .or_else(|| {
                     meeting_records
@@ -105,7 +109,7 @@ impl KoeRuntime {
         let selected_record = selected_record_id
             .as_deref()
             .and_then(|id| self.workspace().record(id))
-            .filter(|r| r.is_live());
+            .filter(|r| r.is_live() && r.mode == RecordMode::Meeting);
 
         let phase = if let Some(m) = meeting_mic {
             match m.phase {
@@ -159,7 +163,7 @@ impl KoeRuntime {
             },
         });
 
-        let coverage = selected_record.map(|r| {
+        let cov_data = selected_record.map(|r| {
             let rec_id = r.aggregate.recording_id.as_str();
             let eff_live_ms = if Some(rec_id) == live_record_id {
                 live_duration_ms
@@ -170,7 +174,9 @@ impl KoeRuntime {
             };
             let rec_active =
                 is_active && active_record_id.as_deref() == Some(r.aggregate.recording_id.as_str());
-            let cov = compute_meeting_coverage(r, eff_live_ms, rec_active);
+            compute_meeting_coverage(r, eff_live_ms, rec_active)
+        });
+        let coverage = cov_data.as_ref().map(|cov| {
             json!({
                 "audioDurationMs": cov.audio_duration_ms,
                 "transcribedDurationMs": cov.transcribed_duration_ms,
@@ -198,7 +204,9 @@ impl KoeRuntime {
             .map_or_else(Vec::new, |s| s.drafts().collect());
         let live_sections = selected_record.map_or_else(Vec::new, |r| self.minutes_sections(r));
         let final_sections = if !is_active
-            && selected_record.is_some_and(|r| r.aggregate.minutes.is_some())
+            && cov_data
+                .as_ref()
+                .is_some_and(|cov| cov.consolidation == ConsolidationStage::Ready)
         {
             selected_record.map_or_else(Vec::new, |r| self.minutes_sections(r))
         } else {
@@ -220,9 +228,11 @@ impl KoeRuntime {
                 && configured
                 && !matches!(r.analysis, AnalysisState::Pending { .. })
         });
+        let can_start = self.can_start_capture_mode(capture_selection);
 
         json!({
             "isActive": is_active,
+            "canStart": can_start,
             "phase": phase,
             "configured": configured,
             "sourceLabel": source_label,
@@ -244,7 +254,7 @@ impl KoeRuntime {
 
     pub(super) fn voice_input_workspace_json(&self) -> Value {
         let session_enabled =
-            self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby;
+            self.active_companion_mode() == CompanionRoutingMode::CollarStandby;
         let available = self.ensure_voice_input_available().is_ok();
         let can_toggle = !self.is_quitting()
             && !self.store.requires_reopen()
@@ -263,19 +273,25 @@ impl KoeRuntime {
             .as_ref()
             .and_then(|t| t.battery);
         let capture_active = self.companion.capture_active || self.any_dictation_active();
-        let companion_subscribers = self.companion.manual_gate_subscribers;
+        let companion_subscribers = self
+            .companion
+            .bridge_subscribers
+            .max(self.companion.manual_gate_subscribers)
+            .max(usize::from(self.has_external_pcm_lease()));
+        let companion_epoch = &self.companion.epoch;
         let companion_sequence = self.companion.sequence;
-        let last_dictation_text = self.companion.events.iter().rev().find_map(|ev| match ev {
-            CompanionStreamEvent::TranscriptFinal {
-                text,
-                dictation: true,
-                ..
-            } if !text.trim().is_empty() => Some(text.as_str()),
-            _ => None,
-        });
+        let forwarded_audio_frames = self.companion.forwarded_audio_frames;
+        let last_dictation_text = self
+            .companion
+            .last_dictation_text
+            .as_deref()
+            .filter(|t| !t.trim().is_empty());
         let bridge_socket_path = crate::companion::resolve_bridge_socket_path(&self.root)
             .map(|p| p.to_string_lossy().into_owned());
         let has_companion_dictation = last_dictation_text.is_some();
+        let external_pcm_ready = self.has_external_pcm_lease();
+        let engine_speech_ready =
+            self.speech_ready(&self.workspace().provider_configuration().speech_engine);
 
         let step1 = if device_connected {
             voice_step(
@@ -383,6 +399,26 @@ impl KoeRuntime {
                 "已收到伴侣识别结果，语音转写链路工作正常。",
                 None,
             )
+        } else if external_pcm_ready {
+            voice_step(
+                5,
+                "speech_readiness",
+                "语音识别就绪",
+                "ready",
+                "已连接外部识别",
+                "已连接外部 PCM 伴侣识别流，语音识别由伴侣实时承接。",
+                None,
+            )
+        } else if engine_speech_ready {
+            voice_step(
+                5,
+                "speech_readiness",
+                "语音识别就绪",
+                "ready",
+                "已就绪",
+                "语音识别引擎与模型已就绪，可随时听写验证。",
+                None,
+            )
         } else {
             voice_step(
                 5,
@@ -436,7 +472,9 @@ impl KoeRuntime {
             "batteryPercent": battery_percent,
             "captureActive": capture_active,
             "companionSubscribers": companion_subscribers,
+            "companionEpoch": companion_epoch,
             "companionSequence": companion_sequence,
+            "forwardedAudioFrames": forwarded_audio_frames,
             "lastDictationText": last_dictation_text,
             "bridgeSocketPath": bridge_socket_path,
             "boundaryNote": VOICE_INPUT_BOUNDARY_NOTE,

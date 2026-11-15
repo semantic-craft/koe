@@ -1,5 +1,3 @@
-//! Raw-first Markdown export for single recordings and All-Day daily timelines.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::{SegmentId, UtteranceSegment};
@@ -145,14 +143,41 @@ pub fn format_day_markdown(
         sanitize_middle_dots(date_label.trim())
     );
 
+    let mut event_refs_per_record: BTreeMap<&str, usize> = BTreeMap::new();
+    for span in &timeline.spans {
+        if let DayTimelineSpan::Event(event) = span {
+            for rid in &event.record_ids {
+                *event_refs_per_record.entry(rid.as_str()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut seen_event_refs: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut emitted_segments: BTreeSet<(&str, SegmentId)> = BTreeSet::new();
+
     for span in &timeline.spans {
         match span {
             DayTimelineSpan::Event(event) => {
                 out.push_str(&format!("### {}\n\n", sanitize_middle_dots(&event.title)));
                 for rid in &event.record_ids {
+                    let count_so_far = seen_event_refs
+                        .entry(rid.as_str())
+                        .and_modify(|c| *c += 1)
+                        .or_insert(1);
+                    let is_last = *count_so_far
+                        >= event_refs_per_record.get(rid.as_str()).copied().unwrap_or(1);
                     if let Some(rec) = record_by_id.get(rid.as_str()) {
                         for segment in rec.aggregate.spine.segments() {
-                            append_raw_segment(&mut out, segment);
+                            let key = (rid.as_str(), segment.id);
+                            if emitted_segments.contains(&key) {
+                                continue;
+                            }
+                            if is_last
+                                || super::day_timeline::segment_wall_epoch_sec(rec, segment)
+                                    < event.end_epoch_sec
+                            {
+                                emitted_segments.insert(key);
+                                append_raw_segment(&mut out, segment);
+                            }
                         }
                     }
                 }
@@ -293,8 +318,20 @@ fn sanitize_middle_dots(text: &str) -> String {
 }
 
 fn strip_inline_citations(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
+    text.lines()
+        .map(strip_line_citations)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn strip_line_citations(line: &str) -> String {
+    if line.trim().is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
     while let Some(open) = rest.find('[') {
         out.push_str(&rest[..open]);
         let after_open = &rest[open + 1..];
