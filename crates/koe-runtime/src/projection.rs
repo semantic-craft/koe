@@ -18,7 +18,6 @@ impl KoeRuntime {
         });
         let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
         let now = if now > 0 { now } else { self.last_now_sec };
-        let today = local_date(now);
         let rows: Vec<_> = records.iter().filter(|r| r.is_live()).map(|record| {
             let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
             let duration_ms = if is_live {
@@ -36,11 +35,6 @@ impl KoeRuntime {
                 "source":origin(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"segmentCount":record.aggregate.spine.len(),
                 "preview":preview,"archived":record.is_archived()})
         }).collect();
-        let today_ids: Vec<_> = records
-            .iter()
-            .filter(|r| r.is_live() && local_date(r.aggregate.created_at_epoch_sec) == today)
-            .map(|r| &r.aggregate.recording_id)
-            .collect();
         let mut trashed_records: Vec<_> = self
             .workspace()
             .records()
@@ -134,8 +128,10 @@ impl KoeRuntime {
         let ask = self.workspace().ask_session();
         let messages: Vec<_> = ask.messages.iter().map(|m| {
             let sources: Vec<_> = m.sources.iter().filter_map(|line| {
-                let id = SegmentId::from_zero_based(line.source.line?)?;
-                self.source_json(&SourceRef { record_id: line.source.recording_key.clone(), segment_id: id })
+                self.source_json(&SourceRef {
+                    record_id: line.source.recording_key.clone(),
+                    segment_id: line.source.segment_id,
+                })
             }).collect();
             json!({"id":m.id,"role":if m.role == AskRole::User {"user"} else {"assistant"},"text":m.text,
                 "mode":if m.notice {"retrieval"} else {"answer"},"sources":sources})
@@ -272,12 +268,11 @@ impl KoeRuntime {
             microphone.as_ref(),
             &capture_selection,
         );
-        json!({"voiceInput":self.voice_input_json(),"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
-            "journal":crate::journal::journal_json(now, &records, &today_ids),
+        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
             "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
             "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
-            "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
+            "records":rows,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "workspaces":workspaces,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
             "device":device_json,

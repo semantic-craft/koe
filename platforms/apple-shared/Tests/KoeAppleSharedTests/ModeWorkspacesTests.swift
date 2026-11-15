@@ -44,7 +44,6 @@ struct ModeWorkspacesTests {
               "archived": false
             }
           ],
-          "todayRecordIds": [],
           "detail": null,
           "tasks": [],
           "memories": [],

@@ -442,15 +442,6 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
     if dto.version != 1 {
         return Err(invalid("unsupported workspace version"));
     }
-    if dto.purged_bean_file_ids.contains(&0) {
-        return Err(invalid("invalid purged bean file id"));
-    }
-    if dto.standby_scratch_file_ids.contains(&0) {
-        return Err(invalid("invalid standby scratch file id"));
-    }
-    if dto.reclaimed_standby_file_ids.contains(&0) {
-        return Err(invalid("invalid reclaimed standby file id"));
-    }
     let companion_mode = match dto.companion_mode.as_deref() {
         None => CompanionRoutingMode::Disabled,
         Some(raw_mode) => CompanionRoutingMode::parse(raw_mode)
@@ -636,9 +627,6 @@ impl RecordDto {
                     AnalysisState::Ready { input_revision } => *input_revision,
                     _ => self.content_revision,
                 });
-                if rev == 0 || rev > self.content_revision {
-                    return Err(invalid("invalid minutes_revision"));
-                }
                 a.minutes = Some(
                     parse_persisted_meeting_minutes_json(
                         &raw,
@@ -649,12 +637,7 @@ impl RecordDto {
                 );
                 Some(rev)
             }
-            None => {
-                if self.minutes_revision.is_some() {
-                    return Err(invalid("orphan minutes_revision"));
-                }
-                None
-            }
+            None => self.minutes_revision,
         };
         for timestamp in self.bookmarks {
             a.add_bookmark(if a.duration_ms > 0 {
@@ -717,22 +700,10 @@ impl RecordDto {
             }
             None => None,
         };
-        let project = match self.project {
-            None => None,
-            Some(raw_project) => {
-                if raw_project.chars().any(char::is_control) {
-                    return Err(invalid("invalid project name"));
-                }
-                let trimmed = raw_project.trim();
-                if trimmed.is_empty() {
-                    None
-                } else if trimmed.chars().count() > MAX_PROJECT_NAME_CHARS {
-                    return Err(invalid("project name exceeds maximum length"));
-                } else {
-                    Some(trimmed.to_owned())
-                }
-            }
-        };
+        let project = self
+            .project
+            .map(|raw_project| raw_project.trim().to_owned())
+            .filter(|trimmed| !trimmed.is_empty());
         let all_day = match (self.all_day_run_id, self.all_day_ordinal) {
             (Some(run_id), Some(ordinal)) if !run_id.is_empty() && ordinal > 0 => {
                 Some(AllDaySegment { run_id, ordinal })
@@ -888,7 +859,11 @@ impl MessageDto {
             },
             text: self.text,
             at_epoch_sec: self.at,
-            sources: self.sources.into_iter().map(LineDto::into_line).collect(),
+            sources: self
+                .sources
+                .into_iter()
+                .map(LineDto::into_line)
+                .collect::<Result<_, _>>()?,
             status: match self.status.as_str() {
                 "done" => AskStatus::Done,
                 "pending" => AskStatus::Pending,
@@ -910,12 +885,16 @@ impl LineDto {
             record_id: line.source.recording_key.clone(),
             start_ms: line.source.start_ms,
             end_ms: line.source.end_ms,
-            line: line.source.line,
+            line: Some(line.source.segment_id.zero_based_index()),
             at: line.at_epoch_sec,
         }
     }
-    fn into_line(self) -> SourceLine {
-        SourceLine {
+    fn into_line(self) -> Result<SourceLine, StoreError> {
+        let segment_id = self
+            .line
+            .and_then(SegmentId::from_zero_based)
+            .ok_or_else(|| invalid("invalid source line segment"))?;
+        Ok(SourceLine {
             label: self.label,
             title: self.title,
             text: self.text,
@@ -924,10 +903,10 @@ impl LineDto {
                 path: None,
                 start_ms: self.start_ms,
                 end_ms: self.end_ms,
-                line: self.line,
+                segment_id,
             },
             at_epoch_sec: self.at,
-        }
+        })
     }
 }
 impl RequestDto {

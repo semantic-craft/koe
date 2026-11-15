@@ -32,25 +32,6 @@ impl ProductWorkspace {
         &self.migrations
     }
 
-    /// Commits a receipt alongside the imported records in the same transaction.
-    pub fn finish_migration(&mut self, receipt: MigrationReceipt) -> Result<(), ProductError> {
-        self.validate_migration(&receipt)?;
-        if let Some(existing) = self
-            .migrations
-            .iter()
-            .find(|m| m.fingerprint == receipt.fingerprint)
-        {
-            return if existing == &receipt {
-                Ok(())
-            } else {
-                Err(ProductError::InvalidEvidence)
-            };
-        }
-        self.migrations.push(receipt);
-        self.changed();
-        Ok(())
-    }
-
     pub(super) fn validate_migration(
         &self,
         receipt: &MigrationReceipt,

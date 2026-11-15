@@ -371,7 +371,8 @@ fn permanent_purge_expiry_and_empty_trash_maintain_restore_totality_and_bean_tom
         .unwrap();
 
     let fp = "a".repeat(64);
-    ws.finish_migration(MigrationReceipt {
+    let mut state = ws.export_state();
+    state.migrations.push(MigrationReceipt {
         fingerprint: fp.clone(),
         archive: format!("legacy-imports/{fp}"),
         record_ids: vec!["rec-1".into(), "rec-3".into()],
@@ -388,8 +389,8 @@ fn permanent_purge_expiry_and_empty_trash_maintain_restore_totality_and_bean_tom
                 text: "旧版发布摘要".into(),
             },
         ],
-    })
-    .unwrap();
+    });
+    ws = ProductWorkspace::restore(state).unwrap();
 
     let ask_both = ws
         .begin_ask(SearchScope::All, "发布计划", 1_800_000_400)

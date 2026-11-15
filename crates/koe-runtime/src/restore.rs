@@ -4,7 +4,6 @@ use koe_engine::{
     commands::DeviceCommands,
     session::{CustodyReceipt, TransferPhaseTag},
 };
-use std::fs;
 
 impl KoeRuntime {
     pub(super) fn recover_local_captures(&mut self) -> Result<(), String> {
@@ -188,12 +187,8 @@ impl KoeRuntime {
                 if has_audio {
                     recording_assets::save_audio(&self.root, &id, &recording.preview_wav_bytes)?;
                 }
-                fs::create_dir_all(self.root.join("audio")).map_err(|e| e.to_string())?;
-                write_atomic(&opus_path, &recording.ogg_opus_bytes)
+                recording_assets::save_opus(&self.root, &id, &recording.ogg_opus_bytes)
                     .map_err(|e| format!("原始录音保存失败：{e}"))?;
-                fs::File::open(self.root.join("audio"))
-                    .and_then(|f| f.sync_all())
-                    .map_err(|e| format!("录音尚未完成落盘：{e}"))?;
             }
             let byte_count = recording.ogg_opus_bytes.len() as u32;
             let receipt = CustodyReceipt {

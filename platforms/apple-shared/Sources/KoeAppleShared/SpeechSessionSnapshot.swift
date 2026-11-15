@@ -20,18 +20,3 @@ public struct SpeechSnapshot: Codable, Equatable, Sendable {
         engine: "apple_speech", modelId: nil, models: [], appleState: "unavailable", appleMessage: nil
     )
 }
-
-public struct AllDaySnapshot: Codable, Equatable, Sendable {
-    public let state: String
-    public let source: String?
-    public let runId: String?
-    public let segmentCount: Int
-    public let message: String?
-
-    public static let empty = AllDaySnapshot(state: "idle", source: nil, runId: nil, segmentCount: 0, message: nil)
-}
-
-public struct DictationSnapshot: Codable, Equatable, Sendable {
-    public let active: Bool
-    public static let empty = DictationSnapshot(active: false)
-}

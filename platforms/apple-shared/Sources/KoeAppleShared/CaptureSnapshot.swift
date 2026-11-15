@@ -102,3 +102,46 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
         canIncludeSystemAudio = try c.decodeIfPresent(Bool.self, forKey: .canIncludeSystemAudio) ?? false
     }
 }
+
+public enum CaptureMode: String, Codable, Sendable {
+    case quickNote = "quick_note"
+    case allDay = "all_day"
+    case meeting
+    case dictation
+}
+
+public enum CaptureAction: String, Codable, Sendable {
+    case pause
+    case resume
+    case end
+    case endDictation = "end_dictation"
+    case retrySave = "retry_save"
+    case retryStop = "retry_stop"
+    case cancel
+}
+
+public struct CaptureModeSnapshot: Codable, Equatable, Identifiable, Sendable {
+    public var id: CaptureMode { mode }
+    public let mode: CaptureMode
+    public let sourceLabel: String
+    public let available: Bool
+}
+
+public struct ActiveCaptureSnapshot: Codable, Equatable, Sendable {
+    public let mode: CaptureMode
+    public let phase: String
+    public let sourceLabel: String
+    public let durationMs: UInt64
+    public let actions: [CaptureAction]
+    public let dictating: Bool
+    public let error: String?
+    public let level: Double?
+}
+
+public struct HostAction: Decodable, Sendable {
+    public enum Kind: String, Decodable, Sendable {
+        case openResponsay = "open_responsay"
+    }
+
+    public let type: Kind
+}

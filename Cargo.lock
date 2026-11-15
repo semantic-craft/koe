@@ -587,7 +587,7 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "hound",
- "koe-client-base",
+ "koe-engine",
  "reqwest",
  "serde_json",
  "sha2",

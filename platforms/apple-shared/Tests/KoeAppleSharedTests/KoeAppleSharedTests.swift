@@ -79,7 +79,6 @@ struct KoeAppleSharedTests {
           "selectedRecordId": null,
           "focusSegmentId": null,
           "records": [],
-          "todayRecordIds": [],
           "detail": null,
           "tasks": [],
           "memories": [],
@@ -123,7 +122,6 @@ struct KoeAppleSharedTests {
               "preview": "正在讨论实时转写进度"
             }
           ],
-          "todayRecordIds": ["rec-live-1"],
           "detail": null,
           "tasks": [],
           "memories": [],
@@ -193,7 +191,6 @@ struct KoeAppleSharedTests {
               "preview": "兼容旧字段"
             }
           ],
-          "todayRecordIds": [],
           "detail": {
             "id": "rec-legacy",
             "title": "旧快照记录",
@@ -245,7 +242,6 @@ struct KoeAppleSharedTests {
               "archived": true
             }
           ],
-          "todayRecordIds": ["rec-archived"],
           "trashRecords": [
             {
               "id": "rec-trashed",
@@ -403,7 +399,7 @@ struct KoeAppleSharedTests {
         let legacyMicJSON = """
         {
           "version": 2, "generation": 1, "section": "today", "canGoBack": false,
-          "selectedRecordId": null, "focusSegmentId": null, "records": [], "todayRecordIds": [],
+          "selectedRecordId": null, "focusSegmentId": null, "records": [],
           "detail": null, "tasks": [], "memories": [],
           "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
           "microphone": {

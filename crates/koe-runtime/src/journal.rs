@@ -292,25 +292,3 @@ impl KoeRuntime {
         Value::Null
     }
 }
-
-pub(super) fn journal_json(now: u64, records: &[&ProductRecord], today_ids: &[&String]) -> Value {
-    let summaries: Vec<_> = records
-        .iter()
-        .filter_map(|record| {
-            let aggregate = &record.aggregate;
-            if !today_ids.contains(&&aggregate.recording_id) || record.is_minutes_stale() {
-                return None;
-            }
-            let overview = &aggregate.minutes.as_ref()?.overview;
-            (!overview.trim().is_empty()).then(
-                || json!({"recordId":aggregate.recording_id,"title":record.title,"text":overview}),
-            )
-        })
-        .collect();
-    let note_ids: Vec<_> = records
-        .iter()
-        .filter(|record| record.is_live() && !record.aggregate.spine.is_empty())
-        .map(|record| &record.aggregate.recording_id)
-        .collect();
-    json!({"dateEpochSec":now,"recordIds":today_ids,"summaries":summaries,"noteRecordIds":note_ids})
-}

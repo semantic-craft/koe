@@ -332,6 +332,30 @@ impl KoeRuntime {
             "get_today_brief" => {
                 ensure_allowed_keys(obj, &[])?;
                 let snap = self.snapshot(now);
+                let eff_now = if now > 0 { now } else { self.last_now_sec };
+                let today = crate::projection::local_date(eff_now);
+                let mut live_non_archived: Vec<_> = self
+                    .workspace()
+                    .records()
+                    .values()
+                    .filter(|r| r.is_live() && !r.is_archived())
+                    .collect();
+                live_non_archived.sort_by_key(|r| {
+                    std::cmp::Reverse((
+                        r.aggregate.created_at_epoch_sec,
+                        r.aggregate.recording_id.clone(),
+                    ))
+                });
+                let today_record_ids: Vec<&str> = live_non_archived
+                    .iter()
+                    .filter(|r| {
+                        today.is_some()
+                            && crate::projection::local_date(r.aggregate.created_at_epoch_sec)
+                                == today
+                    })
+                    .map(|r| r.aggregate.recording_id.as_str())
+                    .collect();
+                let today_count = today_record_ids.len();
                 let recent_records: Vec<Value> = snap["records"]
                     .as_array()
                     .into_iter()
@@ -341,7 +365,6 @@ impl KoeRuntime {
                     .cloned()
                     .collect();
                 let live_count = snap["records"].as_array().map_or(0, Vec::len);
-                let today_count = snap["todayRecordIds"].as_array().map_or(0, Vec::len);
                 let tasks = snap["tasks"].as_array().cloned().unwrap_or_default();
                 let memories = snap["memories"].as_array().cloned().unwrap_or_default();
                 let pending_tasks = tasks.iter().filter(|t| t["state"] == "proposed").count();
@@ -355,7 +378,7 @@ impl KoeRuntime {
                 Ok(McpToolCallState::Completed(Ok(json!({
                     "generation": snap["generation"],
                     "revision": self.workspace().revision(),
-                    "todayRecordIds": snap["todayRecordIds"],
+                    "todayRecordIds": today_record_ids,
                     "recentRecords": recent_records,
                     "counts": {
                         "liveRecords": live_count,

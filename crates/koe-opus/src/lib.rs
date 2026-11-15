@@ -6,11 +6,8 @@
 #![deny(missing_docs)]
 
 use std::ffi::c_int;
-use std::sync::Once;
 
-use koe_engine::wav::{
-    register_default_opus_decoder_factory, OpusStreamDecoder, OpusWave, MAX_OPUS_FRAME_SAMPLES_48K,
-};
+use koe_engine::wav::{OpusStreamDecoder, OpusWave, MAX_OPUS_FRAME_SAMPLES_48K};
 
 use audiopus_sys::{
     opus_decode, opus_decoder_create, opus_decoder_ctl, opus_decoder_destroy, OpusDecoder, OPUS_OK,
@@ -100,16 +97,7 @@ impl OpusStreamDecoder for LibOpusDecoder {
     }
 }
 
-static REGISTER_ONCE: Once = Once::new();
-
 /// Constructs a boxed `LibOpusDecoder` for `sample_rate`.
 pub fn create_libopus_decoder(sample_rate: u32) -> Option<Box<dyn OpusStreamDecoder>> {
     LibOpusDecoder::new(sample_rate).map(|d| Box::new(d) as Box<dyn OpusStreamDecoder>)
-}
-
-/// Ensures `create_libopus_decoder` is registered as `koe_core`'s default decoder factory.
-pub fn ensure_opus_factory_registered() {
-    REGISTER_ONCE.call_once(|| {
-        register_default_opus_decoder_factory(create_libopus_decoder);
-    });
 }

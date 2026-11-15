@@ -114,19 +114,7 @@ impl CaptureAsset {
     pub fn publish(&mut self) -> Result<(), String> {
         let size = (self.samples * 2) as u32;
         if !self.published {
-            let mut header = Vec::with_capacity(44);
-            header.extend_from_slice(b"RIFF");
-            header.extend_from_slice(&(size + 36).to_le_bytes());
-            header.extend_from_slice(b"WAVEfmt ");
-            header.extend_from_slice(&16u32.to_le_bytes());
-            header.extend_from_slice(&1u16.to_le_bytes());
-            header.extend_from_slice(&1u16.to_le_bytes());
-            header.extend_from_slice(&self.sample_rate.to_le_bytes());
-            header.extend_from_slice(&(self.sample_rate * 2).to_le_bytes());
-            header.extend_from_slice(&2u16.to_le_bytes());
-            header.extend_from_slice(&16u16.to_le_bytes());
-            header.extend_from_slice(b"data");
-            header.extend_from_slice(&size.to_le_bytes());
+            let header = koe_engine::wav::OpusWave::wav_header_with_rate(size, self.sample_rate);
             self.file.seek(SeekFrom::Start(0)).map_err(io_error)?;
             self.file.write_all(&header).map_err(io_error)?;
             self.file.set_len(44 + u64::from(size)).map_err(io_error)?;

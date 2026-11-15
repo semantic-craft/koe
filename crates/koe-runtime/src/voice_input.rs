@@ -86,30 +86,6 @@ impl KoeRuntime {
         Ok(())
     }
 
-    pub(super) fn voice_input_json(&self) -> Value {
-        let unavailable = self.ensure_voice_input_available().err();
-        let ready = self.is_standby_ready();
-        let status = if unavailable.is_some() {
-            "当前记录进行中"
-        } else if ready {
-            "录音豆已待命"
-        } else if !self.device.is_connected() {
-            "等待录音豆连接"
-        } else {
-            "正在准备录音豆"
-        };
-        json!({
-            "sourceLabel": self.device.device_name.as_deref().unwrap_or("soundcore Work 待连接"),
-            "canPrepare": unavailable.is_none() && !self.is_quitting() && !self.store.requires_reopen(),
-            "deviceStatus": status,
-            "message": unavailable.as_deref().unwrap_or(if ready {
-                "将光标放入输入框，双击录音豆正面开始或结束听写。"
-            } else {
-                "请将录音豆取出充电仓，Koe 会自动连接并准备声音输入。"
-            })
-        })
-    }
-
     /// Transfers one-shot application actions to the native platform adapter.
     pub fn drain_host_actions_json(&mut self) -> String {
         json!(std::mem::take(&mut self.host_actions)).to_string()

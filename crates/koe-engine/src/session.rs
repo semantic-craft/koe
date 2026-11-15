@@ -16,10 +16,7 @@ use crate::transport::{
     OPUS_FRAME_BYTES, OpenedFileHead, SLICE_RECORD_BYTES, TransportSliceProcessor,
     UNFINISHED_FILE_SIZE,
 };
-use crate::wav::{
-    ASR_SAMPLE_RATE, OpusDecoderFactory, OpusStreamDecoder, OpusWave, WAV_SAMPLE_RATE,
-    default_opus_decoder_factory,
-};
+use crate::wav::{ASR_SAMPLE_RATE, OpusDecoderFactory, OpusStreamDecoder, OpusWave, WAV_SAMPLE_RATE};
 
 /// Canonical 20 ms mono Opus packet (`libopus` 1.5.2, 440 Hz sine, 24 kbps VoIP, 94 bytes).
 ///
@@ -1963,9 +1960,7 @@ impl TransportSession {
                         }
                         self.marks_ms.sort_unstable();
                         if self.live_decoder_16k.is_none() {
-                            if let Some(factory) =
-                                self.decoder_factory.or_else(default_opus_decoder_factory)
-                            {
+                            if let Some(factory) = self.decoder_factory {
                                 self.live_decoder_16k = factory(ASR_SAMPLE_RATE);
                             }
                         }

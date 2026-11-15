@@ -164,7 +164,7 @@ fn ask_answers_require_request_evidence_and_cannot_cross_scopes() {
         "local snippets must be labeled separately from a model answer"
     );
     assert_eq!(last.sources[0].source.recording_key, "a");
-    assert_eq!(last.sources[0].source.line, Some(0));
+    assert_eq!(last.sources[0].source.segment_id.ordinal(), 1);
 }
 
 #[test]

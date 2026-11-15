@@ -7,7 +7,7 @@ use koe_engine::{
 };
 use std::{
     collections::BTreeSet,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -118,6 +118,17 @@ pub fn opus_path(root: &Path, id: &str) -> Result<PathBuf, String> {
         return Err("无效的录音标识".into());
     }
     Ok(root.join("audio").join(format!("{id}.opus")))
+}
+
+/// Atomically persists raw Ogg Opus custody bytes for `record_id` and fsyncs its audio directory.
+pub fn save_opus(root: &Path, record_id: &str, opus: &[u8]) -> io::Result<PathBuf> {
+    let path = opus_path(root, record_id)
+        .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
+    write_atomic(&path, opus)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(path)
 }
 
 /// Persists complete validated audio before a record is allowed to reference it.

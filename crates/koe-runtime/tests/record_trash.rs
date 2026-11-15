@@ -479,7 +479,6 @@ fn soft_delete_stops_playback_hides_across_views_and_restores_tasks_and_audio_in
     assert!(trashed["playback"]["recordId"].is_null());
     assert!(trashed["playback"]["requestId"].as_u64().unwrap() > prev_request_id);
     assert_eq!(trashed["records"], json!([]));
-    assert_eq!(trashed["todayRecordIds"], json!([]));
     assert_eq!(trashed["tasks"], json!([]));
     assert_eq!(trashed["memories"], json!([]));
     assert_eq!(trashed["trashRecords"].as_array().unwrap().len(), 1);
@@ -538,8 +537,8 @@ fn soft_delete_stops_playback_hides_across_views_and_restores_tasks_and_audio_in
     assert_eq!(restored["notice"], "已从回收站恢复记录");
     assert!(restored["undoTrash"].is_null());
     assert_eq!(restored["trashRecords"], json!([]));
+    assert_eq!(restored["records"].as_array().unwrap().len(), 1);
     assert_eq!(restored["records"][0]["id"], id);
-    assert_eq!(restored["todayRecordIds"], json!([id]));
     assert_eq!(restored["tasks"][0]["id"], task_id);
     assert_eq!(restored["tasks"][0]["state"], "accepted");
     assert_eq!(restored["tasks"][0]["completed"], true);

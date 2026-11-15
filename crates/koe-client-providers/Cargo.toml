@@ -8,7 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-koe-client-base = { path = "../koe-client-base" }
+koe-engine = { path = "../koe-engine" }
 futures-util = { version = "0.3", features = ["sink"] }
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = "1"

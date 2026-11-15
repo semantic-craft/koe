@@ -3,7 +3,9 @@
 mod ask;
 mod provider;
 pub use provider::{
-    CredentialBinding, MeetingAudioPolicy, ProviderConfiguration, SpeechEngine, valid_reference,
+    CredentialBinding, DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_HTTP_BASE_URL,
+    DEFAULT_DASHSCOPE_WS_URL, DEFAULT_TEXT_MODEL, MeetingAudioPolicy, ProviderConfiguration,
+    SpeechEngine, valid_reference,
 };
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};

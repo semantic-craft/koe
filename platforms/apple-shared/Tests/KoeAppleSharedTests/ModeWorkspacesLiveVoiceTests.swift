@@ -70,54 +70,6 @@ struct ModeWorkspacesLiveVoiceTests {
         #expect(store.snapshot.error == nil)
         #expect(FileManager.default.fileExists(atPath: exportURL.path))
 
-        let legacyPayload = """
-        {
-          "version": 2,
-          "generation": 3,
-          "section": "live_minutes",
-          "canGoBack": false,
-          "selectedRecordId": null,
-          "focusSegmentId": null,
-          "records": [],
-          "todayRecordIds": [],
-          "detail": null,
-          "tasks": [],
-          "memories": [],
-          "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
-          "liveMinutes": {
-            "scope": { "kind": "record", "id": "legacy-m1" },
-            "phase": "recording",
-            "configured": true,
-            "parts": [
-              {
-                "recordId": "legacy-m1",
-                "title": "旧版会议快照",
-                "ordinal": null,
-                "segments": [
-                  { "id": "1", "text": "旧版实时原文", "isEdited": false, "startMs": 0, "endMs": 2000, "speaker": "甲" }
-                ],
-                "drafts": ["正在识别中"],
-                "summary": [],
-                "analysis": "waiting",
-                "minutesStale": false,
-                "error": null
-              }
-            ]
-          },
-          "device": { "state": "未连接", "connected": false, "busy": false, "files": [], "progress": 0.0 },
-          "provider": { "configured": true, "model": "qwen-plus" },
-          "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
-          "error": null,
-          "notice": null
-        }
-        """
-        let legacyDecoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(legacyPayload.utf8))
-        let resolved = LiveMinutesWorkspaceSnapshot.resolved(from: legacyDecoded)
-        #expect(resolved.isActive)
-        #expect(resolved.selectedRecordId == "legacy-m1")
-        #expect(resolved.segments.map(\.text) == ["旧版实时原文"])
-        #expect(resolved.drafts == ["正在识别中"])
-
         _ = LiveMinutesView(store: store).body
     }
 
@@ -219,7 +171,7 @@ struct ModeWorkspacesLiveVoiceTests {
         #expect(!activeWs.liveMinutes.canStart)
         store.performCaptureAction(.cancel)
 
-        let legacyIdlePayload = """
+        let minimalPayload = """
         {
           "version": 2,
           "generation": 4,
@@ -228,17 +180,10 @@ struct ModeWorkspacesLiveVoiceTests {
           "selectedRecordId": null,
           "focusSegmentId": null,
           "records": [],
-          "todayRecordIds": [],
           "detail": null,
           "tasks": [],
           "memories": [],
           "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
-          "liveMinutes": {
-            "scope": { "kind": "record", "id": null },
-            "phase": "idle",
-            "configured": true,
-            "parts": []
-          },
           "device": { "state": "未连接", "connected": false, "busy": false, "files": [], "progress": 0.0 },
           "provider": { "configured": true, "model": "qwen-plus" },
           "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
@@ -246,10 +191,10 @@ struct ModeWorkspacesLiveVoiceTests {
           "notice": null
         }
         """
-        let idleDecoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(legacyIdlePayload.utf8))
-        let idleResolved = LiveMinutesWorkspaceSnapshot.resolved(from: idleDecoded)
-        #expect(!idleResolved.isActive)
-        #expect(idleResolved.activeRecordId == nil)
+        let minimalDecoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(minimalPayload.utf8))
+        let emptyLiveMinutes = minimalDecoded.workspaces?.liveMinutes ?? .empty
+        #expect(!emptyLiveMinutes.isActive)
+        #expect(emptyLiveMinutes.activeRecordId == nil)
 
         let controlEdgeOnly = VoiceInputWorkspaceSnapshot(
             sessionEnabled: true,

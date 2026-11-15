@@ -73,7 +73,7 @@ impl ProductWorkspace {
                         path: None,
                         start_ms: evidence.start_ms,
                         end_ms: seg.map(|s| s.end_ms),
-                        line: Some(evidence.source.segment_id.zero_based_index()),
+                        segment_id: evidence.source.segment_id,
                     },
                     at_epoch_sec: if record.aggregate.created_at_epoch_sec == 0 {
                         None
@@ -123,7 +123,7 @@ impl ProductWorkspace {
                 .candidate_sources
                 .iter()
                 .map(|line| {
-                    let mut ev = self.resolve_live_source(&source_ref(line)?)?;
+                    let mut ev = self.resolve_live_source(&source_ref(line))?;
                     ev.quote.clone_from(&line.text);
                     Ok(ev)
                 })
@@ -140,9 +140,6 @@ impl ProductWorkspace {
             self.pending_ask = Some(request.clone());
             Some(request)
         } else {
-            if let Some(message) = self.ask_session.messages.last_mut() {
-                message.notice = true;
-            }
             None
         };
         self.changed();
@@ -151,6 +148,31 @@ impl ProductWorkspace {
 
     /// Validates request identity and every cited source before accepting a model answer.
     pub fn complete_ask(&mut self, operation: u64, answer: &str) -> Result<(), ProductError> {
+        self.finish_ask(operation, answer, false)
+    }
+
+    /// Returns clearly labeled local evidence snippets when no language-model request is made.
+    pub fn complete_retrieval(&mut self, operation: u64) -> Result<(), ProductError> {
+        let request = self
+            .pending_ask
+            .as_ref()
+            .filter(|r| r.operation == operation)
+            .ok_or(ProductError::StaleRequest)?;
+        self.validate_request_evidence(request)?;
+        let mut answer = "本地检索找到以下原话：\n".to_string();
+        for (index, evidence) in request.evidence.iter().enumerate() {
+            let quote = evidence.quote.replace('[', "［").replace(']', "］");
+            answer.push_str(&format!("\n{quote} [S{}]\n", index + 1));
+        }
+        self.finish_ask(operation, &answer, true)
+    }
+
+    fn finish_ask(
+        &mut self,
+        operation: u64,
+        answer: &str,
+        notice: bool,
+    ) -> Result<(), ProductError> {
         let answer = nonempty(answer)?;
         if self.last_ask_operation == Some(operation)
             && self.pending_ask.is_none()
@@ -175,35 +197,17 @@ impl ProductWorkspace {
         {
             return Err(ProductError::InvalidEvidence);
         }
-        if !matches!(
-            self.ask_session.complete_answer(answer),
-            AskStepOutcome::AnswerCompleted { .. }
-        ) {
+        let outcome = if notice {
+            self.ask_session.complete_notice_answer(answer)
+        } else {
+            self.ask_session.complete_answer(answer)
+        };
+        if !matches!(outcome, AskStepOutcome::AnswerCompleted { .. }) {
             return Err(ProductError::InvalidTransition);
         }
         self.pending_ask = None;
         self.last_ask_operation = Some(operation);
         self.changed();
-        Ok(())
-    }
-
-    /// Returns clearly labeled local evidence snippets when no language-model request is made.
-    pub fn complete_retrieval(&mut self, operation: u64) -> Result<(), ProductError> {
-        let request = self
-            .pending_ask
-            .as_ref()
-            .filter(|r| r.operation == operation)
-            .ok_or(ProductError::StaleRequest)?;
-        self.validate_request_evidence(request)?;
-        let mut answer = "本地检索找到以下原话：\n".to_string();
-        for (index, evidence) in request.evidence.iter().enumerate() {
-            let quote = evidence.quote.replace('[', "［").replace(']', "］");
-            answer.push_str(&format!("\n{quote} [S{}]\n", index + 1));
-        }
-        self.complete_ask(operation, &answer)?;
-        if let Some(message) = self.ask_session.messages.last_mut() {
-            message.notice = true;
-        }
         Ok(())
     }
 
@@ -249,13 +253,9 @@ impl ProductWorkspace {
     }
 }
 
-pub(super) fn source_ref(line: &SourceLine) -> Result<SourceRef, ProductError> {
-    Ok(SourceRef {
+pub(super) fn source_ref(line: &SourceLine) -> SourceRef {
+    SourceRef {
         record_id: line.source.recording_key.clone(),
-        segment_id: line
-            .source
-            .line
-            .and_then(SegmentId::from_zero_based)
-            .ok_or(ProductError::InvalidSource)?,
-    })
+        segment_id: line.source.segment_id,
+    }
 }

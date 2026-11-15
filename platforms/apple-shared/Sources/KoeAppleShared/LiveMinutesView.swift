@@ -16,7 +16,7 @@ public struct LiveMinutesView: View {
     }
 
     private var lm: LiveMinutesWorkspaceSnapshot {
-        LiveMinutesWorkspaceSnapshot.resolved(from: store.snapshot)
+        store.snapshot.workspaces?.liveMinutes ?? .empty
     }
 
     private var activeActions: [CaptureAction] {

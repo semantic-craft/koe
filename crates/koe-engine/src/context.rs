@@ -7,6 +7,8 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::domain::SegmentId;
+
 /// Pointer into an original audio recording or text material without copying its payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourcePointer {
@@ -18,8 +20,8 @@ pub struct SourcePointer {
     pub start_ms: u64,
     /// Optional end offset in milliseconds within the recording.
     pub end_ms: Option<u64>,
-    /// Optional 0-based sentence line index when pointing into a text document (`"doc:<id>"`).
-    pub line: Option<usize>,
+    /// Stable 1-based utterance segment identity within the originating recording or document.
+    pub segment_id: SegmentId,
 }
 
 impl SourcePointer {
@@ -117,14 +119,14 @@ pub fn cited_labels(text: &str) -> Vec<String> {
 }
 
 /// Rewrites `[S#]` citation labels in `text` from `from` source lines to the matching labels in `to`
-/// (matched by `recording_key`, `start_ms`, and `line`), stripping citations that have no match in `to`.
+/// (matched by `recording_key`, `start_ms`, and `segment_id`), stripping citations that have no match in `to`.
 #[must_use]
 pub fn relabel_citations(text: &str, from: &[SourceLine], to: &[SourceLine]) -> String {
-    let key_of = |line: &SourceLine| -> (String, u64, Option<usize>) {
+    let key_of = |line: &SourceLine| -> (String, u64, SegmentId) {
         (
             line.source.recording_key.clone(),
             line.source.start_ms,
-            line.source.line,
+            line.source.segment_id,
         )
     };
     let mut target = BTreeMap::new();
@@ -984,21 +986,31 @@ impl AskSession {
         }
 
         if is_delegation_request(trimmed) {
-            self.messages.push(AskMessage {
-                id: format!("k{now_epoch_sec}_{}", self.messages.len()),
-                role: AskRole::Koe,
-                text: DELEGATION_CLOSED_NOTICE.to_string(),
-                at_epoch_sec: now_epoch_sec,
-                sources: Vec::new(),
-                status: AskStatus::Done,
-                grounded: true,
-                via_voice: false,
-                notice: true,
-            });
+            self.append_assistant_notice(DELEGATION_CLOSED_NOTICE, now_epoch_sec, true);
             return AskStepOutcome::NoticeReplyEmitted;
         }
 
         self.plan_answer_for_last_question(now_epoch_sec, corpus_candidates, scope)
+    }
+
+    /// Appends a completed local Koe notice message without dispatching an LLM call.
+    pub fn append_assistant_notice(
+        &mut self,
+        text: impl Into<String>,
+        now_epoch_sec: u64,
+        grounded: bool,
+    ) {
+        self.messages.push(AskMessage {
+            id: format!("k{now_epoch_sec}_{}", self.messages.len()),
+            role: AskRole::Koe,
+            text: text.into(),
+            at_epoch_sec: now_epoch_sec,
+            sources: Vec::new(),
+            status: AskStatus::Done,
+            grounded,
+            via_voice: false,
+            notice: true,
+        });
     }
 
     /// Retries the last question when the trailing Koe message is `Failed` or `Pending` (and not currently in flight).
@@ -1057,17 +1069,11 @@ impl AskSession {
             } else {
                 format!("另外{}，这些内容我还看不到。", gaps.join("，"))
             };
-            self.messages.push(AskMessage {
-                id: format!("k{now_epoch_sec}_{}", self.messages.len()),
-                role: AskRole::Koe,
-                text: format!("在已转写的资料里没有找到相关内容，所以没有可依据的回答。{suffix}"),
-                at_epoch_sec: now_epoch_sec,
-                sources: Vec::new(),
-                status: AskStatus::Done,
-                grounded: false,
-                via_voice: false,
-                notice: false,
-            });
+            self.append_assistant_notice(
+                format!("在已转写的资料里没有找到相关内容，所以没有可依据的回答。{suffix}"),
+                now_epoch_sec,
+                false,
+            );
             return AskStepOutcome::UngroundedShortCircuit;
         }
 
@@ -1136,6 +1142,15 @@ impl AskSession {
 
     /// Completes the pending Koe reply with `answer_text` and filters its sources to cited labels.
     pub fn complete_answer(&mut self, answer_text: String) -> AskStepOutcome {
+        self.finish_pending_answer(answer_text, false)
+    }
+
+    /// Completes the pending Koe reply as a local retrieval notice (`notice = true`) and filters its sources to cited labels.
+    pub fn complete_notice_answer(&mut self, answer_text: String) -> AskStepOutcome {
+        self.finish_pending_answer(answer_text, true)
+    }
+
+    fn finish_pending_answer(&mut self, answer_text: String, notice: bool) -> AskStepOutcome {
         self.in_flight = false;
         let Some(last) = self.messages.last_mut() else {
             return AskStepOutcome::Ignored;
@@ -1148,6 +1163,7 @@ impl AskSession {
         let cited_count = last.sources.len();
         last.text = answer_text;
         last.status = AskStatus::Done;
+        last.notice = notice;
         AskStepOutcome::AnswerCompleted { cited_count }
     }
 
@@ -1273,7 +1289,7 @@ mod tests {
                 path: None,
                 start_ms: 0,
                 end_ms: Some(5_000),
-                line: None,
+                segment_id: SegmentId::new(1).unwrap(),
             },
             at_epoch_sec: Some(1_000),
         }];
