@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-15T08:27:53.980975Z</p>
-<p>Main: <code>main: 9588aaa86320c85a4029b556a6442fcc81a004bd</code></p>
+<p>Observed: 2026-11-15T09:32:18.362425Z</p>
+<p>Main: <code>main: d8c08c1a1a169a9a1de7314b6a242912ad8fb335</code></p>
 <section id="mode-workspaces-definition"><h2>四模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>四种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。本项交付业务定义文档与交互稿，正式页面已由 PR #712 实现。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -48,11 +48,12 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/661">issue 661: 用户明确不需要旧版资料迁移。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/restore.rs">file crates/koe-runtime/src/restore.rs: 当前工作区与已有记录恢复仍保留。</a></li>
 </ul><p>Next: 已交付移除；当前工作区恢复按 #662 硬件验收核对。</p></article>
-<article id="provider-persistence"><h3>服务凭据与非敏感配置持久化</h3><span class="badge">done</span><p>非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；macOS 平台适配与开发隔离已接通。17 项 Rust 回归、2 项 Swift 桥接回归、check、独立评审与 PR CI 通过，已 squash 合并。</p><ul>
+<article id="provider-persistence"><h3>服务凭据与非敏感配置持久化</h3><span class="badge">done</span><p>非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；新密钥先登记待回收引用再创建安全项，崩溃孤儿在启动或重试时按精确引用回收（PR #714）。macOS 平台适配与开发隔离已接通，自动门禁、独立评审与 PR CI 通过，已 squash 合并。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 实现已合并，包含配置与安全存储故障回归。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/provider_persistence.rs">file crates/koe-runtime/tests/provider_persistence.rs: 重启、故障、清除、授权与隔离行为回归。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/issues/604">issue 604: 新安全项创建后、引用提交前崩溃可能留下无引用项，尚未自动回收。</a></li>
-</ul><p>Next: 日常签名覆盖升级由日常使用检验（#603 已按日常使用替代人工清单关闭）；崩溃孤儿无引用安全项回收见 #604。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/604">issue 604: 崩溃孤儿回收范围：新安全项创建后、引用提交前终止留下的无引用项。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/714">pull 714: squash 92692a7 已合并：先登记 pending_credentials 再创建安全项，启动/重试按精确引用回收，不枚举 Keychain；真实子进程 SIGKILL 回归先红后绿，381 Rust、Swift 门禁与 CI 通过，独立评审 PASS。未在签名版真实 Keychain 上验证。</a></li>
+</ul><p>Next: 日常签名覆盖升级与真实 Keychain 下的崩溃回收由日常使用检验（#603 已按日常使用替代人工清单关闭）。</p></article>
 <article id="meeting-audio-policy"><h3>会议音频只留本机</h3><span class="badge">done</span><p>N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。Apple 本机实时识别已另由 #660 接入；下载模型与引擎独立配置在 #661 集成。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/609">pull 609: 独立评审 PASS+NOTES，14 项策略与 7 项采集独立复跑通过，CI success，已 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/607">issue 607: 本轮实现与自动验收范围。</a></li>
@@ -69,8 +70,8 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/629">issue 629: 原生麦克风真实时刻与暂停子单元；265 Rust、32 Python、50 Swift完整本地门禁通过。系统双路、签名安装与真实权限仍未验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativeCaptureTimelineTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativeCaptureTimelineTests.swift: 隔离权限、暂停尾块、恢复代次、队列溢出及最终WAV/时间轴回读。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/630">pull 630: squash 22334d2；265 Rust、32 Python、50 Swift完整门禁与CI通过；独立worktree15 Rust+24 NativeCapture实运行PASS+NOTES。未安装、未在真实环境验证。</a></li>
-</ul><p>Next: 单路麦克风日常体验随 /Applications/Koe.app 日常使用检验；Core Audio 系统音频授权与原生双路接入继续按 #620 推进。</p></article>
-<article id="mac-dual-capture"><h3>Mac 系统音频双路恢复</h3><span class="badge">in_progress</span><p>Rust 分路资产保管（PR #621）、共同时间轴与暂停协议（PR #624）及分路回放（PR #627）已合并。原生单路麦克风补接真实首样本时刻、权限后clock及暂停恢复，PR #630已squash 22334d2，完整门禁、CI和独立实运行通过；本轮未安装签名版。Core Audio与原生双路入口仍未恢复，不把单路子单元视为完整N3B。真实GUI、权限和听感继续#620。</p><ul>
+</ul><p>Next: 单路麦克风日常体验随 /Applications/Koe.app 日常使用检验；系统音频双路见「Mac 系统音频双路恢复」。</p></article>
+<article id="mac-dual-capture"><h3>Mac 系统音频双路恢复</h3><span class="badge">unverified</span><p>Rust 分路保管、共同时间轴与暂停协议、分路回放（PR #621/#624/#627）和原生单路麦克风（PR #630）已合并。PR #715 接入 Core Audio 系统音频路：私有 tap 排除 Koe 自身，跟随默认输出时钟，输出或格式变化明确中断；授权以本进程 -100 dBFS 检测信号被 tap 收到为准；任一路失败只中断该路并标记采集不完整；随心闪记与实时纪要可在录音管理中开启。自动门禁、CI 与独立评审通过；签名版真实授权、输出切换与听感尚未验证。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/621">pull 621: 仅资产保管基础；255 Rust、32 Python、29 Swift完整门禁及CI通过，独立复核PASS+NOTES；未安装或真机验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/619">issue 619: 本轮仅 Rust 分路保管基础。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/dual_capture.rs">file crates/koe-runtime/tests/dual_capture.rs: 分路尾块、取消、发布重试和持久结果的行为回归。</a></li>
@@ -82,7 +83,10 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift: 真实PCM逐样本回读与无时间轴旧录音尾部。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/627">pull 627: 分路回放子单元squash 135f831已合并。完整门禁与CI通过；独立复验运行Rust及6项原生真实媒体回归。未安装，完整GUI与听感未验。</a></li>
 <li>note macOS 27.2 独立授权边界原型: 基于638f5e5，以独立ad-hoc应用经LaunchServices运行。tap、aggregate、I/O启动及清理返回0，317次回调累计报告649216字节，nonzeroBuffers=0；没有可靠记录系统授权选择，因此不是允许、拒绝或静音状态的验收。生产双路入口保持关闭，未安装签名版。</li>
-</ul><p>Next: 先取得公开 API 可识别的系统音频授权完成判据，再接 Core Audio 与原生双路入口（#620）。独立限时原型的 HAL 成功与 317 次零幅度回调仍只能判定授权未知；不启用伪就绪入口。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/715">pull 715: squash d8c08c1 已合并：Core Audio process tap 采集、公开 API -100 dBFS 检测信号授权判据、单路失败保留另一路、录音管理开关。Rust 与 Swift 回归先红后绿；383 Rust、59 XCTest、Swift Testing 全部通过，CI 与独立评审 PASS。所有 swift test 注入替身，未触发真实 TCC；未安装签名版，未在真实环境验证。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Sources/Koe/NativeSystemAudioProbe.swift">file platforms/macos/Sources/Koe/NativeSystemAudioProbe.swift: 授权判据：只有 tap 收到非零检测信号才算授权；静音、AudioDeviceStart 成功不算；拒绝需检测信号已渲染且无权限弹窗。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/620">issue 620: 工程实现范围已随 PR #715 关闭；签名版授权组合、输出切换与听感未验收。</a></li>
+</ul><p>Next: 安装签名版后，在日常使用中核对系统音频权限允许/拒绝/撤销与麦克风组合、耳机远端声音双路回放与共同时间轴、内建/USB/蓝牙输出切换，以及录音中退出重开。若真实权限弹窗不属于已识别的窗口所属进程，判据会偏向拒绝，需据实调整。</p></article>
 <article id="record-trash-archive"><h3>记录归档防误删与 30 天回收站</h3><span class="badge">done</span><p>Slice R1（PR #635）在 ProductWorkspace 新增互斥保留态 RecordRetention（Active / Archived / Trashed），软删即刻生效并附 8 秒底部撤销条，软删记录自动移出今天、待办、记忆、BM25 与全局问答，30 天内恢复零损归位；已归档、采集中或排空中的记录拒绝删除；彻底清除或到期先原子落盘元数据再按白名单清理主音频与分路音频，录音豆已清除文件写入墓碑阻断自动重建并保留手动重下恢复。实体 D3200 蓝牙同步墓碑行为继续归入 #588。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/634">issue 634: Slice R1 实现范围与验收条件。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: squash d832ec8 已合并；281 Rust、44 Python、53 Swift 完整门禁、三模型对抗审查加固与 CI 通过。</a></li>
