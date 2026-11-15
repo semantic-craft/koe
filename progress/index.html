@@ -3,23 +3,24 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-15T04:38:14.566053Z</p>
-<p>Main: <code>main: f5000651042fb2e781795ccac7544bb674c5c5bf</code></p>
+<p>Observed: 2026-11-15T08:27:53.980975Z</p>
+<p>Main: <code>main: 9588aaa86320c85a4029b556a6442fcc81a004bd</code></p>
 <section id="mode-workspaces-definition"><h2>四模式工作区业务定义</h2>
-<article id="mode-workspaces-spec"><h3>四种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。交付为文档和交互稿，尚未实现完整正式页面。</p><ul>
+<article id="mode-workspaces-spec"><h3>四种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。本项交付业务定义文档与交互稿，正式页面已由 PR #712 实现。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/687">issue 687: 本单仅交付业务定义和方案。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/mode-workspaces.md">file docs/mode-workspaces.md: 已明确实现、原型与未验收边界。</a></li>
-</ul><p>Next: 正式页面实现沿用当前Rust状态与既有MCP，不重建资料库。</p></article>
-<article id="mode-workspaces-pages"><h3>正式四工作区业务页面</h3><span class="badge">unverified</span><p>已实现随心闪记（收件箱/项目归类与原文对照 AI 理解）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议切换）、语音输入（六步联动检查与伴侣流感知测试框）、侧栏纯导航及所有记录按模式/收件箱筛选，并通过 Rust/Swift 测试与自检门禁；真机交互待单独验收。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/711">issue 711: 独立真机验收工单，保持开放未验。</a></li>
+</ul><p>Next: 正式页面实现已由 PR #712 合并主线，沿用同一 Rust 工作区与既有 MCP。</p></article>
+<article id="mode-workspaces-pages"><h3>正式四工作区业务页面</h3><span class="badge">done</span><p>PR #712（9588aaa）已合入主线，落地随心闪记（收件箱/项目归类、原文对照 AI 理解与自定义 Markdown 导出）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议回看）、语音输入（六步联动检查与伴侣流感知测试框）、侧栏纯导航及所有记录按模式/收件箱筛选。全量 scripts/check、三模型对抗审查、独立 pro 分支复验（PASS+NOTES）与远端 CI 均通过；尚未基于 9588aaa 重装 /Applications/Koe.app，#711 手工验收单已按日常使用替代人工清单原则关闭。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/712">pull 712: 正式四工作区页面与纯导航解耦经全量 check、三模型对抗审查、独立 pro 复验（PASS+NOTES）与远端 CI 通过后 squash 合并为 9588aaa。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/711">issue 711: 手工交互验收清单已关闭（not_planned），改为日常使用直接发现问题。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/mode_workspaces.rs">file crates/koe-runtime/src/mode_workspaces.rs: Runtime 解耦侧栏导航与统一 workspaces 投影。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/QuickNoteWorkspaceView.swift">file platforms/apple-shared/Sources/KoeAppleShared/QuickNoteWorkspaceView.swift: 随心闪记收件箱/项目归类、原文对照 AI 理解与自定义 Markdown 导出。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/AllDayWorkspaceView.swift">file platforms/apple-shared/Sources/KoeAppleShared/AllDayWorkspaceView.swift: 全天听记跨切片事件、暂停与未录音空档时间轴及集中复查。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift">file platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift: 实时纪要三项覆盖率指标、往期会议回看与响应式分栏。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/VoiceInputView.swift">file platforms/apple-shared/Sources/KoeAppleShared/VoiceInputView.swift: 语音输入六步联动检查与伴侣流感知光标输入测试。</a></li>
 <li>note https://github.com/semantic-craft/responsay-macos/pull/823: 仅证明Responsay软件交付；不证明Koe新业务页面或物理效果。</li>
-</ul><p>Next: 在签名安装的 /Applications/Koe.app 上配合物理 D3200 与 Responsay 完成四工作区真机交互验收（#711）。</p></article>
+</ul><p>Next: 需要日常使用时运行 ./scripts/install-macos.sh 更新签名版 /Applications/Koe.app，在日常使用中直接检验界面与交互。</p></article>
 <article id="mode-workspaces-real-input"><h3>真实识别与光标上屏</h3><span class="badge">done</span><p>Koe 2.0.0（9）与 Responsay 1.27.1（203）及后续安装的 Responsay 1.28.0（204）已完成闭环验收。正式菜单成功弹出录音浮窗，真实录音豆声学收音经 Koe 和千问实时服务取得测试句终稿；2026-11-14 16:12 与 16:23 系统日志记录 Responsay[9949] 真实听写会话与 Spotlight 写入，用户在 Koe 2.0.0（9）与 Responsay 1.28.0（204）真机确认原光标插入（originalCursor）与D3200 实体双击启停（physicalDoubleTap）均已通过，semantic-craft/responsay-macos#810 已关闭，Slice PCMHW 已于 PR #701 结案。物理蓝牙断连恢复与三种快捷键录制器本轮未单独再作机器回放。</p><ul>
 <li>note https://github.com/semantic-craft/responsay-macos/issues/810: 机器实测与 2026-11-14 用户真机确认（originalCursor 与 physicalDoubleTap）均已闭环，#810 已关闭。</li>
 <li><a href="https://github.com/semantic-craft/koe/pull/701">pull 701: Slice PCMHW 标记完成并记录机器证据、用户真机确认与未重跑边界。</a></li>
@@ -51,7 +52,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 实现已合并，包含配置与安全存储故障回归。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/provider_persistence.rs">file crates/koe-runtime/tests/provider_persistence.rs: 重启、故障、清除、授权与隔离行为回归。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/604">issue 604: 新安全项创建后、引用提交前崩溃可能留下无引用项，尚未自动回收。</a></li>
-</ul><p>Next: 跨版本安装升级与系统授权仍待 #603；无引用安全项回收见 #604。</p></article>
+</ul><p>Next: 日常签名覆盖升级由日常使用检验（#603 已按日常使用替代人工清单关闭）；崩溃孤儿无引用安全项回收见 #604。</p></article>
 <article id="meeting-audio-policy"><h3>会议音频只留本机</h3><span class="badge">done</span><p>N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。Apple 本机实时识别已另由 #660 接入；下载模型与引擎独立配置在 #661 集成。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/609">pull 609: 独立评审 PASS+NOTES，14 项策略与 7 项采集独立复跑通过，CI success，已 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/607">issue 607: 本轮实现与自动验收范围。</a></li>
@@ -68,7 +69,7 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/629">issue 629: 原生麦克风真实时刻与暂停子单元；265 Rust、32 Python、50 Swift完整本地门禁通过。系统双路、签名安装与真实权限仍未验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativeCaptureTimelineTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativeCaptureTimelineTests.swift: 隔离权限、暂停尾块、恢复代次、队列溢出及最终WAV/时间轴回读。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/630">pull 630: squash 22334d2；265 Rust、32 Python、50 Swift完整门禁与CI通过；独立worktree15 Rust+24 NativeCapture实运行PASS+NOTES。未安装、未在真实环境验证。</a></li>
-</ul><p>Next: 签名版权限、输入切换、暂停恢复、回放与退出重开按 #616/#620 验收；系统音频授权及双路另片推进。</p></article>
+</ul><p>Next: 单路麦克风日常体验随 /Applications/Koe.app 日常使用检验；Core Audio 系统音频授权与原生双路接入继续按 #620 推进。</p></article>
 <article id="mac-dual-capture"><h3>Mac 系统音频双路恢复</h3><span class="badge">in_progress</span><p>Rust 分路资产保管（PR #621）、共同时间轴与暂停协议（PR #624）及分路回放（PR #627）已合并。原生单路麦克风补接真实首样本时刻、权限后clock及暂停恢复，PR #630已squash 22334d2，完整门禁、CI和独立实运行通过；本轮未安装签名版。Core Audio与原生双路入口仍未恢复，不把单路子单元视为完整N3B。真实GUI、权限和听感继续#620。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/621">pull 621: 仅资产保管基础；255 Rust、32 Python、29 Swift完整门禁及CI通过，独立复核PASS+NOTES；未安装或真机验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/619">issue 619: 本轮仅 Rust 分路保管基础。</a></li>
@@ -81,7 +82,7 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift: 真实PCM逐样本回读与无时间轴旧录音尾部。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/627">pull 627: 分路回放子单元squash 135f831已合并。完整门禁与CI通过；独立复验运行Rust及6项原生真实媒体回归。未安装，完整GUI与听感未验。</a></li>
 <li>note macOS 27.2 独立授权边界原型: 基于638f5e5，以独立ad-hoc应用经LaunchServices运行。tap、aggregate、I/O启动及清理返回0，317次回调累计报告649216字节，nonzeroBuffers=0；没有可靠记录系统授权选择，因此不是允许、拒绝或静音状态的验收。生产双路入口保持关闭，未安装签名版。</li>
-</ul><p>Next: 先取得公开API可识别的系统音频授权完成判据，再接Core Audio与原生双路。独立限时原型的HAL成功与317次未检出非零数据的回调仍只能判定授权未知；不启用伪就绪入口。允许、拒绝、延迟、取消及签名真机矩阵仍待#620。</p></article>
+</ul><p>Next: 先取得公开 API 可识别的系统音频授权完成判据，再接 Core Audio 与原生双路入口（#620）。独立限时原型的 HAL 成功与 317 次零幅度回调仍只能判定授权未知；不启用伪就绪入口。</p></article>
 <article id="record-trash-archive"><h3>记录归档防误删与 30 天回收站</h3><span class="badge">done</span><p>Slice R1（PR #635）在 ProductWorkspace 新增互斥保留态 RecordRetention（Active / Archived / Trashed），软删即刻生效并附 8 秒底部撤销条，软删记录自动移出今天、待办、记忆、BM25 与全局问答，30 天内恢复零损归位；已归档、采集中或排空中的记录拒绝删除；彻底清除或到期先原子落盘元数据再按白名单清理主音频与分路音频，录音豆已清除文件写入墓碑阻断自动重建并保留手动重下恢复。实体 D3200 蓝牙同步墓碑行为继续归入 #588。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/634">issue 634: Slice R1 实现范围与验收条件。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: squash d832ec8 已合并；281 Rust、44 Python、53 Swift 完整门禁、三模型对抗审查加固与 CI 通过。</a></li>
@@ -174,7 +175,7 @@
 </ul><p>Next: Responsay 通道实体双击与原光标插入已于 #810 结案；Koe 独立侧键物理长按/松开及相关模式真机项继续按 #668 追踪。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、80 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #712 经三模型对抗审查、独立 pro 复验（PASS+NOTES）与远端 CI 通过后合并。此前切片的验收记录保留在各自条目。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 独立评审与 CI 通过，未运行真实安装升级。</a></li>
@@ -183,6 +184,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/638">pull 638: Slice R2 完整门禁（295 Rust、44 Python、57 Swift）、koe-cli benchmark（release 5 轮中位数 65.721 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 16 工具实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 独立「录音」音源工作台完整门禁（50 文件 UI 原则零违规、全量离线 Rust 与 Swift 测试）、koe-cli benchmark（69.821 ms）、三模型对抗审查 5 项先红后绿加固及 PR CI 通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/712">pull 712: 正式四工作区与解耦导航通过全量 scripts/check（80 文件 UI 原则零违规、全量 Rust/Clippy 与 Swift 测试）、三模型对抗审查、独立 pro 复验（PASS+NOTES）及远端 CI。</a></li>
 </ul><p>Next: 后续改动运行统一门禁。</p></article>
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
@@ -203,11 +205,11 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/598">issue 598: 独立真机验收工单，保持未验。</a></li>
 </ul><p>Next: 不再实施旧库导入；当前工作区恢复按全天听记验收核对。</p></article>
 <article id="provider-upgrade-acceptance"><h3>凭据跨签名安装升级验收</h3><span class="badge">unverified</span><p>本轮仅核对旧凭据标识源码、现有签名元数据，并运行隔离原生桥接测试。未运行真实签名安装升级、个人 Keychain 读回或系统授权交互。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/603">issue 603: 覆盖升级后静默读取、授权次数、清除重启与开发隔离的独立真机工单。</a></li>
-</ul><p>Next: 用受控测试凭据在真实 Developer ID 交付版本间升级，记录前后构建、签名与读取结果；不以同构建重启替代升级。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/603">issue 603: 独立人工升级验收单已按日常使用替代人工清单关闭（not_planned）；未单独执行人工矩阵。</a></li>
+</ul><p>Next: #603 已关闭（not_planned），跨版本 Keychain 继承在日常升级 /Applications/Koe.app 时直接检验；崩溃孤儿项回收继续追踪 #604。</p></article>
 <article id="meeting-audio-device-acceptance"><h3>会议音频策略的签名版与真机验收</h3><span class="badge">unverified</span><p>本轮仅验证隔离工作区和本地 HTTP/WS 服务。尚未安装签名版，未用真实云账户或录音豆验收。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/608">issue 608: 独立真机验收，不以模拟协议通过替代。</a></li>
-</ul><p>Next: 按 #608 验证实时、离线取回、文件重转写、录制中切换、重启与文字云服务；本机 ASR 未接入不得暗转云。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/608">issue 608: 独立人工验收单已按日常使用替代人工清单关闭（not_planned）；零上传契约由 audio_policy_tests 守护。</a></li>
+</ul><p>Next: #608 已关闭（not_planned），网络零上传由 Rust 协议回归守护，界面开关与本机识别状态在日常使用中直接检验。</p></article>
 <article id="activity-quit-device-acceptance"><h3>活动与退出真机验收</h3><span class="badge">unverified</span><p>本轮隔离 C ABI 协议音频、保存重开和活动计数通过；未安装签名版，未运行真实 pmset、锁屏、D3200 和云端场景。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/612">issue 612: 独立真机验收，仍开放未验。</a></li>
 </ul><p>Next: 在签名安装版核对活动重叠释放、锁屏、停止确认恢复及录音中退出重开。</p></article>
@@ -237,7 +239,7 @@
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.0.0">release v2.0.0: 正式私有 Release，arm64 zip、SHA256SUMS 与无秘密验收回执均已上传。zip SHA-256 c4b75ee1f79e7b52eaac77df000d4e5d974bb8fa3cbcfe9c08be5511afa15e35。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/690">pull 690: 版本准备经独立评审与完整门禁通过，squash 合并为 34d251b6；远端 parent 和 tree 与受检范围一致。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.0.0.md">file docs/releases/v2.0.0.md: 当前可用范围、安装方式和未验收边界。</a></li>
-</ul><p>Next: 完整四业务页仍为交互稿；Responsay #810 与 PCMHW 已结案。全天听记长时硬件与断网验收继续按 #662，物理 Fn / 右 Option 继续按 Responsay #822 追踪。</p></article>
+</ul><p>Next: 正式四业务页面代码已于 PR #712 合入主线（v2.0.0 之后）；Responsay #810 与 PCMHW 已结案，物理 Fn / 右 Option 继续按 Responsay #822 追踪。</p></article>
 <article id="code-quality-cleanup"><h3>废弃子系统清理与实际 UI 门禁</h3><span class="badge">done</span><p>删除无消费者的旧 MCP/ACP、Google/Copilot、分析队列、偏好和 memory hub，移除空余 core crate。UI 门禁改查真实 Swift 配色；完整 scripts/check、独立审查和远端 CI 通过，PR #695 已 squash 合并为 07d1e64。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/acceptance/code-quality-2026-11-14.md">file docs/acceptance/code-quality-2026-11-14.md: 来源标准、范围、回归证据与尚未验证的边界。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/695">pull 695: 独立审查及完整本地、远端门禁通过，合并树与受检候选一致。</a></li>
