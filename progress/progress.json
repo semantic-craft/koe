@@ -46,9 +46,9 @@
       },
       {
         "number": 604,
-        "reason": "completed",
-        "state": "closed",
-        "updated_at": "2026-11-15T09:14:46Z"
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T08:24:01Z"
       },
       {
         "number": 607,
@@ -94,9 +94,9 @@
       },
       {
         "number": 620,
-        "reason": "completed",
-        "state": "closed",
-        "updated_at": "2026-11-15T09:29:16Z"
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-15T08:25:30Z"
       },
       {
         "number": 623,
@@ -249,7 +249,7 @@
         "updated_at": "2026-11-15T08:24:53Z"
       }
     ],
-    "main": "d8c08c1a1a169a9a1de7314b6a242912ad8fb335",
+    "main": "9588aaa86320c85a4029b556a6442fcc81a004bd",
     "open_pulls": [],
     "pulls": [
       {
@@ -547,22 +547,6 @@
         "merged": true,
         "number": 712,
         "state": "closed"
-      },
-      {
-        "base": "6a12f90ab03947116c5c755b5299439a76bf5d5c",
-        "head": "9161daa88e7c0bddec7eb492b16e4175fb47119f",
-        "merge_commit": "92692a7e95414dfe15be621c79590808754e7821",
-        "merged": true,
-        "number": 714,
-        "state": "closed"
-      },
-      {
-        "base": "92692a7e95414dfe15be621c79590808754e7821",
-        "head": "c9284b6866c7c5ed09754c28bc4197ffa8072f7d",
-        "merge_commit": "d8c08c1a1a169a9a1de7314b6a242912ad8fb335",
-        "merged": true,
-        "number": 715,
-        "state": "closed"
       }
     ],
     "releases": [
@@ -576,7 +560,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-15T09:32:18.362425Z",
+  "observed_at": "2026-11-15T08:27:53.980975Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -809,19 +793,14 @@
             },
             {
               "kind": "issue",
-              "note": "崩溃孤儿回收范围：新安全项创建后、引用提交前终止留下的无引用项。",
+              "note": "新安全项创建后、引用提交前崩溃可能留下无引用项，尚未自动回收。",
               "ref": 604
-            },
-            {
-              "kind": "pull",
-              "note": "squash 92692a7 已合并：先登记 pending_credentials 再创建安全项，启动/重试按精确引用回收，不枚举 Keychain；真实子进程 SIGKILL 回归先红后绿，381 Rust、Swift 门禁与 CI 通过，独立评审 PASS。未在签名版真实 Keychain 上验证。",
-              "ref": 714
             }
           ],
           "id": "provider-persistence",
-          "next": "日常签名覆盖升级与真实 Keychain 下的崩溃回收由日常使用检验（#603 已按日常使用替代人工清单关闭）。",
+          "next": "日常签名覆盖升级由日常使用检验（#603 已按日常使用替代人工清单关闭）；崩溃孤儿无引用安全项回收见 #604。",
           "status": "done",
-          "summary": "非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；新密钥先登记待回收引用再创建安全项，崩溃孤儿在启动或重试时按精确引用回收（PR #714）。macOS 平台适配与开发隔离已接通，自动门禁、独立评审与 PR CI 通过，已 squash 合并。",
+          "summary": "非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；macOS 平台适配与开发隔离已接通。17 项 Rust 回归、2 项 Swift 桥接回归、check、独立评审与 PR CI 通过，已 squash 合并。",
           "title": "服务凭据与非敏感配置持久化"
         },
         {
@@ -901,7 +880,7 @@
             }
           ],
           "id": "mac-microphone-capture",
-          "next": "单路麦克风日常体验随 /Applications/Koe.app 日常使用检验；系统音频双路见「Mac 系统音频双路恢复」。",
+          "next": "单路麦克风日常体验随 /Applications/Koe.app 日常使用检验；Core Audio 系统音频授权与原生双路接入继续按 #620 推进。",
           "status": "done",
           "summary": "今天页可选择输入设备录音，Rust 按会话和序号有界写入 WAV。授权后确认时钟，AVAudioEngine 提供真实首样本时刻；暂停排空尾块，继续保留序号并切换 epoch。采样率变化和非法时刻明确中断并保存此前音频；保存失败阻退出并可重试。默认只留本机，真实环境仍待验收。",
           "title": "Mac 单路麦克风采集"
@@ -962,27 +941,12 @@
               "kind": "note",
               "note": "基于638f5e5，以独立ad-hoc应用经LaunchServices运行。tap、aggregate、I/O启动及清理返回0，317次回调累计报告649216字节，nonzeroBuffers=0；没有可靠记录系统授权选择，因此不是允许、拒绝或静音状态的验收。生产双路入口保持关闭，未安装签名版。",
               "ref": "macOS 27.2 独立授权边界原型"
-            },
-            {
-              "kind": "pull",
-              "note": "squash d8c08c1 已合并：Core Audio process tap 采集、公开 API -100 dBFS 检测信号授权判据、单路失败保留另一路、录音管理开关。Rust 与 Swift 回归先红后绿；383 Rust、59 XCTest、Swift Testing 全部通过，CI 与独立评审 PASS。所有 swift test 注入替身，未触发真实 TCC；未安装签名版，未在真实环境验证。",
-              "ref": 715
-            },
-            {
-              "kind": "file",
-              "note": "授权判据：只有 tap 收到非零检测信号才算授权；静音、AudioDeviceStart 成功不算；拒绝需检测信号已渲染且无权限弹窗。",
-              "ref": "platforms/macos/Sources/Koe/NativeSystemAudioProbe.swift"
-            },
-            {
-              "kind": "issue",
-              "note": "工程实现范围已随 PR #715 关闭；签名版授权组合、输出切换与听感未验收。",
-              "ref": 620
             }
           ],
           "id": "mac-dual-capture",
-          "next": "安装签名版后，在日常使用中核对系统音频权限允许/拒绝/撤销与麦克风组合、耳机远端声音双路回放与共同时间轴、内建/USB/蓝牙输出切换，以及录音中退出重开。若真实权限弹窗不属于已识别的窗口所属进程，判据会偏向拒绝，需据实调整。",
-          "status": "unverified",
-          "summary": "Rust 分路保管、共同时间轴与暂停协议、分路回放（PR #621/#624/#627）和原生单路麦克风（PR #630）已合并。PR #715 接入 Core Audio 系统音频路：私有 tap 排除 Koe 自身，跟随默认输出时钟，输出或格式变化明确中断；授权以本进程 -100 dBFS 检测信号被 tap 收到为准；任一路失败只中断该路并标记采集不完整；随心闪记与实时纪要可在录音管理中开启。自动门禁、CI 与独立评审通过；签名版真实授权、输出切换与听感尚未验证。",
+          "next": "先取得公开 API 可识别的系统音频授权完成判据，再接 Core Audio 与原生双路入口（#620）。独立限时原型的 HAL 成功与 317 次零幅度回调仍只能判定授权未知；不启用伪就绪入口。",
+          "status": "in_progress",
+          "summary": "Rust 分路资产保管（PR #621）、共同时间轴与暂停协议（PR #624）及分路回放（PR #627）已合并。原生单路麦克风补接真实首样本时刻、权限后clock及暂停恢复，PR #630已squash 22334d2，完整门禁、CI和独立实运行通过；本轮未安装签名版。Core Audio与原生双路入口仍未恢复，不把单路子单元视为完整N3B。真实GUI、权限和听感继续#620。",
           "title": "Mac 系统音频双路恢复"
         },
         {
@@ -1865,9 +1829,7 @@
       708,
       709,
       710,
-      712,
-      714,
-      715
+      712
     ]
   }
 }
