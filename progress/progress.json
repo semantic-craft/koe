@@ -241,6 +241,12 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-13T15:25:12Z"
+      },
+      {
+        "number": 711,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-15T04:36:52Z"
       }
     ],
     "main": "f5000651042fb2e781795ccac7544bb674c5c5bf",
@@ -522,7 +528,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-15T04:30:29.808787Z",
+  "observed_at": "2026-11-15T04:38:14.566053Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -570,6 +576,11 @@
         {
           "evidence": [
             {
+              "kind": "issue",
+              "note": "独立真机验收工单，保持开放未验。",
+              "ref": 711
+            },
+            {
               "kind": "file",
               "note": "Runtime 解耦侧栏导航与统一 workspaces 投影。",
               "ref": "crates/koe-runtime/src/mode_workspaces.rs"
@@ -601,7 +612,7 @@
             }
           ],
           "id": "mode-workspaces-pages",
-          "next": "在签名安装的 /Applications/Koe.app 上配合物理 D3200 与 Responsay 完成四工作区真机交互验收（#668）。",
+          "next": "在签名安装的 /Applications/Koe.app 上配合物理 D3200 与 Responsay 完成四工作区真机交互验收（#711）。",
           "status": "unverified",
           "summary": "已实现随心闪记（收件箱/项目归类与原文对照 AI 理解）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议切换）、语音输入（六步联动检查与伴侣流感知测试框）、侧栏纯导航及所有记录按模式/收件箱筛选，并通过 Rust/Swift 测试与自检门禁；真机交互待单独验收。",
           "title": "正式四工作区业务页面"
@@ -1736,7 +1747,8 @@
       675,
       678,
       685,
-      687
+      687,
+      711
     ],
     "pulls": [
       589,
