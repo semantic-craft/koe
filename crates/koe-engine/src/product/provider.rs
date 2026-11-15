@@ -70,6 +70,9 @@ pub struct ProviderConfiguration {
     pub credential: CredentialBinding,
     /// Superseded items awaiting confirmed deletion.
     pub retired_credentials: Vec<String>,
+    /// References recorded before their secure item is created. Each is either
+    /// promoted to `credential` or deleted; a crash leaves it for reclamation.
+    pub pending_credentials: Vec<String>,
 }
 impl Default for ProviderConfiguration {
     fn default() -> Self {
@@ -82,12 +85,14 @@ impl Default for ProviderConfiguration {
                 .into(),
             credential: CredentialBinding::Uninitialized,
             retired_credentials: Vec::new(),
+            pending_credentials: Vec::new(),
         }
     }
 }
 impl ProviderConfiguration {
     /// Validates non-sensitive metadata before persistence or restoration.
     pub fn validate(&self) -> Result<(), ProductError> {
+        let pending = &self.pending_credentials;
         if matches!(&self.speech_engine, SpeechEngine::Downloaded(id) if id.is_empty() || id.len() > 200)
             || self.model.trim().is_empty()
             || self.model.len() > 200
@@ -95,7 +100,12 @@ impl ProviderConfiguration {
             || !safe_endpoint(&self.chat_endpoint, &["https://", "http://"])
             || self.retired_credentials.len() > 64
             || self.retired_credentials.iter().any(|s| !valid_reference(s))
-            || matches!(&self.credential, CredentialBinding::Saved(s) if !valid_reference(s) || self.retired_credentials.contains(s))
+            || matches!(&self.credential, CredentialBinding::Saved(s) if !valid_reference(s) || self.retired_credentials.contains(s) || pending.contains(s))
+            || pending.len() > 64
+            || pending
+                .iter()
+                .enumerate()
+                .any(|(i, s)| !valid_reference(s) || pending[..i].contains(s))
         {
             return Err(ProductError::InvalidEvidence);
         }

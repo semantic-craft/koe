@@ -63,6 +63,7 @@ final class NativeCredentials: HostCredentials {
         Self.lock.lock()
         defer { Self.lock.unlock() }
         if isolated { return try isolatedOperation(operation, reference, value) }
+        if operation == 5 { return UUID().uuidString.lowercased() }
         var wasAllowed = DarwinBoolean(false)
         guard SecKeychainGetUserInteractionAllowed(&wasAllowed) == errSecSuccess,
               SecKeychainSetUserInteractionAllowed(operation == 4) == errSecSuccess else { throw Failure.unavailable }
@@ -70,11 +71,11 @@ final class NativeCredentials: HostCredentials {
         switch operation {
         case 0: return try read(reference)
         case 1:
-            let id = UUID().uuidString.lowercased()
-            var item = query(id)
+            guard UUID(uuidString: reference) != nil else { throw Failure.unavailable }
+            var item = query(reference)
             item[kSecValueData as String] = Data(value.utf8)
             guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw Failure.unavailable }
-            return id
+            return reference
         case 2:
             guard UUID(uuidString: reference) != nil else { return "" }
             let status = SecItemDelete(query(reference) as CFDictionary)
@@ -100,15 +101,11 @@ final class NativeCredentials: HostCredentials {
             else { return nil }
             return key
         case 1:
-            let prefix: String
-            if case .environment(let key) = source, key == value {
-                prefix = Self.environmentReferencePrefix
-            } else {
-                prefix = "isolated-"
-            }
-            let id = prefix + UUID().uuidString.lowercased()
-            memory[id] = value
-            return id
+            let prefix = isolatedPrefix(value)
+            guard reference.hasPrefix(prefix),
+                  UUID(uuidString: String(reference.dropFirst(prefix.count))) != nil else { throw Failure.unavailable }
+            memory[reference] = value
+            return reference
         case 2:
             memory.removeValue(forKey: reference)
             deleted.insert(reference)
@@ -117,8 +114,14 @@ final class NativeCredentials: HostCredentials {
             guard case .environment(let key?) = source else { return nil }
             return String(decoding: try JSONEncoder().encode(["qwen": key]), as: UTF8.self)
         case 4: return ""
+        case 5: return isolatedPrefix(value) + UUID().uuidString.lowercased()
         default: throw Failure.unavailable
         }
+    }
+
+    private func isolatedPrefix(_ value: String) -> String {
+        if case .environment(let key) = source, key == value { return Self.environmentReferencePrefix }
+        return "isolated-"
     }
 
     private func query(_ reference: String, legacy: Bool = false) -> [String: Any] {

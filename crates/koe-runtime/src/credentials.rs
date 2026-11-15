@@ -11,8 +11,11 @@ pub trait CredentialStore: Send {
     fn isolated(&self) -> bool;
     /// Reads one immutable item, distinguishing missing from inaccessible.
     fn read(&mut self, reference: &str) -> Result<Option<String>, CredentialError>;
-    /// Creates a new item and returns its unique opaque reference.
-    fn create(&mut self, secret: &str) -> Result<String, CredentialError>;
+    /// Allocates a fresh unique reference without touching storage, so the
+    /// workspace can record ownership before the item exists.
+    fn prepare(&mut self, secret: &str) -> Result<String, CredentialError>;
+    /// Creates a new item at a reference returned by `prepare`.
+    fn create(&mut self, reference: &str, secret: &str) -> Result<(), CredentialError>;
     /// Deletes one previously created item. Missing is successful.
     fn delete(&mut self, reference: &str) -> Result<(), CredentialError>;
     /// Reads the old engines-v1 JSON item without modifying it.
@@ -38,9 +41,9 @@ impl CredentialStore for IsolatedCredentials {
     fn read(&mut self, reference: &str) -> Result<Option<String>, CredentialError> {
         Ok(self.items.get(reference).cloned())
     }
-    fn create(&mut self, secret: &str) -> Result<String, CredentialError> {
+    fn prepare(&mut self, _secret: &str) -> Result<String, CredentialError> {
         self.next += 1;
-        let reference = format!(
+        Ok(format!(
             "isolated-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -48,9 +51,11 @@ impl CredentialStore for IsolatedCredentials {
                 .map_err(|_| CredentialError)?
                 .as_nanos(),
             self.next
-        );
-        self.items.insert(reference.clone(), secret.into());
-        Ok(reference)
+        ))
+    }
+    fn create(&mut self, reference: &str, secret: &str) -> Result<(), CredentialError> {
+        self.items.insert(reference.into(), secret.into());
+        Ok(())
     }
     fn delete(&mut self, reference: &str) -> Result<(), CredentialError> {
         self.items.remove(reference);

@@ -51,6 +51,8 @@ struct ProviderDto {
     chat_endpoint: String,
     credential: BindingDto,
     retired_credentials: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_credentials: Vec<String>,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +89,7 @@ impl From<ProviderConfiguration> for ProviderDto {
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,
             retired_credentials: p.retired_credentials,
+            pending_credentials: p.pending_credentials,
             credential: match p.credential {
                 CredentialBinding::Uninitialized => BindingDto::Uninitialized,
                 CredentialBinding::Saved(r) => BindingDto::Saved(r),
@@ -111,6 +114,7 @@ impl From<ProviderDto> for ProviderConfiguration {
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,
             retired_credentials: p.retired_credentials,
+            pending_credentials: p.pending_credentials,
             credential: match p.credential {
                 BindingDto::Uninitialized => CredentialBinding::Uninitialized,
                 BindingDto::Saved(r) => CredentialBinding::Saved(r),
