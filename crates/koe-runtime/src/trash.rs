@@ -101,83 +101,18 @@ impl KoeRuntime {
             self.auto_transcribe.remove(id);
             self.auto_summarize.remove(id);
         }
-        if self
-            .selected_quick_note_record
-            .as_ref()
-            .is_some_and(|id| removed_ids.contains(id))
         {
-            self.selected_quick_note_record = None;
-        }
-        if self
-            .selected_live_minutes_record
-            .as_ref()
-            .is_some_and(|id| removed_ids.contains(id))
-        {
-            self.selected_live_minutes_record = None;
-        }
-        {
-            let purged_bean_ids = self.store.workspace().purged_bean_file_ids();
+            let workspace = self.store.workspace();
+            let all_day_active_run = self.all_day.run.as_ref().map(|run| run.id.as_str());
+            self.selection
+                .detach_records(removed_ids, workspace, all_day_active_run);
+            let purged_bean_ids = workspace.purged_bean_file_ids();
             if !purged_bean_ids.is_empty() {
                 self.device
                     .session
                     .custody_receipts
                     .retain(|fid, _| !purged_bean_ids.contains(fid));
             }
-        }
-        if self
-            .playback
-            .record
-            .as_ref()
-            .is_some_and(|id| removed_ids.contains(id))
-        {
-            self.playback.record = None;
-            self.playback.lane = None;
-            self.playback.position_ms = 0;
-            self.playback.playing = false;
-            self.playback.request_id = self.playback.request_id.saturating_add(1);
-        }
-        let mut cleaned_back = Vec::with_capacity(self.back.len());
-        for mut loc in std::mem::take(&mut self.back) {
-            let dead_record = loc.record.as_ref().is_some_and(|id| {
-                removed_ids.contains(id)
-                    || !self
-                        .workspace()
-                        .record(id)
-                        .is_some_and(ProductRecord::is_live)
-            });
-            if dead_record {
-                if loc.page == Page::Detail {
-                    continue;
-                }
-                loc.record = None;
-                loc.segment = None;
-            }
-            if cleaned_back.last() != Some(&loc) {
-                cleaned_back.push(loc);
-            }
-        }
-        self.back = cleaned_back;
-
-        if self
-            .location
-            .record
-            .as_ref()
-            .is_some_and(|id| removed_ids.contains(id))
-        {
-            if self.location.page == Page::Detail {
-                let fallback = self.back.pop().unwrap_or(Location {
-                    page: Page::Records,
-                    record: None,
-                    segment: None,
-                });
-                self.set_location(fallback);
-            } else {
-                self.location.record = None;
-                self.location.segment = None;
-            }
-        }
-        while self.back.last() == Some(&self.location) {
-            self.back.pop();
         }
     }
 

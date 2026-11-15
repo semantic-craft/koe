@@ -173,7 +173,7 @@ impl KoeRuntime {
     }
 
     pub(super) fn live_minutes_view(&self) -> Option<LiveMinutesView<'_>> {
-        let scope = self.live_minutes_scope.as_ref()?;
+        let scope = self.selection.live_minutes_scope.as_ref()?;
         let mut records: Vec<_> = match scope {
             LiveMinutesScope::BeanStarting => Vec::new(),
             LiveMinutesScope::Record(id) => self.workspace().record(id).into_iter().collect(),
@@ -378,7 +378,7 @@ impl KoeRuntime {
                 return None;
             }
             let record = self.workspace().record(id)?;
-            let included = match self.live_minutes_scope.as_ref() {
+            let included = match self.selection.live_minutes_scope.as_ref() {
                 Some(LiveMinutesScope::Record(record_id)) => record_id == id,
                 Some(LiveMinutesScope::AllDay(run_id)) => record
                     .all_day

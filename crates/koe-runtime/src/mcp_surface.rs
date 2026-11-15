@@ -331,21 +331,18 @@ impl KoeRuntime {
             }
             "get_today_brief" => {
                 ensure_allowed_keys(obj, &[])?;
-                let snap = self.snapshot(now);
                 let eff_now = if now > 0 { now } else { self.last_now_sec };
                 let today = crate::projection::local_date(eff_now);
-                let mut live_non_archived: Vec<_> = self
-                    .workspace()
-                    .records()
-                    .values()
-                    .filter(|r| r.is_live() && !r.is_archived())
+                let live_records: Vec<&ProductRecord> = self
+                    .sorted_records()
+                    .into_iter()
+                    .filter(|r| r.is_live())
                     .collect();
-                live_non_archived.sort_by_key(|r| {
-                    std::cmp::Reverse((
-                        r.aggregate.created_at_epoch_sec,
-                        r.aggregate.recording_id.clone(),
-                    ))
-                });
+                let live_count = live_records.len();
+                let live_non_archived: Vec<&ProductRecord> = live_records
+                    .into_iter()
+                    .filter(|r| !r.is_archived())
+                    .collect();
                 let today_record_ids: Vec<&str> = live_non_archived
                     .iter()
                     .filter(|r| {
@@ -356,17 +353,13 @@ impl KoeRuntime {
                     .map(|r| r.aggregate.recording_id.as_str())
                     .collect();
                 let today_count = today_record_ids.len();
-                let recent_records: Vec<Value> = snap["records"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|r| r["archived"] != Value::Bool(true))
+                let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
+                let recent_records: Vec<Value> = live_non_archived
+                    .iter()
                     .take(5)
-                    .cloned()
+                    .map(|r| self.live_record_row_json(r, live_record_id, live_duration_ms))
                     .collect();
-                let live_count = snap["records"].as_array().map_or(0, Vec::len);
-                let tasks = snap["tasks"].as_array().cloned().unwrap_or_default();
-                let memories = snap["memories"].as_array().cloned().unwrap_or_default();
+                let (tasks, memories) = self.tasks_and_memories_json();
                 let pending_tasks = tasks.iter().filter(|t| t["state"] == "proposed").count();
                 let pending_memories = memories.iter().filter(|m| m["state"] == "proposed").count();
                 let open_tasks = tasks
@@ -375,8 +368,9 @@ impl KoeRuntime {
                     .count();
                 let accepted_memories =
                     memories.iter().filter(|m| m["state"] == "accepted").count();
+                let device = self.device_json();
                 Ok(McpToolCallState::Completed(Ok(json!({
-                    "generation": snap["generation"],
+                    "generation": self.generation,
                     "revision": self.workspace().revision(),
                     "todayRecordIds": today_record_ids,
                     "recentRecords": recent_records,
@@ -389,15 +383,15 @@ impl KoeRuntime {
                         "acceptedMemories": accepted_memories
                     },
                     "device": {
-                        "connected": snap["device"]["connected"],
-                        "phase": snap["device"]["phase"],
-                        "state": snap["device"]["state"],
-                        "deviceName": snap["device"]["deviceName"],
-                        "batteryPercent": snap["device"]["batteryPercent"],
-                        "boxBatteryPercent": snap["device"]["boxBatteryPercent"],
-                        "autoConnect": snap["device"]["autoConnect"],
-                        "companionMode": snap["device"]["companionMode"],
-                        "standbyReady": snap["device"]["standbyReady"]
+                        "connected": device["connected"],
+                        "phase": device["phase"],
+                        "state": device["state"],
+                        "deviceName": device["deviceName"],
+                        "batteryPercent": device["batteryPercent"],
+                        "boxBatteryPercent": device["boxBatteryPercent"],
+                        "autoConnect": device["autoConnect"],
+                        "companionMode": device["companionMode"],
+                        "standbyReady": device["standbyReady"]
                     }
                 }))))
             }
@@ -503,8 +497,7 @@ impl KoeRuntime {
                     self.error = Some(err.clone());
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
-                let snap = self.snapshot(now);
-                match self.resolve_settled_ask(&snap) {
+                match self.resolve_settled_ask() {
                     None => Ok(McpToolCallState::PendingAsk { question }),
                     Some(done) => Ok(McpToolCallState::Completed(done)),
                 }
@@ -752,7 +745,7 @@ impl KoeRuntime {
             }
             "device_status" => {
                 ensure_allowed_keys(obj, &[])?;
-                let mut device = self.snapshot(now)["device"].clone();
+                let mut device = self.device_json();
                 if let Some(map) = device.as_object_mut() {
                     map.insert(
                         "hardwareRecordingState".to_string(),
@@ -793,12 +786,11 @@ impl KoeRuntime {
                     _ => return Err(McpToolError::invalid_params("无效的 device_control action")),
                 };
                 let result = self.run_mcp_command(command, now).map(|()| {
-                    let snap = self.snapshot(now);
                     json!({
                         "ok": true,
                         "action": action,
                         "generation": self.generation,
-                        "device": snap["device"]
+                        "device": self.device_json()
                     })
                 });
                 Ok(McpToolCallState::Completed(result))
@@ -831,7 +823,7 @@ impl KoeRuntime {
                         }
                     })
                     .collect();
-                let snap = self.snapshot(now);
+                let device = self.device_json();
                 Ok(McpToolCallState::Completed(Ok(json!({
                     "generation": generation,
                     "revision": revision,
@@ -841,13 +833,13 @@ impl KoeRuntime {
                     "notice": self.notice,
                     "error": self.error,
                     "device": {
-                        "connected": self.device.is_connected(),
-                        "phase": snap["device"]["phase"],
-                        "transferPhase": snap["device"]["transferPhase"],
-                        "batteryPercent": snap["device"]["batteryPercent"],
-                        "autoConnect": self.workspace().ble_auto_connect(),
-                        "companionMode": self.workspace().companion_mode().as_str(),
-                        "standbyReady": self.is_standby_ready()
+                        "connected": device["connected"],
+                        "phase": device["phase"],
+                        "transferPhase": device["transferPhase"],
+                        "batteryPercent": device["batteryPercent"],
+                        "autoConnect": device["autoConnect"],
+                        "companionMode": device["companionMode"],
+                        "standbyReady": device["standbyReady"]
                     }
                 }))))
             }
@@ -863,15 +855,15 @@ impl KoeRuntime {
         now: u64,
     ) -> Option<Result<Value, String>> {
         self.poll_timers(elapsed_ms, now);
-        let snapshot = self.snapshot(now);
-        self.resolve_settled_ask(&snapshot)
+        self.resolve_settled_ask()
     }
 
-    fn resolve_settled_ask(&self, snapshot: &Value) -> Option<Result<Value, String>> {
-        if snapshot["ask"]["phase"] == "pending" {
+    fn resolve_settled_ask(&self) -> Option<Result<Value, String>> {
+        let phase = self.ask_phase();
+        if phase == "pending" {
             return None;
         }
-        if snapshot["ask"]["phase"] == "failed" {
+        if phase == "failed" {
             let reason = self
                 .workspace()
                 .ask_session()
@@ -884,7 +876,7 @@ impl KoeRuntime {
                 .to_string();
             return Some(Err(reason));
         }
-        Some(Ok(snapshot["ask"].clone()))
+        Some(Ok(self.ask_json()))
     }
 
     fn prepare_mcp_write(&mut self, now: u64) -> Result<(), String> {
@@ -913,27 +905,15 @@ impl KoeRuntime {
 
     fn mcp_create_note(&mut self, title: String, text: &str, now: u64) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        if text.trim().is_empty() {
-            let err = "先写下一段内容".to_string();
-            self.error = Some(err.clone());
-            self.generation = self.generation.saturating_add(1);
-            return Err(err);
-        }
-        let id = format!("note-{now}-{}", self.workspace().revision() + 1);
-        let commit_res = self.commit(|workspace| {
-            workspace.insert_record(id.clone(), title, RecordOrigin::Note, 0, now, 0)?;
-            for paragraph in text.lines().map(str::trim).filter(|v| !v.is_empty()) {
-                workspace.append_transcript(&id, paragraph, 0, 0, "manual")?;
-            }
-            Ok(())
-        });
+        let created = self.create_quick_note(title, text, now);
         self.generation = self.generation.saturating_add(1);
-        if let Err(error) = commit_res {
-            self.error = Some(error.clone());
-            return Err(error);
+        match created {
+            Ok(id) => self.record_detail_json(&id),
+            Err(error) => {
+                self.error = Some(error.clone());
+                Err(error)
+            }
         }
-        self.notice = Some("记录已保存".into());
-        self.record_detail_json(&id)
     }
 
     fn mcp_annotate_segment(
@@ -944,16 +924,8 @@ impl KoeRuntime {
         now: u64,
     ) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        let source = match source_ref(record_id, segment_id) {
-            Ok(source) => source,
-            Err(error) => {
-                self.error = Some(error.clone());
-                self.generation = self.generation.saturating_add(1);
-                return Err(error);
-            }
-        };
         let result = match kind {
-            "highlight" => self.commit(|w| w.add_highlight(source)).map(|()| {
+            "highlight" => self.highlight_segment(record_id, segment_id).map(|()| {
                 json!({
                     "ok": true,
                     "kind": "highlight",
@@ -967,22 +939,16 @@ impl KoeRuntime {
                 } else {
                     ItemKind::Memory
                 };
-                self.commit(|w| {
-                    let evidence = w.resolve_live_source(&source)?;
-                    let id = w.propose_item(item_kind, &evidence.quote, vec![source])?;
-                    w.review_item(&id, ReviewDecision::Accept)?;
-                    Ok(id)
-                })
-                .map(|item_id| {
-                    self.notice = Some("已保存，可从来源返回原文".into());
-                    json!({
-                        "ok": true,
-                        "kind": kind,
-                        "itemId": item_id,
-                        "recordId": record_id,
-                        "segmentId": segment_id
+                self.accept_segment_item(item_kind, record_id, segment_id)
+                    .map(|item_id| {
+                        json!({
+                            "ok": true,
+                            "kind": kind,
+                            "itemId": item_id,
+                            "recordId": record_id,
+                            "segmentId": segment_id
+                        })
                     })
-                })
             }
             _ => unreachable!(),
         };
@@ -1005,22 +971,7 @@ impl KoeRuntime {
         now: u64,
     ) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        let res: Result<TranscriptEditReceipt, String> = (|| {
-            self.ensure_record_editable(record_id)?;
-            let target = SpeakerName::parse(to_speaker).map_err(|e| e.to_string())?;
-            let receipt =
-                self.commit(|w| w.rename_speaker(record_id, from_speaker, target.as_str()))?;
-            if receipt.updated_segments > 0 {
-                let _ = self.reclaim_stale_summaries();
-                self.drive_analysis_queue();
-                self.notice = Some(format!(
-                    "已将 {} 段说话人更新为 {}",
-                    receipt.updated_segments,
-                    target.as_str()
-                ));
-            }
-            Ok(receipt)
-        })();
+        let res = self.rename_speaker(record_id, from_speaker, to_speaker);
         self.generation = self.generation.saturating_add(1);
         match res {
             Ok(receipt) => Ok(json!({

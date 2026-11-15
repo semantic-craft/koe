@@ -2401,3 +2401,53 @@ fn teardown_stop_frames_projected_for_collar_standby_and_recording() {
     assert_eq!(stopped_snap["device"]["recording"], false);
     assert_eq!(stopped_snap["device"]["teardownStopFramesHex"], json!([]));
 }
+
+#[test]
+fn mcp_create_note_selects_new_quick_note_matching_ui_command() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let first_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({
+                "type": "create_note",
+                "title": "第一条闪记",
+                "text": "初始闪记正文",
+                "stayOnPage": true
+            })
+            .to_string(),
+            NOW,
+        ),
+    )
+    .unwrap();
+    assert!(first_snap["error"].is_null(), "{first_snap}");
+    let note_1_id = first_snap["workspaces"]["quickNote"]["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(!note_1_id.is_empty());
+
+    let mcp_created = match runtime
+        .call_mcp_tool_step(
+            "create_note",
+            &json!({
+                "title": "MCP闪记",
+                "text": "通过MCP写入的新闪记"
+            }),
+            NOW + 1,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("create_note expected Completed(Ok), got {other:?}"),
+    };
+    let note_2_id = mcp_created["id"].as_str().unwrap().to_owned();
+    assert_ne!(note_2_id, note_1_id);
+
+    let after_mcp = runtime.snapshot(NOW + 1);
+    assert_eq!(
+        after_mcp["workspaces"]["quickNote"]["selectedRecordId"],
+        json!(note_2_id),
+        "MCP create_note must select the newly created Quick Note"
+    );
+}

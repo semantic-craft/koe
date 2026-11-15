@@ -126,7 +126,7 @@ impl KoeRuntime {
         record_id: &str,
         from_speaker: &str,
         to_speaker: &str,
-    ) -> Result<(), String> {
+    ) -> Result<TranscriptEditReceipt, String> {
         self.ensure_record_editable(record_id)?;
         let target = SpeakerName::parse(to_speaker).map_err(|e| e.to_string())?;
         let receipt = self.commit(|w| w.rename_speaker(record_id, from_speaker, target.as_str()))?;
@@ -140,6 +140,6 @@ impl KoeRuntime {
                 target.as_str()
             ));
         }
-        Ok(())
+        Ok(receipt)
     }
 }

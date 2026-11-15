@@ -108,12 +108,12 @@ impl KoeRuntime {
         if mode == CaptureMode::Meeting {
             let scope = if let Some(mic) = &self.microphone {
                 let rec_id = mic.current_record_id().to_owned();
-                self.selected_live_minutes_record = Some(rec_id.clone());
+                self.selection.selected_live_minutes_record = Some(rec_id.clone());
                 crate::live_minutes::LiveMinutesScope::Record(rec_id)
             } else {
                 crate::live_minutes::LiveMinutesScope::BeanStarting
             };
-            self.live_minutes_scope = Some(scope);
+            self.selection.live_minutes_scope = Some(scope);
             if !stay_on_page {
                 self.go(Location {
                     page: Page::LiveMinutes,

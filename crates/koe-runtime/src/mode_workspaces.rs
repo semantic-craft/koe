@@ -40,7 +40,7 @@ impl KoeRuntime {
                 return Err("记录不存在".into());
             }
         }
-        self.selected_quick_note_record = record_id;
+        self.selection.selected_quick_note_record = record_id;
         Ok(())
     }
 
@@ -48,7 +48,7 @@ impl KoeRuntime {
         let trimmed = date.trim();
         NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
             .map_err(|_| "日期格式无效".to_string())?;
-        self.selected_all_day_date = Some(trimmed.to_owned());
+        self.selection.selected_all_day_date = Some(trimmed.to_owned());
         Ok(())
     }
 
@@ -65,8 +65,43 @@ impl KoeRuntime {
                 return Err("该记录不是实时纪要会议".into());
             }
         }
-        self.selected_live_minutes_record = record_id;
+        self.selection.selected_live_minutes_record = record_id;
         Ok(())
+    }
+
+    fn write_exported_markdown(
+        &mut self,
+        path: &Path,
+        output: &str,
+        notice: &str,
+    ) -> Result<(), String> {
+        write_atomic(path, output.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
+        self.notice = Some(notice.into());
+        Ok(())
+    }
+
+    pub(super) fn export_record(&mut self, id: &str, path: &Path) -> Result<(), String> {
+        let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
+        let mut output = format!("# {}\n\n", record.title);
+        if let Some(minutes) = &record.aggregate.minutes {
+            if record.is_minutes_stale() {
+                output.push_str("> 注：原文已变更，以下纪要待重新整理。\n\n");
+            }
+            output.push_str(&format!("{}\n\n", minutes.overview));
+            for topic in &minutes.topics {
+                output.push_str(&format!("## {}\n\n{}\n\n", topic.title, topic.summary));
+            }
+        }
+        output.push_str("## 原文\n\n");
+        for segment in record.aggregate.spine.segments() {
+            if let Some(sp) = segment.speaker.as_deref().filter(|s| !s.is_empty()) {
+                output.push_str(&format!("[{}] {}：{}\n\n", segment.id, sp, segment.text));
+            } else {
+                output.push_str(&format!("[{}] {}\n\n", segment.id, segment.text));
+            }
+        }
+        self.write_exported_markdown(path, &output, "已导出 Markdown")
     }
 
     pub(super) fn export_workspace_markdown(
@@ -86,9 +121,7 @@ impl KoeRuntime {
             let record = self.workspace().record(id).ok_or("记录不存在")?;
             record.ensure_live().map_err(|e| e.to_string())?;
             let output = format_record_markdown(record, &live_items, options);
-            write_atomic(path, output.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
-            self.notice = Some("已导出 Markdown".into());
-            Ok(())
+            self.write_exported_markdown(path, &output, "已导出 Markdown")
         } else if let Some(d) = date {
             let trimmed = d.trim();
             let parsed = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
@@ -112,9 +145,7 @@ impl KoeRuntime {
             });
             let timeline = build_day_timeline(&day_records);
             let output = format_day_markdown(trimmed, &timeline, &day_records, &live_items, options);
-            write_atomic(path, output.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
-            self.notice = Some("已导出当日记录 Markdown".into());
-            Ok(())
+            self.write_exported_markdown(path, &output, "已导出当日记录 Markdown")
         } else {
             Err("缺少导出目标".into())
         }
@@ -442,6 +473,7 @@ impl KoeRuntime {
             .collect();
 
         let selected_record_id = self
+            .selection
             .selected_quick_note_record
             .as_deref()
             .filter(|id| {

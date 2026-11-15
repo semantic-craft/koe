@@ -1339,3 +1339,103 @@ fn purge_with_unwritable_audio_dir_commits_metadata_reports_deferred_cleanup_and
     assert_eq!(reopened.snapshot(NOW + 3)["trashRecords"], json!([]));
     assert!(!owned_wav.exists());
 }
+
+#[test]
+fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+
+    let started = dispatch_ok(
+        &mut runtime,
+        json!({"type": "start_capture_mode", "mode": "meeting", "stayOnPage": true}),
+        NOW,
+    );
+    let mic = &started["microphone"];
+    let meeting_id = mic["recordId"].as_str().unwrap().to_owned();
+    let meeting_session = mic["sessionId"].as_str().unwrap().to_owned();
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "microphone_started", "recordId": meeting_id, "sessionId": meeting_session, "lane": "microphone", "sampleRate": 16000}),
+        NOW,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "microphone_chunk", "recordId": meeting_id, "sessionId": meeting_session, "lane": "microphone", "sequence": 0, "samples": vec![42; 320]}),
+        NOW,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "capture_action", "action": "end"}),
+        NOW + 1,
+    );
+    let ended = dispatch_ok(
+        &mut runtime,
+        json!({"type": "microphone_stopped", "recordId": meeting_id, "sessionId": meeting_session, "lane": "microphone", "sequence": 1, "epoch": 0}),
+        NOW + 1,
+    );
+    assert_eq!(
+        ended["liveMinutes"]["scope"],
+        json!({"kind": "record", "id": meeting_id})
+    );
+    assert_eq!(ended["liveMinutes"]["phase"], "ended");
+
+    let trashed = dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": meeting_id}),
+        NOW + 2,
+    );
+    assert!(
+        trashed["liveMinutes"].is_null(),
+        "trashing ended meeting record must clear liveMinutes scope, got: {}",
+        trashed["liveMinutes"]
+    );
+
+    let ad_started = dispatch_ok(
+        &mut runtime,
+        json!({"type": "start_capture_mode", "mode": "all_day", "stayOnPage": true}),
+        NOW + 3,
+    );
+    let ad_mic = &ad_started["microphone"];
+    let ad_id = ad_mic["recordId"].as_str().unwrap().to_owned();
+    let ad_session = ad_mic["sessionId"].as_str().unwrap().to_owned();
+    let run_id = ad_started["liveMinutes"]["scope"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "microphone_started", "recordId": ad_id, "sessionId": ad_session, "lane": "microphone", "sampleRate": 16000}),
+        NOW + 3,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "microphone_chunk", "recordId": ad_id, "sessionId": ad_session, "lane": "microphone", "sequence": 0, "samples": vec![42; 320]}),
+        NOW + 3,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "capture_action", "action": "end"}),
+        NOW + 4,
+    );
+    let ad_ended = dispatch_ok(
+        &mut runtime,
+        json!({"type": "microphone_stopped", "recordId": ad_id, "sessionId": ad_session, "lane": "microphone", "sequence": 1, "epoch": 0}),
+        NOW + 4,
+    );
+    assert_eq!(
+        ad_ended["liveMinutes"]["scope"],
+        json!({"kind": "all_day", "id": run_id})
+    );
+    assert_eq!(ad_ended["liveMinutes"]["phase"], "ended");
+
+    let ad_trashed = dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": ad_id}),
+        NOW + 5,
+    );
+    assert!(
+        ad_trashed["liveMinutes"].is_null(),
+        "trashing last live record of an idle all-day run must clear liveMinutes scope, got: {}",
+        ad_trashed["liveMinutes"]
+    );
+}

@@ -1,47 +1,11 @@
 use super::*;
-use koe_client_base::{hash::sha256_hex, write_atomic};
+use koe_client_base::hash::sha256_hex;
 use koe_engine::{
     commands::DeviceCommands,
     session::{CustodyReceipt, TransferPhaseTag},
 };
 
 impl KoeRuntime {
-    pub(super) fn recover_local_captures(&mut self) -> Result<(), String> {
-        let ids: Vec<_> = self
-            .workspace()
-            .records()
-            .values()
-            .filter(|record| record.is_live())
-            .map(|r| r.aggregate.recording_id.clone())
-            .collect();
-        for id in ids {
-            if let Some(duration) =
-                koe_client_services::capture_asset::CaptureAsset::recover(&self.root, &id)?
-            {
-                self.commit(|w| w.finish_capture(&id, duration, &[]))?;
-                koe_client_services::capture_asset::CaptureAsset::release_recovered(
-                    &self.root, &id,
-                )?;
-            }
-        }
-        self.auto_transcribe.extend(
-            self.workspace()
-                .records()
-                .values()
-                .filter(|r| {
-                    matches!(r.analysis, AnalysisState::Interrupted { .. })
-                        && matches!(
-                            r.speech_engine,
-                            Some(SpeechEngine::AppleSpeech | SpeechEngine::Downloaded(_))
-                        )
-                        && recording_assets::audio_path(&self.root, &r.aggregate.recording_id)
-                            .is_ok_and(|p| p.is_file())
-                })
-                .map(|r| r.aggregate.recording_id.clone())
-                .collect::<Vec<_>>(),
-        );
-        Ok(())
-    }
     pub(crate) fn is_device_file_synced(&self, file_id: u32) -> bool {
         if file_id == 0 {
             return false;
@@ -264,32 +228,6 @@ impl KoeRuntime {
                 self.auto_transcribe.insert(id);
             }
         }
-        Ok(())
-    }
-
-    pub(super) fn export_record(&mut self, id: &str, path: &Path) -> Result<(), String> {
-        let record = self.workspace().record(id).ok_or("记录不存在")?;
-        record.ensure_live().map_err(|e| e.to_string())?;
-        let mut output = format!("# {}\n\n", record.title);
-        if let Some(minutes) = &record.aggregate.minutes {
-            if record.is_minutes_stale() {
-                output.push_str("> 注：原文已变更，以下纪要待重新整理。\n\n");
-            }
-            output.push_str(&format!("{}\n\n", minutes.overview));
-            for topic in &minutes.topics {
-                output.push_str(&format!("## {}\n\n{}\n\n", topic.title, topic.summary));
-            }
-        }
-        output.push_str("## 原文\n\n");
-        for segment in record.aggregate.spine.segments() {
-            if let Some(sp) = segment.speaker.as_deref().filter(|s| !s.is_empty()) {
-                output.push_str(&format!("[{}] {}：{}\n\n", segment.id, sp, segment.text));
-            } else {
-                output.push_str(&format!("[{}] {}\n\n", segment.id, segment.text));
-            }
-        }
-        write_atomic(path, output.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
-        self.notice = Some("已导出 Markdown".into());
         Ok(())
     }
 }

@@ -677,9 +677,9 @@ impl KoeRuntime {
                 w.set_capture_lanes(&m.current_record_id, outcomes)
             })?;
             if mic_mode == Some(CaptureMode::QuickNote) {
-                self.selected_quick_note_record = Some(m.current_record_id.clone());
+                self.selection.selected_quick_note_record = Some(m.current_record_id.clone());
             } else if mic_mode == Some(CaptureMode::Meeting) {
-                self.selected_live_minutes_record = Some(m.current_record_id.clone());
+                self.selection.selected_live_minutes_record = Some(m.current_record_id.clone());
             }
             for l in m.lanes.values() {
                 if let Some(asset) = &l.asset {
@@ -690,7 +690,7 @@ impl KoeRuntime {
             self.set_source_dictation(DictationSource::Microphone, false);
             self.capture_saved(&m.current_record_id);
             self.poll_captures();
-            if m.mode.is_none() && self.location.page != Page::LiveMinutes {
+            if m.mode.is_none() && self.selection.location.page != Page::LiveMinutes {
                 self.open_record(&m.current_record_id, None)?;
             }
             self.notice = Some(if partial {

@@ -1,5 +1,4 @@
 use super::*;
-use koe_engine::session::TransferPhaseTag;
 use serde::Serialize;
 use serde_json::json;
 
@@ -70,17 +69,14 @@ impl KoeRuntime {
         mode: CompanionRoutingMode,
         now: u64,
     ) -> Result<(), String> {
-        if !self.is_quitting() && self.device.session.transfer.phase == TransferPhaseTag::Failed {
-            self.device.session.reset_active_transfer();
-        }
+        let quitting = self.is_quitting();
+        self.device.reset_failed_transfer_if_idle(quitting);
         self.companion.armed = mode != CompanionRoutingMode::Disabled;
         self.companion.standby_suppressed_for_connection = false;
         if mode != CompanionRoutingMode::CollarStandby && self.companion.standby_stream_owned {
             self.stop_owned_standby_stream()?;
         } else if mode == CompanionRoutingMode::Disabled {
-            self.companion.capture_active = false;
-            self.companion.post_tap_skip_slices = 0;
-            self.companion.tail_holdback.clear();
+            self.companion.clear_transient_capture();
         }
         self.drive_companion(now);
         Ok(())

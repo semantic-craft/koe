@@ -51,7 +51,8 @@ impl KoeRuntime {
             _ => return Err("请选择 Mac 麦克风或录音豆".into()),
         }
         let id = format!("day-{now}-{}", self.workspace().revision() + 1);
-        self.live_minutes_scope = Some(crate::live_minutes::LiveMinutesScope::AllDay(id.clone()));
+        self.selection.live_minutes_scope =
+            Some(crate::live_minutes::LiveMinutesScope::AllDay(id.clone()));
         self.all_day.run = Some(AllDayRun {
             id,
             source: source.into(),

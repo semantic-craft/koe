@@ -17,6 +17,43 @@ fn has_recording_asset(root: &Path, id: &str) -> Result<bool, String> {
 }
 
 impl KoeRuntime {
+    pub(super) fn recover_local_captures(&mut self) -> Result<(), String> {
+        let ids: Vec<_> = self
+            .workspace()
+            .records()
+            .values()
+            .filter(|record| record.is_live())
+            .map(|r| r.aggregate.recording_id.clone())
+            .collect();
+        for id in ids {
+            if let Some(duration) =
+                koe_client_services::capture_asset::CaptureAsset::recover(&self.root, &id)?
+            {
+                self.commit(|w| w.finish_capture(&id, duration, &[]))?;
+                koe_client_services::capture_asset::CaptureAsset::release_recovered(
+                    &self.root, &id,
+                )?;
+            }
+        }
+        self.auto_transcribe.extend(
+            self.workspace()
+                .records()
+                .values()
+                .filter(|r| {
+                    matches!(r.analysis, AnalysisState::Interrupted { .. })
+                        && matches!(
+                            r.speech_engine,
+                            Some(SpeechEngine::AppleSpeech | SpeechEngine::Downloaded(_))
+                        )
+                        && recording_assets::audio_path(&self.root, &r.aggregate.recording_id)
+                            .is_ok_and(|p| p.is_file())
+                })
+                .map(|r| r.aggregate.recording_id.clone())
+                .collect::<Vec<_>>(),
+        );
+        Ok(())
+    }
+
     pub(super) fn process_capture_events(&mut self, now: u64) -> Result<(), String> {
         while let Some(event) = self.device.captures.front().cloned() {
             match event {
@@ -111,13 +148,6 @@ impl KoeRuntime {
                                             }
                                             Ok(())
                                         })?;
-                                        if matches!(
-                                            &self.live_minutes_scope,
-                                            Some(crate::live_minutes::LiveMinutesScope::Record(rid))
-                                                if rid == &id
-                                        ) {
-                                            self.live_minutes_scope = None;
-                                        }
                                         self.detach_records_from_session(&BTreeSet::from([id]));
                                     }
                                 }
@@ -155,11 +185,11 @@ impl KoeRuntime {
         })?;
         if group.is_none() {
             if bean_mode == Some(command::CaptureMode::Meeting) {
-                self.live_minutes_scope =
+                self.selection.live_minutes_scope =
                     Some(crate::live_minutes::LiveMinutesScope::Record(id.clone()));
-                self.selected_live_minutes_record = Some(id.clone());
+                self.selection.selected_live_minutes_record = Some(id.clone());
             } else if bean_mode == Some(command::CaptureMode::QuickNote) {
-                self.selected_quick_note_record = Some(id.clone());
+                self.selection.selected_quick_note_record = Some(id.clone());
             }
         }
         self.captures.active.insert(file_id, id.clone());

@@ -51,10 +51,12 @@ impl KoeRuntime {
         let active_record_id = if let Some(m) = meeting_mic {
             Some(m.current_record_id().to_owned())
         } else if meeting_bean_active {
-            live_record_id.map(str::to_owned).or_else(|| match &self.live_minutes_scope {
-                Some(LiveMinutesScope::Record(id)) => Some(id.clone()),
-                _ => None,
-            })
+            live_record_id
+                .map(str::to_owned)
+                .or_else(|| match &self.selection.live_minutes_scope {
+                    Some(LiveMinutesScope::Record(id)) => Some(id.clone()),
+                    _ => None,
+                })
         } else {
             None
         };
@@ -91,7 +93,8 @@ impl KoeRuntime {
         let selected_record_id = if is_active {
             active_record_id.clone()
         } else {
-            self.selected_live_minutes_record
+            self.selection
+                .selected_live_minutes_record
                 .as_deref()
                 .filter(|id| {
                     self.workspace()

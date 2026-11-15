@@ -108,6 +108,17 @@ impl Default for DeviceRuntime {
 }
 
 impl DeviceRuntime {
+    pub(super) fn reset_failed_transfer_if_idle(&mut self, quitting: bool) {
+        if !quitting
+            && matches!(
+                self.session.transfer.phase,
+                koe_engine::session::TransferPhaseTag::Failed
+            )
+        {
+            self.session.reset_active_transfer();
+        }
+    }
+
     pub fn stop_recording(&mut self) {
         if self.awaiting_stop {
             self.outbound.push(DeviceCommands::pause_record());
