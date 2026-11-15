@@ -157,7 +157,7 @@
 
 - 出事：2026-10-24 #453，工具直接 Popen 安装包二进制，EventKit 报未授权；同时把 Calendar 重开后恢复的编辑浮层当成已提交事件，误判会议命名失败。
 - 修复：开发启动入口通过 NSWorkspace 启动安装包，保留环境凭据隔离；已有进程时拒绝启动。Calendar 点击空白格关闭编辑后再测试。
-- 证据：同一安装包直接启动 authorized=0、系统启动 authorized=1；提交事件前后 matches=0/1。去掉临时诊断重新签名安装，12:45录音会议命名及重启保留通过。见 [验收记录](../acceptance/calendar-453-2026-10-24.md)。
+- 证据：同一安装包直接启动 authorized=0、系统启动 authorized=1；提交事件前后 matches=0/1。去掉临时诊断重新签名安装，12:45录音会议命名及重启保留通过。见 #453 验收记录。
 - 正确做法：系统设置开关、进程实际权限、编辑提交、真实录音结果分层核对；重开恢复编辑不算数据库写入证据。
 - 验证点：`scripts/run-with-secrets.py macos` 在已有Koe时返回失败；退出后经LaunchServices启动，并通过真实日历事件录音复验。
 - Seen 1x (2026-10-24)。
@@ -173,7 +173,7 @@
 
 - 出处：2026-11-03 QwenNote 接入会话；Magpie / 本机 Codex OAuth 登录后列出 27 个工具，但授权页包含读写且当次未能选择只读，新会话及其他 agent 尚需验证。记录来自会话交接，本文未重新调用服务。
 - 修复方向：未来 Koe MCP 先按指定记录只读，分开核对上游授权、下游客户端身份和宿主权限；不复制令牌，持久连接不等于逐次操作同意，工具发现与内容读取、写入后读回、新会话、撤销分别验收。当前只落文档，未实现权限控制。
-- 验证点：按 [复盘与规划验收矩阵](../design/qwennote-mcp-lessons-and-plan.md#开发时使用的验收矩阵) 使用授权测试记录核对；每个客户端有独立结果，过期/撤销和越权明确失败，不将工具数量视为数据操作通过。
+- 验证点：按 #475 复盘与规划 使用授权测试记录核对；每个客户端有独立结果，过期/撤销和越权明确失败，不将工具数量视为数据操作通过。
 - Seen 1x (2026-11-03)。
 
 ### msmtp 要求含密码配置文件的属主必须为当前运行用户且发信需显式指定发件人
@@ -411,4 +411,18 @@
 - 修复：普通采集默认 QuickNote，显式会话才建立持续纪要 scope；保留普通最终转写与摘要。本次 companion 启用状态只在 runtime 生效，真正会话结束后释放，持久配置保持。
 - Done right：分开保存的配置、本次启用授权与已有会话的收尾。撤销新会话授权不能截断 quiet-drain 尾音，也不能把下一段普通录音音频混入旧租约。
 - 验证点：capture_tests 的物理通知默认、显式会议结束后普通开录、全天结束回归；continuous_live_minutes 的 quick_note 不持续整理但停止后有摘要；companion_mcp_tests 的冷启动及停止回应后尾音。协议夹具不等于实体按键验收。
+- Seen 1x（2026-11-13）。
+
+### 指定麦克风启动须使用物理输入格式，不能把过期格式当成设备变化
+
+- 出处：2026-11-13 #668 真机验收、#674 修复。指定麦克风启动时仍用过期的输出格式协商采集，被误判为设备变化并中断录音。
+- 修复：`NativeAudioSource` 改读 `node.inputFormat(forBus: 0)`，仅在引擎、设备或格式真正变化时停止采集。
+- 验证点：`testSelectedHardwareInputDeliversPcmThroughStartupConfigurationChange` 在启动配置变化后仍交付指定硬件的 PCM；修前物理输入测试的采样率、PCM 与通知断言失败，修后两个音源通过。真机证据见 PR #674。
+- Seen 1x（2026-11-13）。
+
+### 安全启动器注入的环境凭据必须被原生适配器按导入协议消费
+
+- 出处：2026-11-13 #668 真机验收、#674 修复。安全启动器已把 `KOE_CREDENTIAL_SOURCE` 与 `DASHSCOPE_API_KEY` 注入进程环境，原生适配器未消费，新工作区表现为未配置，也无法用启动器凭据完成 ASR。
+- 修复：`NativeCredentials` 识别 `KOE_CREDENTIAL_SOURCE=environment`，沿用 Rust 导入、保存、清除协议，不回退个人 Keychain。
+- 验证点：`environmentLifecycle`（`Explicit environment credentials configure a new workspace, survive restart and respect clear`）覆盖首次导入、重启保留与清除后不再回读环境密钥；密钥不得写入工作区快照。
 - Seen 1x（2026-11-13）。

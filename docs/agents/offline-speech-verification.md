@@ -31,12 +31,3 @@ sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip))' 
 ```sh
 ./scripts/check
 ```
-
-## 本轮独立复核
-
-实现提交 `1779461` 通过独立真实 SenseVoice CPU 验收。随后 `verify_offline_socket` 在 `sandbox-exec` 禁全部外网 IP（正对照连接 `1.1.1.1:443` 返回 `Operation not permitted`）条件下，通过 `HostSessionGuard`（C ABI v2）与真实 `koe.sock` 完成两项离线验收：
-
-- `sensevoice-small --all-day`：经已订阅的同一 `UnixStream` 发送 `set_dictation_active` 圈定首段 0–15000 ms；在首段与自动切分后的第二段（`ordinal = 2`）各执行一次暂停与单调时钟恢复（持久化多 `epoch` 时间轴）；注入 `product-workspace.json` 目录占位故障确认 `microphone.phase == "saving"` 暴露保存错误，恢复文件后调用 `retry_microphone_save` 收口为 300 秒（20 段）与 3 秒（1 段）两条 WAV 记录；后台导入音频并执行 `transcribe`，确认 `koe.sock` 零泄漏后台 `transcript_final` 事件，唯一听写事件与持久化分段完全一致；销毁会话确认 `koe.sock` 清理，重开后 `meetingAudioPolicy` 保持 `local_only`，未手动调用 `prepare_speech_model` 即自动重新加载模型至 `ready`。
-- `qwen3-asr-0.6b`：在相同禁外网沙盒与 `koe.sock` 订阅下完成 15 秒麦克风听写圈定、后台导入文件离线识别（零事件泄漏）、会话销毁套接字清理，以及重开后 `local_only` 保持与模型自动就绪（`reopenAutoReady: true`）。
-
-未在真实物理环境验证的项目：超过 5 分钟的真实麦克风与 D3200 连续说话、锁屏续录、物理蓝牙断连重连、真实外部输入法进程联调，以及本机大语言模型整理与问答；上述真机与本机 LLM 场景仍按 [#662](https://github.com/semantic-craft/koe/issues/662) 跟踪。
