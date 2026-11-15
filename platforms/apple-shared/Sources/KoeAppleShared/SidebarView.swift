@@ -5,39 +5,127 @@ public struct SidebarView: View {
 
     public init(store: HostSessionStore) { self.store = store }
 
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Image(systemName: "waveform").foregroundStyle(AppColors.accent)
-                    .frame(width: 30, height: 30).background(AppColors.accentSoft, in: RoundedRectangle(cornerRadius: 8))
-                Text("Koe").font(.system(size: AppFontSizes.lg, weight: .semibold))
-            }.padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 26)
-            navigationRow("today", title: "模式选择", icon: "square.grid.2x2")
-            navigationRow("voice_input", title: "语音输入", icon: "character.cursor.ibeam")
-            navigationRow("notes", title: "随心记", icon: "text.alignleft")
-            navigationRow("tasks", title: "行动", icon: "checkmark.circle")
-            navigationRow("live_minutes", title: "实时纪要", icon: "doc.text")
-            navigationRow("ask", title: "问 Koe", icon: "sparkles")
-            Spacer(minLength: 30)
-            navigationRow("records", title: "所有记录", icon: "rectangle.stack")
-            navigationRow("settings", title: "设置", icon: "gearshape")
-        }
-        .padding(12).frame(width: 186).background(AppColors.bgPanel)
+    private var proposedActionCount: Int {
+        store.snapshot.tasks.filter { $0.state == "proposed" }.count
+            + store.snapshot.memories.filter { $0.state == "proposed" }.count
     }
 
-    private func navigationRow(_ id: String, title: String, icon: String) -> some View {
-        let selected = store.snapshot.section == id || (id == "settings" && store.snapshot.section == "capture")
-        return Button { store.send("navigate", ["section": id]) } label: {
-            HStack(spacing: 11) {
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Image(systemName: "waveform")
+                    .foregroundStyle(AppColors.accent)
+                    .frame(width: 28, height: 28)
+                    .background(AppColors.accentSoft, in: RoundedRectangle(cornerRadius: 8))
+                Text("Koe")
+                    .font(.system(size: AppFontSizes.md, weight: .semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 18)
+
+            navigationRow("today", title: "模式选择", icon: "square.grid.2x2")
+            modeRow("notes", title: "随心闪记", icon: "bolt.horizontal")
+            modeRow("all_day", title: "全天听记", icon: "clock")
+            modeRow("live_minutes", title: "实时纪要", icon: "waveform.path.ecg")
+            modeRow("voice_input", title: "语音输入", icon: "character.cursor.ibeam")
+
+            navigationRow("ask", title: "问 AI", icon: "bubble.left.and.text.bubble.right")
+                .padding(.top, 4)
+
+            Text("资料")
+                .font(.system(size: AppFontSizes.xs, weight: .medium))
+                .foregroundStyle(AppColors.textMuted)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 2)
+
+            navigationRow(
+                "records",
+                title: "所有记录",
+                icon: "tray.full",
+                count: store.snapshot.records.isEmpty ? nil : store.snapshot.records.count
+            )
+            navigationRow(
+                "tasks",
+                title: "行动",
+                icon: "checklist",
+                count: proposedActionCount > 0 ? proposedActionCount : nil
+            )
+
+            Spacer(minLength: 16)
+            navigationRow("settings", title: "设置", icon: "gearshape")
+        }
+        .padding(12)
+        .frame(width: 196)
+        .background(AppColors.bgPanel)
+    }
+
+    private func isSelected(_ id: String) -> Bool {
+        if id == "settings" {
+            return store.snapshot.section == "settings" || store.snapshot.section == "capture"
+        }
+        if id == "tasks" {
+            return store.snapshot.section == "tasks" || store.snapshot.section == "memory"
+        }
+        return store.snapshot.section == id
+    }
+
+    private func isModeSessionActive(_ id: String) -> Bool {
+        store.snapshot.workspaces?.picker.cards.first(where: { $0.id == id })?.isSessionActive == true
+    }
+
+    private func navigationRow(_ id: String, title: String, icon: String, count: Int? = nil) -> some View {
+        let selected = isSelected(id)
+        return Button {
+            store.send("navigate", ["section": id])
+        } label: {
+            HStack(spacing: 10) {
                 Image(systemName: icon).frame(width: 18)
                 Text(title)
-                Spacer()
+                Spacer(minLength: 4)
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: AppFontSizes.xs))
+                        .foregroundStyle(selected ? AppColors.accent : AppColors.textMuted)
+                        .monospacedDigit()
+                }
             }
             .font(.system(size: AppFontSizes.sm, weight: selected ? .medium : .regular))
             .foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
-            .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
             .background(selected ? AppColors.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func modeRow(_ id: String, title: String, icon: String) -> some View {
+        let selected = isSelected(id)
+        let active = isModeSessionActive(id)
+        return Button {
+            store.send("navigate", ["section": id])
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: icon).frame(width: 16)
+                Text(title)
+                Spacer(minLength: 4)
+                if active {
+                    Circle()
+                        .fill(AppColors.success)
+                        .frame(width: 6, height: 6)
+                        .accessibilityLabel("进行中")
+                }
+            }
+            .font(.system(size: AppFontSizes.sm, weight: selected ? .medium : .regular))
+            .foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
+            .padding(.leading, 24)
+            .padding(.trailing, 12)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(selected ? AppColors.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

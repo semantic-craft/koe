@@ -4,12 +4,19 @@ public struct KoeWorkspaceRootView: View {
     public let store: HostSessionStore
     private let importAction: () -> Void
     private let exportAction: (String) -> Void
+    let exportWorkspaceAction: (WorkspaceExportRequest) -> Void
     @State private var showNewNote = false
 
-    public init(store: HostSessionStore, onImport: @escaping () -> Void = {}, onExport: @escaping (String) -> Void = { _ in }) {
+    public init(
+        store: HostSessionStore,
+        onImport: @escaping () -> Void = {},
+        onExport: @escaping (String) -> Void = { _ in },
+        onExportWorkspace: @escaping (WorkspaceExportRequest) -> Void = { _ in }
+    ) {
         self.store = store
         importAction = onImport
         exportAction = onExport
+        exportWorkspaceAction = onExportWorkspace
     }
     public var body: some View {
         HStack(spacing: 0) {
@@ -88,13 +95,14 @@ public struct KoeWorkspaceRootView: View {
         switch store.snapshot.section {
         case "voice_input": "语音输入"
         case "capture": "设置 / 录音管理"
-        case "notes": "随心记"
+        case "notes": "随心闪记"
+        case "all_day": "全天听记"
         case "records": "所有记录"
         case "detail": store.snapshot.detail?.title ?? "记录"
         case "tasks": "行动"
         case "memory": "记忆"
         case "live_minutes": "实时纪要"
-        case "ask": "问 Koe"
+        case "ask": "问 AI"
         case "trash": "回收站"
         case "settings": "设置"
         default: "模式选择"
@@ -105,6 +113,7 @@ public struct KoeWorkspaceRootView: View {
         case "voice_input": VoiceInputView(store: store)
         case "capture": CaptureView(store: store)
         case "notes": NotesView(store: store)
+        case "all_day": AllDayPlaceholderView(store: store)
         case "records": RecordListView(store: store)
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)

@@ -1,0 +1,196 @@
+import Foundation
+import Testing
+@testable import KoeAppleShared
+
+@Suite("Mode workspaces snapshot and decoupled controls")
+struct ModeWorkspacesTests {
+    @Test("Live HostSessionStore decodes unified workspaces projection and legacy JSON stays compatible")
+    @MainActor
+    func workspacesProjectionAndLegacyCompatibility() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let workspaces = try #require(store.snapshot.workspaces)
+        #expect(workspaces.picker.cards.map(\.id) == ["notes", "all_day", "live_minutes", "voice_input"])
+        #expect(workspaces.picker.cards.map(\.title) == ["随心闪记", "全天听记", "实时纪要", "语音输入"])
+        #expect(workspaces.voiceInput.steps.count == 6)
+        #expect(!workspaces.quickNote.mcpReadNote.isEmpty)
+
+        let legacyJSON = """
+        {
+          "version": 2,
+          "generation": 5,
+          "section": "today",
+          "canGoBack": false,
+          "selectedRecordId": null,
+          "focusSegmentId": null,
+          "records": [
+            {
+              "id": "legacy-1",
+              "title": "旧版闪记",
+              "createdAtEpochSec": 1700000000,
+              "durationMs": 0,
+              "source": "文字记录",
+              "status": "就绪",
+              "segmentCount": 1,
+              "preview": "保留旧版快照兼容",
+              "archived": false
+            }
+          ],
+          "todayRecordIds": [],
+          "detail": null,
+          "tasks": [],
+          "memories": [],
+          "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
+          "device": { "state": "未连接", "connected": false, "busy": false, "files": [], "progress": 0.0 },
+          "provider": { "configured": false, "model": "qwen-plus" },
+          "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
+          "error": null,
+          "notice": null
+        }
+        """
+        let decoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(legacyJSON.utf8))
+        #expect(decoded.workspaces == nil)
+        let legacyRecord = try #require(decoded.records.first)
+        #expect(legacyRecord.mode == nil)
+        #expect(legacyRecord.project == nil)
+        #expect(legacyRecord.modeLabel == "随心闪记")
+        #expect(legacyRecord.matches(filter: .inbox, query: ""))
+    }
+
+    @Test("Sidebar navigation across four modes stays side-effect-free while Mode Picker session switches stay on page")
+    @MainActor
+    func decoupledNavigationAndModePickerSwitches() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        for destination in ["notes", "all_day", "live_minutes", "voice_input", "today"] {
+            store.send("navigate", ["section": destination])
+            #expect(store.snapshot.section == destination)
+            #expect(store.snapshot.activeCapture == nil)
+            #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == false)
+            #expect(store.drainHostActions().isEmpty)
+        }
+
+        let voiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
+        store.toggleModeSession(voiceCard)
+        #expect(store.snapshot.section == "today")
+        #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == true)
+        #expect(store.drainHostActions().isEmpty)
+
+        let activeVoiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
+        store.toggleModeSession(activeVoiceCard)
+        #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == false)
+
+        let meetingCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "live_minutes" }))
+        store.toggleModeSession(meetingCard)
+        #expect(store.snapshot.section == "today")
+        #expect(store.snapshot.workspaces?.liveMinutes.isActive == true)
+
+        let activeMeetingCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "live_minutes" }))
+        let mic = try #require(store.snapshot.microphone)
+        store.toggleModeSession(activeMeetingCard)
+        #expect(store.snapshot.activeCapture?.phase == "stopping")
+        store.send("microphone_stopped", [
+            "recordId": mic.recordId,
+            "sessionId": mic.sessionId,
+            "lane": "microphone",
+            "sequence": mic.nextSequence,
+            "epoch": mic.epoch
+        ])
+        #expect(store.snapshot.activeCapture == nil)
+        #expect(store.snapshot.workspaces?.liveMinutes.isActive == false)
+    }
+
+    @Test("QuickNote project assignment, RecordListView category/search filtering, and AllDay span decoding")
+    @MainActor
+    func projectAssignmentFilteringAndAllDaySpans() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        store.send("create_note", ["title": "API 方案", "text": "讨论 C ABI 快照结构"])
+        let firstId = try #require(store.snapshot.detail?.id)
+        store.send("create_note", ["title": "读书清单", "text": "周末阅读系统设计章节"])
+        #expect(store.snapshot.workspaces?.quickNote.inboxCount == 2)
+        #expect(store.snapshot.records.filter { $0.matches(filter: .inbox, query: "") }.count == 2)
+
+        store.send("set_record_project", ["recordId": firstId, "project": "Koe 架构"])
+        let quickNote = try #require(store.snapshot.workspaces?.quickNote)
+        #expect(quickNote.inboxCount == 1)
+        #expect(quickNote.projects == [QuickNoteProjectCountSnapshot(name: "Koe 架构", count: 1)])
+
+        let assigned = try #require(store.snapshot.records.first(where: { $0.id == firstId }))
+        #expect(assigned.project == "Koe 架构")
+        #expect(!assigned.matches(filter: .inbox, query: ""))
+        #expect(assigned.matches(filter: .quickNote, query: "Koe 架构"))
+        #expect(!assigned.matches(filter: .quickNote, query: "不存在的关键词"))
+
+        let allDayJSON = """
+        {
+          "isActive": false,
+          "isPaused": false,
+          "canPause": false,
+          "canResume": false,
+          "sourceLabel": "系统默认麦克风",
+          "selectedDate": "2026-11-15",
+          "availableDates": ["2026-11-15"],
+          "totalRecordedMs": 420000,
+          "eventCount": 1,
+          "pauseCount": 1,
+          "gapCount": 1,
+          "spans": [
+            {
+              "kind": "event",
+              "id": "ev-1",
+              "title": "上午架构评审",
+              "startEpochSec": 1763172000,
+              "endEpochSec": 1763172600,
+              "durationMs": 420000,
+              "recordIds": ["r-1", "r-2"],
+              "primaryRecordId": "r-1",
+              "firstSegment": null,
+              "preview": "确认四层边界保持不变",
+              "summaryPoints": ["接口保持稳定"],
+              "speakers": ["Alice"],
+              "segmentCount": 4
+            },
+            {
+              "kind": "pause",
+              "id": "pause-1",
+              "recordId": "r-1",
+              "startEpochSec": 1763172300,
+              "endEpochSec": 1763172360,
+              "durationMs": 60000
+            },
+            {
+              "kind": "unrecorded_gap",
+              "id": "gap-1",
+              "startEpochSec": 1763172600,
+              "endEpochSec": 1763176200,
+              "durationMs": 3600000
+            }
+          ],
+          "reviewTasks": [],
+          "reviewMemories": [],
+          "reviewDecisions": [],
+          "dailyReview": {
+            "overview": "完成上午架构评审",
+            "highlights": ["确认四层边界"],
+            "sources": []
+          }
+        }
+        """
+        let decodedAllDay = try JSONDecoder().decode(AllDayWorkspaceSnapshot.self, from: Data(allDayJSON.utf8))
+        #expect(decodedAllDay.spans.map(\.kind) == ["event", "pause", "unrecorded_gap"])
+        #expect(decodedAllDay.spans[0].recordIds == ["r-1", "r-2"])
+        #expect(decodedAllDay.spans[1].recordId == "r-1")
+        #expect(decodedAllDay.spans[2].durationMs == 3_600_000)
+        #expect(decodedAllDay.dailyReview?.overview == "完成上午架构评审")
+    }
+}
