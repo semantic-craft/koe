@@ -94,7 +94,7 @@ fn repeated_segment_edits_preserve_asr_provenance_citations_and_collapse_on_reve
     let ask_msg = ws.ask_session().messages.last().unwrap();
     let ask_source = SourceRef {
         record_id: ask_msg.sources[0].source.recording_key.clone(),
-        segment_id: SegmentId::from_zero_based(ask_msg.sources[0].source.line.unwrap()).unwrap(),
+        segment_id: ask_msg.sources[0].source.segment_id,
     };
     assert_eq!(
         ws.resolve_source(&ask_source).unwrap().quote,

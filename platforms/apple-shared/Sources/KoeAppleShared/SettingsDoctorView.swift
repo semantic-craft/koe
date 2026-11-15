@@ -17,7 +17,7 @@ public struct SettingsDoctorView: View {
                         }
                         HStack(spacing: 10) {
                             KoeActionButton("录音管理", systemImage: "mic") {
-                                store.send("navigate", ["section": "capture"])
+                                store.send(.navigate(section: "capture"))
                             }
                             KoeActionButton("全天听记演示", systemImage: "play.rectangle") { showAllDayDemo = true }
                         }
@@ -58,11 +58,11 @@ public struct SettingsDoctorView: View {
                             }
                             HStack(spacing: 10) {
                                 KoeActionButton("刷新状态", systemImage: "arrow.clockwise") {
-                                    store.send("device_refresh")
+                                    store.send(.deviceRefresh)
                                     NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                                 }.disabled(store.snapshot.device.busy)
                                 KoeActionButton("使用引导", systemImage: "questionmark.circle") {
-                                    store.send("device_open_guide")
+                                    store.send(.deviceOpenGuide)
                                 }
                                 KoeActionButton("断开连接", systemImage: "xmark.circle") {
                                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
@@ -73,7 +73,7 @@ public struct SettingsDoctorView: View {
                                 .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                             HStack(spacing: 10) {
                                 KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right", isPrimary: true) {
-                                    store.send("device_open_guide")
+                                    store.send(.deviceOpenGuide)
                                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
                                 }.disabled(store.snapshot.device.busy)
                                 KoeActionButton("重新扫描", systemImage: "arrow.clockwise") {
@@ -98,7 +98,7 @@ public struct SettingsDoctorView: View {
                     }
                 }
                 KoeActionButton("管理记忆", systemImage: "square.stack.3d.up") {
-                    store.send("navigate", ["section": "memory"])
+                    store.send(.navigate(section: "memory"))
                 }
             }.padding(30).frame(maxWidth: 850, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -119,7 +119,7 @@ struct SourceLink: View {
     let store: HostSessionStore
     var body: some View {
         Button {
-            store.send("open_source", ["recordId": source.recordId, "segmentId": source.segmentId])
+            store.send(.openSource(recordId: source.recordId, segmentId: source.segmentId))
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.up.right")

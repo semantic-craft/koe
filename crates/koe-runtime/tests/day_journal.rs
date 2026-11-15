@@ -152,11 +152,15 @@ fn journal_rolls_to_the_current_day_without_hiding_prior_notes() {
         &mut runtime,
         json!({"type":"create_note","title":"今天","text":"今天的原文"}),
     );
-    let today_id = &snapshot["selectedRecordId"];
-    assert_eq!(snapshot["journal"]["recordIds"], json!([today_id]));
-    assert_eq!(snapshot["journal"]["summaries"], json!([]));
+    let today_id = snapshot["selectedRecordId"].clone();
+    let today_date = snapshot["workspaces"]["allDay"]["selectedDate"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(snapshot["records"][0]["id"], today_id);
+    assert!(snapshot["workspaces"]["allDay"]["dailyReview"].is_null());
     assert_eq!(
-        snapshot["journal"]["noteRecordIds"]
+        snapshot["workspaces"]["quickNote"]["cards"]
             .as_array()
             .unwrap()
             .len(),
@@ -168,9 +172,13 @@ fn journal_rolls_to_the_current_day_without_hiding_prior_notes() {
     runtime.poll_timers(250, TODAY + 86_400);
     let snapshot = runtime.snapshot(TODAY + 86_400);
     assert!(runtime.generation() > old_generation);
-    assert_eq!(snapshot["journal"]["recordIds"], json!([]));
+    assert_ne!(
+        snapshot["workspaces"]["allDay"]["selectedDate"],
+        json!(today_date)
+    );
+    assert_eq!(snapshot["records"].as_array().unwrap().len(), 2);
     assert_eq!(
-        snapshot["journal"]["noteRecordIds"]
+        snapshot["workspaces"]["quickNote"]["cards"]
             .as_array()
             .unwrap()
             .len(),
@@ -185,8 +193,8 @@ fn imported_text_appears_in_notes_with_its_real_text() {
     std::fs::write(&text, "现场留下的原文").unwrap();
     let snapshot = send(&mut runtime, json!({"type":"import_file","path":text}));
     assert_eq!(
-        snapshot["journal"]["noteRecordIds"],
-        json!([snapshot["selectedRecordId"]])
+        snapshot["workspaces"]["quickNote"]["cards"][0]["id"],
+        snapshot["selectedRecordId"]
     );
     assert_eq!(snapshot["records"][0]["preview"], "现场留下的原文");
 }

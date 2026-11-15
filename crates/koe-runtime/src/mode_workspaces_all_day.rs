@@ -26,7 +26,7 @@ impl KoeRuntime {
                 }
             }
         }
-        if let Some(sel) = &self.selected_all_day_date {
+        if let Some(sel) = &self.selection.selected_all_day_date {
             if let Ok(parsed) = NaiveDate::parse_from_str(sel, "%Y-%m-%d") {
                 date_set.insert(parsed);
             }
@@ -37,6 +37,7 @@ impl KoeRuntime {
             .map(|d| d.format("%Y-%m-%d").to_string())
             .collect();
         let selected_date = self
+            .selection
             .selected_all_day_date
             .clone()
             .or_else(|| today.map(|d| d.format("%Y-%m-%d").to_string()))

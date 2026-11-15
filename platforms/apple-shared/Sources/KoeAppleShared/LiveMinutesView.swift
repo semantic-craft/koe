@@ -16,7 +16,7 @@ public struct LiveMinutesView: View {
     }
 
     private var lm: LiveMinutesWorkspaceSnapshot {
-        LiveMinutesWorkspaceSnapshot.resolved(from: store.snapshot)
+        store.snapshot.workspaces?.liveMinutes ?? .empty
     }
 
     private var activeActions: [CaptureAction] {
@@ -115,17 +115,17 @@ public struct LiveMinutesView: View {
                     lm.liveSections.isEmpty && lm.finalSections.isEmpty ? "生成完整纪要" : "重新整理",
                     systemImage: "sparkles"
                 ) {
-                    store.send("summarize", ["recordId": recordId])
+                    store.send(.summarize(recordId: recordId))
                 }
                 .disabled(!lm.canSummarize)
 
                 KoeActionButton("问本场会议", systemImage: "bubble.left.and.text.bubble.right") {
-                    store.send("set_ask_scope", ["scope": "record", "recordId": recordId])
-                    store.send("navigate", ["section": "ask"])
+                    store.send(.setAskScope(scope: "record", recordId: recordId))
+                    store.send(.navigate(section: "ask"))
                 }
 
                 KoeActionButton("完整校对与播放", systemImage: "slider.horizontal.below.rectangle") {
-                    store.send("select_record", ["recordId": recordId])
+                    store.send(.selectRecord(recordId: recordId))
                 }
 
                 Toggle("附带 AI 整理", isOn: $includeAnalysis)
@@ -200,7 +200,7 @@ public struct LiveMinutesView: View {
                     ForEach(lm.pastMeetings) { meeting in
                         let selected = lm.selectedRecordId == meeting.id
                         Button {
-                            store.send("select_live_minutes_record", ["recordId": meeting.id])
+                            store.send(.selectLiveMinutesRecord(recordId: meeting.id))
                         } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack(spacing: 6) {

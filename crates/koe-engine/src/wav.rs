@@ -1,5 +1,5 @@
 //! PCM16 little-endian RIFF/WAVE header construction and raw 160-byte Opus
-//! frame slicing utilities matching `lib/audio/opus_wave.dart`.
+//! frame slicing utilities.
 //!
 //! # Examples
 //!
@@ -11,8 +11,6 @@
 //! assert_eq!(hdr.len(), 44);
 //! assert!(OggOpus::is_wav(&hdr));
 //! ```
-
-use std::sync::{OnceLock, RwLock};
 
 use crate::ogg_opus::{OggOpus, FRAME_SIZE};
 
@@ -142,31 +140,6 @@ pub fn parse_pcm_wave(bytes: &[u8]) -> Result<PcmWave<'_>, &'static str> {
     })
 }
 
-static DEFAULT_DECODER_FACTORY: OnceLock<RwLock<Option<OpusDecoderFactory>>> = OnceLock::new();
-
-/// Registers the process-wide default `OpusDecoderFactory`.
-pub fn register_default_opus_decoder_factory(factory: OpusDecoderFactory) {
-    let lock = DEFAULT_DECODER_FACTORY.get_or_init(|| RwLock::new(None));
-    if let Ok(mut guard) = lock.write() {
-        *guard = Some(factory);
-    }
-}
-
-/// Clears the process-wide default `OpusDecoderFactory`.
-pub fn clear_default_opus_decoder_factory() {
-    let lock = DEFAULT_DECODER_FACTORY.get_or_init(|| RwLock::new(None));
-    if let Ok(mut guard) = lock.write() {
-        *guard = None;
-    }
-}
-
-/// Returns the currently registered default `OpusDecoderFactory`, if any.
-#[must_use]
-pub fn default_opus_decoder_factory() -> Option<OpusDecoderFactory> {
-    let lock = DEFAULT_DECODER_FACTORY.get_or_init(|| RwLock::new(None));
-    lock.read().ok().and_then(|g| *g)
-}
-
 /// Stateless WAV header builder and raw Opus frame chunker.
 #[derive(Debug, Clone, Copy)]
 pub struct OpusWave;
@@ -269,7 +242,7 @@ impl OpusWave {
         if raw_opus.is_empty() || !Self::is_valid_sample_rate(sample_rate) {
             return None;
         }
-        let make_decoder = factory.or_else(default_opus_decoder_factory)?;
+        let make_decoder = factory?;
         let mut decoder = make_decoder(sample_rate)?;
         let estimated_frames = raw_opus.len().div_ceil(FRAME_SIZE);
         let bytes_per_20ms = (sample_rate as usize / 50) * 2;

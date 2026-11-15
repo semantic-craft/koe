@@ -249,8 +249,13 @@
         "updated_at": "2026-11-15T08:24:53Z"
       }
     ],
-    "main": "97ad6fc18a2844ac978ee47d2709f2de9014af3b",
-    "open_pulls": [],
+    "main": "0a86c1f4a944135fb1f7adf1916243b1ab552dd4",
+    "open_pulls": [
+      {
+        "head": "e4bc8c9091b5818e8eb1721707794636dfcc2044",
+        "number": 720
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -608,7 +613,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-15T11:01:57.093222Z",
+  "observed_at": "2026-11-15T23:51:10.710862Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -818,7 +823,7 @@
             {
               "kind": "file",
               "note": "当前工作区与已有记录恢复仍保留。",
-              "ref": "crates/koe-runtime/src/restore.rs"
+              "ref": "crates/koe-runtime/src/capture.rs"
             }
           ],
           "id": "flutter-migration",

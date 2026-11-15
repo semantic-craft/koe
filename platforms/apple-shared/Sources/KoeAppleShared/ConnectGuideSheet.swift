@@ -153,7 +153,7 @@ public struct ConnectGuideSheet: View {
 
             HStack(spacing: 10) {
                 KoeActionButton("稍后连接") {
-                    store.send("device_close_guide")
+                    store.send(.deviceCloseGuide)
                 }
                 Spacer()
                 KoeActionButton(
@@ -215,10 +215,10 @@ public struct ConnectGuideSheet: View {
                 }
                 Spacer()
                 KoeActionButton("跳过引导") {
-                    store.send("device_close_guide")
+                    store.send(.deviceCloseGuide)
                 }
                 KoeActionButton(guide.primaryLabel, isPrimary: true) {
-                    store.send("device_onboarding_next")
+                    store.send(.deviceOnboardingNext)
                 }
             }
         }

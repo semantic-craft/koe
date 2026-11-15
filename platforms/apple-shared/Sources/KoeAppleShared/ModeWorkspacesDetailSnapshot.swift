@@ -288,40 +288,6 @@ public struct LiveMinutesWorkspaceSnapshot: Codable, Equatable, Sendable {
         default: "待开始"
         }
     }
-
-    public static func resolved(from snapshot: HostSnapshot) -> LiveMinutesWorkspaceSnapshot {
-        if let projected = snapshot.workspaces?.liveMinutes {
-            return projected
-        }
-        guard let legacy = snapshot.liveMinutes else {
-            return .empty
-        }
-        let lastPart = legacy.parts.last
-        let mergedSegments = legacy.parts.flatMap(\.segments)
-        let mergedDrafts = legacy.parts.flatMap(\.drafts)
-        let mergedSections = legacy.parts.flatMap(\.summary)
-        let active = legacy.phase != .ended && legacy.phase != .idle
-        return LiveMinutesWorkspaceSnapshot(
-            isActive: active,
-            canStart: snapshot.capture.canStart && !active,
-            phase: legacy.phase.rawValue,
-            configured: legacy.configured,
-            sourceLabel: snapshot.capture.selectedLabel,
-            activeRecordId: active ? lastPart?.recordId : nil,
-            selectedRecordId: lastPart?.recordId,
-            selectedTitle: lastPart?.title,
-            minutesStale: legacy.parts.contains(where: \.minutesStale),
-            canSummarize: false,
-            error: legacy.parts.compactMap(\.error).first,
-            coverage: nil,
-            segments: mergedSegments,
-            drafts: mergedDrafts,
-            liveSections: mergedSections,
-            finalSections: legacy.phase == .ended ? mergedSections : [],
-            actionItems: [],
-            pastMeetings: []
-        )
-    }
 }
 
 public struct VoiceInputStepSnapshot: Codable, Equatable, Identifiable, Sendable {

@@ -1,5 +1,15 @@
 use super::{ProductError, ProductWorkspace};
 
+/// Default DashScope streaming ASR WebSocket endpoint.
+pub const DEFAULT_DASHSCOPE_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+/// Default DashScope OpenAI-compatible chat-completions HTTP endpoint.
+pub const DEFAULT_DASHSCOPE_HTTP_BASE_URL: &str =
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+/// Default real-time streaming ASR model identifier.
+pub const DEFAULT_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
+/// Default text generation and summarization model identifier.
+pub const DEFAULT_TEXT_MODEL: &str = "qwen-plus";
+
 /// Whether meeting audio may be sent to a remote speech service.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MeetingAudioPolicy {
@@ -79,10 +89,9 @@ impl Default for ProviderConfiguration {
         Self {
             meeting_audio_policy: MeetingAudioPolicy::default(),
             speech_engine: SpeechEngine::default(),
-            model: "qwen-plus".into(),
-            asr_endpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference".into(),
-            chat_endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-                .into(),
+            model: DEFAULT_TEXT_MODEL.into(),
+            asr_endpoint: DEFAULT_DASHSCOPE_WS_URL.into(),
+            chat_endpoint: DEFAULT_DASHSCOPE_HTTP_BASE_URL.into(),
             credential: CredentialBinding::Uninitialized,
             retired_credentials: Vec::new(),
             pending_credentials: Vec::new(),

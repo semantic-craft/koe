@@ -83,7 +83,7 @@ public struct VoiceInputView: View {
             HStack(spacing: 8) {
                 if !vi.deviceConnected {
                     KoeActionButton("连接录音豆指南", systemImage: "dot.radiowaves.left.and.right") {
-                        store.send("device_open_guide")
+                        store.send(.deviceOpenGuide)
                     }
                 }
                 KoeActionButton(
@@ -91,10 +91,10 @@ public struct VoiceInputView: View {
                     systemImage: "character.cursor.ibeam",
                     isPrimary: !vi.sessionEnabled
                 ) {
-                    store.send("set_voice_input_session", [
-                        "enabled": !vi.sessionEnabled,
-                        "openResponsay": false
-                    ])
+                    store.send(.setVoiceInputSession(
+                        enabled: !vi.sessionEnabled,
+                        openResponsay: false
+                    ))
                     NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                 }
                 .disabled(!vi.canToggleSession)

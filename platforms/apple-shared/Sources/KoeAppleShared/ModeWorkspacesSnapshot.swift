@@ -73,15 +73,14 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         )
     }
 
-    public func commandPayload(path: String) -> [String: Any] {
-        var payload: [String: Any] = [
-            "path": path,
-            "includeAnalysis": includeAnalysis,
-            "includeSources": includeSources
-        ]
-        if let recordId { payload["recordId"] = recordId }
-        if let date { payload["date"] = date }
-        return payload
+    public func command(path: String) -> HostCommand {
+        .exportWorkspaceMarkdown(
+            recordId: recordId,
+            date: date,
+            path: path,
+            includeAnalysis: includeAnalysis,
+            includeSources: includeSources
+        )
     }
 }
 
@@ -412,17 +411,11 @@ public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
 extension HostSessionStore {
     public func toggleModeSession(_ card: ModePickerCardSnapshot) {
         if card.id == "voice_input" || card.mode == "dictation" {
-            send("set_voice_input_session", [
-                "enabled": !card.isSessionActive,
-                "openResponsay": false
-            ])
+            send(.setVoiceInputSession(enabled: !card.isSessionActive, openResponsay: false))
         } else if card.isSessionActive {
-            send("capture_action", ["action": "end"])
-        } else {
-            send("start_capture_mode", [
-                "mode": card.mode,
-                "stayOnPage": true
-            ])
+            send(.captureAction(action: .end))
+        } else if let mode = CaptureMode(rawValue: card.mode) {
+            send(.startCaptureMode(mode: mode, stayOnPage: true))
         }
         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
     }
@@ -430,17 +423,14 @@ extension HostSessionStore {
     public func performVoiceInputStepAction(_ command: String) {
         switch command {
         case "enable_voice_input", "set_voice_input_session":
-            send("set_voice_input_session", [
-                "enabled": true,
-                "openResponsay": false
-            ])
+            send(.setVoiceInputSession(enabled: true, openResponsay: false))
             NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
         case "open_responsay_app":
-            send("open_responsay_app")
+            send(.openResponsayApp)
         case "device_open_guide":
-            send("device_open_guide")
+            send(.deviceOpenGuide)
         default:
-            break
+            send(command)
         }
     }
 }

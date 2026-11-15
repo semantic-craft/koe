@@ -72,7 +72,7 @@ pub(crate) fn call_offline_tool(
     drive_mcp_tool_blocking(
         runtime,
         |rt| rt.call_mcp_tool_step(name, args, super::now()),
-        |rt, question, elapsed_ms| Ok(rt.poll_mcp_ask(question, elapsed_ms, super::now())),
+        |rt, elapsed_ms| Ok(rt.poll_mcp_ask(elapsed_ms, super::now())),
     )
 }
 

@@ -12,15 +12,19 @@ struct SpeechSessionSnapshotTests {
             "models": [["id": "small", "name": "Small", "sizeBytes": 100, "downloadedBytes": 40,
                         "state": "preparing", "message": "正在下载"]]
         ]
-        payload["allDay"] = ["state": "recording", "source": "microphone", "runId": "run-1", "segmentCount": 3]
-        payload["dictation"] = ["active": true]
+        payload["activeCapture"] = [
+            "mode": "all_day", "phase": "recording", "sourceLabel": "Mac 麦克风",
+            "durationMs": 12000, "actions": ["pause", "end", "end_dictation"], "dictating": true
+        ]
         let decoded = try JSONDecoder().decode(HostSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
         let result = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any])
         let speech = try #require(result["speech"] as? [String: Any])
         let models = try #require(speech["models"] as? [[String: Any]])
         #expect(models.first?["downloadedBytes"] as? Int == 40)
         #expect(models.first?["state"] as? String == "preparing")
-        #expect((result["allDay"] as? [String: Any])?["state"] as? String == "recording")
-        #expect((result["dictation"] as? [String: Any])?["active"] as? Bool == true)
+        let activeCapture = try #require(result["activeCapture"] as? [String: Any])
+        #expect(activeCapture["mode"] as? String == "all_day")
+        #expect(activeCapture["phase"] as? String == "recording")
+        #expect(activeCapture["dictating"] as? Bool == true)
     }
 }

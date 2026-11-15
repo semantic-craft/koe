@@ -19,8 +19,9 @@ pub mod companion;
 mod companion_mcp_tests;
 pub mod credentials;
 mod device;
+mod device_custody;
 mod dictation_capture;
-mod journal;
+mod capture_flow;
 mod legacy;
 mod lifecycle;
 #[cfg(test)]
@@ -39,14 +40,14 @@ mod playback;
 mod processing;
 mod projection;
 mod provider_settings;
+mod selection;
 mod speech;
 use provider_settings::ProviderSettings;
-mod restore;
 mod transcript_edit;
 mod trash;
 mod voice_input;
 
-use command::{Command, Location, Page, Playback};
+use command::{Command, Location, Page};
 pub use companion::{
     decode_pcm16_le_b64, encode_pcm16_le_b64, resolve_bridge_socket_path, CompanionClientCommand,
     CompanionRoutingMode, CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
@@ -83,9 +84,7 @@ pub struct KoeRuntime {
     store: ProductStore,
     root: PathBuf,
     generation: u64,
-    location: Location,
-    back: Vec<Location>,
-    playback: Playback,
+    selection: selection::WorkspaceSelection,
     device: DeviceRuntime,
     companion: companion::CompanionRuntime,
     provider: ProviderWorker,
@@ -98,10 +97,6 @@ pub struct KoeRuntime {
     speech: speech::SpeechState,
     dictation_capture: Option<dictation_capture::DictationCapture>,
     all_day: all_day::AllDayState,
-    live_minutes_scope: Option<live_minutes::LiveMinutesScope>,
-    selected_quick_note_record: Option<String>,
-    selected_all_day_date: Option<String>,
-    selected_live_minutes_record: Option<String>,
     capture_studio: capture_studio::CaptureStudioState,
     host_actions: Vec<voice_input::HostAction>,
     microphone: Option<microphone::Microphone>,
@@ -137,15 +132,9 @@ impl KoeRuntime {
             speech: speech::SpeechState::new(&root),
             dictation_capture: None,
             all_day: Default::default(),
-            live_minutes_scope: None,
-            selected_quick_note_record: None,
-            selected_all_day_date: None,
-            selected_live_minutes_record: None,
             root,
             generation: 1,
-            location: Location::default(),
-            back: Vec::new(),
-            playback: Playback::default(),
+            selection: Default::default(),
             device: DeviceRuntime::default(),
             companion: Default::default(),
             provider: ProviderWorker::new()?,
@@ -354,23 +343,15 @@ impl KoeRuntime {
             Command::RequestQuit => self.request_quit(),
             Command::CancelQuit => {
                 self.quit = lifecycle::QuitState::Running;
-                if matches!(
-                    self.device.session.transfer.phase,
-                    koe_engine::session::TransferPhaseTag::Failed
-                ) {
-                    self.device.session.reset_active_transfer();
-                }
+                let quitting = self.is_quitting();
+                self.device.reset_failed_transfer_if_idle(quitting);
                 self.drive_companion(now);
             }
             Command::Navigate { section } => self.go(Location {
                 page: section,
-                ..self.location.clone()
+                ..self.selection.location.clone()
             }),
-            Command::Back => {
-                if let Some(location) = self.back.pop() {
-                    self.set_location(location);
-                }
-            }
+            Command::Back => self.selection.pop_back(),
             Command::SelectRecord { record_id } => self.open_record(&record_id, None)?,
             Command::OpenSource {
                 record_id,
@@ -388,23 +369,10 @@ impl KoeRuntime {
                 text,
                 stay_on_page,
             } => {
-                if text.trim().is_empty() {
-                    return Err("先写下一段内容".into());
-                }
-                let id = format!("note-{now}-{}", self.workspace().revision() + 1);
-                self.commit(|workspace| {
-                    workspace.insert_record(id.clone(), title, RecordOrigin::Note, 0, now, 0)?;
-                    workspace.set_record_mode(&id, RecordMode::QuickNote)?;
-                    for paragraph in text.lines().map(str::trim).filter(|v| !v.is_empty()) {
-                        workspace.append_transcript(&id, paragraph, 0, 0, "manual")?;
-                    }
-                    Ok(())
-                })?;
-                self.selected_quick_note_record = Some(id.clone());
+                let id = self.create_quick_note(title, &text, true, now)?;
                 if !stay_on_page {
                     self.open_record(&id, None)?;
                 }
-                self.notice = Some("记录已保存".into());
             }
             Command::ImportFile { path } => {
                 let imported =
@@ -499,18 +467,19 @@ impl KoeRuntime {
             Command::SaveMemory {
                 record_id,
                 segment_id,
-            } => self.create_item(ItemKind::Memory, &record_id, &segment_id)?,
+            } => {
+                let _ = self.accept_segment_item(ItemKind::Memory, &record_id, &segment_id)?;
+            }
             Command::CreateTask {
                 record_id,
                 segment_id,
-            } => self.create_item(ItemKind::Task, &record_id, &segment_id)?,
+            } => {
+                let _ = self.accept_segment_item(ItemKind::Task, &record_id, &segment_id)?;
+            }
             Command::AddHighlight {
                 record_id,
                 segment_id,
-            } => {
-                let source = source_ref(&record_id, &segment_id)?;
-                self.commit(|w| w.add_highlight(source))?;
-            }
+            } => self.highlight_segment(&record_id, &segment_id)?,
             Command::EditSegmentText {
                 record_id,
                 segment_id,
@@ -525,7 +494,9 @@ impl KoeRuntime {
                 record_id,
                 from_speaker,
                 to_speaker,
-            } => self.rename_speaker(&record_id, &from_speaker, &to_speaker)?,
+            } => {
+                let _ = self.rename_speaker(&record_id, &from_speaker, &to_speaker)?;
+            }
             Command::Ask {
                 question,
                 scope,
@@ -534,7 +505,7 @@ impl KoeRuntime {
                 self.start_ask(search_scope(&scope, record_id)?, &question, now)?;
                 self.go(Location {
                     page: Page::Ask,
-                    ..self.location.clone()
+                    ..self.selection.location.clone()
                 });
             }
             Command::SetAskScope { scope, record_id } => {
@@ -603,14 +574,8 @@ impl KoeRuntime {
             Command::DeviceOnboardingNext => self.device.onboarding_next(),
             Command::DeviceCloseGuide => self.device.close_guide(),
             Command::DeviceRefresh => {
-                if !self.is_quitting()
-                    && matches!(
-                        self.device.session.transfer.phase,
-                        koe_engine::session::TransferPhaseTag::Failed
-                    )
-                {
-                    self.device.session.reset_active_transfer();
-                }
+                let quitting = self.is_quitting();
+                self.device.reset_failed_transfer_if_idle(quitting);
                 self.device.refresh();
             }
             Command::DeviceDisconnect => {
@@ -621,7 +586,7 @@ impl KoeRuntime {
                         }
                     }
                 }
-                self.companion.deleted_in_connection.clear();
+                self.companion.on_ble_disconnected();
                 self.device.disconnect();
                 self.save_captures(now)?;
                 self.retire_active_standby_stream();
@@ -640,10 +605,7 @@ impl KoeRuntime {
                         }
                     }
                 }
-                self.companion.deleted_in_connection.clear();
-                self.companion.capture_active = false;
-                self.companion.post_tap_skip_slices = 0;
-                self.companion.tail_holdback.clear();
+                self.companion.on_ble_released();
                 self.device.disconnect();
                 self.save_captures(now)?;
                 self.retire_active_standby_stream();
@@ -673,14 +635,8 @@ impl KoeRuntime {
                         "当前处于领夹麦待命模式，请先切换为关闭或实时纪要兼听写模式后再下载录音".into(),
                     );
                 }
-                if !self.is_quitting()
-                    && matches!(
-                        self.device.session.transfer.phase,
-                        koe_engine::session::TransferPhaseTag::Failed
-                    )
-                {
-                    self.device.session.reset_active_transfer();
-                }
+                let quitting = self.is_quitting();
+                self.device.reset_failed_transfer_if_idle(quitting);
                 self.ensure_device_idle()?;
                 let entry = self
                     .device
@@ -709,14 +665,8 @@ impl KoeRuntime {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
-                if !self.is_quitting()
-                    && matches!(
-                        self.device.session.transfer.phase,
-                        koe_engine::session::TransferPhaseTag::Failed
-                    )
-                {
-                    self.device.session.reset_active_transfer();
-                }
+                let quitting = self.is_quitting();
+                self.device.reset_failed_transfer_if_idle(quitting);
                 if self.active_companion_mode() == CompanionRoutingMode::CollarStandby {
                     if self.companion.standby_stream_owned {
                         return Err(
@@ -779,22 +729,9 @@ impl KoeRuntime {
     }
 
     fn go(&mut self, location: Location) {
-        self.back.push(self.location.clone());
-        if self.back.len() > 32 {
-            self.back.remove(0);
-        }
-        self.set_location(location);
+        self.selection.go(location);
     }
-    fn set_location(&mut self, location: Location) {
-        if self.playback.record != location.record {
-            self.playback.record = location.record.clone();
-            self.playback.lane = None;
-            self.playback.request_id = self.playback.request_id.saturating_add(1);
-            self.playback.position_ms = 0;
-            self.playback.playing = false;
-        }
-        self.location = location;
-    }
+
     fn open_record(&mut self, id: &str, segment: Option<String>) -> Result<(), String> {
         let record = self.workspace().record(id).ok_or("记录不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
@@ -805,15 +742,56 @@ impl KoeRuntime {
         });
         Ok(())
     }
-    fn create_item(&mut self, kind: ItemKind, id: &str, segment: &str) -> Result<(), String> {
-        let source = source_ref(id, segment)?;
-        self.commit(|w| {
+
+    pub(crate) fn create_quick_note(
+        &mut self,
+        title: String,
+        text: &str,
+        select_in_ui: bool,
+        now: u64,
+    ) -> Result<String, String> {
+        if text.trim().is_empty() {
+            return Err("先写下一段内容".into());
+        }
+        let id = format!("note-{now}-{}", self.workspace().revision() + 1);
+        self.commit(|workspace| {
+            workspace.insert_record(id.clone(), title, RecordOrigin::Note, 0, now, 0)?;
+            for paragraph in text.lines().map(str::trim).filter(|v| !v.is_empty()) {
+                workspace.append_transcript(&id, paragraph, 0, 0, "manual")?;
+            }
+            Ok(())
+        })?;
+        if select_in_ui {
+            self.selection.selected_quick_note_record = Some(id.clone());
+        }
+        self.notice = Some("记录已保存".into());
+        Ok(id)
+    }
+
+    pub(crate) fn accept_segment_item(
+        &mut self,
+        kind: ItemKind,
+        record_id: &str,
+        segment_id: &str,
+    ) -> Result<String, String> {
+        let source = source_ref(record_id, segment_id)?;
+        let item_id = self.commit(|w| {
             let evidence = w.resolve_live_source(&source)?;
             let id = w.propose_item(kind, &evidence.quote, vec![source])?;
-            w.review_item(&id, ReviewDecision::Accept)
+            w.review_item(&id, ReviewDecision::Accept)?;
+            Ok(id)
         })?;
         self.notice = Some("已保存，可从来源返回原文".into());
-        Ok(())
+        Ok(item_id)
+    }
+
+    pub(crate) fn highlight_segment(
+        &mut self,
+        record_id: &str,
+        segment_id: &str,
+    ) -> Result<(), String> {
+        let source = source_ref(record_id, segment_id)?;
+        self.commit(|w| w.add_highlight(source))
     }
 
     /// Feeds real platform notifications into the existing protocol engine.
@@ -926,13 +904,12 @@ impl KoeRuntime {
     /// Advances timers and returns the diagnostic projection shared by CLI and local bridge.
     pub fn doctor_snapshot(&mut self, now: u64) -> Value {
         self.poll_timers(0, now);
-        let snap = self.snapshot(now);
         json!({
             "workspaceReadable": true,
-            "generation": snap["generation"],
-            "device": snap["device"],
-            "provider": snap["provider"],
-            "error": snap["error"]
+            "generation": self.generation,
+            "device": self.device_json(),
+            "provider": self.provider_json(),
+            "error": self.error
         })
     }
 }

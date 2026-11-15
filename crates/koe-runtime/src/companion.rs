@@ -322,6 +322,21 @@ impl Default for CompanionRuntime {
 }
 
 impl CompanionRuntime {
+    pub(super) fn clear_transient_capture(&mut self) {
+        self.capture_active = false;
+        self.post_tap_skip_slices = 0;
+        self.tail_holdback.clear();
+    }
+
+    pub(super) fn on_ble_disconnected(&mut self) {
+        self.deleted_in_connection.clear();
+    }
+
+    pub(super) fn on_ble_released(&mut self) {
+        self.on_ble_disconnected();
+        self.clear_transient_capture();
+    }
+
     fn next_sequence(&mut self) -> u64 {
         self.sequence = self.sequence.saturating_add(1);
         self.sequence
@@ -727,9 +742,7 @@ impl KoeRuntime {
         }
         self.companion.active_standby_file_id = None;
         self.companion.standby_stream_owned = false;
-        self.companion.capture_active = false;
-        self.companion.post_tap_skip_slices = 0;
-        self.companion.tail_holdback.clear();
+        self.companion.clear_transient_capture();
         if in_flight {
             self.device.stop_recording();
         }
@@ -752,15 +765,12 @@ impl KoeRuntime {
             if let Some(lease) = &mut self.companion.external_pcm {
                 lease.capture = None;
             }
-            self.companion.capture_active = false;
             self.companion.active_standby_file_id = None;
             self.companion.pending_standby_stop = false;
             self.companion.pre_standby_catalog_ids.clear();
             self.companion.pre_standby_catalog_complete = false;
-            self.companion.deleted_in_connection.clear();
             self.companion.standby_suppressed_for_connection = false;
-            self.companion.post_tap_skip_slices = 0;
-            self.companion.tail_holdback.clear();
+            self.companion.on_ble_released();
             self.companion.last_recording_state = self
                 .device
                 .session
@@ -779,11 +789,8 @@ impl KoeRuntime {
             self.retire_active_standby_stream();
             self.companion.pre_standby_catalog_ids.clear();
             self.companion.pre_standby_catalog_complete = false;
-            self.companion.deleted_in_connection.clear();
             self.companion.standby_suppressed_for_connection = false;
-            self.companion.capture_active = false;
-            self.companion.post_tap_skip_slices = 0;
-            self.companion.tail_holdback.clear();
+            self.companion.on_ble_released();
             self.companion.last_recording_state = 0;
             changed = true;
         }

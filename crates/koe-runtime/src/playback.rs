@@ -36,12 +36,14 @@ impl KoeRuntime {
     fn selected_playback_lane(&self) -> Option<PlaybackLane<'_>> {
         let record = self
             .workspace()
-            .record(self.playback.record.as_deref()?)
+            .record(self.selection.playback.record.as_deref()?)
             .filter(|r| r.is_live())?;
         let lanes = self.playback_lanes(record);
         let index = lanes
             .iter()
-            .position(|l| Some(l.id) == self.playback.lane.as_deref() && l.path.is_some())
+            .position(|l| {
+                Some(l.id) == self.selection.playback.lane.as_deref() && l.path.is_some()
+            })
             .or_else(|| lanes.iter().position(|l| l.path.is_some()))?;
         lanes.into_iter().nth(index)
     }
@@ -49,7 +51,13 @@ impl KoeRuntime {
     pub(super) fn select_playback_lane(&mut self, lane: String) -> Result<(), String> {
         let record = self
             .workspace()
-            .record(self.playback.record.as_deref().ok_or("先选择一条录音")?)
+            .record(
+                self.selection
+                    .playback
+                    .record
+                    .as_deref()
+                    .ok_or("先选择一条录音")?,
+            )
             .ok_or("录音不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
         if !self
@@ -59,24 +67,29 @@ impl KoeRuntime {
         {
             return Err("该音源没有可播放的音频".into());
         }
-        self.playback.lane = Some(lane);
-        self.playback.request_id = self.playback.request_id.saturating_add(1);
+        self.selection.playback.lane = Some(lane);
+        self.selection.playback.request_id = self.selection.playback.request_id.saturating_add(1);
         Ok(())
     }
 
     pub(super) fn seek_playback(&mut self, position_ms: u64) -> Result<(), String> {
-        let id = self.location.record.clone().ok_or("先选择一条录音")?;
+        let id = self
+            .selection
+            .location
+            .record
+            .clone()
+            .ok_or("先选择一条录音")?;
         let record = self.workspace().record(&id).ok_or("录音不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
         let duration = record.aggregate.duration_ms;
-        self.playback.record = Some(id);
-        self.playback.position_ms = position_ms.min(duration);
-        self.playback.request_id = self.playback.request_id.saturating_add(1);
+        self.selection.playback.record = Some(id);
+        self.selection.playback.position_ms = position_ms.min(duration);
+        self.selection.playback.request_id = self.selection.playback.request_id.saturating_add(1);
         Ok(())
     }
 
     pub(super) fn set_playback(&mut self, playing: bool) -> Result<(), String> {
-        if let Some(id) = self.playback.record.as_deref() {
+        if let Some(id) = self.selection.playback.record.as_deref() {
             if let Some(record) = self.workspace().record(id) {
                 record.ensure_live().map_err(|e| e.to_string())?;
             }
@@ -84,8 +97,8 @@ impl KoeRuntime {
         if self.selected_playback_lane().is_none() {
             return Err("这条记录没有可播放的音频".into());
         }
-        self.playback.playing = playing;
-        self.playback.request_id = self.playback.request_id.saturating_add(1);
+        self.selection.playback.playing = playing;
+        self.selection.playback.request_id = self.selection.playback.request_id.saturating_add(1);
         Ok(())
     }
 
@@ -96,20 +109,20 @@ impl KoeRuntime {
         position_ms: u64,
         playing: bool,
     ) {
-        if self.playback.record.as_deref() != Some(record_id)
-            || self.playback.request_id != request_id
+        if self.selection.playback.record.as_deref() != Some(record_id)
+            || self.selection.playback.request_id != request_id
         {
             return;
         }
         if let Some(record) = self.workspace().record(record_id).filter(|r| r.is_live()) {
-            self.playback.position_ms = position_ms.min(record.aggregate.duration_ms);
-            self.playback.playing = playing;
+            self.selection.playback.position_ms = position_ms.min(record.aggregate.duration_ms);
+            self.selection.playback.playing = playing;
         }
     }
 
     pub(super) fn playback_json(&self) -> Value {
-        let record = self
-            .playback
+        let playback = &self.selection.playback;
+        let record = playback
             .record
             .as_deref()
             .and_then(|id| self.workspace().record(id))
@@ -134,7 +147,7 @@ impl KoeRuntime {
             })).collect()).unwrap_or_default();
             json!({"audioPath":l.path.as_ref().map(|p|p.to_string_lossy()),"sampleRate":l.capture.and_then(|l|l.sample_rate),"durationNs":duration_ns,"segments":segments})
         });
-        json!({"recordId":record.map(|r| &r.aggregate.recording_id),"requestId":self.playback.request_id,"lane":selected.map(|l|l.id),
-            "positionMs":self.playback.position_ms,"isPlaying":self.playback.playing,"lanes":lanes,"asset":asset})
+        json!({"recordId":record.map(|r| &r.aggregate.recording_id),"requestId":playback.request_id,"lane":selected.map(|l|l.id),
+            "positionMs":playback.position_ms,"isPlaying":playback.playing,"lanes":lanes,"asset":asset})
     }
 }

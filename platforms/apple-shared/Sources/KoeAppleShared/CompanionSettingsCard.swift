@@ -21,7 +21,7 @@ public struct CompanionSettingsCard: View {
                         Picker("音频模式", selection: Binding(
                             get: { store.snapshot.device.companionMode },
                             set: {
-                                store.send("set_companion_mode", ["mode": $0])
+                                store.send(.setCompanionMode(mode: $0))
                                 NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                             }
                         )) {
@@ -37,7 +37,7 @@ public struct CompanionSettingsCard: View {
                         "启动时自动重连录音豆",
                         isOn: Binding(
                             get: { store.snapshot.device.autoConnect },
-                            set: { store.send("set_ble_auto_connect", ["enabled": $0]) }
+                            set: { store.send(.setBleAutoConnect(enabled: $0)) }
                         )
                     )
                     InfoTip("关闭后 Koe 启动时不再自动回连已配对的录音豆。手动点击连接录音豆时会自动重新打开。")

@@ -33,7 +33,7 @@ struct LiveCaptionBar: View {
             }
             Spacer(minLength: 8)
             KoeActionButton("查看记录", systemImage: "text.alignleft") {
-                store.send("select_record", ["recordId": caption.recordId])
+                store.send(.selectRecord(recordId: caption.recordId))
             }
         }
         .padding(.horizontal, 22)

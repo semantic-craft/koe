@@ -147,7 +147,7 @@ impl ProductWorkspace {
         }
         for message in &workspace.ask_session.messages {
             for line in &message.sources {
-                workspace.resolve_source(&super::ask::source_ref(line)?)?;
+                workspace.resolve_source(&super::ask::source_ref(line))?;
             }
         }
         let pending_count = workspace
@@ -192,7 +192,7 @@ impl ProductWorkspace {
             {
                 if line.label != format!("S{}", index + 1)
                     || line.text != evidence.quote
-                    || super::ask::source_ref(line)? != evidence.source
+                    || super::ask::source_ref(line) != evidence.source
                 {
                     return Err(ProductError::InvalidEvidence);
                 }

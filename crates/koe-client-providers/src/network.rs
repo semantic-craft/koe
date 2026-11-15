@@ -2,6 +2,10 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use koe_engine::product::{
+    DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_HTTP_BASE_URL, DEFAULT_DASHSCOPE_WS_URL,
+    DEFAULT_TEXT_MODEL,
+};
 use tokio::sync::{mpsc, watch};
 
 mod asr;
@@ -15,14 +19,13 @@ const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Documented Beijing public endpoint; a workspace-specific WSS URL may override it.
-pub const DASHSCOPE_ASR_ENDPOINT: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+pub const DASHSCOPE_ASR_ENDPOINT: &str = DEFAULT_DASHSCOPE_WS_URL;
 /// Documented Beijing OpenAI-compatible public chat endpoint.
-pub const DASHSCOPE_CHAT_ENDPOINT: &str =
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+pub const DASHSCOPE_CHAT_ENDPOINT: &str = DEFAULT_DASHSCOPE_HTTP_BASE_URL;
 /// Default real-time ASR model.
-pub const DASHSCOPE_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
+pub const DASHSCOPE_ASR_MODEL: &str = DEFAULT_ASR_MODEL;
 /// Default general-purpose chat model.
-pub const DASHSCOPE_CHAT_MODEL: &str = "qwen-plus";
+pub const DASHSCOPE_CHAT_MODEL: &str = DEFAULT_TEXT_MODEL;
 
 /// Per-request connection settings. Credentials are never read from disk or the environment.
 #[derive(Clone)]

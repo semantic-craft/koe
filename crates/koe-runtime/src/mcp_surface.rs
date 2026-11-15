@@ -32,10 +32,7 @@ pub enum McpToolCallState {
     /// Synchronous tool completion (`Ok(payload)` or `Err(domain_error)` mapped to `isError: true`).
     Completed(Result<Value, String>),
     /// Asynchronous `ask` job submitted; poll with [`KoeRuntime::poll_mcp_ask`] until `Some`.
-    PendingAsk {
-        /// Original question string submitted by the caller.
-        question: String,
-    },
+    PendingAsk,
 }
 
 impl KoeRuntime {
@@ -331,19 +328,37 @@ impl KoeRuntime {
             }
             "get_today_brief" => {
                 ensure_allowed_keys(obj, &[])?;
-                let snap = self.snapshot(now);
-                let recent_records: Vec<Value> = snap["records"]
-                    .as_array()
+                let eff_now = if now > 0 { now } else { self.last_now_sec };
+                let today = crate::projection::local_date(eff_now);
+                let live_records: Vec<&ProductRecord> = self
+                    .sorted_records()
                     .into_iter()
-                    .flatten()
-                    .filter(|r| r["archived"] != Value::Bool(true))
-                    .take(5)
-                    .cloned()
+                    .filter(|r| r.is_live())
                     .collect();
-                let live_count = snap["records"].as_array().map_or(0, Vec::len);
-                let today_count = snap["todayRecordIds"].as_array().map_or(0, Vec::len);
-                let tasks = snap["tasks"].as_array().cloned().unwrap_or_default();
-                let memories = snap["memories"].as_array().cloned().unwrap_or_default();
+                let live_count = live_records.len();
+                let live_non_archived: Vec<&ProductRecord> = live_records
+                    .iter()
+                    .copied()
+                    .filter(|r| !r.is_archived())
+                    .collect();
+                let today_record_ids: Vec<&str> = live_records
+                    .iter()
+                    .filter(|r| {
+                        today.is_some_and(|t| {
+                            crate::projection::local_date(r.aggregate.created_at_epoch_sec)
+                                == Some(t)
+                        })
+                    })
+                    .map(|r| r.aggregate.recording_id.as_str())
+                    .collect();
+                let today_count = today_record_ids.len();
+                let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
+                let recent_records: Vec<Value> = live_non_archived
+                    .iter()
+                    .take(5)
+                    .map(|r| self.live_record_row_json(r, live_record_id, live_duration_ms))
+                    .collect();
+                let (tasks, memories) = self.tasks_and_memories_json();
                 let pending_tasks = tasks.iter().filter(|t| t["state"] == "proposed").count();
                 let pending_memories = memories.iter().filter(|m| m["state"] == "proposed").count();
                 let open_tasks = tasks
@@ -352,10 +367,11 @@ impl KoeRuntime {
                     .count();
                 let accepted_memories =
                     memories.iter().filter(|m| m["state"] == "accepted").count();
+                let device = self.device_json();
                 Ok(McpToolCallState::Completed(Ok(json!({
-                    "generation": snap["generation"],
+                    "generation": self.generation,
                     "revision": self.workspace().revision(),
-                    "todayRecordIds": snap["todayRecordIds"],
+                    "todayRecordIds": today_record_ids,
                     "recentRecords": recent_records,
                     "counts": {
                         "liveRecords": live_count,
@@ -366,15 +382,15 @@ impl KoeRuntime {
                         "acceptedMemories": accepted_memories
                     },
                     "device": {
-                        "connected": snap["device"]["connected"],
-                        "phase": snap["device"]["phase"],
-                        "state": snap["device"]["state"],
-                        "deviceName": snap["device"]["deviceName"],
-                        "batteryPercent": snap["device"]["batteryPercent"],
-                        "boxBatteryPercent": snap["device"]["boxBatteryPercent"],
-                        "autoConnect": snap["device"]["autoConnect"],
-                        "companionMode": snap["device"]["companionMode"],
-                        "standbyReady": snap["device"]["standbyReady"]
+                        "connected": device["connected"],
+                        "phase": device["phase"],
+                        "state": device["state"],
+                        "deviceName": device["deviceName"],
+                        "batteryPercent": device["batteryPercent"],
+                        "boxBatteryPercent": device["boxBatteryPercent"],
+                        "autoConnect": device["autoConnect"],
+                        "companionMode": device["companionMode"],
+                        "standbyReady": device["standbyReady"]
                     }
                 }))))
             }
@@ -405,13 +421,7 @@ impl KoeRuntime {
                 let limit = optional_limit(obj, 20)?;
                 let offset = optional_u64(obj, "offset")?.unwrap_or(0) as usize;
 
-                let mut records: Vec<_> = self.workspace().records().values().collect();
-                records.sort_by_key(|r| {
-                    std::cmp::Reverse((
-                        r.aggregate.created_at_epoch_sec,
-                        r.aggregate.recording_id.clone(),
-                    ))
-                });
+                let records = self.sorted_records();
                 let filtered: Vec<_> = records
                     .into_iter()
                     .filter(|r| {
@@ -466,7 +476,7 @@ impl KoeRuntime {
             }
             "ask" => {
                 ensure_allowed_keys(obj, &["question", "record_id"])?;
-                let question = required_str(obj, "question")?.to_string();
+                let question = required_str(obj, "question")?;
                 let scope = optional_scope(obj)?;
                 if question.trim().is_empty() {
                     return Ok(McpToolCallState::Completed(Err("请输入问题".into())));
@@ -474,15 +484,14 @@ impl KoeRuntime {
                 if let Err(err) = self.prepare_mcp_write(now) {
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
-                let start_res = self.start_ask(scope, &question, now);
+                let start_res = self.start_ask(scope, question, now);
                 self.generation = self.generation.saturating_add(1);
                 if let Err(err) = start_res {
                     self.error = Some(err.clone());
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
-                let snap = self.snapshot(now);
-                match self.resolve_settled_ask(&snap) {
-                    None => Ok(McpToolCallState::PendingAsk { question }),
+                match self.resolve_settled_ask() {
+                    None => Ok(McpToolCallState::PendingAsk),
                     Some(done) => Ok(McpToolCallState::Completed(done)),
                 }
             }
@@ -729,7 +738,7 @@ impl KoeRuntime {
             }
             "device_status" => {
                 ensure_allowed_keys(obj, &[])?;
-                let mut device = self.snapshot(now)["device"].clone();
+                let mut device = self.device_json();
                 if let Some(map) = device.as_object_mut() {
                     map.insert(
                         "hardwareRecordingState".to_string(),
@@ -770,12 +779,11 @@ impl KoeRuntime {
                     _ => return Err(McpToolError::invalid_params("无效的 device_control action")),
                 };
                 let result = self.run_mcp_command(command, now).map(|()| {
-                    let snap = self.snapshot(now);
                     json!({
                         "ok": true,
                         "action": action,
                         "generation": self.generation,
-                        "device": snap["device"]
+                        "device": self.device_json()
                     })
                 });
                 Ok(McpToolCallState::Completed(result))
@@ -808,7 +816,7 @@ impl KoeRuntime {
                         }
                     })
                     .collect();
-                let snap = self.snapshot(now);
+                let device = self.device_json();
                 Ok(McpToolCallState::Completed(Ok(json!({
                     "generation": generation,
                     "revision": revision,
@@ -818,13 +826,13 @@ impl KoeRuntime {
                     "notice": self.notice,
                     "error": self.error,
                     "device": {
-                        "connected": self.device.is_connected(),
-                        "phase": snap["device"]["phase"],
-                        "transferPhase": snap["device"]["transferPhase"],
-                        "batteryPercent": snap["device"]["batteryPercent"],
-                        "autoConnect": self.workspace().ble_auto_connect(),
-                        "companionMode": self.workspace().companion_mode().as_str(),
-                        "standbyReady": self.is_standby_ready()
+                        "connected": device["connected"],
+                        "phase": device["phase"],
+                        "transferPhase": device["transferPhase"],
+                        "batteryPercent": device["batteryPercent"],
+                        "autoConnect": device["autoConnect"],
+                        "companionMode": device["companionMode"],
+                        "standbyReady": device["standbyReady"]
                     }
                 }))))
             }
@@ -833,22 +841,17 @@ impl KoeRuntime {
     }
 
     /// Advances background timers for an in-flight MCP `ask` call and returns `Some` once settled.
-    pub fn poll_mcp_ask(
-        &mut self,
-        _question: &str,
-        elapsed_ms: u64,
-        now: u64,
-    ) -> Option<Result<Value, String>> {
+    pub fn poll_mcp_ask(&mut self, elapsed_ms: u64, now: u64) -> Option<Result<Value, String>> {
         self.poll_timers(elapsed_ms, now);
-        let snapshot = self.snapshot(now);
-        self.resolve_settled_ask(&snapshot)
+        self.resolve_settled_ask()
     }
 
-    fn resolve_settled_ask(&self, snapshot: &Value) -> Option<Result<Value, String>> {
-        if snapshot["ask"]["phase"] == "pending" {
+    fn resolve_settled_ask(&self) -> Option<Result<Value, String>> {
+        let phase = self.ask_phase();
+        if phase == "pending" {
             return None;
         }
-        if snapshot["ask"]["phase"] == "failed" {
+        if phase == "failed" {
             let reason = self
                 .workspace()
                 .ask_session()
@@ -861,7 +864,7 @@ impl KoeRuntime {
                 .to_string();
             return Some(Err(reason));
         }
-        Some(Ok(snapshot["ask"].clone()))
+        Some(Ok(self.ask_json()))
     }
 
     fn prepare_mcp_write(&mut self, now: u64) -> Result<(), String> {
@@ -890,27 +893,15 @@ impl KoeRuntime {
 
     fn mcp_create_note(&mut self, title: String, text: &str, now: u64) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        if text.trim().is_empty() {
-            let err = "先写下一段内容".to_string();
-            self.error = Some(err.clone());
-            self.generation = self.generation.saturating_add(1);
-            return Err(err);
-        }
-        let id = format!("note-{now}-{}", self.workspace().revision() + 1);
-        let commit_res = self.commit(|workspace| {
-            workspace.insert_record(id.clone(), title, RecordOrigin::Note, 0, now, 0)?;
-            for paragraph in text.lines().map(str::trim).filter(|v| !v.is_empty()) {
-                workspace.append_transcript(&id, paragraph, 0, 0, "manual")?;
-            }
-            Ok(())
-        });
+        let created = self.create_quick_note(title, text, false, now);
         self.generation = self.generation.saturating_add(1);
-        if let Err(error) = commit_res {
-            self.error = Some(error.clone());
-            return Err(error);
+        match created {
+            Ok(id) => self.record_detail_json(&id),
+            Err(error) => {
+                self.error = Some(error.clone());
+                Err(error)
+            }
         }
-        self.notice = Some("记录已保存".into());
-        self.record_detail_json(&id)
     }
 
     fn mcp_annotate_segment(
@@ -921,57 +912,38 @@ impl KoeRuntime {
         now: u64,
     ) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        let source = match source_ref(record_id, segment_id) {
-            Ok(source) => source,
-            Err(error) => {
-                self.error = Some(error.clone());
-                self.generation = self.generation.saturating_add(1);
-                return Err(error);
-            }
-        };
-        let result = match kind {
-            "highlight" => self.commit(|w| w.add_highlight(source)).map(|()| {
-                json!({
-                    "ok": true,
-                    "kind": "highlight",
-                    "recordId": record_id,
-                    "segmentId": segment_id
-                })
-            }),
-            "task" | "memory" => {
-                let item_kind = if kind == "task" {
-                    ItemKind::Task
-                } else {
-                    ItemKind::Memory
-                };
-                self.commit(|w| {
-                    let evidence = w.resolve_live_source(&source)?;
-                    let id = w.propose_item(item_kind, &evidence.quote, vec![source])?;
-                    w.review_item(&id, ReviewDecision::Accept)?;
-                    Ok(id)
-                })
-                .map(|item_id| {
-                    self.notice = Some("已保存，可从来源返回原文".into());
-                    json!({
-                        "ok": true,
-                        "kind": kind,
-                        "itemId": item_id,
-                        "recordId": record_id,
-                        "segmentId": segment_id
-                    })
-                })
-            }
+        let item_id = match kind {
+            "highlight" => self.highlight_segment(record_id, segment_id).map(|()| None),
+            "task" => self
+                .accept_segment_item(ItemKind::Task, record_id, segment_id)
+                .map(Some),
+            "memory" => self
+                .accept_segment_item(ItemKind::Memory, record_id, segment_id)
+                .map(Some),
             _ => unreachable!(),
         };
         self.generation = self.generation.saturating_add(1);
-        if let Err(error) = &result {
-            self.error = Some(error.clone());
-        } else if let Some(obj) = result.as_ref().ok().and_then(Value::as_object) {
-            let mut enriched = obj.clone();
-            enriched.insert("generation".to_string(), json!(self.generation));
-            return Ok(Value::Object(enriched));
+        match item_id {
+            Ok(None) => Ok(json!({
+                "ok": true,
+                "kind": "highlight",
+                "recordId": record_id,
+                "segmentId": segment_id,
+                "generation": self.generation
+            })),
+            Ok(Some(item_id)) => Ok(json!({
+                "ok": true,
+                "kind": kind,
+                "itemId": item_id,
+                "recordId": record_id,
+                "segmentId": segment_id,
+                "generation": self.generation
+            })),
+            Err(error) => {
+                self.error = Some(error.clone());
+                Err(error)
+            }
         }
-        result
     }
 
     fn mcp_rename_speaker(
@@ -982,22 +954,7 @@ impl KoeRuntime {
         now: u64,
     ) -> Result<Value, String> {
         self.prepare_mcp_write(now)?;
-        let res: Result<TranscriptEditReceipt, String> = (|| {
-            self.ensure_record_editable(record_id)?;
-            let target = SpeakerName::parse(to_speaker).map_err(|e| e.to_string())?;
-            let receipt =
-                self.commit(|w| w.rename_speaker(record_id, from_speaker, target.as_str()))?;
-            if receipt.updated_segments > 0 {
-                let _ = self.reclaim_stale_summaries();
-                self.drive_analysis_queue();
-                self.notice = Some(format!(
-                    "已将 {} 段说话人更新为 {}",
-                    receipt.updated_segments,
-                    target.as_str()
-                ));
-            }
-            Ok(receipt)
-        })();
+        let res = self.rename_speaker(record_id, from_speaker, to_speaker);
         self.generation = self.generation.saturating_add(1);
         match res {
             Ok(receipt) => Ok(json!({
@@ -1121,7 +1078,7 @@ pub fn drive_mcp_tool_blocking<Ctx, StepFn, PollFn>(
 ) -> Result<Result<Value, String>, McpToolError>
 where
     StepFn: FnOnce(&mut Ctx) -> Result<McpToolCallState, McpToolError>,
-    PollFn: FnMut(&mut Ctx, &str, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
+    PollFn: FnMut(&mut Ctx, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
 {
     drive_mcp_tool_blocking_with_limits(ctx, MCP_ASK_TIMEOUT, MCP_ASK_POLL_INTERVAL, step, poll)
 }
@@ -1135,11 +1092,11 @@ fn drive_mcp_tool_blocking_with_limits<Ctx, StepFn, PollFn>(
 ) -> Result<Result<Value, String>, McpToolError>
 where
     StepFn: FnOnce(&mut Ctx) -> Result<McpToolCallState, McpToolError>,
-    PollFn: FnMut(&mut Ctx, &str, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
+    PollFn: FnMut(&mut Ctx, u64) -> Result<Option<Result<Value, String>>, McpToolError>,
 {
     match step(&mut ctx)? {
         McpToolCallState::Completed(res) => Ok(res),
-        McpToolCallState::PendingAsk { question } => {
+        McpToolCallState::PendingAsk => {
             let deadline = Instant::now() + timeout;
             let mut previous = Instant::now();
             loop {
@@ -1150,7 +1107,7 @@ where
                 let current = Instant::now();
                 let elapsed_ms = current.duration_since(previous).as_millis() as u64;
                 previous = current;
-                if let Some(done) = poll(&mut ctx, &question, elapsed_ms)? {
+                if let Some(done) = poll(&mut ctx, elapsed_ms)? {
                     return Ok(done);
                 }
             }
@@ -1177,7 +1134,7 @@ mod tests {
         let immediate = drive_mcp_tool_blocking(
             (),
             |()| Ok(McpToolCallState::Completed(Ok(json!({ "ok": true })))),
-            |(), _, _| unreachable!("poll must not run after immediate completion"),
+            |(), _| unreachable!("poll must not run after immediate completion"),
         )
         .expect("protocol result");
         assert_eq!(immediate.expect("tool value")["ok"], true);
@@ -1185,7 +1142,7 @@ mod tests {
         let domain_err = drive_mcp_tool_blocking(
             (),
             |()| Ok(McpToolCallState::Completed(Err("domain failed".into()))),
-            |(), _, _| unreachable!("poll must not run after immediate domain error"),
+            |(), _| unreachable!("poll must not run after immediate domain error"),
         )
         .expect("protocol result");
         assert_eq!(domain_err.unwrap_err(), "domain failed");
@@ -1193,7 +1150,7 @@ mod tests {
         let step_err = drive_mcp_tool_blocking(
             (),
             |()| Err(McpToolError::invalid_params("bad step")),
-            |(), _, _| Ok(None),
+            |(), _| Ok(None),
         )
         .unwrap_err();
         assert_eq!(
@@ -1208,7 +1165,6 @@ mod tests {
         struct PollCtx {
             stepped: bool,
             polls: usize,
-            seen_question: String,
         }
 
         let mut poll_ctx = PollCtx::default();
@@ -1216,14 +1172,11 @@ mod tests {
             &mut poll_ctx,
             |ctx| {
                 ctx.stepped = true;
-                Ok(McpToolCallState::PendingAsk {
-                    question: "结论是什么？".into(),
-                })
+                Ok(McpToolCallState::PendingAsk)
             },
-            |ctx, question, elapsed_ms| {
+            |ctx, elapsed_ms| {
                 assert!(ctx.stepped);
                 ctx.polls += 1;
-                ctx.seen_question = question.to_string();
                 assert!(elapsed_ms >= 1);
                 if ctx.polls < 2 {
                     Ok(None)
@@ -1234,18 +1187,13 @@ mod tests {
         )
         .expect("protocol result");
         assert!(poll_ctx.stepped);
-        assert_eq!(poll_ctx.seen_question, "结论是什么？");
         assert_eq!(poll_ctx.polls, 2);
         assert_eq!(polled.expect("settled answer")["answer"], "已完成");
 
         let poll_err = drive_mcp_tool_blocking(
             (),
-            |()| {
-                Ok(McpToolCallState::PendingAsk {
-                    question: "q".into(),
-                })
-            },
-            |(), _, _| {
+            |()| Ok(McpToolCallState::PendingAsk),
+            |(), _| {
                 Err(McpToolError {
                     code: -32603,
                     message: "poll failure".into(),
@@ -1265,12 +1213,8 @@ mod tests {
             0usize,
             Duration::from_millis(5),
             Duration::from_millis(2),
-            |_| {
-                Ok(McpToolCallState::PendingAsk {
-                    question: "超时测试".into(),
-                })
-            },
-            |polls, _, _| {
+            |_| Ok(McpToolCallState::PendingAsk),
+            |polls, _| {
                 *polls += 1;
                 Ok(None)
             },

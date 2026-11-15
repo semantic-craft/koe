@@ -31,6 +31,6 @@ struct NativeHostActionsTests {
         adapter.apply(to: store)
         #expect(opened == ["responsay://connect-koe", "responsay://connect-koe"])
         #expect(store.nativeError == nil)
-        #expect(store.snapshot.voiceInput.sourceLabel.contains("soundcore Work"))
+        #expect(store.snapshot.workspaces?.voiceInput.deviceName == "Soundcore Work")
     }
 }

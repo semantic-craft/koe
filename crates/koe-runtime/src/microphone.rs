@@ -586,13 +586,17 @@ impl KoeRuntime {
                     .all(|l| l.asset.as_ref().is_none_or(|a| a.is_empty()))
             {
                 if m.phase == Phase::Cancelling {
-                    self.cancel_capture_speech(&m.current_record_id);
-                    if self.workspace().record(&m.current_record_id).is_some() {
+                    let purged_id = m.current_record_id.clone();
+                    self.cancel_capture_speech(&purged_id);
+                    if self.workspace().record(&purged_id).is_some() {
                         self.commit(|w| {
-                            w.trash_record(&m.current_record_id, 1)?;
-                            w.purge_record(&m.current_record_id).map(|_| ())
+                            w.trash_record(&purged_id, 1)?;
+                            w.purge_record(&purged_id).map(|_| ())
                         })?;
                     }
+                    self.detach_records_from_session(&std::collections::BTreeSet::from([
+                        purged_id,
+                    ]));
                 }
                 for l in m.lanes.values_mut() {
                     if let Some(asset) = &mut l.asset {
@@ -677,9 +681,9 @@ impl KoeRuntime {
                 w.set_capture_lanes(&m.current_record_id, outcomes)
             })?;
             if mic_mode == Some(CaptureMode::QuickNote) {
-                self.selected_quick_note_record = Some(m.current_record_id.clone());
+                self.selection.selected_quick_note_record = Some(m.current_record_id.clone());
             } else if mic_mode == Some(CaptureMode::Meeting) {
-                self.selected_live_minutes_record = Some(m.current_record_id.clone());
+                self.selection.selected_live_minutes_record = Some(m.current_record_id.clone());
             }
             for l in m.lanes.values() {
                 if let Some(asset) = &l.asset {
@@ -690,7 +694,7 @@ impl KoeRuntime {
             self.set_source_dictation(DictationSource::Microphone, false);
             self.capture_saved(&m.current_record_id);
             self.poll_captures();
-            if m.mode.is_none() && self.location.page != Page::LiveMinutes {
+            if m.mode.is_none() && self.selection.location.page != Page::LiveMinutes {
                 self.open_record(&m.current_record_id, None)?;
             }
             self.notice = Some(if partial {

@@ -66,7 +66,17 @@ public final class HostSessionStore {
 
     public func clearError() {
         nativeError = nil
-        send("clear_error")
+        send(.clearError)
+    }
+
+    public func send(_ command: HostCommand, nowEpochSec: UInt64 = 0) {
+        guard handle != 0 else { return }
+        do {
+            let data = try JSONEncoder().encode(command)
+            dispatchEncodedJSON(data, commandType: command.commandType, nowEpochSec: nowEpochSec)
+        } catch {
+            nativeError = "无法发送这次操作，请重试。"
+        }
     }
 
     public func send(_ type: String, _ fields: [String: Any] = [:], nowEpochSec: UInt64 = 0) {
@@ -77,24 +87,27 @@ public final class HostSessionStore {
 
     public func dispatchCommand(_ payload: [String: Any], nowEpochSec: UInt64 = 0) {
         guard handle != 0 else { return }
-        let commandType = payload["type"] as? String
-        if commandType != "playback_progress" && commandType != "sync_audio_inputs" { nativeError = nil }
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
-            guard let command = String(data: data, encoding: .utf8) else { return }
-            let result: String? = command.withCString { ptr in
-                guard let response = koe_host_session_dispatch_json(handle, ptr, nowEpochSec) else { return nil }
-                defer { koe_host_string_free(response) }
-                return String(cString: response)
-            }
-            guard let result else {
-                nativeError = "操作未能完成，请重试。工作区数据仍然保留。"
-                return
-            }
-            applySnapshotJSON(result)
+            dispatchEncodedJSON(data, commandType: payload["type"] as? String, nowEpochSec: nowEpochSec)
         } catch {
             nativeError = "无法发送这次操作，请重试。"
         }
+    }
+
+    private func dispatchEncodedJSON(_ data: Data, commandType: String?, nowEpochSec: UInt64) {
+        if commandType != "playback_progress" && commandType != "sync_audio_inputs" { nativeError = nil }
+        guard let command = String(data: data, encoding: .utf8) else { return }
+        let result: String? = command.withCString { ptr in
+            guard let response = koe_host_session_dispatch_json(handle, ptr, nowEpochSec) else { return nil }
+            defer { koe_host_string_free(response) }
+            return String(cString: response)
+        }
+        guard let result else {
+            nativeError = "操作未能完成，请重试。工作区数据仍然保留。"
+            return
+        }
+        applySnapshotJSON(result)
     }
 
     public func refreshSnapshot(nowEpochSec: UInt64 = 0) {

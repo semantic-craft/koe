@@ -2,13 +2,13 @@ use super::*;
 use chrono::{DateTime, Local};
 use koe_engine::{
     context::{AskRole, AskStatus},
-    session::{ConnectionPhaseTag, TransferPhaseTag},
+    session::TransferPhaseTag,
     transport::OPUS_FRAME_BYTES,
 };
 use serde_json::json;
 
 impl KoeRuntime {
-    pub(super) fn project(&self, now: u64) -> Value {
+    pub(super) fn sorted_records(&self) -> Vec<&ProductRecord> {
         let mut records: Vec<_> = self.workspace().records().values().collect();
         records.sort_by_key(|r| {
             std::cmp::Reverse((
@@ -16,30 +16,171 @@ impl KoeRuntime {
                 r.aggregate.recording_id.clone(),
             ))
         });
+        records
+    }
+
+    pub(super) fn live_record_row_json(
+        &self,
+        record: &ProductRecord,
+        live_record_id: Option<&str>,
+        live_duration_ms: u64,
+    ) -> Value {
+        let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
+        let duration_ms = if is_live {
+            record.aggregate.duration_ms.max(live_duration_ms)
+        } else {
+            record.aggregate.duration_ms
+        };
+        let preview = if is_live {
+            record
+                .aggregate
+                .spine
+                .segments()
+                .last()
+                .map(|s| s.text.chars().take(100).collect::<String>())
+                .unwrap_or_default()
+        } else {
+            record
+                .aggregate
+                .spine
+                .segments()
+                .first()
+                .map(|s| s.text.chars().take(100).collect::<String>())
+                .unwrap_or_default()
+        };
+        json!({
+            "id": record.aggregate.recording_id,
+            "title": record.title,
+            "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
+            "durationMs": duration_ms,
+            "source": origin(record.origin),
+            "mode": record.mode.as_str(),
+            "project": record.project,
+            "runId": record.all_day.as_ref().map(|s| &s.run_id),
+            "ordinal": record.all_day.as_ref().map(|s| s.ordinal),
+            "status": status(record),
+            "segmentCount": record.aggregate.spine.len(),
+            "preview": preview,
+            "archived": record.is_archived(),
+        })
+    }
+
+    pub(super) fn tasks_and_memories_json(&self) -> (Vec<Value>, Vec<Value>) {
+        let mut tasks = Vec::new();
+        let mut memories = Vec::new();
+        for item in self.workspace().items().values() {
+            let sources: Vec<_> = item
+                .sources
+                .iter()
+                .filter_map(|s| self.source_json(s))
+                .collect();
+            if sources.is_empty() {
+                continue;
+            }
+            let state = match item.review {
+                ReviewState::Proposed => "proposed",
+                ReviewState::Accepted => "accepted",
+                ReviewState::Dismissed => "dismissed",
+            };
+            let row = json!({
+                "id": item.id,
+                "text": item.text,
+                "state": state,
+                "completed": item.completed,
+                "due": item.due,
+                "sources": sources,
+            });
+            if item.kind == ItemKind::Task {
+                tasks.push(row);
+            } else {
+                memories.push(row);
+            }
+        }
+        (tasks, memories)
+    }
+
+    pub(super) fn ask_phase(&self) -> &'static str {
+        let ask = self.workspace().ask_session();
+        if ask.in_flight {
+            "pending"
+        } else if ask
+            .messages
+            .last()
+            .is_some_and(|m| m.status == AskStatus::Failed)
+        {
+            "failed"
+        } else if ask.messages.is_empty() {
+            "idle"
+        } else {
+            "ready"
+        }
+    }
+
+    pub(super) fn ask_json(&self) -> Value {
+        let ask = self.workspace().ask_session();
+        let messages: Vec<_> = ask
+            .messages
+            .iter()
+            .map(|m| {
+                let sources: Vec<_> = m
+                    .sources
+                    .iter()
+                    .filter_map(|line| {
+                        self.source_json(&SourceRef {
+                            record_id: line.source.recording_key.clone(),
+                            segment_id: line.source.segment_id,
+                        })
+                    })
+                    .collect();
+                json!({
+                    "id": m.id,
+                    "role": if m.role == AskRole::User { "user" } else { "assistant" },
+                    "text": m.text,
+                    "mode": if m.notice { "retrieval" } else { "answer" },
+                    "sources": sources,
+                })
+            })
+            .collect();
+        let (scope, ask_record) = match self.workspace().ask_scope() {
+            SearchScope::All => ("all", None),
+            SearchScope::Record(id) => ("record", Some(id)),
+        };
+        json!({
+            "scope": scope,
+            "recordId": ask_record,
+            "phase": self.ask_phase(),
+            "messages": messages,
+        })
+    }
+
+    pub(super) fn provider_json(&self) -> Value {
+        let config = self.workspace().provider_configuration();
+        json!({
+            "meetingAudioPolicy": config.meeting_audio_policy.as_str(),
+            "meetingAudioPolicyError": self.audio_policy_error,
+            "meetingAudioStatus": if config.meeting_audio_policy == MeetingAudioPolicy::LocalOnly {
+                Some("音频只保存在本机；云端语音上传已关闭。".to_string())
+            } else {
+                self.ensure_meeting_audio_upload().err()
+            },
+            "configured": self.text_provider_configured(),
+            "model": config.model,
+            "asrEndpoint": config.asr_endpoint,
+            "chatEndpoint": config.chat_endpoint,
+            "credentialState": self.credential_state(),
+            "isolated": self.credentials.isolated(),
+        })
+    }
+
+    pub(super) fn project(&self, now: u64) -> Value {
+        let records = self.sorted_records();
         let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
         let now = if now > 0 { now } else { self.last_now_sec };
-        let today = local_date(now);
-        let rows: Vec<_> = records.iter().filter(|r| r.is_live()).map(|record| {
-            let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
-            let duration_ms = if is_live {
-                record.aggregate.duration_ms.max(live_duration_ms)
-            } else {
-                record.aggregate.duration_ms
-            };
-            let preview = if is_live {
-                record.aggregate.spine.segments().last().map(|s| s.text.chars().take(100).collect::<String>()).unwrap_or_default()
-            } else {
-                record.aggregate.spine.segments().first().map(|s| s.text.chars().take(100).collect::<String>()).unwrap_or_default()
-            };
-            json!({"id":record.aggregate.recording_id,"title":record.title,
-                "createdAtEpochSec":record.aggregate.created_at_epoch_sec,"durationMs":duration_ms,
-                "source":origin(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"segmentCount":record.aggregate.spine.len(),
-                "preview":preview,"archived":record.is_archived()})
-        }).collect();
-        let today_ids: Vec<_> = records
+        let rows: Vec<_> = records
             .iter()
-            .filter(|r| r.is_live() && local_date(r.aggregate.created_at_epoch_sec) == today)
-            .map(|r| &r.aggregate.recording_id)
+            .copied()
+            .filter(|r| r.is_live())
+            .map(|record| self.live_record_row_json(record, live_record_id, live_duration_ms))
             .collect();
         let mut trashed_records: Vec<_> = self
             .workspace()
@@ -102,166 +243,16 @@ impl KoeRuntime {
             .as_ref()
             .map(|b| json!({"recordId": b.record_id, "title": b.title}));
         let detail = self
+            .selection
             .location
             .record
             .as_deref()
             .and_then(|id| self.workspace().record(id))
             .filter(|r| r.is_live())
             .map(|r| self.detail(r, live_record_id, live_duration_ms));
-        let mut tasks = Vec::new();
-        let mut memories = Vec::new();
-        for item in self.workspace().items().values() {
-            let sources: Vec<_> = item
-                .sources
-                .iter()
-                .filter_map(|s| self.source_json(s))
-                .collect();
-            if sources.is_empty() {
-                continue;
-            }
-            let state = match item.review {
-                ReviewState::Proposed => "proposed",
-                ReviewState::Accepted => "accepted",
-                ReviewState::Dismissed => "dismissed",
-            };
-            let row = json!({"id":item.id,"text":item.text,"state":state,"completed":item.completed,"due":item.due,"sources":sources});
-            if item.kind == ItemKind::Task {
-                tasks.push(row);
-            } else {
-                memories.push(row);
-            }
-        }
-        let ask = self.workspace().ask_session();
-        let messages: Vec<_> = ask.messages.iter().map(|m| {
-            let sources: Vec<_> = m.sources.iter().filter_map(|line| {
-                let id = SegmentId::from_zero_based(line.source.line?)?;
-                self.source_json(&SourceRef { record_id: line.source.recording_key.clone(), segment_id: id })
-            }).collect();
-            json!({"id":m.id,"role":if m.role == AskRole::User {"user"} else {"assistant"},"text":m.text,
-                "mode":if m.notice {"retrieval"} else {"answer"},"sources":sources})
-        }).collect();
-        let (scope, ask_record) = match self.workspace().ask_scope() {
-            SearchScope::All => ("all", None),
-            SearchScope::Record(id) => ("record", Some(id)),
-        };
-        let phase = if ask.in_flight {
-            "pending"
-        } else if ask
-            .messages
-            .last()
-            .is_some_and(|m| m.status == AskStatus::Failed)
-        {
-            "failed"
-        } else if ask.messages.is_empty() {
-            "idle"
-        } else {
-            "ready"
-        };
-        let device = &self.device.session;
-        let (device_phase, device_state) = match device.connection_phase {
-            ConnectionPhaseTag::Disconnected => ("disconnected", "未连接"),
-            ConnectionPhaseTag::Scanning => ("scanning", "正在查找录音豆"),
-            ConnectionPhaseTag::Connecting => ("connecting", "正在连接"),
-            ConnectionPhaseTag::Handshaking => ("handshaking", "正在握手"),
-            ConnectionPhaseTag::Connected => ("connected", "已连接"),
-        };
-        let connected = self.device.is_connected();
-        let telemetry = device.telemetry.as_ref();
-        let battery_pct = telemetry.and_then(|t| t.battery);
-        let box_battery_pct = telemetry.and_then(|t| t.box_battery);
-        let status_detail = match device.connection_phase {
-            ConnectionPhaseTag::Disconnected => {
-                "将麦克风放入充电仓，短按下方按钮开启广播".to_string()
-            }
-            ConnectionPhaseTag::Scanning => "正在等待录音豆蓝牙广播…".to_string(),
-            ConnectionPhaseTag::Connecting => "正在建立蓝牙连接…".to_string(),
-            ConnectionPhaseTag::Handshaking => "正在完成安全握手与电量同步…".to_string(),
-            ConnectionPhaseTag::Connected => match (battery_pct, box_battery_pct) {
-                (Some(mic), Some(case_pct)) => format!("麦克风 {mic}%  充电仓 {case_pct}%"),
-                (Some(mic), None) => format!("麦克风 {mic}%"),
-                _ => "已就绪".to_string(),
-            },
-        };
-        let device_name = self
-            .device
-            .device_name
-            .clone()
-            .unwrap_or_else(|| "Soundcore Work".to_string());
-        let files: Vec<_> = device
-            .catalog
-            .iter()
-            .filter(|f| !self.is_standby_file(f.file_id) && !self.workspace().is_reclaimed_standby_file(f.file_id))
-            .map(|f| json!({"id":f.file_id,"title":format!("录音 {}", f.file_id),"durationMs":f.duration_ms}))
-            .collect();
-        let progress = if device.transfer.expected_wire_bytes > 0 {
-            (f64::from(device.transfer.received_wire_bytes)
-                / f64::from(device.transfer.expected_wire_bytes))
-            .clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let transfer_phase = if device.is_offline_pull_suspended() {
-            "suspended"
-        } else if self.companion.standby_stream_owned
-            && matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
-        {
-            "collar_standby"
-        } else {
-            match device.transfer.phase {
-                TransferPhaseTag::Idle | TransferPhaseTag::QueryingCatalog => "idle",
-                TransferPhaseTag::StreamingRealtime => "streaming_realtime",
-                TransferPhaseTag::PullingOffline => "pulling_offline",
-                TransferPhaseTag::Failed => "failed",
-            }
-        };
-        let device_busy = (matches!(
-            device.transfer.phase,
-            TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
-        ) || device.device_recording_active
-            || self.device.awaiting_stop)
-            && !self.companion.standby_stream_owned;
-        let device_recording =
-            device.device_recording_active && !self.companion.standby_stream_owned;
-        let teardown_stop_frames_hex = if self.is_standby_ready()
-            || device_recording
-            || self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-        {
-            vec![koe_client_base::prng::to_hex_upper(
-                &koe_engine::commands::DeviceCommands::pause_record(),
-            )]
-        } else {
-            Vec::new()
-        };
-        let device_json = json!({
-            "phase": device_phase,
-            "state": device_state,
-            "statusDetail": status_detail,
-            "connected": connected,
-            "busy": device_busy,
-            "stopping": self.device.awaiting_stop,
-            "recording": device_recording,
-            "transferPhase": transfer_phase,
-            "transferErrorCode": device.transfer.error_code,
-            "audioDecryptReady": device.active_file_key.is_some() && device.active_nonce.is_some(),
-            "liveDurationMs": live_duration_ms,
-            "liveBytes": device.transfer.received_wire_bytes,
-            "liveRecordId": live_record_id,
-            "deviceName": device_name,
-            "batteryPercent": battery_pct,
-            "charging": telemetry.is_some_and(|t| t.charging),
-            "boxBatteryPercent": box_battery_pct,
-            "boxCharging": telemetry.is_some_and(|t| t.box_charging),
-            "serialNumber": telemetry.map(|t| t.serial_number.clone()).unwrap_or_default(),
-            "firmwareVersion": telemetry.map(|t| t.firmware_version.clone()).unwrap_or_default(),
-            "storageLabel": telemetry.map(|t| t.storage_label()).unwrap_or_else(|| "—".to_string()),
-            "files": files,
-            "progress": progress,
-            "autoConnect": self.workspace().ble_auto_connect(),
-            "companionMode": self.workspace().companion_mode().as_str(),
-            "standbyReady": self.is_standby_ready(),
-            "teardownStopFramesHex": teardown_stop_frames_hex,
-            "guide": self.device.guide_json()
-        });
+        let (tasks, memories) = self.tasks_and_memories_json();
+        let ask_json = self.ask_json();
+        let device_json = self.device_json_with_live(live_record_id, live_duration_ms);
         let microphone = self.microphone_status();
         let capture_selection = self.capture_selection();
         let workspaces = self.mode_workspaces_json(
@@ -272,18 +263,17 @@ impl KoeRuntime {
             microphone.as_ref(),
             &capture_selection,
         );
-        json!({"voiceInput":self.voice_input_json(),"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
-            "journal":crate::journal::journal_json(now, &records, &today_ids),
+        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
             "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
-            "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
-            "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
-            "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
+            "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.selection.location.page,
+            "canGoBack":!self.selection.back.is_empty(),"selectedRecordId":self.selection.location.record,"focusSegmentId":self.selection.location.segment,
+            "records":rows,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "workspaces":workspaces,
-            "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
+            "ask":ask_json,
             "device":device_json,
             "localAsr":{"state":self.local_asr.state,"message":self.local_asr.message},
             "liveCaption":self.live_caption_json(),"liveMinutes":self.live_minutes_view(),
-            "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":if self.workspace().provider_configuration().meeting_audio_policy == MeetingAudioPolicy::LocalOnly { Some("音频只保存在本机；云端语音上传已关闭。".to_string()) } else { self.ensure_meeting_audio_upload().err() },"configured":self.text_provider_configured(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
+            "provider":self.provider_json(),
             "playback":self.playback_json(),
             "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
             "error":self.error,"notice":self.notice})
@@ -368,7 +358,7 @@ impl KoeRuntime {
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
     }
 
-    fn live_bean_capture_progress(&self) -> (Option<&str>, u64) {
+    pub(super) fn live_bean_capture_progress(&self) -> (Option<&str>, u64) {
         let device = &self.device.session;
         let live_record_id = device
             .active_file_id

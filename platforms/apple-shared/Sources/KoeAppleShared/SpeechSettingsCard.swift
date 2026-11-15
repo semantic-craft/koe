@@ -11,7 +11,7 @@ struct SpeechSettingsCard: View {
                     .font(.system(size: AppFontSizes.md, weight: .medium))
                 Picker("识别引擎", selection: Binding(
                     get: { speech.engine },
-                    set: { store.send("configure_speech", ["engine": $0]) }
+                    set: { store.send(.configureSpeech(engine: $0)) }
                 )) {
                     Text("Apple 本机识别").tag("apple_speech")
                     Text("下载离线模型").tag("downloaded")
@@ -38,7 +38,7 @@ struct SpeechSettingsCard: View {
                 HStack {
                     Toggle("允许将录音音频上传到云端", isOn: Binding(
                         get: { store.snapshot.provider.meetingAudioPolicy == "cloud_allowed" },
-                        set: { store.send("set_meeting_audio_policy", ["policy": $0 ? "cloud_allowed" : "local_only"]) }
+                        set: { store.send(.setMeetingAudioPolicy(policy: $0 ? "cloud_allowed" : "local_only")) }
                     ))
                     InfoTip("这是独立的音频上传授权。切换识别引擎或下载模型不会改变此授权。关闭后音频保存在本机，文字整理服务仍可接收转写文字。")
                 }
@@ -60,14 +60,14 @@ struct SpeechSettingsCard: View {
                 Spacer()
                 if model.state == "ready" {
                     KoeActionButton(speech.modelId == model.id ? "已选择" : "使用此模型", isPrimary: speech.modelId == model.id) {
-                        store.send("configure_speech", ["engine": "downloaded", "modelId": model.id])
+                        store.send(.configureSpeech(engine: "downloaded", modelId: model.id))
                     }
                 } else if model.state == "preparing" {
-                    KoeActionButton("取消下载", systemImage: "xmark.circle") { store.send("cancel_speech_model") }
+                    KoeActionButton("取消下载", systemImage: "xmark.circle") { store.send(.cancelSpeechModel) }
                 } else {
                     KoeActionButton(model.state == "downloaded" ? "加载模型" : model.state == "failed" ? "重试准备" : "下载",
                                     systemImage: model.state == "downloaded" ? "play.circle" : "arrow.down.circle") {
-                        store.send("prepare_speech_model", ["modelId": model.id])
+                        store.send(.prepareSpeechModel(modelId: model.id))
                     }
                 }
             }

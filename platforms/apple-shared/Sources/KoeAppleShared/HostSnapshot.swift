@@ -57,8 +57,6 @@ extension SegmentSnapshot {
     }
 }
 
-public typealias KoeColors = AppColors
-
 public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
@@ -353,16 +351,11 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
     public var speech: SpeechSnapshot = .empty
-    public var allDay: AllDaySnapshot = .empty
-    public var dictation: DictationSnapshot = .empty
     public var localAsr: LocalAsrSnapshot? = nil
     public var liveCaption: LiveCaptionSnapshot? = nil
-    public var liveMinutes: LiveMinutesSnapshot? = nil
     public var microphone: MicrophoneSnapshot? = nil
     public var capture: CaptureStudioSnapshot = .empty
     public var lifecycle: LifecycleSnapshot? = nil
-    public var journal: JournalSnapshot = .empty
-    public var voiceInput: VoiceInputSnapshot = .empty
     public var captureModes: [CaptureModeSnapshot] = []
     public var activeCapture: ActiveCaptureSnapshot? = nil
     public var workspaces: ModeWorkspacesSnapshot? = nil
@@ -373,7 +366,6 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let selectedRecordId: String?
     public let focusSegmentId: String?
     public let records: [RecordSnapshot]
-    public let todayRecordIds: [String]
     public let trashRecords: [TrashRecordSnapshot]
     public let undoTrash: UndoTrashSnapshot?
     public let detail: RecordDetailSnapshot?
@@ -388,10 +380,10 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
-        case localAsr, liveCaption, liveMinutes, speech, allDay, dictation
-        case journal, captureModes, activeCapture, voiceInput, workspaces
+        case localAsr, liveCaption, speech
+        case captureModes, activeCapture, workspaces
         case microphone, capture, lifecycle, version, generation, section, canGoBack
-        case selectedRecordId, focusSegmentId, records, todayRecordIds
+        case selectedRecordId, focusSegmentId, records
         case trashRecords, undoTrash, detail, tasks, memories, ask
         case device, provider, playback, error, migrationReports, notice
     }
@@ -406,7 +398,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
 
     public static let empty = HostSnapshot(
         version: 2, generation: 0, section: "today", canGoBack: false,
-        selectedRecordId: nil, focusSegmentId: nil, records: [], todayRecordIds: [],
+        selectedRecordId: nil, focusSegmentId: nil, records: [],
         trashRecords: [], undoTrash: nil, detail: nil, tasks: [], memories: [],
         ask: AskSnapshot(scope: "all", recordId: nil, phase: "idle", messages: []),
         device: .empty,
@@ -420,16 +412,11 @@ extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         speech = try c.decodeIfPresent(SpeechSnapshot.self, forKey: .speech) ?? .empty
-        allDay = try c.decodeIfPresent(AllDaySnapshot.self, forKey: .allDay) ?? .empty
-        dictation = try c.decodeIfPresent(DictationSnapshot.self, forKey: .dictation) ?? .empty
         localAsr = try c.decodeIfPresent(LocalAsrSnapshot.self, forKey: .localAsr)
         liveCaption = try c.decodeIfPresent(LiveCaptionSnapshot.self, forKey: .liveCaption)
-        liveMinutes = try c.decodeIfPresent(LiveMinutesSnapshot.self, forKey: .liveMinutes)
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
         capture = try c.decodeIfPresent(CaptureStudioSnapshot.self, forKey: .capture) ?? .empty
         lifecycle = try c.decodeIfPresent(LifecycleSnapshot.self, forKey: .lifecycle)
-        journal = try c.decodeIfPresent(JournalSnapshot.self, forKey: .journal) ?? .empty
-        voiceInput = try c.decodeIfPresent(VoiceInputSnapshot.self, forKey: .voiceInput) ?? .empty
         captureModes = try c.decodeIfPresent([CaptureModeSnapshot].self, forKey: .captureModes) ?? []
         activeCapture = try c.decodeIfPresent(ActiveCaptureSnapshot.self, forKey: .activeCapture)
         workspaces = try c.decodeIfPresent(ModeWorkspacesSnapshot.self, forKey: .workspaces)
@@ -440,7 +427,6 @@ extension HostSnapshot {
         selectedRecordId = try c.decodeIfPresent(String.self, forKey: .selectedRecordId)
         focusSegmentId = try c.decodeIfPresent(String.self, forKey: .focusSegmentId)
         records = try c.decode([RecordSnapshot].self, forKey: .records)
-        todayRecordIds = try c.decode([String].self, forKey: .todayRecordIds)
         trashRecords = try c.decodeIfPresent([TrashRecordSnapshot].self, forKey: .trashRecords) ?? []
         undoTrash = try c.decodeIfPresent(UndoTrashSnapshot.self, forKey: .undoTrash)
         detail = try c.decodeIfPresent(RecordDetailSnapshot.self, forKey: .detail)

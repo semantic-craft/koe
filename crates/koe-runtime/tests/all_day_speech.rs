@@ -299,7 +299,10 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         .unwrap();
     assert_eq!(second.all_day.as_ref().unwrap().ordinal, 2);
     assert_eq!(second.aggregate.created_at_epoch_sec, next_day);
-    assert_eq!(s["journal"]["recordIds"], json!([second.aggregate.recording_id]));
+    assert_eq!(
+        s["workspaces"]["allDay"]["spans"][0]["recordIds"],
+        json!([second.aggregate.recording_id])
+    );
     assert_eq!(
         second.all_day.as_ref().unwrap().run_id,
         first.all_day.as_ref().unwrap().run_id
@@ -319,7 +322,10 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         assert!(std::time::Instant::now() < deadline, "{}", r.snapshot(100));
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    assert_eq!(r.snapshot(100)["journal"]["summaries"][0]["text"], "已封段原文");
+    assert_eq!(
+        r.snapshot(100)["workspaces"]["allDay"]["dailyReview"]["overview"],
+        "已封段原文"
+    );
     let live = r.snapshot(100);
     let minutes = &live["liveMinutes"];
     assert_eq!(minutes["scope"], json!({"kind":"all_day","id":first.all_day.as_ref().unwrap().run_id}));

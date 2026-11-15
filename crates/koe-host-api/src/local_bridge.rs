@@ -582,7 +582,7 @@ fn handle_mcp_tool_call(
             entry.subscribers.broadcast(&events);
             res
         },
-        |(), question, _elapsed_ms| {
+        |(), _elapsed_ms| {
             if shutdown.load(Ordering::Acquire) {
                 return Ok(Some(Err("Koe 会话正在关闭".into())));
             }
@@ -593,7 +593,7 @@ fn handle_mcp_tool_call(
             let Some(entry) = table.entries.get_mut(&handle) else {
                 return Ok(Some(Err("Koe 会话已关闭".into())));
             };
-            let res = entry.runtime.poll_mcp_ask(question, 0, now(0));
+            let res = entry.runtime.poll_mcp_ask(0, now(0));
             let evs = entry.runtime.drain_companion_events();
             entry.subscribers.broadcast(&evs);
             Ok(res)

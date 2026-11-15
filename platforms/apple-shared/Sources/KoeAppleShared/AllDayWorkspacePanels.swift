@@ -23,12 +23,12 @@ struct AllDayEventSpanCard: View {
                     if span.firstSegment != nil || span.primaryRecordId != nil {
                         KoeActionButton("回到原文", systemImage: "arrow.up.right") {
                             if let first = span.firstSegment {
-                                store.send("open_source", [
-                                    "recordId": first.recordId,
-                                    "segmentId": first.segmentId
-                                ])
+                                store.send(.openSource(
+                                    recordId: first.recordId,
+                                    segmentId: first.segmentId
+                                ))
                             } else if let recordId = span.primaryRecordId {
-                                store.send("select_record", ["recordId": recordId])
+                                store.send(.selectRecord(recordId: recordId))
                             }
                         }
                     }
