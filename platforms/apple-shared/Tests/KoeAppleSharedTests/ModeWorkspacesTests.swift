@@ -15,6 +15,11 @@ struct ModeWorkspacesTests {
         let workspaces = try #require(store.snapshot.workspaces)
         #expect(workspaces.picker.cards.map(\.id) == ["notes", "all_day", "live_minutes", "voice_input"])
         #expect(workspaces.picker.cards.map(\.title) == ["随心闪记", "全天听记", "实时纪要", "语音输入"])
+        #expect(workspaces.picker.beanBadge == "录音豆 未连接")
+        #expect(workspaces.picker.canConnectBean == true)
+        #expect(workspaces.picker.canSwitchToBean == false)
+        #expect(workspaces.picker.guidanceText == "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。")
+        _ = TodayView(store: store).body
         #expect(workspaces.voiceInput.steps.count == 6)
         #expect(!workspaces.quickNote.mcpReadNote.isEmpty)
 

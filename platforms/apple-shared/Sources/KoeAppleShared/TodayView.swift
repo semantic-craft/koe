@@ -8,7 +8,11 @@ struct TodayView: View {
         return projected.isEmpty ? ModePickerSnapshot.defaultCards : projected
     }
 
-    private var proposedActionCount: Int {
+    private var liveRecordCount: Int {
+        store.snapshot.records.count
+    }
+
+    private var pendingActionCount: Int {
         store.snapshot.tasks.filter { $0.state == "proposed" }.count
             + store.snapshot.memories.filter { $0.state == "proposed" }.count
     }
@@ -18,7 +22,7 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 20) {
                 PageHeading(
                     title: "模式选择",
-                    subtitle: "选择工作模式进入对应工作区，或直接切换模式会话开关。"
+                    subtitle: "先确认下方录音音源，再打开模式开关。单按录音豆侧键默认记入随心闪记。"
                 )
 
                 sourceStrip
@@ -44,65 +48,62 @@ struct TodayView: View {
     }
 
     private var sourceStrip: some View {
-        HStack(spacing: 10) {
-            KoeBadge(store.snapshot.capture.selectedBadge, tint: AppColors.accent)
-            Text(store.snapshot.capture.selectedLabel)
-                .font(.system(size: AppFontSizes.sm, weight: .medium))
-            Text(store.snapshot.device.state)
-                .font(.system(size: AppFontSizes.xs))
-                .foregroundStyle(AppColors.textMuted)
-            Spacer()
-            if !store.snapshot.device.connected {
-                KoeActionButton("连接录音豆", systemImage: "dot.radiowaves.left.and.right") {
-                    store.send("device_open_guide")
+        let picker = store.snapshot.workspaces?.picker
+        let beanBadge = picker?.beanBadge ?? "录音豆 \(store.snapshot.device.state)"
+        let guidanceText = picker?.guidanceText ?? "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
+        return KoeCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    KoeBadge(picker?.sourceBadge ?? store.snapshot.capture.selectedBadge, tint: AppColors.accent)
+                    Text(picker?.sourceLabel ?? store.snapshot.capture.selectedLabel)
+                        .font(.system(size: AppFontSizes.sm, weight: .semibold))
+                        .foregroundStyle(AppColors.textPrimary)
+                    KoeBadge(
+                        beanBadge,
+                        tint: store.snapshot.device.connected ? AppColors.success : AppColors.textMuted
+                    )
+                    Spacer()
+                    if picker?.canSwitchToBean == true {
+                        KoeActionButton("切换为录音豆", systemImage: "wave.3.right") {
+                            store.send("select_capture_source", ["source": "bean"])
+                        }
+                    } else if picker?.canConnectBean == true {
+                        KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right") {
+                            store.send("device_open_guide")
+                        }
+                    }
+                    KoeActionButton("设置音源", systemImage: "slider.horizontal.3") {
+                        store.send("navigate", ["section": "capture"])
+                    }
                 }
-            }
-            KoeActionButton("设置音源", systemImage: "slider.horizontal.3") {
-                store.send("navigate", ["section": "capture"])
+                Text(guidanceText)
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(AppColors.bgPanel, in: RoundedRectangle(cornerRadius: AppRadii.cardOuter))
-        .overlay(RoundedRectangle(cornerRadius: AppRadii.cardOuter).stroke(AppColors.border))
     }
 
     private var behaviorRulesCard: some View {
         KoeCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("录音与导航约定")
-                    .font(.system(size: AppFontSizes.sm, weight: .semibold))
-                VStack(alignment: .leading, spacing: 6) {
-                    ruleLine("进入左侧任意工作区仅查看内容，不会自动开始录音或改写硬件路由。")
-                    ruleLine("录音豆单按默认记入随心闪记；全天听记、实时纪要与语音输入通过上方开关按会话启用。")
-                    ruleLine("应用重启后不会自动恢复上次录音会话，避免后台静默收音。")
+            HStack(spacing: 10) {
+                KoeActionButton(
+                    "浏览所有记录 (\(liveRecordCount))",
+                    systemImage: "tray.full"
+                ) {
+                    store.send("navigate", ["section": "records"])
                 }
-                HStack(spacing: 10) {
-                    KoeActionButton("浏览所有记录（\(store.snapshot.records.count)）", systemImage: "tray.full") {
-                        store.send("navigate", ["section": "records"])
-                    }
-                    KoeActionButton(
-                        proposedActionCount > 0 ? "待确认行动（\(proposedActionCount)）" : "查看行动与记忆",
-                        systemImage: "checklist"
-                    ) {
-                        store.send("navigate", ["section": "tasks"])
-                    }
-                    Spacer()
+                KoeActionButton(
+                    "待确认行动 (\(pendingActionCount))",
+                    systemImage: "checklist"
+                ) {
+                    store.send("navigate", ["section": "tasks"])
                 }
-                .padding(.top, 2)
+                Spacer(minLength: 12)
+                Text("进入左侧工作区仅查看内容，不会自动开始录音。")
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textMuted)
             }
-        }
-    }
-
-    private func ruleLine(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: AppFontSizes.xs))
-                .foregroundStyle(AppColors.textMuted)
-                .padding(.top, 2)
-            Text(text)
-                .font(.system(size: AppFontSizes.xs))
-                .foregroundStyle(AppColors.textSecondary)
         }
     }
 }

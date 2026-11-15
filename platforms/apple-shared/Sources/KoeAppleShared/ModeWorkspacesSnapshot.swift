@@ -183,7 +183,46 @@ public struct ModeWorkspacesSnapshot: Codable, Equatable, Sendable {
 public struct ModePickerSnapshot: Codable, Equatable, Sendable {
     public let sourceLabel: String
     public let sourceBadge: String
+    public let beanBadge: String
+    public let guidanceText: String
+    public let canSwitchToBean: Bool
+    public let canConnectBean: Bool
     public let cards: [ModePickerCardSnapshot]
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceLabel, sourceBadge, beanBadge, guidanceText
+        case canSwitchToBean, canConnectBean, cards
+    }
+
+    public init(
+        sourceLabel: String,
+        sourceBadge: String,
+        beanBadge: String = "录音豆 未连接",
+        guidanceText: String = "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。",
+        canSwitchToBean: Bool = false,
+        canConnectBean: Bool = true,
+        cards: [ModePickerCardSnapshot]
+    ) {
+        self.sourceLabel = sourceLabel
+        self.sourceBadge = sourceBadge
+        self.beanBadge = beanBadge
+        self.guidanceText = guidanceText
+        self.canSwitchToBean = canSwitchToBean
+        self.canConnectBean = canConnectBean
+        self.cards = cards
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
+        sourceBadge = try c.decode(String.self, forKey: .sourceBadge)
+        beanBadge = try c.decodeIfPresent(String.self, forKey: .beanBadge) ?? "录音豆 未连接"
+        guidanceText = try c.decodeIfPresent(String.self, forKey: .guidanceText)
+            ?? "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
+        canSwitchToBean = try c.decodeIfPresent(Bool.self, forKey: .canSwitchToBean) ?? false
+        canConnectBean = try c.decodeIfPresent(Bool.self, forKey: .canConnectBean) ?? true
+        cards = try c.decode([ModePickerCardSnapshot].self, forKey: .cards)
+    }
 
     public static let defaultCards: [ModePickerCardSnapshot] = [
         ModePickerCardSnapshot(

@@ -655,3 +655,76 @@ fn capture_studio_system_audio_toggle_starts_dual_lanes_for_meeting_and_quick_no
     );
     assert_eq!(bean["capture"]["canIncludeSystemAudio"], false);
 }
+
+#[test]
+fn mode_picker_projects_bean_badge_guidance_and_one_click_switch() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+
+    let initial = runtime.snapshot(NOW);
+    assert_eq!(initial["workspaces"]["picker"]["beanBadge"], "录音豆 未连接");
+    assert_eq!(initial["workspaces"]["picker"]["canConnectBean"], true);
+    assert_eq!(initial["workspaces"]["picker"]["canSwitchToBean"], false);
+    assert_eq!(
+        initial["workspaces"]["picker"]["guidanceText"],
+        "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
+    );
+
+    dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "sync_audio_inputs",
+            "inputs": [
+                {"id": "usb-studio", "name": "Studio Display Microphone", "transport": "usb", "isDefault": false}
+            ]
+        }),
+        NOW + 1,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "input:usb-studio"}),
+        NOW + 1,
+    );
+    connect_bean(&mut runtime, "c-guide", "soundcore Work (63:9D)", NOW + 1);
+    let with_bean_connected = runtime.snapshot(NOW + 1);
+    let picker = &with_bean_connected["workspaces"]["picker"];
+    assert_eq!(picker["sourceBadge"], "USB 外接");
+    assert_eq!(picker["sourceLabel"], "Studio Display Microphone");
+    assert_eq!(picker["beanBadge"], "录音豆 已连接");
+    assert_eq!(picker["canSwitchToBean"], true);
+    assert_eq!(picker["canConnectBean"], false);
+    assert_eq!(
+        picker["guidanceText"],
+        "当前使用电脑麦克风，如需用录音豆收音可点右侧切换为录音豆。"
+    );
+
+    let switched = dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "bean"}),
+        NOW + 2,
+    );
+    let picker = &switched["workspaces"]["picker"];
+    assert_eq!(picker["sourceBadge"], "录音豆");
+    assert_eq!(picker["sourceLabel"], "soundcore Work (63:9D)");
+    assert_eq!(picker["beanBadge"], "录音豆 已连接");
+    assert_eq!(picker["canSwitchToBean"], false);
+    assert_eq!(picker["canConnectBean"], false);
+    assert_eq!(
+        picker["guidanceText"],
+        "录音豆已就绪，可直接打开下方模式开关，或单按豆子侧键录闪记。"
+    );
+
+    let disconnected = dispatch_ok(
+        &mut runtime,
+        json!({"type": "device_event", "event": "disconnected", "connectionId": "c-guide"}),
+        NOW + 3,
+    );
+    let picker = &disconnected["workspaces"]["picker"];
+    assert_eq!(picker["beanBadge"], "录音豆 未连接");
+    assert_eq!(picker["canConnectBean"], true);
+    assert_eq!(picker["canSwitchToBean"], false);
+    assert_eq!(
+        picker["guidanceText"],
+        "请先将录音豆放入充电仓长按 2 秒连接，或切换为电脑麦克风后再选模式。"
+    );
+}

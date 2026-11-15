@@ -266,6 +266,49 @@ impl KoeRuntime {
             .as_deref()
             .unwrap_or("Soundcore Work");
 
+        let device_busy = (matches!(
+            self.device.session.transfer.phase,
+            koe_engine::session::TransferPhaseTag::PullingOffline
+                | koe_engine::session::TransferPhaseTag::StreamingRealtime
+        ) || self.device.session.device_recording_active
+            || self.device.awaiting_stop)
+            && !self.companion.standby_stream_owned;
+        let device_recording =
+            self.device.session.device_recording_active && !self.companion.standby_stream_owned;
+
+        let bean_badge = if !self.device.is_connected() {
+            "录音豆 未连接"
+        } else if device_recording {
+            "录音豆 录音中"
+        } else if device_busy {
+            "录音豆 同步中"
+        } else {
+            "录音豆 已连接"
+        };
+
+        let can_switch_to_bean = can_control
+            && self.device.is_connected()
+            && !device_busy
+            && capture_selection.active_source.is_none()
+            && capture_selection.source != "bean";
+        let can_connect_bean = can_control && !self.device.is_connected();
+
+        let guidance_text = if capture_selection.source == "bean" {
+            if !self.device.is_connected() {
+                "请先将录音豆放入充电仓长按 2 秒连接，或切换为电脑麦克风后再选模式。"
+            } else if device_busy {
+                "录音豆正在同步或录音，完成后可开启下方模式，或单按侧键录闪记。"
+            } else {
+                "录音豆已就绪，可直接打开下方模式开关，或单按豆子侧键录闪记。"
+            }
+        } else if self.device.is_connected() && device_busy {
+            "录音豆正在同步或录音，当前暂用电脑麦克风，完成后自动恢复。"
+        } else if self.device.is_connected() {
+            "当前使用电脑麦克风，如需用录音豆收音可点右侧切换为录音豆。"
+        } else {
+            "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
+        };
+
         let cards = json!([
             {
                 "id": "notes",
@@ -346,6 +389,10 @@ impl KoeRuntime {
         json!({
             "sourceLabel": capture_selection.label,
             "sourceBadge": capture_selection.badge,
+            "beanBadge": bean_badge,
+            "guidanceText": guidance_text,
+            "canSwitchToBean": can_switch_to_bean,
+            "canConnectBean": can_connect_bean,
             "cards": cards,
         })
     }

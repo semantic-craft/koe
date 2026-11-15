@@ -57,7 +57,7 @@ pub(super) struct CaptureSelection {
     pub label: String,
     pub badge: &'static str,
     mode: &'static str,
-    active_source: Option<String>,
+    pub(super) active_source: Option<String>,
     pub can_start: bool,
 }
 
