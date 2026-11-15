@@ -561,3 +561,97 @@ fn edge_cases_quiet_drain_hardware_coexistence_auto_skip_and_unplug_reset() {
     assert_eq!(coexist["microphone"]["inputLabel"], "AirPods Pro");
     assert_eq!(coexist["microphone"]["inputBadge"], "Mac 蓝牙");
 }
+
+fn lane_names(snap: &Value) -> Vec<String> {
+    let mut names: Vec<String> = snap["microphone"]["lanes"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    names.sort();
+    names
+}
+
+fn finish_microphone(runtime: &mut KoeRuntime, snap: &Value, now: u64) {
+    let mic = snap["microphone"].clone();
+    for lane in lane_names(snap) {
+        dispatch_ok(
+            runtime,
+            json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],
+                "lane":lane,"sequence":0}),
+            now,
+        );
+    }
+    assert!(runtime.snapshot(now)["microphone"].is_null());
+}
+
+#[test]
+fn capture_studio_system_audio_toggle_starts_dual_lanes_for_meeting_and_quick_note_only() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let initial = runtime.snapshot(NOW);
+    assert_eq!(initial["capture"]["includeSystemAudio"], false);
+    assert_eq!(initial["capture"]["canIncludeSystemAudio"], true);
+
+    let local_only = dispatch_ok(
+        &mut runtime,
+        json!({"type":"start_capture_mode","mode":"meeting","stayOnPage":true}),
+        NOW,
+    );
+    assert_eq!(lane_names(&local_only), ["microphone"]);
+    assert_eq!(local_only["microphone"]["includeSystem"], false);
+    dispatch_ok(&mut runtime, json!({"type":"capture_action","action":"cancel"}), NOW);
+    finish_microphone(&mut runtime, &local_only, NOW);
+
+    let enabled = dispatch_ok(
+        &mut runtime,
+        json!({"type":"set_capture_system_audio","enabled":true}),
+        NOW + 1,
+    );
+    assert_eq!(enabled["capture"]["includeSystemAudio"], true);
+
+    for mode in ["meeting", "quick_note"] {
+        let dual = dispatch_ok(
+            &mut runtime,
+            json!({"type":"start_capture_mode","mode":mode,"stayOnPage":true}),
+            NOW + 2,
+        );
+        assert_eq!(lane_names(&dual), ["microphone", "system"], "{mode}");
+        assert_eq!(dual["microphone"]["includeSystem"], true);
+        let locked = dispatch(
+            &mut runtime,
+            json!({"type":"set_capture_system_audio","enabled":false}),
+            NOW + 2,
+        );
+        assert!(locked["error"].is_string(), "toggle must be locked while recording");
+        assert_eq!(locked["capture"]["includeSystemAudio"], true);
+        dispatch_ok(&mut runtime, json!({"type":"capture_action","action":"cancel"}), NOW + 2);
+        finish_microphone(&mut runtime, &dual, NOW + 2);
+    }
+
+    let dictation = dispatch_ok(
+        &mut runtime,
+        json!({"type":"start_capture_mode","mode":"dictation","stayOnPage":true}),
+        NOW + 3,
+    );
+    assert_eq!(lane_names(&dictation), ["microphone"]);
+    dispatch_ok(&mut runtime, json!({"type":"capture_action","action":"cancel"}), NOW + 3);
+    finish_microphone(&mut runtime, &dictation, NOW + 3);
+
+    let all_day = dispatch_ok(
+        &mut runtime,
+        json!({"type":"start_capture_mode","mode":"all_day","stayOnPage":true}),
+        NOW + 4,
+    );
+    assert_eq!(lane_names(&all_day), ["microphone"]);
+    dispatch_ok(&mut runtime, json!({"type":"capture_action","action":"end"}), NOW + 4);
+    finish_microphone(&mut runtime, &all_day, NOW + 4);
+
+    let bean = dispatch_ok(
+        &mut runtime,
+        json!({"type":"select_capture_source","source":"bean"}),
+        NOW + 5,
+    );
+    assert_eq!(bean["capture"]["canIncludeSystemAudio"], false);
+}

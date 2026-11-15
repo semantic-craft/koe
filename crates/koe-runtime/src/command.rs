@@ -136,6 +136,9 @@ pub(crate) enum Command {
     SelectCaptureSource {
         source: String,
     },
+    SetCaptureSystemAudio {
+        enabled: bool,
+    },
     PauseMicrophone,
     MicrophonePrepared {
         record_id: String,

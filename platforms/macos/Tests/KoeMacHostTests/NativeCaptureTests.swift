@@ -64,11 +64,16 @@ final class FakeMicrophone: MicrophoneSource {
 @MainActor
 final class NativeCaptureIntegrationTests: XCTestCase {
     func fixture(_ body: (HostSessionStore, FakeMicrophone, NativeCapture, URL) async throws -> Void) async throws {
+        try await dualFixture { store, microphone, _, capture, root in try await body(store, microphone, capture, root) }
+    }
+    func dualFixture(_ body: (HostSessionStore, FakeMicrophone, FakeSystemAudio, NativeCapture, URL) async throws -> Void) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("koe-native-mic-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = HostSessionStore(workspacePath: root.path)
         let source = FakeMicrophone()
-        let capture = NativeCapture(source: source, nowNanoseconds: { source.clockNs })
+        let system = FakeSystemAudio()
+        system.clock = { source.clockNs }
+        let capture = NativeCapture(source: source, systemSource: system, nowNanoseconds: { source.clockNs })
         capture.store = store
         store.onSnapshotChanged = { _ in capture.apply() }
         defer {
@@ -76,7 +81,7 @@ final class NativeCaptureIntegrationTests: XCTestCase {
             store.shutdown()
             try? FileManager.default.removeItem(at: root)
         }
-        try await body(store, source, capture, root)
+        try await body(store, source, system, capture, root)
     }
     func awaitState(_ predicate: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
@@ -240,6 +245,121 @@ extension NativeCaptureIntegrationTests {
             XCTAssertTrue(store.snapshot.records.isEmpty)
             XCTAssertEqual(store.snapshot.lifecycle?.quitPhase, "ready")
             XCTAssertNil(store.snapshot.microphone)
+        }
+    }
+}
+
+/// Deterministic system audio lane: never touches Core Audio taps or TCC.
+final class FakeSystemAudio: SystemAudioSource {
+    var authorization: (@Sendable (SystemAudioAuthResult) -> Void)?
+    var shouldAbort: (@Sendable () -> Bool)?
+    var emit: ((CapturedPCM) -> Void)?
+    var failure: ((String) -> Void)?
+    var clock: () -> UInt64 = { 1_000_000_000 }
+    var firstOffsetNs: UInt64 = 0
+    var nextSampleNs: UInt64 = 0
+    var sampleRate: UInt32 = 48_000
+    var authorizations = 0
+    var starts = 0
+    var stops = 0
+    var tail: [Int16] = []
+    func authorize(shouldAbort: @escaping @Sendable () -> Bool,
+                   _ completion: @escaping @Sendable (SystemAudioAuthResult) -> Void) {
+        authorizations += 1
+        self.shouldAbort = shouldAbort
+        authorization = completion
+    }
+    func start(expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
+               failed: @escaping (String) -> Void) throws -> UInt32 {
+        starts += 1
+        emit = receive
+        failure = failed
+        nextSampleNs = clock() + firstOffsetNs
+        return sampleRate
+    }
+    func receive(_ samples: [Int16]) {
+        emit?(CapturedPCM(samples: samples, capturedStartNs: nextSampleNs))
+        nextSampleNs += UInt64(samples.count) * 1_000_000_000 / UInt64(sampleRate)
+    }
+    func stop() {
+        stops += 1
+        if !tail.isEmpty { let samples = tail; tail = []; receive(samples) }
+    }
+}
+
+extension NativeCaptureIntegrationTests {
+    nonisolated func pcm(_ root: URL, _ asset: String) throws -> [UInt8] {
+        Array(try Data(contentsOf: root.appendingPathComponent("audio/\(asset).wav")).dropFirst(44))
+    }
+
+    func testSingleLaneDenialKeepsTheOtherLaneRecordingInBothDirections() async throws {
+        for denied in ["system", "microphone"] {
+            try await dualFixture { store, microphone, system, capture, root in
+                store.send("start_microphone", ["inputId": "fixture", "includeSystem": true])
+                XCTAssertEqual(store.snapshot.microphone?.lanes.keys.sorted(), ["microphone", "system"])
+                microphone.permission?(denied != "microphone")
+                system.authorization?(denied == "system" ? .denied(SystemAudioCanaryEvaluator.deniedMessage) : .authorized)
+                await self.awaitState { store.snapshot.microphone?.lanes[denied]?.stopped == true
+                    && store.snapshot.microphone?.phase == "recording" }
+                XCTAssertEqual(microphone.starts, denied == "microphone" ? 0 : 1)
+                XCTAssertEqual(system.starts, denied == "system" ? 0 : 1)
+                XCTAssertNotNil(store.snapshot.activeCapture?.error, "incomplete capture must stay visible")
+                let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
+                if denied == "system" { microphone.receive?([1, 2]) } else { system.receive([3, 4]) }
+                capture.apply()
+                store.send("stop_microphone")
+                XCTAssertNil(store.snapshot.microphone)
+                let lanes = try SavedCapture.read(root).captureLanes
+                XCTAssertEqual(lanes.count, 2)
+                let healthyAsset = denied == "system" ? id : "\(id)-system"
+                XCTAssertEqual(try self.pcm(root, healthyAsset), denied == "system" ? [1, 0, 2, 0] : [3, 0, 4, 0])
+                XCTAssertEqual(lanes.filter { $0.interruption != nil }.count, 1)
+                store.send("select_record", ["recordId": id])
+                XCTAssertEqual(store.snapshot.detail?.status, "采集不完整")
+            }
+        }
+    }
+
+    func testOutputSwitchStopsOnlySystemLaneWithoutLosingAcceptedAudio() async throws {
+        try await dualFixture { store, microphone, system, capture, root in
+            store.send("start_microphone", ["inputId": "fixture", "includeSystem": true])
+            microphone.permission?(true)
+            system.authorization?(.authorized)
+            await self.awaitRecording(store)
+            let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
+            system.receive([2, 2]); microphone.receive?([1, 1]); capture.apply()
+            system.receive([5, 5])
+            system.failure?("系统音频输出设备发生变化，已停止系统音频采集并保留此前收到的音频。")
+            capture.apply()
+            XCTAssertEqual(store.snapshot.microphone?.phase, "recording")
+            XCTAssertEqual(store.snapshot.microphone?.lanes["system"]?.stopped, true)
+            XCTAssertEqual(store.snapshot.microphone?.lanes["system"]?.nextSequence, 2)
+            XCTAssertGreaterThanOrEqual(system.stops, 1)
+            microphone.receive?([3, 3]); capture.apply()
+            store.send("request_quit")
+            XCTAssertEqual(store.snapshot.lifecycle?.quitPhase, "ready")
+            XCTAssertEqual(try self.pcm(root, id), [1, 0, 1, 0, 3, 0, 3, 0])
+            XCTAssertEqual(try self.pcm(root, "\(id)-system"), [2, 0, 2, 0, 5, 0, 5, 0])
+            let lanes = try SavedCapture.read(root).captureLanes
+            XCTAssertNil(lanes[0].interruption)
+            XCTAssertTrue(lanes[1].interruption?.contains("输出设备") == true)
+        }
+    }
+
+    func testCancelAbortsPendingSystemAuthorizationAndLateGrantStartsNothing() async throws {
+        try await dualFixture { store, microphone, system, _, _ in
+            store.send("start_microphone", ["inputId": "fixture", "includeSystem": true])
+            microphone.permission?(true)
+            await Task.yield()
+            XCTAssertEqual(store.snapshot.microphone?.phase, "starting")
+            XCTAssertEqual(system.shouldAbort?(), false)
+            store.send("cancel_microphone")
+            XCTAssertNil(store.snapshot.microphone)
+            XCTAssertEqual(system.shouldAbort?(), true)
+            system.authorization?(.authorized)
+            await Task.yield()
+            XCTAssertEqual(microphone.starts + system.starts, 0)
+            XCTAssertTrue(store.snapshot.records.isEmpty)
         }
     }
 }

@@ -47,6 +47,8 @@ pub(crate) enum CaptureSourcePreference {
 pub(crate) struct CaptureStudioState {
     pub preference: CaptureSourcePreference,
     pub inputs: Vec<AudioInputDescriptor>,
+    /// Mac meeting and quick-note captures add a system audio lane; local mic only by default.
+    pub include_system_audio: bool,
 }
 
 pub(super) struct CaptureSelection {
@@ -152,6 +154,14 @@ impl KoeRuntime {
                     CaptureSourcePreference::CoreAudioInput(uid.to_string());
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn set_capture_system_audio(&mut self, enabled: bool) -> Result<(), String> {
+        if self.microphone.is_some() || self.is_bean_meeting_recording() {
+            return Err("正在录音中，请先停止当前录音再切换系统音频".into());
+        }
+        self.capture_studio.include_system_audio = enabled;
         Ok(())
     }
 
@@ -362,6 +372,8 @@ impl KoeRuntime {
             "selectionMode": selection.mode,
             "activeSource": selection.active_source,
             "canStart": selection.can_start,
+            "includeSystemAudio": self.capture_studio.include_system_audio,
+            "canIncludeSystemAudio": selection.source != "bean",
             "inputs": inputs_json,
         })
     }

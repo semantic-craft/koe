@@ -302,6 +302,7 @@ impl KoeRuntime {
             } => self.start_microphone(input_id, include_system, clock_ns, now)?,
             Command::SyncAudioInputs { inputs } => self.sync_audio_inputs(inputs)?,
             Command::SelectCaptureSource { source } => self.select_capture_source(&source)?,
+            Command::SetCaptureSystemAudio { enabled } => self.set_capture_system_audio(enabled)?,
             Command::PauseMicrophone => self.pause_microphone()?,
             Command::MicrophonePrepared {
                 record_id,

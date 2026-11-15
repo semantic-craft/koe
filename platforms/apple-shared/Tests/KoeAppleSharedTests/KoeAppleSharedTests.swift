@@ -477,4 +477,23 @@ struct KoeAppleSharedTests {
         store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sequence": 1, "epoch": 0])
         #expect(store.snapshot.microphone == nil)
     }
+
+    @Test("System audio toggle is local-only by default, locked while recording and adds a meeting lane")
+    @MainActor
+    func systemAudioToggle() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown(); try? FileManager.default.removeItem(at: directory) }
+        #expect(!store.snapshot.capture.includeSystemAudio && store.snapshot.capture.canIncludeSystemAudio)
+        store.send("set_capture_system_audio", ["enabled": true])
+        store.startCapture(.meeting, stayOnPage: true)
+        let mic = try #require(store.snapshot.microphone)
+        #expect(mic.lanes.keys.sorted() == ["microphone", "system"])
+        store.send("set_capture_system_audio", ["enabled": false])
+        #expect(store.snapshot.error != nil && store.snapshot.capture.includeSystemAudio)
+        store.performCaptureAction(.cancel)
+        ["microphone", "system"].forEach { store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": $0, "sequence": 0]) }
+        store.send("select_capture_source", ["source": "bean"])
+        #expect(store.snapshot.microphone == nil && !store.snapshot.capture.canIncludeSystemAudio)
+    }
 }

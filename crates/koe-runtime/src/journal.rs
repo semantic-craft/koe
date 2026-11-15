@@ -93,7 +93,9 @@ impl KoeRuntime {
         } else if bean {
             self.dispatch(Command::DeviceStart, now)?;
         } else {
-            self.start_microphone(selection.input_id, false, None, now)?;
+            let include_system =
+                self.capture_studio.include_system_audio && mode != CaptureMode::Dictation;
+            self.start_microphone(selection.input_id, include_system, None, now)?;
         }
         if let Some(mic) = &mut self.microphone {
             mic.mode = Some(mode);
