@@ -157,11 +157,11 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: python3 progress/progress.py check；#662 每项填写实际版本、结果与回读产物，未运行项保持未验收。
 - **Evidence**: issue #662; crates/koe-cli/examples/verify_offline_socket.rs; Projects/_artifacts/koe/adh-20261114/{sensevoice-sandbox-socket.json,qwen3-sandbox-offline.json,interrogate-red.log,full-check.log}
 
-### [ ] Slice ADH_CONT: 全天听记用户真实硬件验收
+### [x] Slice ADH_CONT: 全天听记用户真实硬件验收（已改由日常使用覆盖并关闭 #662）
 - **Playbook**: `Feature`
-- **Outcome**: 在已安装的签名版 /Applications/Koe.app（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22）上，回收用户自行执行的 #662 真实麦克风与 D3200 跨五分钟连续说话、锁屏续录、物理蓝牙断连重连及外部输入法联调结果，回填 #662 清单（未跑项如实保持未验收）并结案 #662。
-- **Done Predicate**: 用户完成 #662 真实硬件项后回填实际结果与回读产物，且 origin/main 通过 python3 progress/progress.py check --live。
-- **Evidence**: `PENDING`
+- **Outcome**: 按用户「日常使用必现问题不再逐条手工验收」决定，基于已合入 PR #708 的最新 `origin/main`（`a9b4dc8`）重装签名版 `/Applications/Koe.app`（CDHash `4a1f8ba3e558659b04205ca0900eda082b2cbc7e`）直接投入日常使用；关闭 `#662` 与 `#461`、`#549` 等过时或不再逐条人工跑的旧真机工单，保留非显性工程项与安全/双路边界单继续推进。
+- **Done Predicate**: `./scripts/install-macos.sh` 安装签名版并通过 `--verify-self` / `--smoke-test`，批量清理过时/冗余真机工单，且 `./scripts/pstack-relay status --require-all-done` 与 `python3 progress/progress.py check` 通过。
+- **Evidence**: installed `/Applications/Koe.app` from `a9b4dc8` (CDHash `4a1f8ba3e558659b04205ca0900eda082b2cbc7e`, `--verify-self` & `--smoke-test` PASS); closed `#662`, `#461`, `#549` and redundant device-test issues
 
 ### [x] Slice ULD: 浅色版剩余弹窗验收
 - **Outcome**: 核验连接引导、审核编辑弹窗、全天听记演示与退出面板浅色配色，更新 #654。
