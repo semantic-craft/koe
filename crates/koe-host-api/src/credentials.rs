@@ -2,8 +2,10 @@ use koe_runtime::credentials::{CredentialError, CredentialStore};
 use std::ffi::{c_char, c_void, CStr, CString};
 
 /// Synchronous platform credential callback. Operations are read=0, create=1,
-/// delete=2, read legacy=3, authorize=4. Return 0 on success, 1 when missing,
-/// or -1 on failure. Successful reads/creates write a terminated UTF-8 result.
+/// delete=2, read legacy=3, authorize=4, prepare=5. Prepare returns a fresh
+/// reference without storage I/O; create writes the item at that reference and
+/// echoes it. Return 0 on success, 1 when missing, or -1 on failure. Successful
+/// reads/prepares/creates write a terminated UTF-8 result.
 /// The callback must not reenter the host API or retain borrowed pointers.
 pub type KoeCredentialCallback =
     unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *mut c_char, usize) -> i32;
@@ -53,8 +55,14 @@ impl CredentialStore for PlatformCredentials {
     fn read(&mut self, reference: &str) -> Result<Option<String>, CredentialError> {
         self.call(0, reference, "")
     }
-    fn create(&mut self, secret: &str) -> Result<String, CredentialError> {
-        self.call(1, "", secret)?.ok_or(CredentialError)
+    fn prepare(&mut self, secret: &str) -> Result<String, CredentialError> {
+        self.call(5, "", secret)?.ok_or(CredentialError)
+    }
+    fn create(&mut self, reference: &str, secret: &str) -> Result<(), CredentialError> {
+        match self.call(1, reference, secret)? {
+            Some(created) if created == reference => Ok(()),
+            _ => Err(CredentialError),
+        }
     }
     fn delete(&mut self, reference: &str) -> Result<(), CredentialError> {
         self.call(2, reference, "").map(|_| ())

@@ -90,25 +90,24 @@ impl KoeRuntime {
         }
         if authorize {
             let configuration = self.workspace().provider_configuration();
+            let reclaimable = configuration
+                .retired_credentials
+                .iter()
+                .chain(&configuration.pending_credentials)
+                .next()
+                .cloned();
             let target = match &configuration.credential {
                 CredentialBinding::Saved(reference) if self.settings.unavailable => {
                     Some(Some(reference.clone()))
                 }
-                _ if !configuration.retired_credentials.is_empty() => {
-                    Some(configuration.retired_credentials.first().cloned())
-                }
+                _ if reclaimable.is_some() => Some(reclaimable.clone()),
                 CredentialBinding::Saved(reference) => Some(Some(reference.clone())),
                 CredentialBinding::Uninitialized => Some(None),
                 CredentialBinding::Cleared => None,
             };
             if let Some(reference) = target {
                 if self.credentials.authorize(reference.as_deref()).is_err() {
-                    if !reference.as_ref().is_some_and(|r| {
-                        self.workspace()
-                            .provider_configuration()
-                            .retired_credentials
-                            .contains(r)
-                    }) {
+                    if reference.is_none() || reference != reclaimable {
                         self.settings.key.clear();
                         self.settings.unavailable = true;
                     }
@@ -168,40 +167,64 @@ impl KoeRuntime {
         );
         Ok(())
     }
+    /// Records the new reference before creating its item, so termination at
+    /// any point leaves either a committed binding or a reclaimable reference.
     fn save_credential(
         &mut self,
         mut configuration: ProviderConfiguration,
         key: &str,
     ) -> Result<(), String> {
-        let reference = self.credentials.create(key).map_err(|_| STORAGE_ERROR)?;
-        if !valid_reference(&reference) {
+        let candidate = self.credentials.prepare(key).map_err(|_| STORAGE_ERROR)?;
+        if !valid_reference(&candidate) {
             self.settings.unavailable = true;
             self.settings.key.clear();
             return Err(STORAGE_ERROR.into());
         }
-        if self.credentials.read(&reference).ok().flatten().as_deref() != Some(key) {
-            let _ = self.credentials.delete(&reference);
+        let mut staged = self.workspace().provider_configuration().clone();
+        staged.pending_credentials.push(candidate.clone());
+        self.commit(|w| w.configure_provider(staged))?;
+        let created = self.credentials.create(&candidate, key).is_ok()
+            && self.credentials.read(&candidate).ok().flatten().as_deref() == Some(key);
+        if !created {
+            self.discard_pending(&candidate);
             return Err(STORAGE_ERROR.into());
         }
         if let CredentialBinding::Saved(previous) = &configuration.credential {
             configuration.retired_credentials.push(previous.clone());
         }
-        configuration.credential = CredentialBinding::Saved(reference.clone());
+        configuration.pending_credentials = self
+            .workspace()
+            .provider_configuration()
+            .pending_credentials
+            .iter()
+            .filter(|r| **r != candidate)
+            .cloned()
+            .collect();
+        configuration.credential = CredentialBinding::Saved(candidate.clone());
         if let Err(error) = self.store.transact(|w| w.configure_provider(configuration)) {
             if matches!(
                 error,
                 StoreError::CommitUncertain(_) | StoreError::Unavailable
             ) {
+                // The binding may be on disk; reopening decides from durable truth.
                 self.settings.key.clear();
                 self.settings.unavailable = true;
             } else {
-                let _ = self.credentials.delete(&reference);
+                self.discard_pending(&candidate);
             }
             return Err(error.to_string());
         }
         self.settings.key = key.into();
         self.settings.unavailable = false;
         Ok(())
+    }
+    /// Best effort; a reference whose deletion is unconfirmed stays recorded.
+    fn discard_pending(&mut self, candidate: &str) {
+        if self.credentials.delete(candidate).is_ok() {
+            let mut configuration = self.workspace().provider_configuration().clone();
+            configuration.pending_credentials.retain(|r| r != candidate);
+            let _ = self.commit(|w| w.configure_provider(configuration));
+        }
     }
     pub(crate) fn clear_credential(&mut self) -> Result<(), String> {
         self.clear_credential_with_configuration(
@@ -226,25 +249,29 @@ impl KoeRuntime {
     }
     fn cleanup_credentials(&mut self) -> Result<(), String> {
         let mut configuration = self.workspace().provider_configuration().clone();
-        if configuration.retired_credentials.is_empty() {
+        if configuration.retired_credentials.is_empty()
+            && configuration.pending_credentials.is_empty()
+        {
             return Ok(());
         }
-        let mut retained = Vec::new();
+        let isolated = self.credentials.isolated();
         let mut failed = false;
-        for reference in &configuration.retired_credentials {
-            if self.credentials.isolated() && !reference.starts_with("isolated-") {
-                retained.push(reference.clone());
-                continue;
-            }
-            if self.credentials.delete(reference).is_err() {
-                retained.push(reference.clone());
-                failed = true;
-            }
+        for references in [
+            &mut configuration.retired_credentials,
+            &mut configuration.pending_credentials,
+        ] {
+            references.retain(|reference| {
+                if isolated && !reference.starts_with("isolated-") {
+                    return true;
+                }
+                let retained = self.credentials.delete(reference).is_err();
+                failed |= retained;
+                retained
+            });
         }
-        configuration.retired_credentials = retained;
         self.commit(|w| w.configure_provider(configuration))?;
         if failed {
-            Err("配置已保存，但旧安全凭据尚未删除；重试读取安全配置可继续清理。".into())
+            Err("配置已保存，但旧的或未使用的安全凭据尚未删除；重试读取安全配置可继续清理。".into())
         } else {
             Ok(())
         }
