@@ -238,7 +238,17 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
-        for (id, title) in [("today", "模式选择"), ("voice_input", "语音输入"), ("notes", "随心记"), ("tasks", "行动"), ("live_minutes", "实时纪要"), ("ask", "问 Koe"), ("records", "所有记录"), ("settings", "设置")] {
+        for (id, title) in [
+            ("today", "模式选择"),
+            ("notes", "随心闪记"),
+            ("all_day", "全天听记"),
+            ("live_minutes", "实时纪要"),
+            ("voice_input", "语音输入"),
+            ("ask", "问 AI"),
+            ("records", "所有记录"),
+            ("tasks", "行动"),
+            ("settings", "设置")
+        ] {
             let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = id
@@ -286,7 +296,8 @@ struct KoeNativeSceneApp: App {
             KoeWorkspaceRootView(
                 store: appDelegate.ensureSessionStore(),
                 onImport: { appDelegate.files.importFile() },
-                onExport: { appDelegate.files.exportRecord($0) }
+                onExport: { appDelegate.files.exportRecord($0) },
+                onExportWorkspace: { appDelegate.files.exportWorkspace($0) }
             )
             .onAppear {
                 KoeWindowPresenter.presentPrimaryWorkspaceWindow()

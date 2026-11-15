@@ -22,13 +22,23 @@ impl KoeRuntime {
             return Err("全天听记已在运行".into());
         }
         match source {
-            "microphone" => self.start_microphone(input_id, false, None, now)?,
+            "microphone" => {
+                if self.active_companion_mode() == CompanionRoutingMode::CollarStandby {
+                    self.set_voice_input_session(false, false, now)?;
+                }
+                self.start_microphone(input_id, false, None, now)?;
+            }
             "bean" => {
                 if self.microphone.is_some() {
                     return Err("请先结束 Mac 录音".into());
                 }
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
+                }
+                if self.active_companion_mode() == CompanionRoutingMode::CollarStandby
+                    && !self.companion.standby_stream_owned
+                {
+                    self.set_voice_input_session(false, false, now)?;
                 }
                 self.ensure_device_idle()?;
                 let outcome = self.device.session.start_realtime_recording_with_options(

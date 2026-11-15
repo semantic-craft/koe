@@ -145,10 +145,13 @@ impl KoeRuntime {
                 format!("{}（重新转写）", record.title),
                 record.aggregate.created_at_epoch_sec,
                 record.aggregate.duration_ms,
+                record.mode,
+                record.project.clone(),
+                record.all_day.clone(),
             ))
         };
         let retry_id;
-        let id = if let Some((new_id, title, created, duration)) = retry {
+        let id = if let Some((new_id, title, created, duration, mode, project, all_day)) = retry {
             let audio = std::fs::read(recording_assets::audio_path(&self.root, id)?)
                 .map_err(|e| format!("无法读取原始音频：{e}"))?;
             recording_assets::save_audio(&self.root, &new_id, &audio)?;
@@ -160,7 +163,15 @@ impl KoeRuntime {
                     0,
                     created,
                     duration,
-                )
+                )?;
+                w.set_record_mode(&new_id, mode)?;
+                if let Some(proj) = project.as_deref() {
+                    w.set_record_project(&new_id, Some(proj))?;
+                }
+                if let Some(seg) = all_day {
+                    w.group_all_day(&new_id, seg)?;
+                }
+                Ok(())
             })?;
             self.open_record(&new_id, None)?;
             self.notice = Some("正在完整转写新副本，原记录和来源引用仍保留".into());

@@ -98,5 +98,6 @@ fn insert_dictation_record(
         0,
         created_at,
         0,
-    )
+    )?;
+    workspace.set_record_mode(id, RecordMode::Dictation)
 }

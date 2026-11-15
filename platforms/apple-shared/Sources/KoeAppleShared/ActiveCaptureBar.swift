@@ -30,9 +30,18 @@ extension CaptureMode {
 }
 
 extension HostSessionStore {
-    func startCapture(_ mode: CaptureMode) {
-        send("start_capture_mode", ["mode": mode.rawValue])
+    public func startCapture(_ mode: CaptureMode, stayOnPage: Bool = false) {
+        send("start_capture_mode", ["mode": mode.rawValue, "stayOnPage": stayOnPage])
         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+    }
+
+    public func performCaptureAction(_ action: CaptureAction) {
+        if action == .resume {
+            NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
+        } else {
+            send("capture_action", ["action": action.rawValue])
+            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+        }
     }
 }
 
@@ -63,7 +72,7 @@ struct ActiveCaptureBar: View {
                 }
             }
             ForEach(capture.actions, id: \.self) { action in
-                KoeActionButton(actionTitle(action)) { perform(action) }
+                KoeActionButton(actionTitle(action)) { store.performCaptureAction(action) }
             }
         }
         .padding(.horizontal, 22).padding(.vertical, 10)
@@ -93,15 +102,6 @@ struct ActiveCaptureBar: View {
         case .endDictation: "结束语音输入"
         case .retrySave: "重试保存"
         case .cancel: "取消录音"
-        }
-    }
-
-    private func perform(_ action: CaptureAction) {
-        if action == .resume {
-            NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
-        } else {
-            store.send("capture_action", ["action": action.rawValue])
-            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
         }
     }
 }

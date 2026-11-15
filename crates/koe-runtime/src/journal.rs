@@ -64,7 +64,12 @@ impl KoeRuntime {
             && !self.store.requires_reopen()
     }
 
-    pub(super) fn start_capture_mode(&mut self, mode: CaptureMode, now: u64) -> Result<(), String> {
+    pub(super) fn start_capture_mode(
+        &mut self,
+        mode: CaptureMode,
+        stay_on_page: bool,
+        now: u64,
+    ) -> Result<(), String> {
         if mode == CaptureMode::Dictation && self.can_start_dictation_in_all_day() {
             self.set_source_dictation(self.capture_dictation_source(), true);
             return Ok(());
@@ -72,6 +77,11 @@ impl KoeRuntime {
         let selection = self.capture_selection();
         if !self.can_start_capture_mode(&selection) {
             return Err("当前无法开始记录，请检查录音音源或结束当前记录".into());
+        }
+        if mode != CaptureMode::Dictation
+            && self.active_companion_mode() == CompanionRoutingMode::CollarStandby
+        {
+            self.set_voice_input_session(false, false, now)?;
         }
         let bean = selection.source == "bean";
         if mode == CaptureMode::AllDay {
@@ -94,15 +104,20 @@ impl KoeRuntime {
             self.set_source_dictation(self.capture_dictation_source(), true);
         }
         if mode == CaptureMode::Meeting {
-            self.live_minutes_scope = Some(if let Some(mic) = &self.microphone {
-                crate::live_minutes::LiveMinutesScope::Record(mic.current_record_id().to_owned())
+            let scope = if let Some(mic) = &self.microphone {
+                let rec_id = mic.current_record_id().to_owned();
+                self.selected_live_minutes_record = Some(rec_id.clone());
+                crate::live_minutes::LiveMinutesScope::Record(rec_id)
             } else {
                 crate::live_minutes::LiveMinutesScope::BeanStarting
-            });
-            self.go(Location {
-                page: Page::LiveMinutes,
-                ..Location::default()
-            });
+            };
+            self.live_minutes_scope = Some(scope);
+            if !stay_on_page {
+                self.go(Location {
+                    page: Page::LiveMinutes,
+                    ..Location::default()
+                });
+            }
         }
         Ok(())
     }
@@ -156,7 +171,7 @@ impl KoeRuntime {
         }
     }
 
-    fn can_start_capture_mode(&self, selection: &CaptureSelection) -> bool {
+    pub(super) fn can_start_capture_mode(&self, selection: &CaptureSelection) -> bool {
         selection.can_start && self.all_day.run.is_none() && self.bean_capture_mode.is_none()
     }
 

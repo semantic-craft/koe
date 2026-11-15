@@ -68,6 +68,8 @@ impl ProductWorkspace {
                 aggregate,
                 title,
                 origin,
+                mode: RecordMode::QuickNote,
+                project: None,
                 analysis: AnalysisState::Idle,
                 live_summary: AnalysisState::Idle,
                 content_revision: 0,
@@ -115,7 +117,44 @@ impl ProductWorkspace {
             return Err(ProductError::InvalidEvidence);
         }
         record.all_day = Some(segment);
+        record.mode = RecordMode::AllDay;
         self.changed();
+        Ok(())
+    }
+
+    /// Updates the workspace mode attributed to a live recording.
+    pub fn set_record_mode(&mut self, id: &str, mode: RecordMode) -> Result<(), ProductError> {
+        let record = self
+            .records
+            .get_mut(id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        if record.all_day.is_some() && mode != RecordMode::AllDay {
+            return Err(ProductError::InvalidTransition);
+        }
+        if record.mode != mode {
+            record.mode = mode;
+            self.changed();
+        }
+        Ok(())
+    }
+
+    /// Assigns or clears the normalized QuickNote project name on a live recording.
+    pub fn set_record_project(
+        &mut self,
+        id: &str,
+        project: Option<&str>,
+    ) -> Result<(), ProductError> {
+        let record = self
+            .records
+            .get_mut(id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        let normalized = normalize_project(project)?;
+        if record.project != normalized {
+            record.project = normalized;
+            self.changed();
+        }
         Ok(())
     }
 
@@ -481,6 +520,15 @@ impl ProductWorkspace {
 }
 
 impl ProductRecord {
+    /// Returns `true` when this recording is a live, non-archived `QuickNote` in the inbox (`project.is_none()`).
+    #[must_use]
+    pub const fn is_quick_note_inbox(&self) -> bool {
+        matches!(self.mode, RecordMode::QuickNote)
+            && self.project.is_none()
+            && self.is_live()
+            && !self.is_archived()
+    }
+
     fn require_pending(&self, key: &RequestKey, stage: AnalysisStage) -> Result<(), ProductError> {
         if matches!(&self.analysis, AnalysisState::Pending { key: current, stage: actual } if current == key && *actual == stage)
         {
@@ -617,6 +665,8 @@ impl ProductRecord {
             aggregate,
             title,
             origin,
+            mode: RecordMode::QuickNote,
+            project: None,
             analysis,
             live_summary: AnalysisState::Idle,
             content_revision,

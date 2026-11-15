@@ -13,7 +13,7 @@ public struct LiveMinutesSnapshot: Codable, Equatable, Sendable {
     }
 
     public enum Phase: String, Codable, Sendable {
-        case starting, recording, paused, finishing, ended
+        case idle, starting, recording, paused, finishing, ended
     }
 
     public struct Part: Codable, Equatable, Identifiable, Sendable {

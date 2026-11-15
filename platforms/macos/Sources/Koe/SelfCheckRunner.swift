@@ -34,6 +34,16 @@ public enum KoeSelfCheckRunner {
         guard store.snapshot.section == "capture", store.snapshot.canGoBack == true else { return fail("navigate capture") }
         store.send("back")
         guard store.snapshot.section == "today" else { return fail("navigate back from capture") }
+        guard store.snapshot.workspaces != nil else { return fail("mode workspaces projection") }
+        for modeSection in ["notes", "all_day", "live_minutes", "voice_input", "today"] {
+            store.send("navigate", ["section": modeSection])
+            guard store.snapshot.section == modeSection,
+                  store.snapshot.device.companionMode == "disabled",
+                  store.snapshot.activeCapture == nil,
+                  store.drainHostActions().isEmpty else {
+                return fail("pure navigation \(modeSection)")
+            }
+        }
         store.send("create_note", [
             "title": "Architecture review",
             "text": "Keep recording ownership in Rust. The native host renders snapshots.\nVerify speaker merge and reversible inline edits."
@@ -126,6 +136,11 @@ public enum KoeSelfCheckRunner {
         store.send("save_memory", ["recordId": detail.id, "segmentId": segment.id])
         guard let memory = store.snapshot.memories.first else { store.shutdown(); return fail("save memory") }
         store.send("review_item", ["itemId": memory.id, "decision": "accept"])
+        store.send("set_record_project", ["recordId": detail.id, "project": "自检项目"])
+        guard store.snapshot.workspaces?.quickNote.inboxCount == 0 else {
+            store.shutdown()
+            return fail("set record project inbox count")
+        }
         store.send("set_companion_mode", ["mode": "meeting_and_collar"])
         store.send("set_ble_auto_connect", ["enabled": false])
         store.shutdown()
@@ -133,6 +148,7 @@ public enum KoeSelfCheckRunner {
         defer { restored.shutdown() }
         restored.send("select_record", ["recordId": detail.id])
         guard restored.snapshot.records.count == 1,
+              restored.snapshot.records.first?.project == "自检项目",
               restored.snapshot.detail?.segments == detail.segments,
               restored.snapshot.memories.contains(where: { $0.id == memory.id && $0.state == "accepted" }),
               restored.snapshot.device.companionMode == "meeting_and_collar",

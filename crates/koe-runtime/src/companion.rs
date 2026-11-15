@@ -258,9 +258,12 @@ pub(crate) struct CompanionRuntime {
     external_pcm: Option<ExternalPcmLease>,
     pub epoch: String,
     pub sequence: u64,
+    pub forwarded_audio_frames: u64,
     pub capture_active: bool,
     pub auto_gate: bool,
+    pub bridge_subscribers: usize,
     pub manual_gate_subscribers: usize,
+    pub last_dictation_text: Option<String>,
     pub armed: bool,
     pub standby_stream_owned: bool,
     pub active_standby_file_id: Option<u32>,
@@ -286,9 +289,12 @@ impl Default for CompanionRuntime {
             external_pcm: None,
             epoch: generate_uuid_v4(),
             sequence: 0,
+            forwarded_audio_frames: 0,
             capture_active: false,
             auto_gate: true,
+            bridge_subscribers: 0,
             manual_gate_subscribers: 0,
+            last_dictation_text: None,
             armed: false,
             standby_stream_owned: false,
             active_standby_file_id: None,
@@ -322,6 +328,15 @@ impl CompanionRuntime {
     }
 
     fn push_event(&mut self, event: CompanionStreamEvent) {
+        match &event {
+            CompanionStreamEvent::TranscriptFinal { text, .. } if !text.trim().is_empty() => {
+                self.last_dictation_text = Some(text.clone());
+            }
+            CompanionStreamEvent::AudioPcm16 { .. } => {
+                self.forwarded_audio_frames = self.forwarded_audio_frames.saturating_add(1);
+            }
+            _ => {}
+        }
         if self.events.len() >= MAX_COMPANION_EVENTS {
             self.events.pop_front();
         }
@@ -407,16 +422,34 @@ impl KoeRuntime {
         self.companion.auto_gate = enabled;
     }
 
+    /// Registers an active companion stream subscriber across any subscription policy.
+    pub fn acquire_companion_subscriber(&mut self) {
+        self.companion.bridge_subscribers = self.companion.bridge_subscribers.saturating_add(1);
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    /// Unregisters a disconnected companion stream subscriber.
+    pub fn release_companion_subscriber(&mut self) {
+        self.companion.bridge_subscribers = self.companion.bridge_subscribers.saturating_sub(1);
+        self.generation = self.generation.saturating_add(1);
+    }
+
     /// Acquires a scoped manual capture-gate lease for a subscriber with `autoGate == false`.
     pub fn acquire_companion_manual_gate(&mut self) {
         self.companion.manual_gate_subscribers =
             self.companion.manual_gate_subscribers.saturating_add(1);
+        self.generation = self.generation.saturating_add(1);
     }
 
     /// Releases a scoped manual capture-gate lease when a subscriber disconnects.
     pub fn release_companion_manual_gate(&mut self) {
         self.companion.manual_gate_subscribers =
             self.companion.manual_gate_subscribers.saturating_sub(1);
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    pub(crate) fn has_external_pcm_lease(&self) -> bool {
+        self.companion.external_pcm.is_some()
     }
 
     fn effective_companion_auto_gate(&self) -> bool {
@@ -442,6 +475,7 @@ impl KoeRuntime {
             owner,
             capture: None,
         });
+        self.generation = self.generation.saturating_add(1);
         true
     }
 
@@ -456,6 +490,7 @@ impl KoeRuntime {
             self.companion.tail_holdback.clear();
             self.companion.capture_active = false;
             self.companion.external_pcm = None;
+            self.generation = self.generation.saturating_add(1);
         }
     }
 
@@ -713,6 +748,7 @@ impl KoeRuntime {
         if reconnected {
             self.companion.epoch = generate_uuid_v4();
             self.companion.sequence = 0;
+            self.companion.forwarded_audio_frames = 0;
             if let Some(lease) = &mut self.companion.external_pcm {
                 lease.capture = None;
             }

@@ -71,10 +71,12 @@ public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let archived: Bool
     public var runId: String? = nil
     public var ordinal: UInt64? = nil
+    public var mode: String? = nil
+    public var project: String? = nil
     public var isTranscribing: Bool { status == "转写中" || status == "等待转写" }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAtEpochSec, durationMs, source, status, segmentCount, preview, archived, runId, ordinal
+        case id, title, createdAtEpochSec, durationMs, source, status, segmentCount, preview, archived, runId, ordinal, mode, project
     }
 }
 
@@ -92,6 +94,8 @@ extension RecordSnapshot {
         archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
         runId = try c.decodeIfPresent(String.self, forKey: .runId)
         ordinal = try c.decodeIfPresent(UInt64.self, forKey: .ordinal)
+        mode = try c.decodeIfPresent(String.self, forKey: .mode)
+        project = try c.decodeIfPresent(String.self, forKey: .project)
     }
 }
 
@@ -109,6 +113,8 @@ public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let source: String
     public let status: String
     public let archived: Bool
+    public var mode: String? = nil
+    public var project: String? = nil
     public let segments: [SegmentSnapshot]
     public let summary: [SummarySnapshot]
     public let highlights: [SourceSnapshot]
@@ -120,19 +126,20 @@ public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let speakers: [SpeakerSummarySnapshot]
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAtEpochSec, durationMs, source, status, archived
+        case id, title, createdAtEpochSec, durationMs, source, status, archived, mode, project
         case segments, summary, highlights, audioPath, canRetranscribe, isProcessing
         case minutesStale, canEditTranscript, speakers
     }
 
     public init(id: String, title: String, createdAtEpochSec: UInt64, durationMs: UInt64,
-                source: String, status: String, archived: Bool = false, segments: [SegmentSnapshot],
+                source: String, status: String, archived: Bool = false, mode: String? = nil,
+                project: String? = nil, segments: [SegmentSnapshot],
                 summary: [SummarySnapshot], highlights: [SourceSnapshot], audioPath: String? = nil,
                 canRetranscribe: Bool = false, isProcessing: Bool = false, minutesStale: Bool = false,
                 canEditTranscript: Bool = false, speakers: [SpeakerSummarySnapshot] = []) {
         self.id = id; self.title = title; self.createdAtEpochSec = createdAtEpochSec; self.durationMs = durationMs
-        self.source = source; self.status = status; self.archived = archived; self.segments = segments
-        self.summary = summary; self.highlights = highlights; self.audioPath = audioPath
+        self.source = source; self.status = status; self.archived = archived; self.mode = mode; self.project = project
+        self.segments = segments; self.summary = summary; self.highlights = highlights; self.audioPath = audioPath
         self.canRetranscribe = canRetranscribe; self.isProcessing = isProcessing
         self.minutesStale = minutesStale; self.canEditTranscript = canEditTranscript; self.speakers = speakers
     }
@@ -148,6 +155,8 @@ extension RecordDetailSnapshot {
         source = try c.decode(String.self, forKey: .source)
         status = try c.decode(String.self, forKey: .status)
         archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        mode = try c.decodeIfPresent(String.self, forKey: .mode)
+        project = try c.decodeIfPresent(String.self, forKey: .project)
         segments = try c.decode([SegmentSnapshot].self, forKey: .segments)
         summary = try c.decode([SummarySnapshot].self, forKey: .summary)
         highlights = try c.decode([SourceSnapshot].self, forKey: .highlights)
@@ -356,6 +365,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public var voiceInput: VoiceInputSnapshot = .empty
     public var captureModes: [CaptureModeSnapshot] = []
     public var activeCapture: ActiveCaptureSnapshot? = nil
+    public var workspaces: ModeWorkspacesSnapshot? = nil
     public let version: UInt32
     public let generation: UInt64
     public let section: String
@@ -379,7 +389,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case localAsr, liveCaption, liveMinutes, speech, allDay, dictation
-        case journal, captureModes, activeCapture, voiceInput
+        case journal, captureModes, activeCapture, voiceInput, workspaces
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records, todayRecordIds
         case trashRecords, undoTrash, detail, tasks, memories, ask
@@ -422,6 +432,7 @@ extension HostSnapshot {
         voiceInput = try c.decodeIfPresent(VoiceInputSnapshot.self, forKey: .voiceInput) ?? .empty
         captureModes = try c.decodeIfPresent([CaptureModeSnapshot].self, forKey: .captureModes) ?? []
         activeCapture = try c.decodeIfPresent(ActiveCaptureSnapshot.self, forKey: .activeCapture)
+        workspaces = try c.decodeIfPresent(ModeWorkspacesSnapshot.self, forKey: .workspaces)
         version = try c.decode(UInt32.self, forKey: .version)
         generation = try c.decode(UInt64.self, forKey: .generation)
         section = try c.decode(String.self, forKey: .section)

@@ -10,9 +10,9 @@
       },
       {
         "number": 588,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T01:27:49Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:57Z"
       },
       {
         "number": 594,
@@ -28,9 +28,9 @@
       },
       {
         "number": 598,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T07:05:59Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:29Z"
       },
       {
         "number": 602,
@@ -70,9 +70,9 @@
       },
       {
         "number": 612,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T09:40:33Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:52Z"
       },
       {
         "number": 615,
@@ -82,9 +82,9 @@
       },
       {
         "number": 616,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T10:13:03Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:50Z"
       },
       {
         "number": 619,
@@ -136,9 +136,9 @@
       },
       {
         "number": 641,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-11T14:27:08Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:48Z"
       },
       {
         "number": 644,
@@ -148,9 +148,9 @@
       },
       {
         "number": 645,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-12T07:11:38Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:45Z"
       },
       {
         "number": 652,
@@ -172,9 +172,9 @@
       },
       {
         "number": 655,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-12T15:24:17Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:43Z"
       },
       {
         "number": 657,
@@ -190,9 +190,9 @@
       },
       {
         "number": 662,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-14T18:18:48Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:41Z"
       },
       {
         "number": 665,
@@ -208,9 +208,9 @@
       },
       {
         "number": 668,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-13T11:34:32Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-15T01:46:39Z"
       },
       {
         "number": 671,
@@ -241,9 +241,15 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-13T15:25:12Z"
+      },
+      {
+        "number": 711,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-15T04:36:52Z"
       }
     ],
-    "main": "27d0c099cc22e7b1145d09fdf93ee7e22fc197de",
+    "main": "f5000651042fb2e781795ccac7544bb674c5c5bf",
     "open_pulls": [],
     "pulls": [
       {
@@ -522,7 +528,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-14T18:27:15.523133Z",
+  "observed_at": "2026-11-15T04:38:14.566053Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -570,15 +576,45 @@
         {
           "evidence": [
             {
+              "kind": "issue",
+              "note": "独立真机验收工单，保持开放未验。",
+              "ref": 711
+            },
+            {
+              "kind": "file",
+              "note": "Runtime 解耦侧栏导航与统一 workspaces 投影。",
+              "ref": "crates/koe-runtime/src/mode_workspaces.rs"
+            },
+            {
+              "kind": "file",
+              "note": "随心闪记收件箱/项目归类、原文对照 AI 理解与自定义 Markdown 导出。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/QuickNoteWorkspaceView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "全天听记跨切片事件、暂停与未录音空档时间轴及集中复查。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/AllDayWorkspaceView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "实时纪要三项覆盖率指标、往期会议回看与响应式分栏。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "语音输入六步联动检查与伴侣流感知光标输入测试。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/VoiceInputView.swift"
+            },
+            {
               "kind": "note",
               "note": "仅证明Responsay软件交付；不证明Koe新业务页面或物理效果。",
               "ref": "https://github.com/semantic-craft/responsay-macos/pull/823"
             }
           ],
           "id": "mode-workspaces-pages",
-          "next": "按单个可验证业务切片实施。",
-          "status": "planned",
-          "summary": "项目归类、跨片段语义事件、完整实时纪要覆盖和跨App快捷键设置回执仍待实现。Responsay键家族开关软件已经独立合并并签名安装。",
+          "next": "在签名安装的 /Applications/Koe.app 上配合物理 D3200 与 Responsay 完成四工作区真机交互验收（#711）。",
+          "status": "unverified",
+          "summary": "已实现随心闪记（收件箱/项目归类与原文对照 AI 理解）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议切换）、语音输入（六步联动检查与伴侣流感知测试框）、侧栏纯导航及所有记录按模式/收件箱筛选，并通过 Rust/Swift 测试与自检门禁；真机交互待单独验收。",
           "title": "正式四工作区业务页面"
         },
         {
@@ -1711,7 +1747,8 @@
       675,
       678,
       685,
-      687
+      687,
+      711
     ],
     "pulls": [
       589,

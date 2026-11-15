@@ -141,6 +141,10 @@ struct ImportedSummaryDto {
 #[serde(deny_unknown_fields)]
 struct RecordDto {
     #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
     speech_engine: Option<String>,
     #[serde(default)]
     speech_model_id: Option<String>,
@@ -509,6 +513,8 @@ impl RecordDto {
     fn from_record(record: &ProductRecord) -> Self {
         let a = &record.aggregate;
         Self {
+            mode: Some(record.mode.as_str().to_owned()),
+            project: record.project.clone(),
             speech_engine: record.speech_engine.as_ref().map(|e| e.as_str().into()),
             speech_model_id: match &record.speech_engine {
                 Some(SpeechEngine::Downloaded(id)) => Some(id.clone()),
@@ -701,13 +707,42 @@ impl RecordDto {
             None => None,
             _ => return Err(invalid("invalid speech engine")),
         };
-        record.all_day = match (self.all_day_run_id, self.all_day_ordinal) {
+        let parsed_mode = match self.mode.as_deref() {
+            Some(raw_mode) => {
+                Some(RecordMode::parse(raw_mode).ok_or_else(|| invalid("invalid recording mode"))?)
+            }
+            None => None,
+        };
+        let project = match self.project {
+            None => None,
+            Some(raw_project) => {
+                if raw_project.chars().any(char::is_control) {
+                    return Err(invalid("invalid project name"));
+                }
+                let trimmed = raw_project.trim();
+                if trimmed.is_empty() {
+                    None
+                } else if trimmed.chars().count() > MAX_PROJECT_NAME_CHARS {
+                    return Err(invalid("project name exceeds maximum length"));
+                } else {
+                    Some(trimmed.to_owned())
+                }
+            }
+        };
+        let all_day = match (self.all_day_run_id, self.all_day_ordinal) {
             (Some(run_id), Some(ordinal)) if !run_id.is_empty() && ordinal > 0 => {
                 Some(AllDaySegment { run_id, ordinal })
             }
             (None, None) => None,
             _ => return Err(invalid("invalid all-day grouping")),
         };
+        record.mode = if all_day.is_some() {
+            RecordMode::AllDay
+        } else {
+            parsed_mode.unwrap_or(RecordMode::QuickNote)
+        };
+        record.project = project;
+        record.all_day = all_day;
         record.restore_retention(retention);
         Ok(record)
     }

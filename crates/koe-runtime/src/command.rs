@@ -7,6 +7,7 @@ pub(crate) enum Page {
     Today,
     VoiceInput,
     Notes,
+    AllDay,
     Capture,
     Records,
     Detail,
@@ -25,6 +26,21 @@ pub(crate) enum CaptureMode {
     AllDay,
     Meeting,
     Dictation,
+}
+
+impl CaptureMode {
+    pub(crate) const fn to_record_mode(self) -> koe_engine::product::RecordMode {
+        match self {
+            Self::QuickNote => koe_engine::product::RecordMode::QuickNote,
+            Self::AllDay => koe_engine::product::RecordMode::AllDay,
+            Self::Meeting => koe_engine::product::RecordMode::Meeting,
+            Self::Dictation => koe_engine::product::RecordMode::Dictation,
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -55,8 +71,16 @@ pub(crate) struct CaptureTiming {
 )]
 pub(crate) enum Command {
     PrepareVoiceInput,
+    SetVoiceInputSession {
+        enabled: bool,
+        #[serde(default)]
+        open_responsay: bool,
+    },
+    OpenResponsayApp,
     StartCaptureMode {
         mode: CaptureMode,
+        #[serde(default)]
+        stay_on_page: bool,
     },
     CaptureAction {
         action: CaptureAction,
@@ -182,10 +206,28 @@ pub(crate) enum Command {
     CreateNote {
         title: String,
         text: String,
+        #[serde(default)]
+        stay_on_page: bool,
     },
     RenameRecord {
         record_id: String,
         title: String,
+    },
+    SetRecordProject {
+        record_id: String,
+        #[serde(default)]
+        project: Option<String>,
+    },
+    SelectQuickNoteRecord {
+        #[serde(default)]
+        record_id: Option<String>,
+    },
+    SelectAllDayDate {
+        date: String,
+    },
+    SelectLiveMinutesRecord {
+        #[serde(default)]
+        record_id: Option<String>,
     },
     SetRecordArchived {
         record_id: String,
@@ -205,6 +247,17 @@ pub(crate) enum Command {
     ExportRecord {
         record_id: String,
         path: String,
+    },
+    ExportWorkspaceMarkdown {
+        #[serde(default)]
+        record_id: Option<String>,
+        #[serde(default)]
+        date: Option<String>,
+        path: String,
+        #[serde(default = "default_true")]
+        include_analysis: bool,
+        #[serde(default = "default_true")]
+        include_sources: bool,
     },
     ReviewItem {
         item_id: String,

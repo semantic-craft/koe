@@ -312,7 +312,7 @@ fn prepare_voice_input_preserves_records_and_restores_standby_without_capture() 
     let navigated = command(&mut runtime, json!({"type":"navigate","section":"voice_input"}));
     assert!(navigated["error"].is_null(), "{}", navigated["error"]);
     assert_eq!(navigated["section"], "voice_input");
-    assert_eq!(runtime.drain_host_actions_json(), r#"[{"type":"open_responsay"}]"#);
+    assert_eq!(runtime.drain_host_actions_json(), "[]");
     drop(runtime);
     let reopened = KoeRuntime::open(&dir.0).unwrap();
     assert_eq!(
@@ -321,4 +321,41 @@ fn prepare_voice_input_preserves_records_and_restores_standby_without_capture() 
     );
     assert_eq!(reopened.snapshot(1800000000)["device"]["autoConnect"], true);
     assert_eq!(reopened.workspace().records().len(), 1);
+}
+
+#[test]
+fn bean_meeting_and_standby_dictation_stamp_record_modes() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.device.session.session_key = Some([1; 32]);
+    let started = command(
+        &mut runtime,
+        json!({"type":"start_capture_mode","mode":"meeting","stayOnPage":true}),
+    );
+    assert_eq!(started["section"], "today");
+    runtime
+        .device
+        .captures
+        .push_back(koe_engine::session::CaptureEvent::Started { file_id: 91 });
+    runtime.process_capture_events(1800000005).unwrap();
+    let live_id = runtime.captures.active.get(&91).cloned().unwrap();
+    assert_eq!(
+        runtime.workspace().record(&live_id).unwrap().mode,
+        RecordMode::Meeting
+    );
+
+    let dict_dir = Sandbox::new();
+    let mut dict_rt = KoeRuntime::open(&dict_dir.0).unwrap();
+    dict_rt.last_now_sec = 1800000010;
+    dict_rt.companion.standby_stream_owned = true;
+    dict_rt.set_source_dictation(crate::speech::DictationSource::Standby, true);
+    dict_rt.capture_standby_dictation(&vec![100_i16; 320]);
+    dict_rt.finish_standby_dictation().unwrap();
+    let dict_rec = dict_rt
+        .workspace()
+        .records()
+        .values()
+        .find(|r| r.aggregate.recording_id.starts_with("dictation-"))
+        .unwrap();
+    assert_eq!(dict_rec.mode, RecordMode::Dictation);
 }

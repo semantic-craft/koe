@@ -890,3 +890,137 @@ fn persisted_legacy_coarse_place_and_selected_format_load_cleanly_and_omit_on_sa
     );
     assert_eq!(record.highlighted_segments.len(), 1);
 }
+
+#[test]
+fn record_mode_and_project_roundtrip_and_legacy_fallback_on_reopen() {
+    let dir = Directory::new();
+    {
+        let mut store = ProductStore::open(&dir.0).unwrap();
+        store
+            .transact(|w| {
+                w.insert_record(
+                    "rec-qn".into(),
+                    "闪记项目卡".into(),
+                    RecordOrigin::Note,
+                    0,
+                    1_800_100_000,
+                    0,
+                )?;
+                w.set_record_project("rec-qn", Some("  Koe 工作区  "))?;
+
+                w.insert_record(
+                    "rec-meeting".into(),
+                    "周会纪要".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    1_800_100_100,
+                    30_000,
+                )?;
+                w.set_record_mode("rec-meeting", RecordMode::Meeting)?;
+
+                w.insert_record(
+                    "rec-dictation".into(),
+                    "语音输入片段".into(),
+                    RecordOrigin::Bean,
+                    12,
+                    1_800_100_200,
+                    5_000,
+                )?;
+                w.set_record_mode("rec-dictation", RecordMode::Dictation)?;
+
+                w.insert_record(
+                    "rec-allday".into(),
+                    "全天分段".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    1_800_100_300,
+                    300_000,
+                )?;
+                w.group_all_day(
+                    "rec-allday",
+                    AllDaySegment {
+                        run_id: "run-persist".into(),
+                        ordinal: 1,
+                    },
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    let reopened = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        reopened.workspace().record("rec-qn").unwrap().mode,
+        RecordMode::QuickNote
+    );
+    assert_eq!(
+        reopened
+            .workspace()
+            .record("rec-qn")
+            .unwrap()
+            .project
+            .as_deref(),
+        Some("Koe 工作区")
+    );
+    assert_eq!(
+        reopened.workspace().record("rec-meeting").unwrap().mode,
+        RecordMode::Meeting
+    );
+    assert_eq!(
+        reopened.workspace().record("rec-dictation").unwrap().mode,
+        RecordMode::Dictation
+    );
+    assert_eq!(
+        reopened.workspace().record("rec-allday").unwrap().mode,
+        RecordMode::AllDay
+    );
+    drop(reopened);
+
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let baseline = fs::read_to_string(&json_path).unwrap();
+
+    let mut legacy_json: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    for rec in legacy_json["records"].as_array_mut().unwrap() {
+        let obj = rec.as_object_mut().unwrap();
+        obj.remove("mode");
+        obj.remove("project");
+    }
+    fs::write(&json_path, serde_json::to_string(&legacy_json).unwrap()).unwrap();
+
+    let legacy_reopened = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        legacy_reopened.workspace().record("rec-qn").unwrap().mode,
+        RecordMode::QuickNote
+    );
+    assert!(legacy_reopened
+        .workspace()
+        .record("rec-qn")
+        .unwrap()
+        .is_quick_note_inbox());
+    assert_eq!(
+        legacy_reopened
+            .workspace()
+            .record("rec-allday")
+            .unwrap()
+            .mode,
+        RecordMode::AllDay
+    );
+    drop(legacy_reopened);
+
+    let mut bad_mode: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    bad_mode["records"][0]["mode"] = serde_json::json!("bogus_mode");
+    fs::write(&json_path, serde_json::to_string(&bad_mode).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+
+    let mut bad_project: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    bad_project["records"][0]["project"] =
+        serde_json::json!("项".repeat(MAX_PROJECT_NAME_CHARS + 1));
+    fs::write(&json_path, serde_json::to_string(&bad_project).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+}

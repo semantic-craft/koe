@@ -136,6 +136,7 @@ impl KoeRuntime {
         }
         let id = format!("live-{file_id}-{now}-{}", self.workspace().revision() + 1);
         let group = self.all_day_group("bean");
+        let bean_mode = self.bean_capture_mode;
         self.commit(|w| {
             w.insert_record(
                 id.clone(),
@@ -147,11 +148,19 @@ impl KoeRuntime {
             )?;
             if let Some(group) = &group {
                 w.group_all_day(&id, group.clone())?;
+            } else if let Some(cm) = bean_mode {
+                w.set_record_mode(&id, cm.to_record_mode())?;
             }
             Ok(())
         })?;
-        if group.is_none() && self.bean_capture_mode == Some(command::CaptureMode::Meeting) {
-            self.live_minutes_scope = Some(crate::live_minutes::LiveMinutesScope::Record(id.clone()));
+        if group.is_none() {
+            if bean_mode == Some(command::CaptureMode::Meeting) {
+                self.live_minutes_scope =
+                    Some(crate::live_minutes::LiveMinutesScope::Record(id.clone()));
+                self.selected_live_minutes_record = Some(id.clone());
+            } else if bean_mode == Some(command::CaptureMode::QuickNote) {
+                self.selected_quick_note_record = Some(id.clone());
+            }
         }
         self.captures.active.insert(file_id, id.clone());
         self.captures.records_by_file_id.insert(file_id, id.clone());

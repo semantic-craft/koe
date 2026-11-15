@@ -33,7 +33,7 @@ impl KoeRuntime {
             };
             json!({"id":record.aggregate.recording_id,"title":record.title,
                 "createdAtEpochSec":record.aggregate.created_at_epoch_sec,"durationMs":duration_ms,
-                "source":origin(record.origin),"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"segmentCount":record.aggregate.spine.len(),
+                "source":origin(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"segmentCount":record.aggregate.spine.len(),
                 "preview":preview,"archived":record.is_archived()})
         }).collect();
         let today_ids: Vec<_> = records
@@ -264,12 +264,21 @@ impl KoeRuntime {
         });
         let microphone = self.microphone_status();
         let capture_selection = self.capture_selection();
+        let workspaces = self.mode_workspaces_json(
+            now,
+            &records,
+            live_record_id,
+            live_duration_ms,
+            microphone.as_ref(),
+            &capture_selection,
+        );
         json!({"voiceInput":self.voice_input_json(),"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
             "journal":crate::journal::journal_json(now, &records, &today_ids),
             "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
             "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
+            "workspaces":workspaces,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
             "device":device_json,
             "localAsr":{"state":self.local_asr.state,"message":self.local_asr.message},
@@ -317,7 +326,7 @@ impl KoeRuntime {
             .flat_map(|m| &m.summaries)
             .filter(|s| s.record_id == aggregate.recording_id)
         {
-            summary.push(json!({"title":format!("旧版纪要（未验证来源） · {}", imported.slot),"text":imported.text,"sources":[]}));
+            summary.push(json!({"title":format!("旧版纪要（未验证来源） {}", imported.slot),"text":imported.text,"sources":[]}));
         }
         summary.extend(self.minutes_sections(record).iter().map(|section| json!(section)));
         let mut highlighted = record.highlighted_segments.clone();
@@ -353,7 +362,7 @@ impl KoeRuntime {
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
         json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":duration_ms,"source":origin(record.origin),"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
+            "durationMs":duration_ms,"source":origin(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
             "minutesStale":record.is_minutes_stale(),"canEditTranscript":self.can_edit_record(&aggregate.recording_id),
             "captureLanes":capture_lanes,"summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})

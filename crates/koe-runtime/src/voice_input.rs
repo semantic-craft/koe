@@ -10,7 +10,7 @@ pub(super) enum HostAction {
 }
 
 impl KoeRuntime {
-    fn ensure_voice_input_available(&self) -> Result<(), String> {
+    pub(super) fn ensure_voice_input_available(&self) -> Result<(), String> {
         if self.microphone.is_some()
             || self.all_day.run.is_some()
             || self.is_bean_meeting_recording()
@@ -23,21 +23,45 @@ impl KoeRuntime {
         Ok(())
     }
 
-    pub(super) fn prepare_voice_input(&mut self, now: u64) -> Result<(), String> {
-        self.ensure_voice_input_available()?;
-        self.commit(|workspace| {
-            workspace.set_companion_mode(CompanionRoutingMode::CollarStandby);
-            workspace.set_ble_auto_connect(true);
+    pub(super) fn set_voice_input_session(
+        &mut self,
+        enabled: bool,
+        open_responsay: bool,
+        now: u64,
+    ) -> Result<(), String> {
+        if enabled {
+            self.ensure_voice_input_available()?;
+            self.commit(|workspace| {
+                workspace.set_companion_mode(CompanionRoutingMode::CollarStandby);
+                workspace.set_ble_auto_connect(true);
+                Ok(())
+            })?;
+            self.apply_companion_mode(CompanionRoutingMode::CollarStandby, now)?;
+            if open_responsay {
+                self.open_responsay_app();
+            }
             Ok(())
-        })?;
-        self.apply_companion_mode(CompanionRoutingMode::CollarStandby, now)?;
+        } else {
+            self.commit(|workspace| {
+                workspace.set_companion_mode(CompanionRoutingMode::Disabled);
+                Ok(())
+            })?;
+            self.apply_companion_mode(CompanionRoutingMode::Disabled, now)
+        }
+    }
+
+    pub(super) fn open_responsay_app(&mut self) {
+        if !self.host_actions.contains(&HostAction::OpenResponsay) {
+            self.host_actions.push(HostAction::OpenResponsay);
+        }
+    }
+
+    pub(super) fn prepare_voice_input(&mut self, now: u64) -> Result<(), String> {
+        self.set_voice_input_session(true, true, now)?;
         self.go(Location {
             page: Page::VoiceInput,
             ..Location::default()
         });
-        if !self.host_actions.contains(&HostAction::OpenResponsay) {
-            self.host_actions.push(HostAction::OpenResponsay);
-        }
         Ok(())
     }
 
@@ -75,7 +99,7 @@ impl KoeRuntime {
             "正在准备录音豆"
         };
         json!({
-            "sourceLabel": self.device.device_name.as_deref().unwrap_or("soundcore Work · 待连接"),
+            "sourceLabel": self.device.device_name.as_deref().unwrap_or("soundcore Work 待连接"),
             "canPrepare": unavailable.is_none() && !self.is_quitting() && !self.store.requires_reopen(),
             "deviceStatus": status,
             "message": unavailable.as_deref().unwrap_or(if ready {
