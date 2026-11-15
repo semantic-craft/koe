@@ -13,9 +13,9 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-Anker soundcore Work (D3200) packs hardware encryption, physical gesture flags, and long battery life into a tiny wearable pill, yet vendor software locks it inside Feishu and a cloud black box. Meanwhile, open-source projects have solved pieces of this problem in isolation: reverse engineering the D3200 protocol, keeping wearable pulls crash-safe, structuring all-day voice memories, grounding meeting minutes, and splitting a pure-Rust core from a native Apple UI.
+Koe lets your Anker soundcore Work (D3200) recorder run standalone on macOS, independent of Feishu and cloud accounts. It brings direct hardware pull, local transcription, personal memory, and structured meeting notes together in one local-first desktop app.
 
-**Koe brings those proven pieces together into one disciplined local-first core.** Rust owns the BLE protocol, audio assets, BM25 retrieval, citation checks, and workspace persistence, while SwiftUI renders a fast "one day, one page" macOS app. Even with zero cloud API keys configured, recording, offline transcription, playback, editing, and local search work out of the box.
+**Koe builds on proven ideas across the open-source ecosystem with a clear product philosophy of its own.** A pure-Rust core handles the BLE protocol, audio custody, BM25 retrieval, citation checks, and workspace persistence, paired with a native SwiftUI "one day, one page" interface. Even with zero cloud API keys configured, recording, offline transcription, playback, editing, and local search work out of the box.
 
 ## Four workspace modes for daily work
 
@@ -36,7 +36,7 @@ Three guarantees govern daily review across all four modes:
 
 ## Getting full value from Anker soundcore Work (D3200)
 
-Instead of treating wearable hardware as a generic microphone, Koe implements the D3200 BLE protocol and audio pipeline directly in Rust:
+Koe talks to the D3200 directly over BLE rather than treating it as a passive microphone, bringing its hardware encryption, slice-aligned resume, and physical gestures into daily desktop workflows:
 
 1. **No classic Bluetooth pairing, Feishu, or Anker cloud auth.** CoreBluetooth connects directly to service UUID `020cf5da-0000-1000-8000-00805f9b34fb` without OS classic pairing or Anker license servers. An outbound queue enforces 300 ms command pacing and packet chunking.
 2. **In-process NIST P-256 ECDH and AES-256-CTR decryption.** Inside a `#![forbid(unsafe_code)]` Rust engine, Koe runs ephemeral P-256 key exchange (`0x2E/0x01`), RFC 5869 HKDF-SHA256 session key derivation, `soundcored3200` file-key verification, and T-table AES-256-CTR stream decryption with zero heap allocations per frame.
@@ -46,21 +46,28 @@ Instead of treating wearable hardware as a generic microphone, Koe implements th
 
 > **Hardware channel status.** [PROTOCOL.md](PROTOCOL.md) documents Wi-Fi SoftAP fast transfer, Classic Bluetooth SPP, firmware OTA, device time sync, and binding commands observed during reverse engineering, and those paths are **not wired** in Koe today. All transfers run over BLE GATT, and firmware updates stay in the vendor app. Long offline cloud pulls, standby battery endurance, and Bluetooth headset coexistence have active real-device checks.
 
-## Standing on open-source shoulders: what Koe kept, improved, and cut
+## Design principles and open-source foundations
 
-Every core subsystem in Koe builds on prior open-source ideas with explicit credit, targeted fixes, and deliberate scope cuts:
+Four design principles shape how Koe works:
 
-| Reference project | Core strength adopted | How Koe adapted and improved it | Intentionally excluded or not yet wired |
-| --- | --- | --- | --- |
-| **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple UI four-layer split | Versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private Unix socket bridge so GUI, CLI, and MCP share one live runtime | iOS and Android hosts remain future milestones |
-| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | Reverse-engineered D3200 BLE protocol notes and Dart implementation | Ported to memory-safe Rust state machines, fixed `166 * N` resume alignment, and added double-tap flag parsing and custody locks | Wi-Fi SoftAP and Classic SPP remain unwired |
-| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Disconnect WAL custody and review confirmation cards | Made disk custody receipts a hard prerequisite for device file deletion, and wired `Proposed / Accepted / Dismissed` cards to a single-writer ledger and 16 MCP tools | No cloud app store, social feeds, or multi-user cloud accounts |
-| **[screenpipe](https://github.com/screenpipe/screenpipe)** | Timeline aggregation and global live subtitle bar | `LiveCaptionBar` reads directly from Rust `SpeechSession` snapshots for both D3200 and Mac mic input | **Explicitly removed** 24/7 screen recording, desktop OCR, and vision models to stay audio-only |
-| **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day memory segments, multi-mode workspaces, citation self-healing, and optimistic locking | Implemented four workspace modes, 5-minute segments, `RequestKey` stale-overwrite protection, and `relabel_citations` | Uses fixed 5-minute slices today. VAD silence splitting, CAM++ speaker ID, and 21-day calendar disambiguation are not wired |
-| **[Shiyin](https://github.com/juinwei7/Shiyin)** | CoreAudio mic + system audio capture and structured templates | Added an inaudible `-100 dBFS` Barker-13 canary probe plus OS permission-window inspection to detect macOS system-audio grants reliably, coordinated by a Rust dual-lane timeline | Earlier pyannote offline diarization is absent from the Rust build. Real-device system-audio permission and listening checks remain open |
-| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | Structured topic/decision/action JSON schema and strict anti-fabrication rules | Added deterministic `validate_minutes_grounding` checks in Rust that reject missing citations, invalid segment IDs, or ungrounded glossary `heard` corrections | Keeps one unified schema plus custom sections instead of bundling dozens of niche templates |
-| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | Embedded CPU offline ASR runtime and pinned model manifest | Runs SenseVoice Small (~253 MB) and Qwen3 ASR 0.6B (~850 MB) in-process with streaming SHA-256 checks, atomic install, and RAII cleanup on abort | CPU backend only today. GPU/ANE acceleration and larger Whisper models are not bundled |
-| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | Symlink traversal guards and bounded live-minutes pacing | Added `reject_symlink_path` checks before reads and writes, plus 3-segment/20s initial and 45s debounced live-minutes scheduling | Moved text polishing out of Koe to external IMEs so Koe's stored transcript stays verbatim |
+- **Audio-focused and unobtrusive.** Koe stays centered on voice capture, transcription, daily review, and follow-up actions with a light footprint.
+- **Local single-writer source of truth.** Audio assets, verbatim transcripts, and review decisions live on disk under one writer. Edits latch `original_text`, and AI notes always point back to spoken segments rather than altering them.
+- **Hardware details brought into daily flow.** Encrypted BLE pull, 166-byte resume alignment, double-tap markers, and tap-thump gating fit together in one desktop pipeline.
+- **Composable local boundaries.** Koe exposes an owner-private Unix socket and MCP tools so external input methods handle text polish while AI agents collaborate against verified local records.
+
+Koe's architecture draws inspiration from open-source projects in this space. We preserve full attribution in the repository and combine their ideas into one unified Rust and SwiftUI implementation:
+
+| Reference project | Inspiration for Koe | How Koe implemented and extended it |
+| --- | --- | --- |
+| **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple UI four-layer split | Versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private Unix socket bridge so GUI, CLI, and MCP share one live runtime |
+| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | Reverse-engineered D3200 BLE protocol notes and Dart implementation | Ported to memory-safe Rust state machines, aligned offline pulls to exact `166 * N` byte boundaries, and added double-tap flag parsing and telemetry polling |
+| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Disconnect WAL custody and review confirmation cards | Made disk custody receipts a hard prerequisite for device file deletion, and wired `Proposed / Accepted / Dismissed` cards to a single-writer ledger and 16 MCP tools |
+| **[screenpipe](https://github.com/screenpipe/screenpipe)** | Timeline aggregation and global live subtitle bar | Wired `LiveCaptionBar` directly to Rust `SpeechSession` snapshots for both D3200 and Mac microphone input |
+| **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day memory segments, multi-mode workspaces, citation self-healing, and optimistic locking | Implemented four workspace modes, 5-minute segments, `RequestKey` stale-overwrite protection, and `relabel_citations` |
+| **[Shiyin](https://github.com/juinwei7/Shiyin)** | CoreAudio mic + system audio capture and structured templates | Added an inaudible `-100 dBFS` Barker-13 canary probe plus OS permission-window inspection to detect macOS system-audio grants reliably, coordinated by a Rust dual-lane timeline |
+| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | Structured topic/decision/action JSON schema and anti-fabrication rules | Added deterministic `validate_minutes_grounding` checks in Rust that reject missing citations, invalid segment IDs, or ungrounded glossary `heard` corrections |
+| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | Embedded CPU offline ASR runtime and pinned model manifest | Runs SenseVoice Small (~253 MB) and Qwen3 ASR 0.6B (~850 MB) in-process with streaming SHA-256 checks, atomic install, and RAII cleanup on abort |
+| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | Symlink traversal guards and bounded live-minutes pacing | Added `reject_symlink_path` checks before reads and writes, plus 3-segment/20s initial and 45s debounced live-minutes scheduling connected to external IMEs |
 
 ## Practical reliability and privacy boundaries
 
@@ -112,7 +119,7 @@ Koe keeps implemented, CI-tested, and real-hardware-pending items clearly separa
 | --- | --- |
 | **Implemented and passing CI / local gates** | 8-crate Rust core, D3200 BLE handshake/slice-resume/custody logic, 4-mode SwiftUI workspaces, offline GGUF and Apple SpeechAnalyzer (macOS 26+) integration, CoreAudio dual-lane timeline and canary probe code, BM25 retrieval and minutes grounding gate, 16 MCP tools, and local Unix bridge. |
 | **Code merged, pending real-device or account verification** | Long D3200 offline pulls with paid cloud ASR ([#588](https://github.com/semantic-craft/koe/issues/588)), collar standby endurance and A2DP headset hot-plugging ([#641](https://github.com/semantic-craft/koe/issues/641)), real macOS system-audio permission dialogs and output switching, routine signed-app Keychain inheritance on upgrade, and end-to-end physical hardware + IME daily acceptance ([#668](https://github.com/semantic-craft/koe/issues/668)). |
-| **Explicitly out of current scope** | iOS and Android hosts, Wi-Fi SoftAP transfer and firmware OTA, VAD silence segmentation, local speaker diarization, 24/7 screen capture, multi-device sync, and external calendar writeback. |
+| **Future scope (not wired today)** | iOS and Android hosts, Wi-Fi SoftAP transfer and firmware OTA, VAD silence segmentation, local speaker diarization, screen capture, multi-device sync, and external calendar writeback. |
 
 ## Architecture and documentation
 

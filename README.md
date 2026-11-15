@@ -13,9 +13,9 @@
 
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-安克 soundcore Work（D3200）是一颗做工紧凑、带本地加密和实体手势的录音豆，但原厂软件把它绑在飞书与云端流程里。另一边，开源社区已经攒下许多优秀轮子：有人逆向出了 D3200 协议，有人打磨出穿戴设备的断线防丢机制，有人做出了全天候个人记忆或本地会议纪要，也有人验证了 Rust 内核加原生界面的低内存路线。
+安克 soundcore Work（D3200）是一颗做工紧凑、带本地加密和实体手势的录音豆。Koe 让它脱离飞书与云端账号，直接在 macOS 上运行，将硬件取回、音频处理、个人记忆与会议整理收拢进同一套本地优先桌面应用。
 
-**Koe 没有重新发明一套玩具，而是把这些经过实践验证的工程方案收拢进同一个严谨的底座。** 它用纯 Rust 管理协议、音频资产、离线检索、证据校验与状态持久化，用原生 SwiftUI 呈现「一天一页」的工作区。哪怕不配任何云端 API Key，录音、离线转写、播放、修订与本地检索也能照常工作。
+**Koe 的工程灵感来自多个优秀的开源项目，并在统一底座上形成了自己的设计取向。** 我们用纯 Rust 内核管理协议、音频资产、离线检索、证据校验与状态持久化，用原生 SwiftUI 呈现「一天一页」的界面。哪怕不配任何云端 API Key，录音、离线转写、播放、修订与本地检索也能照常工作。
 
 ## 四种工作区与日常流程
 
@@ -36,7 +36,7 @@
 
 ## 充分发挥 Anker soundcore Work（D3200）硬件能力
 
-很多同类软件只把录音硬件当成普通外置麦克风。Koe 在纯 Rust 内核里完整实现了 D3200 的私有 BLE 协议与音频管线，把这颗录音豆本身的设计潜力直接拉满：
+在 Koe 里，D3200 不只充当普通麦克风。我们在纯 Rust 内核里完整实现了它的私有 BLE 协议与音频管线，把硬件本身的加密、断点续传和手势能力都带进桌面日常：
 
 1. **免系统配对、免飞书与免厂商云鉴权。** Mac 通过 CoreBluetooth 扫描 D3200 服务 UUID `020cf5da-0000-1000-8000-00805f9b34fb` 直连控制与通知通道，不走系统经典蓝牙绑定，也不经过 Anker 云端鉴权服务器；发送队列内置 300 ms 节流与分包切片，保证长包下发稳定。
 2. **全套 NIST P-256 ECDH 与 AES-256-CTR 硬件加密解密。** 在 `#![forbid(unsafe_code)]` 的纯 Rust 引擎内完成临时 P-256 密钥协商、RFC 5869 HKDF-SHA256 会话密钥派生、`soundcored3200` 文件密钥前缀验证，以及基于预计算 T-table 的 AES-256-CTR 零分配流式解密。
@@ -46,21 +46,28 @@
 
 > **硬件通道现状说明。** [PROTOCOL.md](PROTOCOL.md) 中也记录了逆向所得的 Wi-Fi SoftAP 快传、经典蓝牙 SPP、固件 OTA、时间同步与设备绑定命令，但这些通道目前**尚未接入** Koe，当前全部通过 BLE GATT 完成传输且不负责固件升级。长文件云端拉取、领口待命功耗与蓝牙耳机热插拔共存正在对应真机工单中持续验收。
 
-## 博采众长与主动取舍
+## 设计理念与开源致谢
 
-Koe 的每一个关键设计几乎都能在开源社区找到灵感源头。我们不仅在代码中保留完整署名，也对每个借鉴做了针对性的改良和克制取舍：
+在设计 Koe 时，我们围绕四条原则组织整个应用：
 
-| 参考项目 | 吸收的核心长处 | Koe 的改良与工程落地 | 明确不采纳或暂未接入的部分 |
-| --- | --- | --- | --- |
-| **[msime](https://github.com/metasequoiaime/msime)** | 纯 Rust 内核 + 全原生 Apple 宿主的四层分离架构 | 通过版本化 C ABI v2 与 `catch_unwind` 隔离 panic，SwiftUI 只渲染带单调 `generation` 的不可变快照；额外补出私有 Unix Socket 桥让 App、CLI 与 MCP 共享同一活体状态 | iOS 与 Android 移动宿主留待后续扩展 |
-| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | 安克 D3200 BLE 协议逆向文档与 Dart 实现 | 完整移植为内存安全的纯 Rust 状态机；修正 `166 * N` 分片断点续传对齐，补充双击标志解析与安全删档约束 | Wi-Fi SoftAP 与 SPP 通道暂不启用 |
-| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | 穿戴设备断线托管 WAL 哲学与待办/记忆确认卡 | 把托管凭证做成硬性删档前置锁；将 `Proposed / Accepted / Dismissed` 三态审核接入本地单写者账本与 16 项 MCP 工具 | 不做云端 App Store、社交分享与多端云账号体系 |
-| **[screenpipe](https://github.com/screenpipe/screenpipe)** | 按时间轴聚合上下文与全局实时字幕条 | `LiveCaptionBar` 直接由 Rust `SpeechSession` 状态快照驱动，麦克风与录音豆同源刷新 | **明确剔除** 24/7 屏幕录制、桌面 OCR 与视觉大模型管道，只做轻量纯音频 |
-| **[TaoSheng（涛声）](https://github.com/0xCoach/TaoSheng)** | 全天分段记忆、多模式工作区、问答引用自愈与并发乐观锁 | 落地四模式工作区、5 分钟分段流水线、`RequestKey` 防过期覆盖与 `relabel_citations` 引用重标 | 固定 5 分钟切段，VAD 静音切段、CAM++ 本地声纹与 21 天日历消歧暂未接入 |
-| **[Shiyin（拾音）](https://github.com/juinwei7/Shiyin)** | CoreAudio 麦克风与系统音频采集、结构化模板 | 自研 `-100 dBFS` Barker-13 无感探测信号配合系统弹窗窗口检测，在 macOS 无公开回调的情况下准确判定系统音频授权，Rust 统一管理双路稀疏时间轴与暂停代次 | 原型期试验的 pyannote 离线聚类未接入当前 Rust 构建；Mac 双路系统音频真机授权与听感仍在收尾 |
-| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | 议题/决策/行动项 JSON 结构与严格防编造指令 | 在 Rust 引擎层加装 `validate_minutes_grounding` 确定性门禁：缺原文引用、引用越界或专有名词纠错找不到原始听写词的纪要直接打回，不入库 | 未照搬几十款垂直模板，保留统一标准结构加动态自定义章节 |
-| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | 静态嵌入式离线 ASR 与校验模型清单 | 在 Rust 进程内直接托管 SenseVoice Small（约 253 MB）与 Qwen3 ASR 0.6B（约 850 MB），流式校验 SHA-256 后原子发布，下载中断自动清理残片 | 当前离线模型使用 CPU 后端，暂未开放 GPU/ANE 加速与大型 Whisper 模型 |
-| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | 文件路径安全校验与实时滚动纪要节奏 | 移植 `reject_symlink_path` 防符号链接越界读写；落地 3 句/20 秒首发、45 秒防抖的增量纪要调度与双栏视图 | 刻意把「原地文字润色」剥离给外部输入法，确保 Koe 内核只保存一字不差的客观原文 |
+- **纯音频与低打扰。** 专注语音采集、转写、回顾与行动，保持日常桌面运行轻量安静。
+- **本机单写者真相源。** 音频资产、逐字稿与审核结果以本地磁盘文件为唯一真相源；修订转写时保留 `original_text`，AI 纪要与问答只做引用叠加，不改写你说过的原话。
+- **把硬件细节带进桌面日常。** 从加密链路、分片续传到物理双击与敲击降噪，让录音豆的每一项硬件能力都有直接的软件配合。
+- **克制、可接线的工具边界。** 通过私有 Unix Socket 与 MCP 对接外部输入法与 AI Agent，让润色上屏、跨库检索和工具协作各司其职。
+
+Koe 的架构与诸多细节都受益于开源社区的多个项目。我们在代码中保留完整署名，并把各家所长结合进同一套 Rust 与 SwiftUI 实现：
+
+| 参考项目 | 启发 Koe 的灵感 | 在 Koe 中的工程落地与延伸 |
+| --- | --- | --- |
+| **[msime](https://github.com/metasequoiaime/msime)** | 纯 Rust 内核 + 全原生 Apple 宿主的四层分离架构 | 通过版本化 C ABI v2 与 `catch_unwind` 隔离 panic，SwiftUI 只渲染带单调 `generation` 的不可变快照，并补出私有 Unix Socket 桥让 App、CLI 与 MCP 共享同一活体状态 |
+| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | 安克 D3200 BLE 协议逆向文档与 Dart 实现 | 完整移植为内存安全的纯 Rust 状态机，按实测 166 字节分片对齐 `166 * N` 断点续传，并解析双击标志与状态遥测 |
+| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | 穿戴设备断线托管 WAL 与待办/记忆确认卡 | 把托管凭证做成硬性删档前置锁，将 `Proposed / Accepted / Dismissed` 三态审核接入本地单写者账本与 16 项 MCP 工具 |
+| **[screenpipe](https://github.com/screenpipe/screenpipe)** | 按时间轴聚合上下文与全局实时字幕条 | 让 `LiveCaptionBar` 直接由 Rust `SpeechSession` 状态快照驱动，麦克风与录音豆采集同源刷新 |
+| **[TaoSheng（涛声）](https://github.com/0xCoach/TaoSheng)** | 全天分段记忆、多模式工作区、问答引用自愈与并发乐观锁 | 落地四模式工作区、5 分钟分段流水线、`RequestKey` 防过期覆盖与 `relabel_citations` 引用重标 |
+| **[Shiyin（拾音）](https://github.com/juinwei7/Shiyin)** | CoreAudio 麦克风与系统音频采集、结构化纪要模板 | 配合 `-100 dBFS` Barker-13 无感探测信号与弹窗检测判定 macOS 系统音频授权，并由 Rust 统一管理双路稀疏时间轴与暂停代次 |
+| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | 议题/决策/行动项 JSON 结构与严格事实约束 | 在 Rust 引擎层加装 `validate_minutes_grounding` 确定性门禁，缺原文引用、引用越界或找不到原始听写词的纠错条目直接打回 |
+| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | 静态嵌入式离线 ASR 与模型校验清单 | 在 Rust 进程内托管 SenseVoice Small（约 253 MB）与 Qwen3 ASR 0.6B（约 850 MB），流式校验 SHA-256 后原子发布，中断时由 RAII 自动清理残片 |
+| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | 文件路径安全校验与实时滚动纪要节奏 | 移植 `reject_symlink_path` 防符号链接越界读写，落地 3 句/20 秒首发、45 秒防抖的增量纪要调度与双栏视图，并通过本地文字桥对接外部输入法 |
 
 ## 工程上的可靠性与隐私边界
 
@@ -112,7 +119,7 @@ swift build --package-path platforms/macos
 | --- | --- |
 | **已实现并通过 CI / 本地门禁** | Rust 8-crate 内核、D3200 BLE 连接/握手/分片续传/托管逻辑、四模式 SwiftUI 工作区、离线 GGUF 与 Apple SpeechAnalyzer（macOS 26+）接入、CoreAudio 双路时间轴与探针代码、BM25 检索与纪要引用门禁、16 项 MCP 工具与本地桥接。 |
 | **已实现代码，待真机/实名账号继续验收** | D3200 完整长录音离线拉取叠加付费云转写（[#588](https://github.com/semantic-craft/koe/issues/588)）、领口待命功耗与蓝牙耳机热插拔共存（[#641](https://github.com/semantic-craft/koe/issues/641)）、macOS 系统音频双路真实权限弹窗与输出设备切换听感、常规覆盖升级的 Keychain 静默继承、物理设备与输入法完整日常连跑（[#668](https://github.com/semantic-craft/koe/issues/668)）。 |
-| **明确暂未接入（后续规划）** | iOS / Android 移动宿主、Wi-Fi SoftAP 快传与固件 OTA、基于静音检测的 VAD 动态切段、本机离线声纹聚类、屏幕画面采集、多设备数据同步与外部日历回写。 |
+| **后续规划（当前未接入）** | iOS / Android 移动宿主、Wi-Fi SoftAP 快传与固件 OTA、基于静音检测的 VAD 动态切段、本机离线声纹聚类、屏幕画面采集、多设备数据同步与外部日历回写。 |
 
 ## 架构与文档
 
