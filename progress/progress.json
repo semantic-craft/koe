@@ -273,7 +273,7 @@
         "updated_at": "2026-11-16T15:31:13Z"
       }
     ],
-    "main": "42cfff25a02fbc5e0f7b11dd0ecbcbac7f46aba3",
+    "main": "b043f3a3b9439c837ebc82d4f6c325ef6be683c6",
     "open_pulls": [],
     "pulls": [
       {
@@ -731,9 +731,24 @@
         "merged": true,
         "number": 734,
         "state": "closed"
+      },
+      {
+        "base": "42cfff25a02fbc5e0f7b11dd0ecbcbac7f46aba3",
+        "head": "61424d8e49c7782105478f86332a6570d95e4bac",
+        "merge_commit": "b043f3a3b9439c837ebc82d4f6c325ef6be683c6",
+        "merged": true,
+        "number": 735,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 447432521,
+        "prerelease": false,
+        "published_at": "2026-11-16T18:33:56Z",
+        "tag": "v2.2.0"
+      },
       {
         "draft": false,
         "id": 446804077,
@@ -751,7 +766,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-16T18:25:49.762114Z",
+  "observed_at": "2026-11-16T18:38:23.525019Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1810,12 +1825,17 @@
               "kind": "release",
               "note": "本机 /Applications/Koe.app 已从正式公证发行包升级至 2.1.0 构建 10（CDHash 10fe6b57bbbd3e64c0555e8269583456c3c70b49，PID 40289），Gatekeeper 通过，68 条记录与 Keychain 授权完整保留，soundcore Work (63:9D) 自动重连并输出「录音豆 已连接」状态胶囊。",
               "ref": "v2.1.0"
+            },
+            {
+              "kind": "release",
+              "note": "基于 b043f3a 构建安装 Developer ID 签名版 /Applications/Koe.app 2.2.0 构建 11（CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，PID 62382），Designated Requirement 逐字节一致，--verify-self 与 --smoke-test 通过；koe status 读回 70 条记录与 21 条待办，mac-ax 验证模式切换卡片与设置导航；未运行 Apple Notary 公证（spctl 为 Unnotarized Developer ID）。",
+              "ref": "v2.2.0"
             }
           ],
           "id": "merge-install",
-          "next": "独立物理按键与热插拔手测继续按 #722、#725 追踪。",
+          "next": "独立物理按键、热插拔与手机控制权切回手测继续按 #722、#725、#731 追踪。",
           "status": "done",
-          "summary": "2026-11-16 本机 /Applications/Koe.app 已从正式 Apple Notary 公证发行包平滑升级至 2.1.0 构建 10（CDHash 10fe6b57bbbd3e64c0555e8269583456c3c70b49，运行 PID 40289），Designated Requirement 与旧版逐字节一致，Keychain 凭据静默继承，spctl 返回 Notarized Developer ID；既有 68 条闪记记录完整可见，soundcore Work (63:9D) 自动重连并实时投影「录音豆 已连接」胶囊与操作引导。",
+          "summary": "2026-11-17 本机 /Applications/Koe.app 已从 2.1.0（构建 10）平顺升级为 Developer ID 签名版 2.2.0（构建 11，CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，运行 PID 62382），Designated Requirement 逐字节保留；--verify-self 与 --smoke-test 通过，koe status 返回 70 条记录、21 条待办、localAsr ready、voiceInput companion_bridge（generation 4），mac-ax 验证「模式选择 / 已让出给手机 / Mac 使用 / 手机接管」四卡及设置导航正常。本机安装与私有发行包均已完成 Developer ID 签名，未提交 Apple Notary 公证（spctl 显示 Unnotarized Developer ID）。",
           "title": "本机签名安装"
         },
         {
@@ -2146,6 +2166,11 @@
         {
           "evidence": [
             {
+              "kind": "release",
+              "note": "私有 GitHub Release v2.2.0（tag 指向 b043f3a），arm64 zip、SHA256SUMS.txt 与 Koe-2.2.0-release-receipt.json 均已上传并完成下载 SHA-256 回读校验；zip SHA-256 8631eafac82e3f0a100ce5d8ea92adc3e049f02743c8277e1f2848cc679af3d2。",
+              "ref": "v2.2.0"
+            },
+            {
               "kind": "pull",
               "note": "Mac 到手机控制权切换与 HostAction 空壳清理（326ac6b）。",
               "ref": 732
@@ -2161,15 +2186,20 @@
               "ref": 734
             },
             {
+              "kind": "pull",
+              "note": "版本号升至 2.2.0（构建 11）与发布说明定稿（b043f3a）。",
+              "ref": 735
+            },
+            {
               "kind": "file",
               "note": "2.2.0 当前可用功能、未验收硬件边界与安装说明。",
               "ref": "docs/releases/v2.2.0.md"
             }
           ],
           "id": "private-release-220",
-          "next": "合并版本准备 PR 后打 tag v2.2.0、安装 Developer ID 签名版 /Applications/Koe.app、完成实机功能检验并发布私有 GitHub Release。",
-          "status": "in_progress",
-          "summary": "正在准备 Koe 2.2.0（构建 11）私有发行：合流 #732/#733/#734 的蓝牙控制权切换、死胶水清理与 Rust/SwiftUI 全栈指南加固，将在合并主线后执行完整签名安装与本机功能验收。",
+          "next": "独立物理硬件核对继续按 #722、#725 与 #731 追踪；如需跨机 Gatekeeper 免拦截分发，可另补 Apple Notary 公证。",
+          "status": "done",
+          "summary": "2026-11-17 已在私有仓库发布 v2.2.0（构建 11，tag 指向 b043f3a），提供 Developer ID 签名 arm64 zip、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 sign-macos.sh --verify-only、--verify-self 与 --smoke-test，GitHub Release 下载回读 SHA-256（8631eafac82e3f0a100ce5d8ea92adc3e049f02743c8277e1f2848cc679af3d2）一致，本机 /Applications/Koe.app（PID 62382）已完成实时数据与 UI 验收。未运行 Apple Notary 公证（spctl 为 Unnotarized Developer ID）。",
           "title": "Koe 2.2.0 私有发行包"
         }
       ],
@@ -2302,7 +2332,8 @@
       730,
       732,
       733,
-      734
+      734,
+      735
     ]
   }
 }
