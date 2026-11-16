@@ -265,9 +265,15 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-16T04:56:10Z"
+      },
+      {
+        "number": 731,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-16T15:31:13Z"
       }
     ],
-    "main": "5262789278e535d7eb78dc1a2e20792431d7d552",
+    "main": "42cfff25a02fbc5e0f7b11dd0ecbcbac7f46aba3",
     "open_pulls": [],
     "pulls": [
       {
@@ -693,6 +699,38 @@
         "merged": true,
         "number": 729,
         "state": "closed"
+      },
+      {
+        "base": "5262789278e535d7eb78dc1a2e20792431d7d552",
+        "head": "16bb5e97aa6701c73335489126d43d2776a0b226",
+        "merge_commit": "7277643b57c4082bc39879b5ceab47c6967820fe",
+        "merged": true,
+        "number": 730,
+        "state": "closed"
+      },
+      {
+        "base": "25045cd4d91db81842617101bab4644e4ce47ef0",
+        "head": "c11b41cc9b6bb8cab335b6c8ffb9c5f8e3ab4c61",
+        "merge_commit": "326ac6b43ffcc5c42c39b160ac41669773da5db6",
+        "merged": true,
+        "number": 732,
+        "state": "closed"
+      },
+      {
+        "base": "7277643b57c4082bc39879b5ceab47c6967820fe",
+        "head": "c58f3300311d73017b1b101776b44ff466292938",
+        "merge_commit": "25045cd4d91db81842617101bab4644e4ce47ef0",
+        "merged": true,
+        "number": 733,
+        "state": "closed"
+      },
+      {
+        "base": "326ac6b43ffcc5c42c39b160ac41669773da5db6",
+        "head": "c49c73667acb8c61353ef587168015543d2571d0",
+        "merge_commit": "42cfff25a02fbc5e0f7b11dd0ecbcbac7f46aba3",
+        "merged": true,
+        "number": 734,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -713,7 +751,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-16T10:05:32.404399Z",
+  "observed_at": "2026-11-16T18:25:49.762114Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2085,6 +2123,54 @@
           "status": "done",
           "summary": "2026-11-16 已在私有仓库发布 v2.1.0（构建 10），提供 Apple silicon Developer ID 时间戳签名包、SHA256SUMS 与无秘密验收回执。完整门禁、独立审查、Apple Notary 公证（Accepted，2671c580-1bea-4eb5-936f-f1b15b941edf）、票据装订与解压包 Gatekeeper（Notarized Developer ID）、verify-self、smoke-test 及 8 份许可证逐字节核对全部通过，回读下载哈希与发布哈希一致；本机已从正式发行包完成 /Applications/Koe.app 2.1.0（构建 10）平滑升级并验证记录、连接与权限保留。",
           "title": "Koe 2.1.0 私有发行包"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机核对工单，保持开放未验。",
+              "ref": 731
+            },
+            {
+              "kind": "pull",
+              "note": "Mac 到手机 BLE 控制权切换、Rust 守门与四端统一实现。",
+              "ref": 732
+            }
+          ],
+          "id": "phone-handoff-acceptance",
+          "next": "安装 2.2.0 签名版后按 #731 在实体 D3200 与 iPhone 飞书妙记之间实测切回与重连。",
+          "status": "unverified",
+          "summary": "首页「Mac 使用 / 手机接管」分段开关、状态栏菜单同步、Rust 离线拉取/录音守门与四端统一已在 PR #732 通过全量自动化门禁与多模型对抗复审；实体 D3200 与 iPhone 切回切换仍待物理硬件核对。",
+          "title": "Mac 到手机控制权切换真机核对"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "Mac 到手机控制权切换与 HostAction 空壳清理（326ac6b）。",
+              "ref": 732
+            },
+            {
+              "kind": "pull",
+              "note": "移除 external_pcm_v1 与 open_responsay（25045cd）。",
+              "ref": 733
+            },
+            {
+              "kind": "pull",
+              "note": "Rust FFI/panic 加固、SwiftUI 稳定标识与 CoreAudio/BLE 实时安全（42cfff2）。",
+              "ref": 734
+            },
+            {
+              "kind": "file",
+              "note": "2.2.0 当前可用功能、未验收硬件边界与安装说明。",
+              "ref": "docs/releases/v2.2.0.md"
+            }
+          ],
+          "id": "private-release-220",
+          "next": "合并版本准备 PR 后打 tag v2.2.0、安装 Developer ID 签名版 /Applications/Koe.app、完成实机功能检验并发布私有 GitHub Release。",
+          "status": "in_progress",
+          "summary": "正在准备 Koe 2.2.0（构建 11）私有发行：合流 #732/#733/#734 的蓝牙控制权切换、死胶水清理与 Rust/SwiftUI 全栈指南加固，将在合并主线后执行完整签名安装与本机功能验收。",
+          "title": "Koe 2.2.0 私有发行包"
         }
       ],
       "title": "验收与交付"
@@ -2156,7 +2242,8 @@
       711,
       722,
       723,
-      725
+      725,
+      731
     ],
     "pulls": [
       589,
@@ -2211,7 +2298,11 @@
       726,
       727,
       728,
-      729
+      729,
+      730,
+      732,
+      733,
+      734
     ]
   }
 }
