@@ -348,10 +348,6 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
     accept_windows(&mut r, "最后一句");
     r.poll_timers(0, 100);
     assert_eq!(r.snapshot(100)["allDay"]["state"], "idle");
-    assert!(
-        r.drain_companion_events().is_empty(),
-        "ordinary all-day recording must not emit dictation text"
-    );
     drop(r);
     let r = KoeRuntime::open(&d.0).unwrap();
     assert_eq!(r.workspace().records().len(), 2);
@@ -360,66 +356,6 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         .records()
         .values()
         .all(|v| v.all_day.is_some() && !v.aggregate.spine.is_empty()));
-}
-#[test]
-fn dictation_bridge_publishes_only_selected_persisted_finals_and_the_stop_tail() {
-    let d = Sandbox::new();
-    let mut r = KoeRuntime::open(&d.0).unwrap();
-    apple_ready(&mut r);
-    let s = send(
-        &mut r,
-        json!({"type":"start_microphone","inputId":"fixture"}),
-    );
-    let t = s["microphone"].clone();
-    microphone_started(&mut r, &t);
-    audio(&mut r, &t, 0, 320);
-    let first = accept_windows(&mut r, "")[0];
-    send(
-        &mut r,
-        json!({"type":"local_asr_result","operationId":first,"text":"普通录音","startMs":0,"endMs":20,"isFinal":true}),
-    );
-    assert!(r.drain_companion_events().is_empty());
-    send(&mut r, json!({"type":"set_dictation_active","active":true}));
-    accept_windows(&mut r, "普通录音");
-    audio(&mut r, &t, 1, 320);
-    let selected = accept_windows(&mut r, "")[0];
-    send(
-        &mut r,
-        json!({"type":"local_asr_result","operationId":selected,"text":"未定稿","startMs":0,"endMs":20,"isFinal":false}),
-    );
-    assert!(r.drain_companion_events().is_empty());
-    send(&mut r, json!({"type":"stop_microphone"}));
-    send(
-        &mut r,
-        json!({"type":"microphone_stopped","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":2}),
-    );
-    let path = d.0.join("product-workspace.json");
-    fs::rename(&path, d.0.join("saved.json")).unwrap();
-    fs::create_dir(&path).unwrap();
-    send(
-        &mut r,
-        json!({"type":"local_asr_result","operationId":selected,"text":"真正尾句","startMs":0,"endMs":20,"isFinal":true}),
-    );
-    assert!(r.drain_companion_events().is_empty());
-    send(
-        &mut r,
-        json!({"type":"local_asr_finished","operationId":selected}),
-    );
-    fs::remove_dir(&path).unwrap();
-    fs::rename(d.0.join("saved.json"), &path).unwrap();
-    r.poll_timers(0, 100);
-    assert_eq!(r.snapshot(100)["dictation"]["active"], false);
-    let events = r.drain_companion_events();
-    assert_eq!(events.len(), 1);
-    let e = serde_json::to_value(&events[0]).unwrap();
-    assert_eq!(e["event"], "transcript_final");
-    assert_eq!(e["text"], "真正尾句");
-    assert_eq!(e["dictation"], true);
-    assert_eq!(e["recordId"], t["recordId"]);
-    assert_eq!(e["startMs"], 20);
-    assert_eq!(e["endMs"], 40);
-    let raw = fs::read_to_string(path).unwrap();
-    assert!(raw.contains("真正尾句"));
 }
 #[test]
 fn interrupted_microphone_audio_is_recovered_and_only_local_unfinished_work_resumes() {
@@ -544,7 +480,7 @@ fn apple_waits_for_the_previous_window_tail_before_starting_the_next() {
         .any(|s| s.text == "前窗尾句"));
 }
 #[test]
-fn dictation_selection_does_not_publish_background_file_transcription() {
+fn background_file_transcription_does_not_leak_into_live_minutes() {
     let d = Sandbox::new();
     let mut r = KoeRuntime::open(&d.0).unwrap();
     apple_ready(&mut r);
@@ -553,7 +489,6 @@ fn dictation_selection_does_not_publish_background_file_transcription() {
     let file = d.0.join("audio.wav");
     fs::write(&file, bytes).unwrap();
     let s = send(&mut r, json!({"type":"import_file","path":file}));
-    send(&mut r, json!({"type":"set_dictation_active","active":true}));
     send(
         &mut r,
         json!({"type":"transcribe","recordId":s["selectedRecordId"]}),
@@ -581,7 +516,6 @@ fn dictation_selection_does_not_publish_background_file_transcription() {
         json!({"type":"local_asr_finished","operationId":op}),
     );
     assert_eq!(r.snapshot(100)["liveMinutes"]["parts"][0]["segments"], json!([]));
-    assert!(r.drain_companion_events().is_empty());
     assert_eq!(
         r.workspace()
             .record(s["selectedRecordId"].as_str().unwrap())
@@ -660,49 +594,4 @@ fn apple_file_backpressure_waits_for_native_completion_instead_of_filling_its_qu
     let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
     assert_eq!(effects.iter().filter(|e| e["kind"] == "start").count(), 1);
     assert!(!effects.iter().any(|e| e["kind"] == "cancel"));
-}
-
-#[test]
-fn standalone_dictation_publishes_words_after_microphone_resume() {
-    let d = Sandbox::new();
-    let mut r = KoeRuntime::open(&d.0).unwrap();
-    apple_ready(&mut r);
-    let started = send(&mut r, json!({"type":"start_capture_mode","mode":"dictation"}));
-    let mic = &started["microphone"];
-    send(&mut r, json!({"type":"microphone_prepared","recordId":mic["recordId"],"sessionId":mic["sessionId"],"epoch":0,"clockNs":1_000_000_000_u64}));
-    microphone_started(&mut r, mic);
-    send(&mut r, json!({"type":"capture_action","action":"pause"}));
-    let paused = send(&mut r, json!({"type":"microphone_paused","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":0,"epoch":0}));
-    assert_eq!(paused["dictation"]["active"], false);
-    let resumed = send(&mut r, json!({"type":"resume_microphone","clockNs":2_000_000_000_u64}));
-    assert_eq!(resumed["activeCapture"]["phase"], "recording");
-    let next_epoch = &resumed["microphone"]["epoch"];
-    let recorded = send(&mut r, json!({"type":"microphone_chunk","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":0,"samples":vec![100i16;320],"timing":{"epoch":next_epoch,"capturedStartNs":2_000_000_000_u64}}));
-    assert!(recorded["error"].is_null(), "{recorded}");
-    send(&mut r, json!({"type":"capture_action","action":"end"}));
-    send(&mut r, json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":1,"epoch":next_epoch}));
-    accept_windows(&mut r, "继续后的听写");
-    assert!(r.drain_companion_events().iter().any(|event| matches!(
-        event, koe_runtime::CompanionStreamEvent::TranscriptFinal { text, dictation: true, .. } if text == "继续后的听写"
-    )));
-}
-
-#[test]
-fn ending_all_day_delivers_the_selected_audio_while_the_microphone_drains() {
-    let d = Sandbox::new();
-    let mut r = KoeRuntime::open(&d.0).unwrap();
-    apple_ready(&mut r);
-    let started = send(&mut r, json!({"type":"start_capture_mode","mode":"all_day"}));
-    let mic = &started["microphone"];
-    microphone_started(&mut r, mic);
-    send(&mut r, json!({"type":"start_capture_mode","mode":"dictation"}));
-    send(&mut r, json!({"type":"capture_action","action":"end"}));
-    let tail = audio(&mut r, mic, 0, 320);
-    assert!(tail["error"].is_null(), "{tail}");
-    send(&mut r, json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":1}));
-    accept_windows(&mut r, "排空前的听写");
-    assert!(r.drain_companion_events().iter().any(|event| matches!(
-        event, koe_runtime::CompanionStreamEvent::TranscriptFinal { text, dictation: true, .. } if text == "排空前的听写"
-    )));
-    assert_eq!(r.snapshot(100)["dictation"]["active"], false);
 }

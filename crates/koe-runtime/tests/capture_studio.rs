@@ -516,34 +516,6 @@ fn edge_cases_quiet_drain_hardware_coexistence_auto_skip_and_unplug_reset() {
         "bean"
     );
 
-    let standby = dispatch_ok(
-        &mut runtime,
-        json!({"type": "set_companion_mode", "mode": "collar_standby"}),
-        NOW + 4,
-    );
-    assert_eq!(standby["capture"]["selectedSource"], "input:airpods");
-    assert_eq!(standby["capture"]["selectionMode"], "auto");
-    assert_eq!(standby["capture"]["canStart"], true);
-
-    let manual_bean_standby = dispatch_ok(
-        &mut runtime,
-        json!({"type": "select_capture_source", "source": "bean"}),
-        NOW + 4,
-    );
-    assert_eq!(manual_bean_standby["capture"]["selectedSource"], "bean");
-    assert_eq!(manual_bean_standby["capture"]["canStart"], false);
-
-    dispatch_ok(
-        &mut runtime,
-        json!({"type": "select_capture_source", "source": "auto"}),
-        NOW + 4,
-    );
-    dispatch_ok(
-        &mut runtime,
-        json!({"type": "set_companion_mode", "mode": "disabled"}),
-        NOW + 5,
-    );
-
     let dir_pull = Sandbox::new();
     let mut pull_rt = KoeRuntime::open(&dir_pull.0).unwrap();
     dispatch_ok(
@@ -686,15 +658,6 @@ fn capture_studio_system_audio_toggle_starts_dual_lanes_for_meeting_and_quick_no
         dispatch_ok(&mut runtime, json!({"type":"capture_action","action":"cancel"}), NOW + 2);
         finish_microphone(&mut runtime, &dual, NOW + 2);
     }
-
-    let dictation = dispatch_ok(
-        &mut runtime,
-        json!({"type":"start_capture_mode","mode":"dictation","stayOnPage":true}),
-        NOW + 3,
-    );
-    assert_eq!(lane_names(&dictation), ["microphone"]);
-    dispatch_ok(&mut runtime, json!({"type":"capture_action","action":"cancel"}), NOW + 3);
-    finish_microphone(&mut runtime, &dictation, NOW + 3);
 
     let all_day = dispatch_ok(
         &mut runtime,

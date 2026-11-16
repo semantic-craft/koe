@@ -254,7 +254,6 @@ impl KoeRuntime {
             microphone,
             capture_selection,
         );
-        let voice_input = self.voice_input_workspace_json();
         let picker = self.mode_picker_json(
             now,
             records,
@@ -271,7 +270,6 @@ impl KoeRuntime {
             "quickNote": quick_note,
             "allDay": all_day,
             "liveMinutes": live_minutes,
-            "voiceInput": voice_input,
         })
     }
 
@@ -310,24 +308,15 @@ impl KoeRuntime {
                 .as_ref()
                 .is_some_and(|m| m.phase == Phase::Paused);
         let meeting_active = active_mode == Some(CaptureMode::Meeting);
-        let voice_active =
-            self.active_companion_mode() == CompanionRoutingMode::CollarStandby;
-        let device_name = self
-            .device
-            .device_name
-            .as_deref()
-            .unwrap_or("Soundcore Work");
 
         let is_pulling_offline =
             matches!(self.device.session.transfer.phase, TransferPhaseTag::PullingOffline);
-        let device_busy = (matches!(
+        let device_busy = matches!(
             self.device.session.transfer.phase,
             TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
         ) || self.device.session.device_recording_active
-            || self.device.awaiting_stop)
-            && !self.companion.standby_stream_owned;
-        let device_recording =
-            self.device.session.device_recording_active && !self.companion.standby_stream_owned;
+            || self.device.awaiting_stop;
+        let device_recording = self.device.session.device_recording_active;
         let owner = self.bean_control_owner();
         let can_release_to_phone = self.can_release_to_phone();
 
@@ -430,28 +419,6 @@ impl KoeRuntime {
                     "就绪".to_string()
                 },
                 "metricText": format!("往期会议 {past_meeting_count} 场"),
-            },
-            {
-                "id": "voice_input",
-                "mode": "dictation",
-                "title": "语音输入",
-                "subtitle": "录音豆待命流桥接光标听写，一步步检查可用状态",
-                "isSessionActive": voice_active,
-                "canToggleSession": can_control && (voice_active || self.ensure_voice_input_available().is_ok()),
-                "statusBadge": if voice_active {
-                    if self.is_standby_ready() {
-                        "待命就绪".to_string()
-                    } else {
-                        "已开启待连接".to_string()
-                    }
-                } else {
-                    "未开启".to_string()
-                },
-                "metricText": if self.device.is_connected() {
-                    format!("{device_name} 已连接")
-                } else {
-                    "等待录音豆连接".to_string()
-                },
             }
         ]);
 

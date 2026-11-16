@@ -1264,11 +1264,10 @@ fn ordinary_microphone_start_defaults_to_quick_note_after_explicit_meeting() {
 }
 
 #[test]
-fn all_day_end_releases_explicit_companion_routing_for_next_physical_recording() {
+fn all_day_end_restores_quick_note_for_next_physical_recording() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
     runtime.device.session.set_session_key(SESSION_KEY);
-    command(&mut runtime, json!({"type":"set_companion_mode","mode":"meeting_and_collar"}));
     command(&mut runtime, json!({"type":"start_all_day","source":"bean"}));
     runtime.ingest_ble_chunk(&file_head_rx(963, 0), NOW);
     runtime.ingest_ble_chunk(&encrypted_slices(0..2), NOW);
@@ -1280,7 +1279,6 @@ fn all_day_end_releases_explicit_companion_routing_for_next_physical_recording()
     runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x81, &[1]), NOW + 3);
     runtime.ingest_ble_chunk(&file_head_rx(964, 0), NOW + 3);
     assert_eq!(runtime.snapshot(NOW + 3)["activeCapture"]["mode"], "quick_note");
-    assert!(!runtime.is_standby_ready());
 }
 
 #[path = "all_day_disconnect_tests.rs"]

@@ -282,46 +282,7 @@ fn bean_all_day_keeps_its_mode_until_stop_acknowledgement() {
 }
 
 #[test]
-fn prepare_voice_input_preserves_records_and_restores_standby_without_capture() {
-    let dir = Sandbox::new();
-    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
-    let note = command(
-        &mut runtime,
-        json!({"type":"create_note","title":"Keep","text":"Original record"}),
-    );
-    let record_id = note["selectedRecordId"].clone();
-    command(
-        &mut runtime,
-        json!({"type":"set_ble_auto_connect","enabled":false}),
-    );
-
-    let prepared = command(&mut runtime, json!({"type":"prepare_voice_input"}));
-    assert!(prepared["error"].is_null(), "{}", prepared["error"]);
-    assert_eq!(prepared["section"], "voice_input");
-    assert_eq!(prepared["device"]["companionMode"], "collar_standby");
-    assert_eq!(prepared["device"]["autoConnect"], true);
-    assert!(prepared["activeCapture"].is_null());
-    assert_eq!(prepared["records"].as_array().unwrap().len(), 1);
-    assert_eq!(prepared["records"][0]["id"], record_id);
-
-    let repeated = command(&mut runtime, json!({"type":"prepare_voice_input"}));
-    assert!(repeated["error"].is_null(), "{}", repeated["error"]);
-    assert!(repeated["activeCapture"].is_null());
-    let navigated = command(&mut runtime, json!({"type":"navigate","section":"voice_input"}));
-    assert!(navigated["error"].is_null(), "{}", navigated["error"]);
-    assert_eq!(navigated["section"], "voice_input");
-    drop(runtime);
-    let reopened = KoeRuntime::open(&dir.0).unwrap();
-    assert_eq!(
-        reopened.snapshot(1800000000)["device"]["companionMode"],
-        "collar_standby"
-    );
-    assert_eq!(reopened.snapshot(1800000000)["device"]["autoConnect"], true);
-    assert_eq!(reopened.workspace().records().len(), 1);
-}
-
-#[test]
-fn bean_meeting_and_standby_dictation_stamp_record_modes() {
+fn bean_meeting_stamps_record_mode() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
     runtime.device.session.session_key = Some([1; 32]);
@@ -340,19 +301,4 @@ fn bean_meeting_and_standby_dictation_stamp_record_modes() {
         runtime.workspace().record(&live_id).unwrap().mode,
         RecordMode::Meeting
     );
-
-    let dict_dir = Sandbox::new();
-    let mut dict_rt = KoeRuntime::open(&dict_dir.0).unwrap();
-    dict_rt.last_now_sec = 1800000010;
-    dict_rt.companion.standby_stream_owned = true;
-    dict_rt.set_source_dictation(crate::speech::DictationSource::Standby, true);
-    dict_rt.capture_standby_dictation(&vec![100_i16; 320]);
-    dict_rt.finish_standby_dictation().unwrap();
-    let dict_rec = dict_rt
-        .workspace()
-        .records()
-        .values()
-        .find(|r| r.aggregate.recording_id.starts_with("dictation-"))
-        .unwrap();
-    assert_eq!(dict_rec.mode, RecordMode::Dictation);
 }

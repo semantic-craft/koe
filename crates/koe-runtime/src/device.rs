@@ -1,7 +1,6 @@
 use koe_engine::{
     commands::DeviceCommands,
     crypto::DeviceCrypto,
-    product::CompanionRoutingMode,
     session::{
         CaptureEvent, ConnectionPhaseTag, FinalizedRecording, SessionIngestOutcome,
         TransferPhaseTag, TransportSession,
@@ -402,10 +401,6 @@ impl super::KoeRuntime {
         let files: Vec<_> = device
             .catalog
             .iter()
-            .filter(|f| {
-                !self.is_standby_file(f.file_id)
-                    && !self.workspace().is_reclaimed_standby_file(f.file_id)
-            })
             .map(|f| json!({ "id": f.file_id, "title": format!("录音 {}", f.file_id), "durationMs": f.duration_ms }))
             .collect();
         let progress = if device.transfer.expected_wire_bytes > 0 {
@@ -417,10 +412,6 @@ impl super::KoeRuntime {
         };
         let transfer_phase = if device.is_offline_pull_suspended() {
             "suspended"
-        } else if self.companion.standby_stream_owned
-            && matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
-        {
-            "collar_standby"
         } else {
             match device.transfer.phase {
                 TransferPhaseTag::Idle | TransferPhaseTag::QueryingCatalog => "idle",
@@ -429,18 +420,13 @@ impl super::KoeRuntime {
                 TransferPhaseTag::Failed => "failed",
             }
         };
-        let device_busy = (matches!(
+        let device_busy = matches!(
             device.transfer.phase,
             TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
         ) || device.device_recording_active
-            || self.device.awaiting_stop)
-            && !self.companion.standby_stream_owned;
-        let device_recording =
-            device.device_recording_active && !self.companion.standby_stream_owned;
-        let teardown_stop_frames_hex = if self.is_standby_ready()
-            || device_recording
-            || self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-        {
+            || self.device.awaiting_stop;
+        let device_recording = device.device_recording_active;
+        let teardown_stop_frames_hex = if device_recording {
             vec![koe_client_base::prng::to_hex_upper(
                 &DeviceCommands::pause_record(),
             )]
@@ -472,8 +458,6 @@ impl super::KoeRuntime {
             "files": files,
             "progress": progress,
             "autoConnect": self.workspace().ble_auto_connect(),
-            "companionMode": self.workspace().companion_mode().as_str(),
-            "standbyReady": self.is_standby_ready(),
             "teardownStopFramesHex": teardown_stop_frames_hex,
             "guide": self.device.guide_json(),
         })

@@ -62,7 +62,7 @@ fn meeting_keeps_live_minutes_across_ask_and_record_navigation() {
 
 #[test]
 fn capture_modes_use_the_existing_microphone_across_navigation() {
-    for mode in ["quick_note", "meeting", "dictation", "all_day"] {
+    for mode in ["quick_note", "meeting", "all_day"] {
         let (mut runtime, _sandbox) = runtime();
         let snapshot = send(
             &mut runtime,
@@ -71,7 +71,6 @@ fn capture_modes_use_the_existing_microphone_across_navigation() {
         let microphone = &snapshot["microphone"];
         assert!(microphone["sessionId"].is_string());
         assert_eq!(snapshot["activeCapture"]["mode"], mode);
-        assert_eq!(snapshot["dictation"]["active"], mode == "dictation");
 
         let snapshot = send(&mut runtime, json!({"type":"navigate","section":"notes"}));
         assert_eq!(snapshot["section"], "notes");
@@ -87,41 +86,20 @@ fn capture_modes_use_the_existing_microphone_across_navigation() {
                 &mut runtime,
                 json!({"type":"microphone_started","recordId":microphone["recordId"],"sessionId":microphone["sessionId"],"lane":"microphone","sampleRate":16000}),
             );
-            let snapshot = send(
-                &mut runtime,
-                json!({"type":"start_capture_mode","mode":"dictation"}),
-            );
-            assert_eq!(snapshot["activeCapture"]["mode"], "all_day");
-            assert_eq!(snapshot["dictation"]["active"], true);
-            let snapshot = send(
-                &mut runtime,
-                json!({"type":"capture_action","action":"end_dictation"}),
-            );
-            assert_eq!(snapshot["dictation"]["active"], false);
-            assert_eq!(snapshot["allDay"]["state"], "recording");
-            assert_eq!(snapshot["microphone"]["sessionId"], microphone["sessionId"]);
-            assert_eq!(snapshot["microphone"]["phase"], "recording");
-            send(
-                &mut runtime,
-                json!({"type":"start_capture_mode","mode":"dictation"}),
-            );
-            let pausing = send(
+            let _pausing = send(
                 &mut runtime,
                 json!({"type":"capture_action","action":"pause"}),
             );
-            assert_eq!(pausing["dictation"]["active"], true);
             let paused = send(
                 &mut runtime,
                 json!({"type":"microphone_paused","recordId":microphone["recordId"],"sessionId":microphone["sessionId"],"lane":"microphone","sequence":0,"epoch":0}),
             );
-            assert_eq!(paused["dictation"]["active"], false);
             assert_eq!(paused["activeCapture"]["actions"], json!(["resume", "end"]));
             let resumed = send(
                 &mut runtime,
                 json!({"type":"resume_microphone","clockNs":2_000_000_000_u64}),
             );
             assert_eq!(resumed["activeCapture"]["phase"], "recording");
-            assert_eq!(resumed["dictation"]["active"], false);
             epoch = 1;
         }
 
@@ -135,7 +113,6 @@ fn capture_modes_use_the_existing_microphone_across_navigation() {
             json!({"type":"microphone_stopped","recordId":microphone["recordId"],"sessionId":microphone["sessionId"],"lane":"microphone","sequence":0,"epoch":epoch}),
         );
         assert!(snapshot["activeCapture"].is_null());
-        assert_eq!(snapshot["dictation"]["active"], false);
         assert_eq!(snapshot["section"], "notes");
     }
 }

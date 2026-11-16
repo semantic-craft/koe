@@ -13,14 +13,11 @@ mod capture_studio;
 #[cfg(test)]
 mod capture_tests;
 mod command;
-/// Typeless-compatible D3200 collar companion protocol and tap-thump gating state machine.
-pub mod companion;
 #[cfg(test)]
 mod companion_mcp_tests;
 pub mod credentials;
 mod device;
 mod device_custody;
-mod dictation_capture;
 mod capture_flow;
 mod legacy;
 mod lifecycle;
@@ -45,15 +42,8 @@ mod speech;
 use provider_settings::ProviderSettings;
 mod transcript_edit;
 mod trash;
-mod voice_input;
 
 use command::{Command, Location, Page};
-pub use companion::{
-    decode_pcm16_le_b64, encode_pcm16_le_b64, resolve_bridge_socket_path, CompanionClientCommand,
-    CompanionRoutingMode, CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
-    COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL, COMPANION_PROTOCOL_VERSION,
-    POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES,
-};
 use device::DeviceRuntime;
 use koe_client_providers::ProviderWorker;
 use koe_client_services::{product_store::ProductStore, recording_assets};
@@ -62,11 +52,69 @@ pub use mcp_surface::{drive_mcp_tool_blocking, McpToolCallState, McpToolError};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
+    ffi::OsStr,
     path::{Path, PathBuf},
 };
 
 /// Version of the native JSON snapshot and command contract.
 pub const KOE_HOST_SNAPSHOT_VERSION: u32 = 2;
+
+const MAX_UNIX_SOCKET_PATH_BYTES: usize = 103;
+
+/// Resolves the canonical local bridge Unix domain socket path for `workspace`.
+///
+/// Honors `KOE_BRIDGE_SOCKET` (`""`, `"0"`, or `"off"` disables the socket), places App Sandbox
+/// default container workspaces inside `<Data>/.koe/koe.sock` (`koe-dev.sock` for development)
+/// to stay within the 104-byte `sun_path` kernel limit without altering entitlements, and falls
+/// back to `<workspace>/koe.sock` for standalone directories.
+#[must_use]
+pub fn resolve_bridge_socket_path(workspace: &Path) -> Option<PathBuf> {
+    resolve_bridge_socket_path_with_env(workspace, std::env::var_os("KOE_BRIDGE_SOCKET").as_deref())
+}
+
+pub(crate) fn resolve_bridge_socket_path_with_env(
+    workspace: &Path,
+    env_override: Option<&OsStr>,
+) -> Option<PathBuf> {
+    if let Some(raw) = env_override {
+        if let Some(s) = raw.to_str() {
+            let trimmed = s.trim();
+            if trimmed.is_empty() || trimmed == "0" || trimmed.eq_ignore_ascii_case("off") {
+                return None;
+            }
+            let candidate = PathBuf::from(trimmed);
+            return (candidate.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES)
+                .then_some(candidate);
+        }
+        if raw.is_empty() {
+            return None;
+        }
+        let candidate = PathBuf::from(raw);
+        return (candidate.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES)
+            .then_some(candidate);
+    }
+
+    let canonical_workspace = workspace.ancestors().find_map(|ancestor| {
+        if !ancestor.ends_with("Containers/com.anker.ankerRecorder/Data") {
+            return None;
+        }
+        match workspace.strip_prefix(ancestor).ok()?.to_str()? {
+            "Library/Application Support/KoeWorkspace" => Some((ancestor, "koe.sock")),
+            "Library/Application Support/KoeWorkspaceDevelopment" => {
+                Some((ancestor, "koe-dev.sock"))
+            }
+            _ => None,
+        }
+    });
+    let candidate = if let Some((container_data, sock_name)) = canonical_workspace {
+        container_data.join(".koe").join(sock_name)
+    } else {
+        workspace.join("koe.sock")
+    };
+
+    (candidate.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES)
+        .then_some(candidate)
+}
 
 /// Outcome of attempting to ingest a native microphone PCM chunk.
 #[repr(u32)]
@@ -128,7 +176,6 @@ pub struct KoeRuntime {
     generation: u64,
     selection: selection::WorkspaceSelection,
     device: DeviceRuntime,
-    companion: companion::CompanionRuntime,
     provider: ProviderWorker,
     settings: ProviderSettings,
     credentials: Box<dyn credentials::CredentialStore>,
@@ -137,7 +184,6 @@ pub struct KoeRuntime {
     captures: capture::Captures,
     local_asr: local_asr::LocalAsr,
     speech: speech::SpeechState,
-    dictation_capture: Option<dictation_capture::DictationCapture>,
     all_day: all_day::AllDayState,
     capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
@@ -171,13 +217,11 @@ impl KoeRuntime {
         let mut runtime = Self {
             store,
             speech: speech::SpeechState::new(&root),
-            dictation_capture: None,
             all_day: Default::default(),
             root,
             generation: 1,
             selection: Default::default(),
             device: DeviceRuntime::default(),
-            companion: Default::default(),
             provider: ProviderWorker::new()?,
             settings: ProviderSettings::default(),
             credentials,
@@ -486,10 +530,6 @@ impl KoeRuntime {
             self.reconcile_expired_trash(now);
         }
         match command {
-            Command::PrepareVoiceInput => self.prepare_voice_input(now)?,
-            Command::SetVoiceInputSession { enabled } => {
-                self.set_voice_input_session(enabled, now)?
-            }
             Command::StartCaptureMode { mode, stay_on_page } => {
                 self.start_capture_mode(mode, stay_on_page, now)?
             }
@@ -555,7 +595,6 @@ impl KoeRuntime {
                 self.quit = lifecycle::QuitState::Running;
                 let quitting = self.is_quitting();
                 self.device.reset_failed_transfer_if_idle(quitting);
-                self.drive_companion(now);
             }
             Command::Navigate { section } => self.go(Location {
                 page: section,
@@ -731,7 +770,6 @@ impl KoeRuntime {
                 self.start_all_day(&source, input_id.unwrap_or_default(), now)?
             }
             Command::StopAllDay => self.stop_all_day()?,
-            Command::SetDictationActive { active } => self.set_dictation_active(active),
             Command::Transcribe { record_id } => self.start_transcription(&record_id)?,
             Command::LocalAsrReadiness { state, message } => {
                 self.local_asr_readiness(state, message)?
@@ -778,7 +816,6 @@ impl KoeRuntime {
                 self.device
                     .event(&event, &connection_id, device_name.as_deref())?;
                 self.save_captures(now)?;
-                self.drive_companion(now);
             }
             Command::DeviceOpenGuide => {
                 if !self.workspace().ble_auto_connect() {
@@ -797,20 +834,19 @@ impl KoeRuntime {
                 self.device.refresh();
             }
             Command::DeviceDisconnect => {
-                self.disconnect_device_session(false, now)?;
+                self.disconnect_device_session(now)?;
             }
             Command::DeviceRelease => {
                 if let Some(reason) = self.release_to_phone_block_reason() {
                     return Err(reason.into());
                 }
                 if self.bean_control_owner() != mode_workspaces::BeanControlOwner::Phone {
-                    self.stop_bean_dictation();
                     self.commit(|w| {
                         w.set_ble_auto_connect(false);
                         Ok(())
                     })?;
                     self.reset_bean_preference_if_needed();
-                    self.disconnect_device_session(true, now)?;
+                    self.disconnect_device_session(now)?;
                     self.notice = Some("已释放录音豆蓝牙控制权".into());
                 }
             }
@@ -828,22 +864,9 @@ impl KoeRuntime {
                     self.reset_bean_preference_if_needed();
                 }
             }
-            Command::SetCompanionMode { mode } => {
-                let parsed = CompanionRoutingMode::parse(&mode).ok_or("无效的领夹麦伴侣模式")?;
-                self.commit(|w| {
-                    w.set_companion_mode(parsed);
-                    Ok(())
-                })?;
-                self.apply_companion_mode(parsed, now)?;
-            }
             Command::DeviceDownload { file_id } => {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
-                }
-                if self.companion.standby_stream_owned {
-                    return Err(
-                        "当前处于领夹麦待命模式，请先切换为关闭或实时纪要兼听写模式后再下载录音".into(),
-                    );
                 }
                 let quitting = self.is_quitting();
                 self.device.reset_failed_transfer_if_idle(quitting);
@@ -877,38 +900,16 @@ impl KoeRuntime {
                 }
                 let quitting = self.is_quitting();
                 self.device.reset_failed_transfer_if_idle(quitting);
-                if self.active_companion_mode() == CompanionRoutingMode::CollarStandby {
-                    if self.companion.standby_stream_owned {
-                        return Err(
-                            "当前处于领夹麦待命模式，如需录制实时纪要请先切换为普通或实时纪要兼听写模式"
-                                .into(),
-                        );
-                    }
-                    self.companion.standby_suppressed_for_connection = false;
-                    self.ensure_device_idle()?;
-                    self.drive_companion(now);
-                } else {
-                    if self.companion.standby_stream_owned {
-                        self.stop_owned_standby_stream()?;
-                    }
-                    self.ensure_device_idle()?;
-                    let outcome = self.device.session.start_realtime_recording_with_options(
-                        None,
-                        now.saturating_mul(1000),
-                        false,
-                    );
-                    self.device.accept(outcome);
-                    self.drive_companion(now);
-                }
+                self.ensure_device_idle()?;
+                let outcome = self.device.session.start_realtime_recording_with_options(
+                    None,
+                    now.saturating_mul(1000),
+                    false,
+                );
+                self.device.accept(outcome);
             }
             Command::DeviceStop => {
-                if self.companion.standby_stream_owned {
-                    self.companion.standby_suppressed_for_connection = true;
-                    self.stop_owned_standby_stream()?;
-                } else {
-                    self.device.stop_recording();
-                }
-                self.drive_companion(now);
+                self.device.stop_recording();
             }
         }
         self.reconcile_all_day();
@@ -929,7 +930,7 @@ impl KoeRuntime {
             return Some("正在从录音豆拉取离线录音，请等待完成后再切回手机");
         }
         if self.is_bean_meeting_recording()
-            || (self.device.session.device_recording_active && !self.companion.standby_stream_owned)
+            || self.device.session.device_recording_active
             || self.bean_capture_mode.is_some()
             || self
                 .all_day
@@ -953,48 +954,9 @@ impl KoeRuntime {
         }
     }
 
-    fn mark_active_standby_scratch(&mut self) {
-        if self.companion.standby_stream_owned
-            || self.companion.pending_standby_stop
-            || self.companion.active_standby_file_id.is_some()
-        {
-            if let Some(fid) = self
-                .device
-                .session
-                .active_file_id
-                .filter(|&id| id > 0)
-                .or(self.companion.active_standby_file_id)
-            {
-                if self.can_own_as_standby_scratch(fid) {
-                    let _ = self.mark_standby_scratch_file(fid);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn retire_active_standby_stream(&mut self) {
-        if self.companion.standby_stream_owned
-            || self.companion.pending_standby_stop
-            || self.companion.active_standby_file_id.is_some()
-        {
-            self.mark_active_standby_scratch();
-            self.companion.active_standby_file_id = None;
-            self.companion.standby_stream_owned = false;
-            self.companion.pending_standby_stop = false;
-        }
-    }
-
-    fn disconnect_device_session(&mut self, released: bool, now: u64) -> Result<(), String> {
-        self.mark_active_standby_scratch();
-        if released {
-            self.companion.on_ble_released();
-        } else {
-            self.companion.on_ble_disconnected();
-        }
+    fn disconnect_device_session(&mut self, now: u64) -> Result<(), String> {
         self.device.disconnect();
         self.save_captures(now)?;
-        self.retire_active_standby_stream();
-        self.drive_companion(now);
         Ok(())
     }
 
@@ -1074,7 +1036,6 @@ impl KoeRuntime {
         if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
-        changed |= self.drive_companion(now);
         changed |= self.maybe_start_auto_offline_pull();
         self.reconcile_bean_capture_mode();
         let all_day_finished = self.reconcile_all_day();
@@ -1107,9 +1068,6 @@ impl KoeRuntime {
         if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
-        if let Err(error) = self.retry_standby_dictation_save() {
-            self.error = Some(error);
-        }
         self.tick_local_asr(elapsed_ms);
         let mut completed = self.poll_offline_speech()
             | self.drive_speech_files()
@@ -1119,7 +1077,6 @@ impl KoeRuntime {
         self.drive_analysis_queue();
         self.drive_live_minutes(elapsed_ms);
         let all_day_finished = self.reconcile_all_day();
-        completed |= self.drive_companion(now);
         completed |= self.maybe_start_auto_offline_pull();
         self.reconcile_bean_capture_mode();
         if changed

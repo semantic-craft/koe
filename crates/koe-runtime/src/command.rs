@@ -5,7 +5,6 @@ use serde::Deserialize;
 pub(crate) enum Page {
     #[default]
     Today,
-    VoiceInput,
     Notes,
     AllDay,
     Capture,
@@ -25,7 +24,6 @@ pub(crate) enum CaptureMode {
     QuickNote,
     AllDay,
     Meeting,
-    Dictation,
 }
 
 impl CaptureMode {
@@ -34,7 +32,6 @@ impl CaptureMode {
             Self::QuickNote => koe_engine::product::RecordMode::QuickNote,
             Self::AllDay => koe_engine::product::RecordMode::AllDay,
             Self::Meeting => koe_engine::product::RecordMode::Meeting,
-            Self::Dictation => koe_engine::product::RecordMode::Dictation,
         }
     }
 }
@@ -49,7 +46,6 @@ pub(crate) enum CaptureAction {
     Pause,
     Resume,
     End,
-    EndDictation,
     RetrySave,
     RetryStop,
     Cancel,
@@ -70,10 +66,6 @@ pub(crate) struct CaptureTiming {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
-    PrepareVoiceInput,
-    SetVoiceInputSession {
-        enabled: bool,
-    },
     StartCaptureMode {
         mode: CaptureMode,
         #[serde(default)]
@@ -99,9 +91,6 @@ pub(crate) enum Command {
         input_id: Option<String>,
     },
     StopAllDay,
-    SetDictationActive {
-        active: bool,
-    },
     LocalAsrReadiness {
         state: crate::local_asr::Readiness,
         message: String,
@@ -362,9 +351,6 @@ pub(crate) enum Command {
     DeviceRelease,
     SetBleAutoConnect {
         enabled: bool,
-    },
-    SetCompanionMode {
-        mode: String,
     },
     DeviceDownload {
         file_id: u32,

@@ -63,13 +63,12 @@ pub(super) struct CaptureSelection {
 
 impl KoeRuntime {
     pub(super) fn is_bean_meeting_recording(&self) -> bool {
-        (self.device.session.device_recording_active && !self.companion.standby_stream_owned)
+        self.device.session.device_recording_active
             || self.device.awaiting_stop
-            || (!self.companion.standby_stream_owned
-                && matches!(
-                    self.device.session.transfer.phase,
-                    TransferPhaseTag::StreamingRealtime
-                ))
+            || matches!(
+                self.device.session.transfer.phase,
+                TransferPhaseTag::StreamingRealtime
+            )
     }
 
     pub(super) fn sync_audio_inputs(
@@ -185,16 +184,14 @@ impl KoeRuntime {
             })
         };
 
-        let device_busy = (matches!(
+        let device_busy = matches!(
             self.device.session.transfer.phase,
             TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
         ) || self.device.session.device_recording_active
-            || self.device.awaiting_stop)
-            && !self.companion.standby_stream_owned;
+            || self.device.awaiting_stop;
         let bean_ready = self.device.is_connected()
             && !device_busy
-            && !self.device.session.is_offline_pull_suspended()
-            && self.active_companion_mode() != CompanionRoutingMode::CollarStandby;
+            && !self.device.session.is_offline_pull_suspended();
 
         let resolve_auto = || -> (String, String, String, &'static str) {
             if bean_ready {

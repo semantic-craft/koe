@@ -19,11 +19,7 @@ impl KoeRuntime {
             return;
         }
         self.quit = QuitState::Draining;
-        self.stop_all_dictation();
         let _ = self.stop_microphone(false);
-        if self.companion.standby_stream_owned {
-            let _ = self.stop_owned_standby_stream();
-        }
         let session = &self.device.session;
         if self.device.awaiting_stop
             || session.device_recording_active
@@ -37,7 +33,6 @@ impl KoeRuntime {
     pub(super) fn lifecycle_json(&self) -> Value {
         let session = &self.device.session;
         let owned_work = self.microphone.is_some()
-            || self.dictation_capture.is_some()
             || session.active_file_id.is_some()
             || session.pending_realtime_subscribe
             || session.device_recording_active
