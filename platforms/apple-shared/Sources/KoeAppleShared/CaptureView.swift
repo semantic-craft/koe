@@ -136,8 +136,8 @@ public struct CaptureView: View {
             }
             if device.connected || device.autoConnect {
                 KoeActionButton("切回手机", systemImage: "iphone") {
-                    NotificationCenter.default.post(name: Notification.Name("KoeReleaseBleControl"), object: nil)
-                }.disabled(device.transferPhase == "pulling_offline" || isRecordingLocked)
+                    store.send(.deviceRelease)
+                }.disabled(!(store.today.picker?.canReleaseToPhone ?? true))
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)

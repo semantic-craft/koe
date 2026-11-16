@@ -307,11 +307,9 @@ fn prepare_voice_input_preserves_records_and_restores_standby_without_capture() 
     let repeated = command(&mut runtime, json!({"type":"prepare_voice_input"}));
     assert!(repeated["error"].is_null(), "{}", repeated["error"]);
     assert!(repeated["activeCapture"].is_null());
-    assert_eq!(runtime.drain_host_actions_json(), "[]");
     let navigated = command(&mut runtime, json!({"type":"navigate","section":"voice_input"}));
     assert!(navigated["error"].is_null(), "{}", navigated["error"]);
     assert_eq!(navigated["section"], "voice_input");
-    assert_eq!(runtime.drain_host_actions_json(), "[]");
     drop(runtime);
     let reopened = KoeRuntime::open(&dir.0).unwrap();
     assert_eq!(

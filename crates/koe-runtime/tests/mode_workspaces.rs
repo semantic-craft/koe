@@ -117,7 +117,6 @@ fn pure_navigation_across_all_mode_workspaces_has_zero_session_or_host_side_effe
         assert_eq!(snap["device"]["companionMode"], "disabled");
         assert_eq!(snap["device"]["autoConnect"], initial_auto_connect);
         assert!(snap["activeCapture"].is_null());
-        assert_eq!(rt.drain_host_actions_json(), "[]");
     }
 }
 
@@ -216,7 +215,6 @@ fn voice_input_session_decoupled_from_page_navigation() {
     assert_eq!(snap["device"]["companionMode"], "collar_standby");
     assert_eq!(snap["device"]["autoConnect"], true);
     assert_eq!(snap["workspaces"]["voiceInput"]["sessionEnabled"], true);
-    assert_eq!(rt.drain_host_actions_json(), "[]");
 
     let voice_card = snap["workspaces"]["picker"]["cards"]
         .as_array()

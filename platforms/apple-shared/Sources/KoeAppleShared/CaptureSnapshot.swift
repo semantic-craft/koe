@@ -137,7 +137,3 @@ public struct ActiveCaptureSnapshot: Codable, Equatable, Sendable {
     public let error: String?
     public let level: Double?
 }
-
-public struct HostAction: Decodable, Equatable, Sendable {
-    public let type: String
-}

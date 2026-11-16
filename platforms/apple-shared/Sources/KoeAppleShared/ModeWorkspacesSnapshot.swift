@@ -183,6 +183,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
     public let sourceLabel: String
     public let sourceBadge: String
     public let beanBadge: String
+    public let beanBadgeTone: String
     public let beanControlOwner: String
     public let guidanceText: String
     public let canSwitchToBean: Bool
@@ -191,7 +192,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
     public let cards: [ModePickerCardSnapshot]
 
     private enum CodingKeys: String, CodingKey {
-        case sourceLabel, sourceBadge, beanBadge, beanControlOwner, guidanceText
+        case sourceLabel, sourceBadge, beanBadge, beanBadgeTone, beanControlOwner, guidanceText
         case canSwitchToBean, canConnectBean, canReleaseToPhone, cards
     }
 
@@ -199,6 +200,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         sourceLabel: String,
         sourceBadge: String,
         beanBadge: String = "录音豆 未连接",
+        beanBadgeTone: String = "muted",
         beanControlOwner: String = "mac",
         guidanceText: String = "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。",
         canSwitchToBean: Bool = false,
@@ -209,6 +211,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         self.sourceLabel = sourceLabel
         self.sourceBadge = sourceBadge
         self.beanBadge = beanBadge
+        self.beanBadgeTone = beanBadgeTone
         self.beanControlOwner = beanControlOwner
         self.guidanceText = guidanceText
         self.canSwitchToBean = canSwitchToBean
@@ -222,6 +225,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
         sourceBadge = try c.decode(String.self, forKey: .sourceBadge)
         beanBadge = try c.decodeIfPresent(String.self, forKey: .beanBadge) ?? "录音豆 未连接"
+        beanBadgeTone = try c.decodeIfPresent(String.self, forKey: .beanBadgeTone) ?? "muted"
         beanControlOwner = try c.decodeIfPresent(String.self, forKey: .beanControlOwner) ?? "mac"
         guidanceText = try c.decodeIfPresent(String.self, forKey: .guidanceText)
             ?? "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"

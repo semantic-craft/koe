@@ -374,20 +374,6 @@ pub extern "C" fn koe_host_session_drain_ble_tx_json(handle: u64) -> *mut c_char
     })
 }
 
-/// Transfers one-shot platform actions as owned JSON.
-#[unsafe(no_mangle)]
-pub extern "C" fn koe_host_session_drain_host_actions_json(handle: u64) -> *mut c_char {
-    guarded(|| {
-        let Ok(mut table) = sessions().lock() else {
-            return std::ptr::null_mut();
-        };
-        let Some(entry) = table.entries.get_mut(&handle) else {
-            return std::ptr::null_mut();
-        };
-        string(entry.runtime.drain_host_actions_json())
-    })
-}
-
 /// Transfers local speech effects as owned JSON without invoking native callbacks.
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_drain_local_asr_json(handle: u64) -> *mut c_char {

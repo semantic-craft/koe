@@ -77,14 +77,12 @@ struct ModeWorkspacesTests {
             #expect(store.snapshot.section == destination)
             #expect(store.snapshot.activeCapture == nil)
             #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == false)
-            #expect(store.drainHostActions().isEmpty)
         }
 
         let voiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
         store.toggleModeSession(voiceCard)
         #expect(store.snapshot.section == "today")
         #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == true)
-        #expect(store.drainHostActions().isEmpty)
 
         let activeVoiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
         store.toggleModeSession(activeVoiceCard)
@@ -327,6 +325,7 @@ struct ModeWorkspacesTests {
 
         let initialPicker = try #require(store.snapshot.workspaces?.picker)
         #expect(initialPicker.beanControlOwner == "mac")
+        #expect(initialPicker.beanBadgeTone == "muted")
         #expect(initialPicker.canReleaseToPhone == true)
 
         #expect(HostCommand.deviceRelease.commandType == "device_release")
@@ -339,14 +338,21 @@ struct ModeWorkspacesTests {
         let releasedPicker = try #require(store.snapshot.workspaces?.picker)
         #expect(releasedPicker.beanControlOwner == "phone")
         #expect(releasedPicker.beanBadge == "已让出给手机")
+        #expect(releasedPicker.beanBadgeTone == "muted")
         #expect(releasedPicker.canReleaseToPhone == true)
         _ = TodayView(store: store).body
         _ = CaptureView(store: store).body
         _ = SettingsDoctorView(store: store).body
+        _ = CompanionSettingsCard(store: store).body
 
-        store.send(.setBleAutoConnect(enabled: true))
+        store.send(.deviceOpenGuide)
+        #expect(store.snapshot.device.autoConnect == true)
         let reclaimedPicker = try #require(store.snapshot.workspaces?.picker)
         #expect(reclaimedPicker.beanControlOwner == "mac")
+
+        store.send("device_event", ["event": "scanning", "connectionId": "scan-tone"])
+        let scanningPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(scanningPicker.beanBadgeTone == "warning")
 
         let legacyPickerJSON = """
         {
@@ -361,6 +367,7 @@ struct ModeWorkspacesTests {
         """
         let legacyPicker = try JSONDecoder().decode(ModePickerSnapshot.self, from: Data(legacyPickerJSON.utf8))
         #expect(legacyPicker.beanControlOwner == "mac")
+        #expect(legacyPicker.beanBadgeTone == "muted")
         #expect(legacyPicker.canReleaseToPhone == true)
 
         let phonePickerJSON = """
@@ -368,6 +375,7 @@ struct ModeWorkspacesTests {
           "sourceLabel": "系统默认麦克风",
           "sourceBadge": "系统默认",
           "beanBadge": "已让出给手机",
+          "beanBadgeTone": "success",
           "beanControlOwner": "phone",
           "guidanceText": "已释放 Mac 蓝牙占用",
           "canSwitchToBean": false,
@@ -378,6 +386,7 @@ struct ModeWorkspacesTests {
         """
         let phonePicker = try JSONDecoder().decode(ModePickerSnapshot.self, from: Data(phonePickerJSON.utf8))
         #expect(phonePicker.beanControlOwner == "phone")
+        #expect(phonePicker.beanBadgeTone == "success")
         #expect(phonePicker.canReleaseToPhone == false)
     }
 }

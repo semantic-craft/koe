@@ -454,39 +454,4 @@ struct KoeMacHostTests {
         #expect(!bridge.reportedReady)
         #expect(store.snapshot.device.phase == "disconnected")
     }
-
-    @Test("Status menu reflects Mac vs phone BLE ownership toggle and re-scan action")
-    @MainActor
-    func statusMenuReflectsPhoneHandoffToggle() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = HostSessionStore(workspacePath: directory.path)
-        defer { store.shutdown() }
-
-        let delegate = KoeAppDelegate()
-        delegate.store = store
-
-        let macMenu = delegate.buildStatusMenu()
-        #expect(macMenu.items.first?.title == store.snapshot.device.state)
-        let macScanIndex = try #require(macMenu.items.firstIndex(where: { $0.title == "查找录音豆" }))
-        let releaseItem = macMenu.items[macScanIndex + 1]
-        #expect(releaseItem.title == "切回手机（释放控制权）")
-        #expect(releaseItem.isEnabled == true)
-        #expect(!macMenu.items.contains(where: { $0.title == "连回 Mac 录音豆" }))
-
-        store.send("device_release")
-        delegate.menuNeedsUpdate(macMenu)
-        #expect(macMenu.items.first?.title == "录音豆：已让出给手机")
-        let phoneScanIndex = try #require(macMenu.items.firstIndex(where: { $0.title == "查找录音豆" }))
-        let reconnectItem = macMenu.items[phoneScanIndex + 1]
-        #expect(reconnectItem.title == "连回 Mac 录音豆")
-        #expect(reconnectItem.isEnabled == true)
-        #expect(!macMenu.items.contains(where: { $0.title == "切回手机（释放控制权）" }))
-
-        store.send("set_ble_auto_connect", ["enabled": true])
-        delegate.menuNeedsUpdate(macMenu)
-        #expect(macMenu.items.first?.title == store.snapshot.device.state)
-        let restoredScanIndex = try #require(macMenu.items.firstIndex(where: { $0.title == "查找录音豆" }))
-        #expect(macMenu.items[restoredScanIndex + 1].title == "切回手机（释放控制权）")
-    }
 }

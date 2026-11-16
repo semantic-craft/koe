@@ -59,9 +59,4 @@ impl KoeRuntime {
         self.drive_companion(now);
         Ok(())
     }
-
-    /// Transfers one-shot application actions to the native platform adapter.
-    pub fn drain_host_actions_json(&mut self) -> String {
-        "[]".to_string()
-    }
 }

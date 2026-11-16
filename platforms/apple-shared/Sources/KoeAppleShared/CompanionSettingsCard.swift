@@ -45,11 +45,9 @@ public struct CompanionSettingsCard: View {
                 }
                 HStack(spacing: 10) {
                     KoeActionButton("释放蓝牙控制权", systemImage: "xmark.circle") {
-                        NotificationCenter.default.post(
-                            name: Notification.Name("KoeReleaseBleControl"),
-                            object: nil
-                        )
+                        store.send(.deviceRelease)
                     }
+                    .disabled(!(store.today.picker?.canReleaseToPhone ?? true))
                     Text("断开当前蓝牙连接并关闭自动重连，方便手机或其他应用接管。")
                         .font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(AppColors.textMuted)

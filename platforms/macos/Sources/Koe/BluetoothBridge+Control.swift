@@ -25,23 +25,11 @@ extension BluetoothBridge {
         }
     }
 
-    private func stopActiveStandbyBeforeTeardown() {
-        guard let device = store?.snapshot.device, reportedReady || device.connected else { return }
-        let fallback = device.teardownStopFramesHex.compactMap(Self.decodeHex)
-        guard !fallback.isEmpty else { return }
-        store?.send("device_stop")
-        let drained = (store?.drainOutboundBleFramesHex() ?? []).compactMap(Self.decodeHex)
-        let frames = drained.isEmpty ? fallback : drained
-        lastTeardownStopFrames = frames
-        writeImmediateFrames(frames, on: peripheral, via: writeCharacteristic)
-    }
-
     public func releaseControl() {
-        stopActiveStandbyBeforeTeardown()
-        teardownLocalBleLink()
-        UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
-        lastObservedAutoConnect = false
-        store?.send("device_release")
+        store?.send(.deviceRelease)
+        if let device = store?.snapshot.device, !device.autoConnect {
+            syncWithRuntimeDevice(device)
+        }
     }
 
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {

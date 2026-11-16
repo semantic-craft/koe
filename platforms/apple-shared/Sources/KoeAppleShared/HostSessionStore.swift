@@ -281,17 +281,6 @@ public final class HostSessionStore {
         return frames
     }
 
-    public func drainHostActions() -> [HostAction] {
-        guard handle != 0, let pointer = koe_host_session_drain_host_actions_json(handle) else { return [] }
-        defer { koe_host_string_free(pointer) }
-        do {
-            return try JSONDecoder().decode([HostAction].self, from: Data(String(cString: pointer).utf8))
-        } catch {
-            nativeError = "无法读取应用启动请求，请重新连接。"
-            return []
-        }
-    }
-
     public func drainLocalASREffectsJSON() -> Data? {
         guard handle != 0, let pointer = koe_host_session_drain_local_asr_json(handle) else { return nil }
         defer { koe_host_string_free(pointer) }
@@ -330,6 +319,15 @@ public final class HostSessionStore {
         } else {
             hasDeferredSliceReconcile = true
         }
+    }
+
+    public func reconcileMenuSlicesIfNeeded() {
+        guard hasDeferredSliceReconcile else { return }
+        let nextNavigation = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
+        if navigation != nextNavigation { navigation = nextNavigation }
+        let nextToday = TodaySlice(snapshot: snapshot)
+        if today != nextToday { today = nextToday }
+        if device != snapshot.device { device = snapshot.device }
     }
 
     private func reconcileSlices() {

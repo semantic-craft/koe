@@ -845,3 +845,107 @@ fn mode_picker_projects_phone_handoff_fallback_and_offline_pull_guard() {
     assert_eq!(reclaimed["workspaces"]["picker"]["beanControlOwner"], "mac");
     assert_eq!(reclaimed["workspaces"]["picker"]["beanBadge"], "录音豆 未连接");
 }
+
+#[test]
+fn device_release_rejected_during_pull_and_bean_recording_and_auto_connect_syncs_preference() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+
+    assert_eq!(
+        runtime.snapshot(NOW)["workspaces"]["picker"]["beanBadgeTone"],
+        "muted"
+    );
+    let scanning = dispatch_ok(
+        &mut runtime,
+        json!({"type": "device_event", "event": "scanning", "connectionId": "c-tone"}),
+        NOW,
+    );
+    assert_eq!(scanning["workspaces"]["picker"]["beanBadgeTone"], "warning");
+
+    let session_key =
+        connect_bean_with_session_key(&mut runtime, "c-guard", "soundcore Work (63:9D)", NOW);
+    assert_eq!(
+        runtime.snapshot(NOW)["workspaces"]["picker"]["beanBadgeTone"],
+        "success"
+    );
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "bean"}),
+        NOW + 1,
+    );
+    runtime.ingest_ble_chunk(&catalog_1b0e_rx(902, 20, NOW as u32 + 1), NOW + 1);
+    let _ = runtime.drain_outbound_ble_frames();
+    complete_offline_pull(&mut runtime, &session_key, 902, NOW + 1);
+
+    let pulling = dispatch_ok(
+        &mut runtime,
+        json!({"type": "device_download", "fileId": 902}),
+        NOW + 2,
+    );
+    assert_eq!(pulling["workspaces"]["picker"]["canReleaseToPhone"], false);
+    let rejected_pull = dispatch(&mut runtime, json!({"type": "device_release"}), NOW + 2);
+    assert!(rejected_pull["error"].is_string());
+    assert_eq!(rejected_pull["device"]["connected"], true);
+    assert_eq!(rejected_pull["device"]["autoConnect"], true);
+    assert_eq!(rejected_pull["device"]["transferPhase"], "pulling_offline");
+    assert_eq!(rejected_pull["capture"]["selectedSource"], "bean");
+    assert_eq!(
+        rejected_pull["workspaces"]["picker"]["beanControlOwner"],
+        "mac"
+    );
+
+    complete_offline_pull(&mut runtime, &session_key, 902, NOW + 2);
+    assert_eq!(runtime.snapshot(NOW + 2)["device"]["transferPhase"], "idle");
+
+    let started = dispatch_ok(&mut runtime, json!({"type": "device_start"}), NOW + 3);
+    assert_eq!(started["device"]["recording"], true);
+    assert_eq!(started["workspaces"]["picker"]["canReleaseToPhone"], false);
+    let rejected_rec = dispatch(&mut runtime, json!({"type": "device_release"}), NOW + 3);
+    assert!(rejected_rec["error"].is_string());
+    assert_eq!(rejected_rec["device"]["connected"], true);
+    assert_eq!(rejected_rec["device"]["autoConnect"], true);
+    assert_eq!(rejected_rec["device"]["recording"], true);
+
+    dispatch_ok(&mut runtime, json!({"type": "device_stop"}), NOW + 4);
+    runtime.ingest_ble_chunk(&rx_frame(0x18, 0x82, &[2]), NOW + 4);
+    runtime.poll_timers(2_100, NOW + 7);
+    assert_eq!(
+        runtime.snapshot(NOW + 7)["workspaces"]["picker"]["canReleaseToPhone"],
+        true
+    );
+
+    let released = dispatch_ok(&mut runtime, json!({"type": "device_release"}), NOW + 7);
+    assert_eq!(released["device"]["connected"], false);
+    assert_eq!(released["device"]["autoConnect"], false);
+    assert_eq!(
+        released["workspaces"]["picker"]["beanControlOwner"],
+        "phone"
+    );
+    assert_eq!(released["workspaces"]["picker"]["beanBadgeTone"], "muted");
+    assert_ne!(released["capture"]["selectedSource"], "bean");
+
+    let reopened_guide = dispatch_ok(&mut runtime, json!({"type": "device_open_guide"}), NOW + 8);
+    assert_eq!(reopened_guide["device"]["autoConnect"], true);
+    assert_eq!(reopened_guide["device"]["guide"]["mode"], "connect_guide");
+    assert_eq!(
+        reopened_guide["workspaces"]["picker"]["beanControlOwner"],
+        "mac"
+    );
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "bean"}),
+        NOW + 9,
+    );
+    let disabled_auto = dispatch_ok(
+        &mut runtime,
+        json!({"type": "set_ble_auto_connect", "enabled": false}),
+        NOW + 9,
+    );
+    assert_eq!(
+        disabled_auto["workspaces"]["picker"]["beanControlOwner"],
+        "phone"
+    );
+    assert_ne!(disabled_auto["capture"]["selectedSource"], "bean");
+}

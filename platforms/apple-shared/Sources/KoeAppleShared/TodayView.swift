@@ -75,27 +75,32 @@ struct TodayView: View {
     }
 
     private func beanBadgeTint(_ today: TodaySlice, picker: ModePickerSnapshot?) -> Color {
-        if today.deviceConnected { return AppColors.success }
-        let badge = picker?.beanBadge ?? "录音豆 \(today.deviceState)"
-        if badge == "录音豆 查找中" || badge == "录音豆 连接中" {
-            return AppColors.warning
+        switch picker?.beanBadgeTone {
+        case "success": return AppColors.success
+        case "warning": return AppColors.warning
+        case "muted": return AppColors.textMuted
+        default:
+            if today.deviceConnected { return AppColors.success }
+            switch store.device.phase {
+            case "scanning", "connecting", "handshaking": return AppColors.warning
+            default: return AppColors.textMuted
+            }
         }
-        return AppColors.textMuted
     }
 
     private func beanOwnershipSwitch(_ today: TodaySlice, picker: ModePickerSnapshot?) -> some View {
         let isMacOwner = (picker?.beanControlOwner ?? "mac") != "phone"
         let canRelease = picker?.canReleaseToPhone ?? true
         return HStack(spacing: 2) {
-            ownershipSegment("Mac 使用", active: isMacOwner) {
+            OwnershipSegmentButton(title: "Mac 使用", active: isMacOwner) {
                 if !today.deviceConnected || !isMacOwner {
                     store.send(.deviceOpenGuide)
                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
                 }
             }
-            ownershipSegment("手机接管", active: !isMacOwner) {
+            OwnershipSegmentButton(title: "手机接管", active: !isMacOwner) {
                 if isMacOwner {
-                    NotificationCenter.default.post(name: Notification.Name("KoeReleaseBleControl"), object: nil)
+                    store.send(.deviceRelease)
                 }
             }
             .disabled(!canRelease)
@@ -104,21 +109,6 @@ struct TodayView: View {
         .padding(2)
         .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
         .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(AppColors.border))
-    }
-
-    private func ownershipSegment(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: AppFontSizes.xs, weight: active ? .semibold : .medium))
-                .foregroundStyle(active ? AppColors.onAccent : AppColors.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    active ? AppColors.accent : Color.clear,
-                    in: RoundedRectangle(cornerRadius: AppRadii.control - 2)
-                )
-                .contentShape(Rectangle())
-        }.buttonStyle(.plain)
     }
 
     private func behaviorRulesCard(_ today: TodaySlice) -> some View {
@@ -209,5 +199,35 @@ private struct ModePickerCardView: View, Equatable {
                 }
             }
         }
+    }
+}
+
+private struct OwnershipSegmentButton: View {
+    @Environment(\.isFocused) private var isFocused
+    let title: String
+    let active: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: AppFontSizes.xs, weight: active ? .semibold : .medium))
+                .foregroundStyle(active ? AppColors.onAccent : AppColors.textSecondary)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 28)
+                .background(
+                    active ? AppColors.accent : Color.clear,
+                    in: RoundedRectangle(cornerRadius: AppRadii.control - 2)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppRadii.control - 2)
+                        .stroke(isFocused ? AppColors.accent : Color.clear, lineWidth: 1.5)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 }

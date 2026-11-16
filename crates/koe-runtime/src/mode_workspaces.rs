@@ -329,26 +329,26 @@ impl KoeRuntime {
         let device_recording =
             self.device.session.device_recording_active && !self.companion.standby_stream_owned;
         let owner = self.bean_control_owner();
-        let can_release_to_phone = can_control && !is_pulling_offline;
+        let can_release_to_phone = self.can_release_to_phone();
 
-        let bean_badge = if owner == BeanControlOwner::Phone {
-            "已让出给手机"
+        let (bean_badge, bean_badge_tone) = if owner == BeanControlOwner::Phone {
+            ("已让出给手机", "muted")
         } else if !self.device.is_connected() {
             match self.device.session.connection_phase {
-                ConnectionPhaseTag::Scanning => "录音豆 查找中",
+                ConnectionPhaseTag::Scanning => ("录音豆 查找中", "warning"),
                 ConnectionPhaseTag::Connecting | ConnectionPhaseTag::Handshaking => {
-                    "录音豆 连接中"
+                    ("录音豆 连接中", "warning")
                 }
                 ConnectionPhaseTag::Disconnected | ConnectionPhaseTag::Connected => {
-                    "录音豆 未连接"
+                    ("录音豆 未连接", "muted")
                 }
             }
         } else if device_recording {
-            "录音豆 录音中"
+            ("录音豆 录音中", "success")
         } else if device_busy {
-            "录音豆 同步中"
+            ("录音豆 同步中", "success")
         } else {
-            "录音豆 已连接"
+            ("录音豆 已连接", "success")
         };
 
         let can_switch_to_bean = can_control
@@ -459,6 +459,7 @@ impl KoeRuntime {
             "sourceLabel": capture_selection.label,
             "sourceBadge": capture_selection.badge,
             "beanBadge": bean_badge,
+            "beanBadgeTone": bean_badge_tone,
             "beanControlOwner": match owner {
                 BeanControlOwner::Mac => "mac",
                 BeanControlOwner::Phone => "phone",

@@ -89,7 +89,6 @@ struct ModeWorkspacesLiveVoiceTests {
 
         let enabledVoice = try #require(store.snapshot.workspaces?.voiceInput)
         #expect(enabledVoice.sessionEnabled)
-        #expect(store.drainHostActions().isEmpty)
 
         let step3 = try #require(enabledVoice.steps.first(where: { $0.id == "companion_bridge" }))
         #expect(step3.statusLabel == "等待订阅")

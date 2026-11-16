@@ -211,7 +211,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private let audioInputMonitor: CoreAudioInputMonitor
     private let defaultInputsProvider: () -> [MicrophoneInput]
     private let capture = NativeCapture()
-    private let hostActions = NativeHostActions()
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
@@ -276,7 +275,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         statusItem = item
         NotificationCenter.default.addObserver(self, selector: #selector(scan), name: Notification.Name("KoeRequestBleScan"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(disconnectBle), name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(releaseBleControl), name: Notification.Name("KoeReleaseBleControl"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(flushBle), name: Notification.Name("KoeFlushBleOutbound"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(resumeMicrophone), name: Notification.Name("KoeResumeMicrophone"), object: nil)
         lastTick = ProcessInfo.processInfo.systemUptime
@@ -336,7 +334,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             KoeWindowPresenter.presentPrimaryWorkspaceWindow()
         }
         lastLiveRecordId = liveRecordId
-        if let store { hostActions.apply(to: store) }
         bluetoothBridge.syncWithRuntimeDevice(store?.snapshot.device ?? snapshot.device)
         playback.tick()
         capture.apply()
@@ -374,14 +371,16 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
     private func populate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let device = store?.snapshot.device
-        let owner = store?.snapshot.workspaces?.picker.beanControlOwner
-            ?? ((device?.autoConnect == false && device?.connected != true) ? "phone" : "mac")
-        let statusTitle = owner == "phone" ? "录音豆：已让出给手机" : (device?.state ?? "未连接录音豆")
+        store?.reconcileMenuSlicesIfNeeded()
+        let device = store?.device
+        let picker = store?.today.picker
+        let isPhoneOwner = picker?.beanControlOwner == "phone"
+        let statusTitle = isPhoneOwner ? "录音豆：已让出给手机" : (device?.state ?? "未连接录音豆")
         let status = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
+        let activeSection = store?.navigation.section
         for (id, title) in [
             ("today", "模式选择"),
             ("notes", "随心闪记"),
@@ -396,19 +395,19 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = id
-            item.state = store?.snapshot.section == id ? .on : .off
+            item.state = activeSection == id ? .on : .off
             menu.addItem(item)
         }
         menu.addItem(.separator())
         let scanItem = NSMenuItem(title: "查找录音豆", action: #selector(scan), keyEquivalent: "")
         scanItem.target = self
         menu.addItem(scanItem)
-        let handoffItem = owner == "phone"
+        let handoffItem = isPhoneOwner
             ? NSMenuItem(title: "连回 Mac 录音豆", action: #selector(scan), keyEquivalent: "")
             : NSMenuItem(title: "切回手机（释放控制权）", action: #selector(releaseBleControl), keyEquivalent: "")
         handoffItem.target = self
-        if owner != "phone" {
-            handoffItem.isEnabled = (device?.transferPhase != "pulling_offline")
+        if !isPhoneOwner {
+            handoffItem.isEnabled = picker?.canReleaseToPhone ?? (device?.transferPhase != "pulling_offline")
         }
         menu.addItem(handoffItem)
         let open = NSMenuItem(title: "打开 Koe", action: #selector(openWindow), keyEquivalent: "o")
@@ -424,10 +423,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
     }
     func prepareManualScan() {
-        if store?.snapshot.device.autoConnect == false {
-            store?.send("set_ble_auto_connect", ["enabled": true])
-        }
-        store?.send("device_open_guide")
+        store?.send(.deviceOpenGuide)
     }
     @objc private func scan() {
         prepareManualScan()
@@ -435,7 +431,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
     }
     @objc private func disconnectBle() { bluetoothBridge.disconnect() }
-    @objc private func releaseBleControl() { bluetoothBridge.releaseControl() }
+    @objc private func releaseBleControl() { store?.send(.deviceRelease) }
     @objc private func flushBle() { bluetoothBridge.flushOutboundFrames() }
     @objc private func openWindow() { KoeWindowPresenter.presentPrimaryWorkspaceWindow() }
     @objc private func quit() { NSApp?.terminate(nil) }

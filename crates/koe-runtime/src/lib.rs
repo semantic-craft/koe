@@ -780,7 +780,15 @@ impl KoeRuntime {
                 self.save_captures(now)?;
                 self.drive_companion(now);
             }
-            Command::DeviceOpenGuide => self.device.open_guide(),
+            Command::DeviceOpenGuide => {
+                if !self.workspace().ble_auto_connect() {
+                    self.commit(|w| {
+                        w.set_ble_auto_connect(true);
+                        Ok(())
+                    })?;
+                }
+                self.device.open_guide();
+            }
             Command::DeviceOnboardingNext => self.device.onboarding_next(),
             Command::DeviceCloseGuide => self.device.close_guide(),
             Command::DeviceRefresh => {
@@ -789,40 +797,19 @@ impl KoeRuntime {
                 self.device.refresh();
             }
             Command::DeviceDisconnect => {
-                if self.companion.standby_stream_owned || self.companion.pending_standby_stop {
-                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
-                        if self.can_own_as_standby_scratch(fid) {
-                            let _ = self.mark_standby_scratch_file(fid);
-                        }
-                    }
-                }
-                self.companion.on_ble_disconnected();
-                self.device.disconnect();
-                self.save_captures(now)?;
-                self.retire_active_standby_stream();
-                self.drive_companion(now);
+                self.disconnect_device_session(false, now)?;
             }
             Command::DeviceRelease => {
+                if let Some(reason) = self.release_to_phone_block_reason() {
+                    return Err(reason.into());
+                }
                 self.stop_bean_dictation();
                 self.commit(|w| {
                     w.set_ble_auto_connect(false);
                     Ok(())
                 })?;
-                if self.capture_studio.preference == capture_studio::CaptureSourcePreference::Bean {
-                    self.capture_studio.preference = capture_studio::CaptureSourcePreference::Auto;
-                }
-                if self.companion.standby_stream_owned || self.companion.pending_standby_stop {
-                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
-                        if self.can_own_as_standby_scratch(fid) {
-                            let _ = self.mark_standby_scratch_file(fid);
-                        }
-                    }
-                }
-                self.companion.on_ble_released();
-                self.device.disconnect();
-                self.save_captures(now)?;
-                self.retire_active_standby_stream();
-                self.drive_companion(now);
+                self.reset_bean_preference_if_needed();
+                self.disconnect_device_session(true, now)?;
                 self.notice = Some("已释放录音豆蓝牙控制权".into());
             }
             Command::SetBleAutoConnect { enabled } => {
@@ -830,6 +817,9 @@ impl KoeRuntime {
                     w.set_ble_auto_connect(enabled);
                     Ok(())
                 })?;
+                if !enabled {
+                    self.reset_bean_preference_if_needed();
+                }
             }
             Command::SetCompanionMode { mode } => {
                 let parsed = CompanionRoutingMode::parse(&mode).ok_or("无效的领夹麦伴侣模式")?;
@@ -919,7 +909,43 @@ impl KoeRuntime {
         Ok(())
     }
 
-    pub(crate) fn retire_active_standby_stream(&mut self) {
+    pub(crate) fn release_to_phone_block_reason(&self) -> Option<&'static str> {
+        use koe_engine::session::TransferPhaseTag;
+        if self.is_quitting() || self.store.requires_reopen() {
+            return Some("当前状态暂不可释放录音豆蓝牙控制权");
+        }
+        if matches!(
+            self.device.session.transfer.phase,
+            TransferPhaseTag::PullingOffline
+        ) {
+            return Some("正在从录音豆拉取离线录音，请等待完成后再切回手机");
+        }
+        if self.is_bean_meeting_recording()
+            || (self.device.session.device_recording_active && !self.companion.standby_stream_owned)
+            || self.bean_capture_mode.is_some()
+            || self
+                .all_day
+                .run
+                .as_ref()
+                .is_some_and(|run| run.source == "bean")
+            || self.device.session.pending_realtime_subscribe
+        {
+            return Some("录音豆正在录音，请先停止当前录音再切回手机");
+        }
+        None
+    }
+
+    pub(crate) fn can_release_to_phone(&self) -> bool {
+        self.release_to_phone_block_reason().is_none()
+    }
+
+    fn reset_bean_preference_if_needed(&mut self) {
+        if self.capture_studio.preference == capture_studio::CaptureSourcePreference::Bean {
+            self.capture_studio.preference = capture_studio::CaptureSourcePreference::Auto;
+        }
+    }
+
+    fn mark_active_standby_scratch(&mut self) {
         if self.companion.standby_stream_owned
             || self.companion.pending_standby_stop
             || self.companion.active_standby_file_id.is_some()
@@ -929,16 +955,39 @@ impl KoeRuntime {
                 .session
                 .active_file_id
                 .filter(|&id| id > 0)
-                .or_else(|| self.companion.active_standby_file_id.take())
+                .or(self.companion.active_standby_file_id)
             {
                 if self.can_own_as_standby_scratch(fid) {
                     let _ = self.mark_standby_scratch_file(fid);
                 }
             }
+        }
+    }
+
+    pub(crate) fn retire_active_standby_stream(&mut self) {
+        if self.companion.standby_stream_owned
+            || self.companion.pending_standby_stop
+            || self.companion.active_standby_file_id.is_some()
+        {
+            self.mark_active_standby_scratch();
             self.companion.active_standby_file_id = None;
             self.companion.standby_stream_owned = false;
             self.companion.pending_standby_stop = false;
         }
+    }
+
+    fn disconnect_device_session(&mut self, released: bool, now: u64) -> Result<(), String> {
+        self.mark_active_standby_scratch();
+        if released {
+            self.companion.on_ble_released();
+        } else {
+            self.companion.on_ble_disconnected();
+        }
+        self.device.disconnect();
+        self.save_captures(now)?;
+        self.retire_active_standby_stream();
+        self.drive_companion(now);
+        Ok(())
     }
 
     fn go(&mut self, location: Location) {
