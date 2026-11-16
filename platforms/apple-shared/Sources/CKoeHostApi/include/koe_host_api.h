@@ -23,7 +23,32 @@ bool koe_host_session_destroy(uint64_t handle);
 uint64_t koe_host_session_generation(uint64_t handle);
 char *koe_host_session_snapshot_json(uint64_t handle, uint64_t now_epoch_sec);
 char *koe_host_session_dispatch_json(uint64_t handle, const char *command_json, uint64_t now_epoch_sec);
+typedef struct KoePcmReceipt {
+    uint64_t generation;
+    uint64_t next_sequence;
+    uint32_t status;
+    uint32_t reserved;
+} KoePcmReceipt;
+
+typedef struct KoePlaybackReceipt {
+    uint64_t generation;
+    uint64_t prev_generation;
+    uint64_t position_ms;
+    uint64_t now_epoch_sec;
+    bool is_playing;
+    bool applied;
+    bool needs_full_snapshot;
+    uint8_t reserved[5];
+} KoePlaybackReceipt;
+
 uint64_t koe_host_session_ingest_ble(uint64_t handle, const uint8_t *bytes, size_t len, uint64_t now_epoch_sec);
+KoePcmReceipt koe_host_session_ingest_pcm(
+    uint64_t handle, const char *record_id, const char *session_id, const char *lane,
+    uint64_t sequence, uint64_t epoch, uint64_t captured_start_ns, bool has_timing,
+    const int16_t *samples, size_t sample_count, uint64_t now_epoch_sec);
+KoePlaybackReceipt koe_host_session_report_playback_progress(
+    uint64_t handle, const char *record_id, uint64_t request_id,
+    uint64_t position_ms, bool is_playing, uint64_t last_projected_now_sec, uint64_t now_epoch_sec);
 char *koe_host_session_drain_ble_tx_json(uint64_t handle);
 char *koe_host_session_drain_local_asr_json(uint64_t handle);
 char *koe_host_session_drain_host_actions_json(uint64_t handle);

@@ -52,3 +52,56 @@ public struct PlaybackSegmentSnapshot: Codable, Equatable, Sendable {
     public let sampleCount: Int64
     public let timelineStartNs: Int64
 }
+
+extension PlaybackSnapshot {
+    public func updatingProgress(positionMs: UInt64, isPlaying: Bool) -> PlaybackSnapshot {
+        PlaybackSnapshot(
+            recordId: recordId,
+            positionMs: positionMs,
+            isPlaying: isPlaying,
+            requestId: requestId,
+            lane: lane,
+            lanes: lanes,
+            asset: asset
+        )
+    }
+}
+
+extension HostSnapshot {
+    public func updatingPlayback(
+        generation: UInt64,
+        positionMs: UInt64,
+        isPlaying: Bool
+    ) -> HostSnapshot {
+        HostSnapshot(
+            speech: speech,
+            localAsr: localAsr,
+            liveCaption: liveCaption,
+            microphone: microphone,
+            capture: capture,
+            lifecycle: lifecycle,
+            captureModes: captureModes,
+            activeCapture: activeCapture,
+            workspaces: workspaces,
+            version: version,
+            generation: generation,
+            section: section,
+            canGoBack: canGoBack,
+            selectedRecordId: selectedRecordId,
+            focusSegmentId: focusSegmentId,
+            records: records,
+            trashRecords: trashRecords,
+            undoTrash: undoTrash,
+            detail: detail,
+            tasks: tasks,
+            memories: memories,
+            ask: ask,
+            device: device,
+            provider: provider,
+            playback: playback.updatingProgress(positionMs: positionMs, isPlaying: isPlaying),
+            error: error,
+            migrationReports: migrationReports,
+            notice: notice
+        )
+    }
+}

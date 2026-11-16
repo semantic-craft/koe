@@ -19,7 +19,7 @@ public struct QuickNoteWorkspaceView: View {
     }
 
     private var quickNote: QuickNoteWorkspaceSnapshot {
-        store.snapshot.workspaces?.quickNote ?? .empty
+        store.quickNoteWorkspace
     }
 
     private var canStartOrStopSession: Bool {
@@ -255,7 +255,7 @@ public struct QuickNoteWorkspaceView: View {
             text: trimmed,
             stayOnPage: true
         ))
-        guard store.snapshot.error == nil && store.nativeError == nil else { return }
+        guard store.navigation.effectiveError == nil else { return }
         draftTitle = ""
         draftText = ""
     }

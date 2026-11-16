@@ -204,19 +204,7 @@ impl KoeRuntime {
             .filter_map(|record| {
                 let trashed_at_ms = record.retention().trashed_at_ms()?;
                 let expires_at_ms = record.retention().expires_at_ms()?;
-                let reference_now_ms = if now > 0 {
-                    now.saturating_mul(1000)
-                } else {
-                    trashed_at_ms
-                };
-                let remaining_days = if reference_now_ms < expires_at_ms {
-                    expires_at_ms
-                        .saturating_sub(reference_now_ms)
-                        .div_ceil(86_400_000)
-                        .clamp(1, 30)
-                } else {
-                    0
-                };
+                let remaining_days = trash_remaining_days(record, now)?;
                 let preview = record
                     .aggregate
                     .spine
@@ -401,6 +389,24 @@ pub(super) fn local_date(epoch: u64) -> Option<chrono::NaiveDate> {
         .ok()
         .and_then(|n| DateTime::from_timestamp(n, 0))
         .map(|d| d.with_timezone(&Local).date_naive())
+}
+
+pub(crate) fn trash_remaining_days(record: &ProductRecord, now_sec: u64) -> Option<u64> {
+    let trashed_at_ms = record.retention().trashed_at_ms()?;
+    let expires_at_ms = record.retention().expires_at_ms()?;
+    let reference_now_ms = if now_sec > 0 {
+        now_sec.saturating_mul(1000)
+    } else {
+        trashed_at_ms
+    };
+    Some(if reference_now_ms < expires_at_ms {
+        expires_at_ms
+            .saturating_sub(reference_now_ms)
+            .div_ceil(86_400_000)
+            .clamp(1, 30)
+    } else {
+        0
+    })
 }
 
 pub(crate) fn origin_slug(source: RecordOrigin) -> &'static str {

@@ -101,7 +101,7 @@ final class NativePlayback {
     private func report(_ position: UInt64, playing: Bool) {
         guard let desired = store?.snapshot.playback, let id = desired.recordId else { return }
         lastReportedPosition = position
-        store?.send("playback_progress", ["recordId": id, "requestId": desired.requestId, "positionMs": position, "isPlaying": playing])
+        store?.reportPlaybackProgress(recordId: id, requestId: desired.requestId, positionMs: position, isPlaying: playing)
     }
     private func fail() {
         guard failedRequest == nil else { return }

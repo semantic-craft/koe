@@ -18,16 +18,18 @@ public struct KoeWorkspaceRootView: View {
         exportAction = onExport
         exportWorkspaceAction = onExportWorkspace
     }
+
     public var body: some View {
+        let nav = store.navigation
         HStack(spacing: 0) {
             SidebarView(store: store)
             Rectangle().fill(AppColors.border).frame(width: 1)
             VStack(spacing: 0) {
-                toolbar
-                if store.snapshot.section != "live_minutes", let caption = store.snapshot.liveCaption {
-                    LiveCaptionBar(caption: caption, store: store)
+                toolbar(nav)
+                if nav.section != "live_minutes" {
+                    LiveCaptionBar(store: store)
                 }
-                if let message = store.nativeError ?? store.snapshot.error {
+                if let message = nav.effectiveError {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.circle")
                         Text(message).textSelection(.enabled)
@@ -35,25 +37,24 @@ public struct KoeWorkspaceRootView: View {
                         Button("关闭") { store.clearError() }.buttonStyle(.borderless)
                     }.font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
                         .padding(12).background(AppColors.danger.opacity(0.08))
-                } else if let notice = store.snapshot.notice, !notice.isEmpty {
+                } else if let notice = nav.notice, !notice.isEmpty {
                     HStack { Text(notice); Spacer() }.font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(AppColors.textSecondary).padding(12).background(AppColors.surface1)
                 }
-                page.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let capture = store.snapshot.activeCapture {
-                    ActiveCaptureBar(capture: capture, store: store)
-                }
-                if let undo = store.snapshot.undoTrash {
+                page(nav.section).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ActiveCaptureBar(store: store, isLiveMinutesSection: nav.section == "live_minutes")
+                if let undo = nav.undoTrash {
                     UndoTrashBar(undo: undo, store: store)
                 }
-                if store.snapshot.playback.asset != nil,
-                   store.snapshot.playback.recordId == store.snapshot.detail?.id { PlayerBarView(store: store) }
+                if nav.hasPlayableDetailAsset {
+                    PlayerBarView(store: store)
+                }
             }.background(AppColors.surface0)
         }
         .foregroundStyle(AppColors.textPrimary).tint(AppColors.accent)
         .preferredColorScheme(.light).frame(minWidth: 1040, minHeight: 680)
         .overlay {
-            if store.snapshot.device.guide != nil {
+            if nav.hasConnectGuide {
                 ZStack {
                     Color.black.opacity(0.58)
                         .ignoresSafeArea()
@@ -64,21 +65,22 @@ public struct KoeWorkspaceRootView: View {
         }
         .sheet(isPresented: $showNewNote) { NewNoteSheet(store: store) }
     }
-    private var toolbar: some View {
+
+    private func toolbar(_ nav: NavigationChromeSlice) -> some View {
         HStack(spacing: 12) {
             Button { store.send(.back) } label: {
                 Image(systemName: "chevron.left").frame(width: 30, height: 34).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!store.snapshot.canGoBack).help("返回上一页")
-            Text(sectionTitle).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
+            }.buttonStyle(.plain).disabled(!nav.canGoBack).help("返回上一页")
+            Text(sectionTitle(nav)).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
             Spacer()
-            if let detail = store.snapshot.detail, store.snapshot.section == "detail" {
+            if let detailId = nav.detailId, nav.section == "detail" {
                 KoeActionButton("问这条记录", systemImage: "sparkles") {
-                    store.send(.setAskScope(scope: "record", recordId: detail.id))
+                    store.send(.setAskScope(scope: "record", recordId: detailId))
                     store.send(.navigate(section: "ask"))
                 }
-                KoeActionButton("导出") { exportAction(detail.id) }
+                KoeActionButton("导出") { exportAction(detailId) }
             }
-            if store.snapshot.section == "records" {
+            if nav.section == "records" {
                 KoeActionButton("回收站", systemImage: "trash") {
                     store.send(.navigate(section: "trash"))
                 }
@@ -91,14 +93,15 @@ public struct KoeWorkspaceRootView: View {
         .padding(.horizontal, 22).frame(height: 62)
         .overlay(alignment: .bottom) { Rectangle().fill(AppColors.border).frame(height: 1) }
     }
-    private var sectionTitle: String {
-        switch store.snapshot.section {
+
+    private func sectionTitle(_ nav: NavigationChromeSlice) -> String {
+        switch nav.section {
         case "voice_input": "语音输入"
         case "capture": "设置 / 录音管理"
         case "notes": "随心闪记"
         case "all_day": "全天听记"
         case "records": "所有记录"
-        case "detail": store.snapshot.detail?.title ?? "记录"
+        case "detail": nav.detailTitle ?? "记录"
         case "tasks": "行动"
         case "memory": "记忆"
         case "live_minutes": "实时纪要"
@@ -108,8 +111,9 @@ public struct KoeWorkspaceRootView: View {
         default: "模式选择"
         }
     }
-    @ViewBuilder private var page: some View {
-        switch store.snapshot.section {
+
+    @ViewBuilder private func page(_ section: String) -> some View {
+        switch section {
         case "voice_input": VoiceInputView(store: store)
         case "capture": CaptureView(store: store)
         case "notes": QuickNoteWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)
@@ -170,13 +174,14 @@ private struct NewNoteSheet: View {
     @State private var text = ""
     @FocusState private var focusTitle: Bool
     var body: some View {
+        let error = store.navigation.effectiveError
         VStack(alignment: .leading, spacing: 18) {
             PageHeading(title: "新建记录", subtitle: "写下真实的想法和讨论，之后可以整理、标记和提问。")
             TextField("标题", text: $title).textFieldStyle(.roundedBorder)
                 .focused($focusTitle).onSubmit { save() }
             TextEditor(text: $text).font(.system(size: AppFontSizes.sm)).scrollContentBackground(.hidden)
                 .padding(8).frame(height: 220).background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: 6))
-            if let error = store.nativeError ?? store.snapshot.error {
+            if let error {
                 Text(error).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
             }
             HStack {
@@ -193,6 +198,6 @@ private struct NewNoteSheet: View {
     private func save() {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         store.send(.createNote(title: title, text: text))
-        if store.snapshot.error == nil && store.nativeError == nil { dismiss() }
+        if store.navigation.effectiveError == nil { dismiss() }
     }
 }

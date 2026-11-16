@@ -13,7 +13,7 @@ public struct VoiceInputView: View {
     }
 
     private var vi: VoiceInputWorkspaceSnapshot {
-        store.snapshot.workspaces?.voiceInput ?? .empty
+        store.voiceInputWorkspace
     }
 
     private var evaluation: VoiceInputTestEvaluation {

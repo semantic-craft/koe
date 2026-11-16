@@ -8,18 +8,19 @@ public struct CompanionSettingsCard: View {
     }
 
     public var body: some View {
+        let device = store.device
         KoeCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Label("录音豆连接", systemImage: "mic")
                         .font(.system(size: AppFontSizes.md, weight: .medium))
                     Spacer()
-                    KoeBadge(store.snapshot.device.state, tint: statusTint)
+                    KoeBadge(device.state, tint: statusTint(device))
                 }
                 DisclosureGroup("高级录音豆音频模式") {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("音频模式", selection: Binding(
-                            get: { store.snapshot.device.companionMode },
+                            get: { device.companionMode },
                             set: {
                                 store.send(.setCompanionMode(mode: $0))
                                 NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
@@ -36,7 +37,7 @@ public struct CompanionSettingsCard: View {
                     Toggle(
                         "启动时自动重连录音豆",
                         isOn: Binding(
-                            get: { store.snapshot.device.autoConnect },
+                            get: { device.autoConnect },
                             set: { store.send(.setBleAutoConnect(enabled: $0)) }
                         )
                     )
@@ -57,8 +58,8 @@ public struct CompanionSettingsCard: View {
         }
     }
 
-    private var statusTint: Color {
-        if store.snapshot.device.connected { return AppColors.success }
-        return store.snapshot.device.phase == "disconnected" ? AppColors.textMuted : AppColors.warning
+    private func statusTint(_ device: DeviceSnapshot) -> Color {
+        if device.connected { return AppColors.success }
+        return device.phase == "disconnected" ? AppColors.textMuted : AppColors.warning
     }
 }

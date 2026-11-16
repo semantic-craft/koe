@@ -16,7 +16,7 @@ public struct AllDayWorkspaceView: View {
     }
 
     private var allDay: AllDayWorkspaceSnapshot {
-        store.snapshot.workspaces?.allDay ?? .empty
+        store.allDayWorkspace
     }
 
     private var metricsSummaryText: String {

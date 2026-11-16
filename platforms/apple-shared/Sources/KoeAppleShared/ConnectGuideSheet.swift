@@ -87,7 +87,7 @@ public struct ConnectGuideSheet: View {
     }
 
     private var device: DeviceSnapshot {
-        store.snapshot.device
+        store.device
     }
 
     public var body: some View {

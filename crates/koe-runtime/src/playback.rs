@@ -102,6 +102,21 @@ impl KoeRuntime {
         Ok(())
     }
 
+    pub(super) fn clamped_playback_position(
+        &self,
+        record_id: &str,
+        request_id: u64,
+        position_ms: u64,
+    ) -> Option<u64> {
+        if self.selection.playback.record.as_deref() != Some(record_id)
+            || self.selection.playback.request_id != request_id
+        {
+            return None;
+        }
+        let record = self.workspace().record(record_id).filter(|r| r.is_live())?;
+        Some(position_ms.min(record.aggregate.duration_ms))
+    }
+
     pub(super) fn playback_progress(
         &mut self,
         record_id: &str,
@@ -109,13 +124,8 @@ impl KoeRuntime {
         position_ms: u64,
         playing: bool,
     ) {
-        if self.selection.playback.record.as_deref() != Some(record_id)
-            || self.selection.playback.request_id != request_id
-        {
-            return;
-        }
-        if let Some(record) = self.workspace().record(record_id).filter(|r| r.is_live()) {
-            self.selection.playback.position_ms = position_ms.min(record.aggregate.duration_ms);
+        if let Some(clamped) = self.clamped_playback_position(record_id, request_id, position_ms) {
+            self.selection.playback.position_ms = clamped;
             self.selection.playback.playing = playing;
         }
     }

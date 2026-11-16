@@ -3,182 +3,66 @@
 #![deny(missing_docs)]
 
 mod credentials;
+mod guard;
 mod local_bridge;
 
 pub use credentials::KoeCredentialCallback;
-use koe_runtime::KoeRuntime;
+pub use guard::HostSessionGuard;
+pub(crate) use guard::{guarded, now, read_string, register_session, sessions, string};
+use koe_runtime::{KoeRuntime, PcmIngestStatus};
 use std::{
-    collections::BTreeMap,
-    ffi::{CStr, CString, c_char},
+    ffi::{CString, c_char},
     path::Path,
-    sync::{Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// Native snapshot and command contract version.
 pub const KOE_HOST_API_VERSION: u32 = koe_runtime::KOE_HOST_SNAPSHOT_VERSION;
 
-pub(crate) struct SessionEntry {
-    pub(crate) runtime: KoeRuntime,
-    pub(crate) subscribers: local_bridge::SubscriberHub,
+/// C-ABI receipt returned by [`koe_host_session_ingest_pcm`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoePcmReceipt {
+    /// Resulting session view generation (`0` when handle or pointer is invalid).
+    pub generation: u64,
+    /// Lane `next_sequence` after attempting chunk ingestion (`0` when stale or invalid).
+    pub next_sequence: u64,
+    /// `0` accepted, `1` stale session/lane, `2` rejected.
+    pub status: u32,
+    /// Explicit padding to 8-byte alignment.
+    pub reserved: u32,
 }
 
-#[derive(Default)]
-pub(crate) struct Sessions {
-    next: u64,
-    pub(crate) entries: BTreeMap<u64, SessionEntry>,
-    bridges: BTreeMap<u64, local_bridge::BridgeServer>,
-}
-
-pub(crate) fn sessions() -> &'static Mutex<Sessions> {
-    static SESSIONS: OnceLock<Mutex<Sessions>> = OnceLock::new();
-    SESSIONS.get_or_init(|| Mutex::new(Sessions::default()))
-}
-
-pub(crate) fn now(value: u64) -> u64 {
-    if value > 0 {
-        value
-    } else {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-    }
-}
-
-fn guarded<T: Default>(operation: impl FnOnce() -> T) -> T {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).unwrap_or_default()
-}
-
-fn string(value: String) -> *mut c_char {
-    CString::new(value).map_or(std::ptr::null_mut(), CString::into_raw)
-}
-
-unsafe fn read_string(pointer: *const c_char) -> Option<String> {
-    if pointer.is_null() {
-        None
-    } else {
-        // SAFETY: Each exported caller requires a valid terminated string.
-        unsafe { CStr::from_ptr(pointer) }
-            .to_str()
-            .ok()
-            .map(str::to_string)
-    }
-}
-
-fn take_owned_string(pointer: *mut c_char) -> Option<String> {
-    if pointer.is_null() {
-        return None;
-    }
-    // SAFETY: `pointer` was allocated by `CString::into_raw` inside this crate.
-    let owned = unsafe { CString::from_raw(pointer) };
-    owned.into_string().ok()
-}
-
-fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
-    let subscribers = local_bridge::SubscriberHub::default();
-    let handle = {
-        let Ok(mut table) = sessions().lock() else {
-            return 0;
-        };
-        table.next = table.next.saturating_add(1);
-        let id = table.next;
-        table.entries.insert(
-            id,
-            SessionEntry {
-                runtime,
-                subscribers: subscribers.clone(),
-            },
-        );
-        id
-    };
-    if let Some(bridge) = local_bridge::BridgeServer::start(handle, workspace, subscribers) {
-        let mut orphan_bridge = Some(bridge);
-        if let Ok(mut table) = sessions().lock() {
-            if table.entries.contains_key(&handle) {
-                if let Some(active) = orphan_bridge.take() {
-                    table.bridges.insert(handle, active);
-                }
-            }
+impl Default for KoePcmReceipt {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            next_sequence: 0,
+            status: PcmIngestStatus::Rejected as u32,
+            reserved: 0,
         }
-        drop(orphan_bridge);
-    }
-    handle
-}
-
-/// Safe RAII wrapper around an active host session handle and its local Unix socket bridge.
-pub struct HostSessionGuard(u64);
-
-impl HostSessionGuard {
-    /// Opens an isolated host session with its local socket bridge at `path`.
-    #[must_use]
-    pub fn open(path: &Path) -> Option<Self> {
-        let text = path.to_str()?;
-        let c_path = CString::new(text).ok()?;
-        // SAFETY: `c_path` is a valid NUL-terminated UTF-8 string.
-        let handle = unsafe { koe_host_session_create(c_path.as_ptr()) };
-        (handle != 0).then_some(Self(handle))
-    }
-
-    /// Returns the underlying 1-based session handle.
-    #[must_use]
-    pub fn handle(&self) -> u64 {
-        self.0
-    }
-
-    /// Captures an immutable JSON projection of the session at `now`.
-    #[must_use]
-    pub fn snapshot_json(&self, now: u64) -> Option<String> {
-        take_owned_string(koe_host_session_snapshot_json(self.0, now))
-    }
-
-    /// Dispatches a JSON command into the session and returns the updated snapshot JSON.
-    #[must_use]
-    pub fn dispatch_json(&self, command_json: &str, now: u64) -> Option<String> {
-        let c_cmd = CString::new(command_json).ok()?;
-        // SAFETY: `c_cmd` is a valid NUL-terminated UTF-8 string.
-        take_owned_string(unsafe { koe_host_session_dispatch_json(self.0, c_cmd.as_ptr(), now) })
-    }
-
-    /// Feeds raw BLE notification bytes into the session and returns the resulting generation.
-    #[must_use]
-    pub fn ingest_ble(&self, bytes: &[u8], now: u64) -> u64 {
-        let ptr = if bytes.is_empty() {
-            std::ptr::null()
-        } else {
-            bytes.as_ptr()
-        };
-        // SAFETY: `ptr` addresses `bytes.len()` initialized bytes when non-empty.
-        unsafe { koe_host_session_ingest_ble(self.0, ptr, bytes.len(), now) }
-    }
-
-    /// Advances runtime deadlines and returns the resulting generation.
-    #[must_use]
-    pub fn poll_timers(&self, elapsed_ms: u64, now: u64) -> u64 {
-        koe_host_session_poll_timers(self.0, elapsed_ms, now)
-    }
-
-    /// Drains queued outbound BLE frames for the session.
-    #[must_use]
-    pub fn drain_ble_tx(&self) -> Vec<Vec<u8>> {
-        guarded(|| {
-            sessions()
-                .lock()
-                .ok()
-                .and_then(|mut table| {
-                    table
-                        .entries
-                        .get_mut(&self.0)
-                        .map(|entry| entry.runtime.drain_outbound_ble_frames())
-                })
-                .unwrap_or_default()
-        })
     }
 }
 
-impl Drop for HostSessionGuard {
-    fn drop(&mut self) {
-        let _ = koe_host_session_destroy(self.0);
-    }
+/// C-ABI receipt returned by [`koe_host_session_report_playback_progress`].
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KoePlaybackReceipt {
+    /// Resulting session view generation (`0` when handle or pointer is invalid).
+    pub generation: u64,
+    /// Session view generation immediately before applying progress.
+    pub prev_generation: u64,
+    /// Clamped playback position in milliseconds.
+    pub position_ms: u64,
+    /// Effective wall-clock timestamp in epoch seconds resolved by the runtime.
+    pub now_epoch_sec: u64,
+    /// Active playing state after applying progress.
+    pub is_playing: bool,
+    /// Whether active playback state mutated (or applied alongside dirty clock state).
+    pub applied: bool,
+    /// Whether day rollover, trash retention, or background reconciliation requires a full snapshot.
+    pub needs_full_snapshot: bool,
+    /// Explicit padding to 8-byte alignment.
+    pub reserved: [u8; 5],
 }
 
 /// Returns the native contract version.
@@ -321,6 +205,117 @@ pub unsafe extern "C" fn koe_host_session_dispatch_json(
     })
 }
 
+/// Appends a bounded PCM16 audio chunk directly without JSON encoding or snapshot projection.
+/// # Safety
+/// `record_id`, `session_id`, and `lane` must point to valid terminated UTF-8 strings, or be null.
+/// When `sample_count` is nonzero, `samples` must be aligned and address `sample_count` initialized
+/// `i16` values, or be null.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn koe_host_session_ingest_pcm(
+    handle: u64,
+    record_id: *const c_char,
+    session_id: *const c_char,
+    lane: *const c_char,
+    sequence: u64,
+    epoch: u64,
+    captured_start_ns: u64,
+    has_timing: bool,
+    samples: *const i16,
+    sample_count: usize,
+    now_epoch_sec: u64,
+) -> KoePcmReceipt {
+    guarded(|| {
+        let (Some(record_id), Some(session_id), Some(lane)) = (unsafe {
+            (
+                read_string(record_id),
+                read_string(session_id),
+                read_string(lane),
+            )
+        }) else {
+            return KoePcmReceipt::default();
+        };
+        if sample_count > 0 && (samples.is_null() || !samples.is_aligned()) {
+            return KoePcmReceipt::default();
+        }
+        let slice: &[i16] = if sample_count == 0 || sample_count > 8192 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(samples, sample_count) }
+        };
+        let timing = has_timing.then_some((epoch, captured_start_ns));
+        let Ok(mut table) = sessions().lock() else {
+            return KoePcmReceipt::default();
+        };
+        let Some(entry) = table.entries.get_mut(&handle) else {
+            return KoePcmReceipt::default();
+        };
+        let receipt = entry.runtime.ingest_microphone_pcm(
+            &record_id,
+            &session_id,
+            &lane,
+            sequence,
+            slice,
+            timing,
+            now(now_epoch_sec),
+        );
+        let events = entry.runtime.drain_companion_events();
+        entry.subscribers.broadcast(&events);
+        KoePcmReceipt {
+            generation: receipt.generation,
+            next_sequence: receipt.next_sequence,
+            status: receipt.status as u32,
+            reserved: 0,
+        }
+    })
+}
+
+/// Reports native playhead progress without re-projecting the workspace when clock state is clean.
+/// # Safety
+/// `record_id` must point to a valid terminated UTF-8 string, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn koe_host_session_report_playback_progress(
+    handle: u64,
+    record_id: *const c_char,
+    request_id: u64,
+    position_ms: u64,
+    is_playing: bool,
+    last_projected_now_sec: u64,
+    now_epoch_sec: u64,
+) -> KoePlaybackReceipt {
+    guarded(|| {
+        let Some(record_id) = (unsafe { read_string(record_id) }) else {
+            return KoePlaybackReceipt::default();
+        };
+        let Ok(mut table) = sessions().lock() else {
+            return KoePlaybackReceipt::default();
+        };
+        let Some(entry) = table.entries.get_mut(&handle) else {
+            return KoePlaybackReceipt::default();
+        };
+        let receipt = entry.runtime.report_playback_progress(
+            &record_id,
+            request_id,
+            position_ms,
+            is_playing,
+            last_projected_now_sec,
+            now(now_epoch_sec),
+        );
+        let events = entry.runtime.drain_companion_events();
+        entry.subscribers.broadcast(&events);
+        KoePlaybackReceipt {
+            generation: receipt.generation,
+            prev_generation: receipt.prev_generation,
+            position_ms: receipt.position_ms,
+            now_epoch_sec: receipt.now_epoch_sec,
+            is_playing: receipt.is_playing,
+            applied: receipt.applied,
+            needs_full_snapshot: receipt.needs_full_snapshot,
+            reserved: [0; 5],
+        }
+    })
+}
+
 /// Accepts a bounded BLE notification; returns the resulting view generation.
 /// # Safety
 /// `bytes` must address `length` initialized bytes when length is nonzero.
@@ -338,22 +333,18 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
         let bytes = if length == 0 {
             &[]
         } else {
-            // SAFETY: Checked pointer and length follow the caller contract.
             unsafe { std::slice::from_raw_parts(bytes, length) }
         };
-        let generation = {
-            let Ok(mut table) = sessions().lock() else {
-                return 0;
-            };
-            let Some(entry) = table.entries.get_mut(&handle) else {
-                return 0;
-            };
-            entry.runtime.ingest_ble_chunk(bytes, now(epoch));
-            let generation = entry.runtime.generation();
-            let events = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&events);
-            generation
+        let Ok(mut table) = sessions().lock() else {
+            return 0;
         };
+        let Some(entry) = table.entries.get_mut(&handle) else {
+            return 0;
+        };
+        entry.runtime.ingest_ble_chunk(bytes, now(epoch));
+        let generation = entry.runtime.generation();
+        let events = entry.runtime.drain_companion_events();
+        entry.subscribers.broadcast(&events);
         generation
     })
 }
@@ -415,19 +406,16 @@ pub extern "C" fn koe_host_session_drain_local_asr_json(handle: u64) -> *mut c_c
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epoch: u64) -> u64 {
     guarded(|| {
-        let generation = {
-            let Ok(mut table) = sessions().lock() else {
-                return 0;
-            };
-            let Some(entry) = table.entries.get_mut(&handle) else {
-                return 0;
-            };
-            entry.runtime.poll_timers(elapsed_ms, now(epoch));
-            let generation = entry.runtime.generation();
-            let events = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&events);
-            generation
+        let Ok(mut table) = sessions().lock() else {
+            return 0;
         };
+        let Some(entry) = table.entries.get_mut(&handle) else {
+            return 0;
+        };
+        entry.runtime.poll_timers(elapsed_ms, now(epoch));
+        let generation = entry.runtime.generation();
+        let events = entry.runtime.drain_companion_events();
+        entry.subscribers.broadcast(&events);
         generation
     })
 }
@@ -444,34 +432,7 @@ pub unsafe extern "C" fn koe_host_string_free(pointer: *mut c_char) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn session_lifecycle_has_no_seed_data_and_rejects_duplicate_writer() {
-        let root = std::env::temp_dir().join(format!("koe-ffi-v2-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let path = CString::new(root.to_str().unwrap()).unwrap();
-        // SAFETY: All pointers are owned terminated strings.
-        unsafe {
-            let handle = koe_host_session_create(path.as_ptr());
-            assert_ne!(handle, 0);
-            assert_eq!(koe_host_session_create(path.as_ptr()), 0);
-            let snapshot = koe_host_session_snapshot_json(handle, 1000);
-            let text = CStr::from_ptr(snapshot).to_str().unwrap();
-            assert!(text.contains("\"records\":[]"));
-            assert!(text.contains("\"version\":2"));
-            koe_host_string_free(snapshot);
-            let effects = koe_host_session_drain_local_asr_json(handle);
-            assert_eq!(CStr::from_ptr(effects).to_str().unwrap(), "[]");
-            koe_host_string_free(effects);
-            assert!(koe_host_session_destroy(handle));
-            assert!(koe_host_session_drain_local_asr_json(handle).is_null());
-            assert_eq!(koe_host_session_generation(handle), 0);
-            assert!(!koe_host_session_destroy(handle));
-        }
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
+mod session_tests;
 
 #[cfg(test)]
 #[path = "local_bridge_dictation_tests.rs"]

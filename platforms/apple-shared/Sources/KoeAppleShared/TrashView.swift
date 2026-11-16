@@ -6,18 +6,19 @@ struct TrashView: View {
     @State private var confirmEmptyTrash = false
 
     var body: some View {
+        let trashRecords = store.trashRecords
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 HStack(alignment: .top) {
                     PageHeading(title: "回收站", subtitle: "移入回收站的记录保留 30 天，到期后自动彻底清除。")
                     Spacer()
-                    if !store.snapshot.trashRecords.isEmpty {
+                    if !trashRecords.isEmpty {
                         KoeActionButton("清空回收站", systemImage: "trash.slash") {
                             confirmEmptyTrash = true
                         }
                     }
                 }
-                if store.snapshot.trashRecords.isEmpty {
+                if trashRecords.isEmpty {
                     EmptyState(
                         icon: "trash",
                         title: "回收站是空的",
@@ -25,7 +26,7 @@ struct TrashView: View {
                     )
                 } else {
                     LazyVStack(spacing: 10) {
-                        ForEach(store.snapshot.trashRecords) { item in
+                        ForEach(trashRecords) { item in
                             trashRow(item)
                         }
                     }
@@ -33,7 +34,7 @@ struct TrashView: View {
             }
             .padding(30)
         }
-        .onChange(of: store.snapshot.trashRecords) { _, items in
+        .onChange(of: trashRecords) { _, items in
             if let target = purgeTarget, !items.contains(where: { $0.id == target.id }) {
                 purgeTarget = nil
             }
@@ -70,7 +71,7 @@ struct TrashView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("回收站中的 \(store.snapshot.trashRecords.count) 条记录及其本地录音文件将被永久清除，无法恢复。")
+            Text("回收站中的 \(trashRecords.count) 条记录及其本地录音文件将被永久清除，无法恢复。")
         }
     }
 

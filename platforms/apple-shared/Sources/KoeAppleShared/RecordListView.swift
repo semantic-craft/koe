@@ -7,11 +7,11 @@ struct RecordListView: View {
     @FocusState private var isSearchFocused: Bool
 
     private var filtered: [RecordSnapshot] {
-        store.snapshot.records.filter { $0.matches(filter: selectedFilter, query: searchQuery) }
+        store.records.filter { $0.matches(filter: selectedFilter, query: searchQuery) }
     }
 
     private func categoryCount(_ category: RecordFilterCategory) -> Int? {
-        let count = store.snapshot.records.filter { $0.matches(filter: category, query: "") }.count
+        let count = store.records.filter { $0.matches(filter: category, query: "") }.count
         if category == .all { return count }
         return count > 0 ? count : nil
     }
@@ -23,7 +23,7 @@ struct RecordListView: View {
 
                 searchAndFilters
 
-                if store.snapshot.records.isEmpty {
+                if store.records.isEmpty {
                     EmptyState(
                         icon: "tray.full",
                         title: "还没有记录",
