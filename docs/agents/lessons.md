@@ -426,3 +426,17 @@
 - 修复：`NativeCredentials` 识别 `KOE_CREDENTIAL_SOURCE=environment`，沿用 Rust 导入、保存、清除协议，不回退个人 Keychain。
 - 验证点：`environmentLifecycle`（`Explicit environment credentials configure a new workspace, survive restart and respect clear`）覆盖首次导入、重启保留与清除后不再回读环境密钥；密钥不得写入工作区快照。
 - Seen 1x（2026-11-13）。
+
+### 保存密钥须先登记引用再写入安全项，避免提交前中断留下孤儿
+
+- 出处：2026-11-15 #714（`92692a7e`），对应 #604。保存 API Key 时若进程在「新安全项已写入、工作区引用尚未提交」之间被终止，系统安全存储会留下无人引用的秘密。
+- 修复：改为先登记、后写入、再一次提交提升。平台 `prepare` 只分配新引用（macOS 生产路径只生成 UUID，不调用 Keychain），ProductStore 写入 `provider.pending_credentials` 并提交；`create(reference, secret)` 在该引用上创建并读回校验，失败时确认删除后才移出 pending；一次提交把引用设为 `Saved`、旧引用移入 `retired` 并移出 pending。启动与重试清理按引用精确删除 pending/retired，不扫描、不枚举 Keychain。
+- 验证点：`real_sigkill_after_create_reclaims_orphan_without_touching_other_workspace_or_legacy`、`pending_orphan_delete_failure_retries_with_explicit_authorization` 与 Swift `A secure item created before a crashed workspace commit is reclaimed on reopen` 均先红后绿。未在真实环境验证，没有运行签名安装包，也没有读写个人 Keychain。
+- Seen 1x（2026-11-15）。
+
+### SwiftUI @Observable 宿主存储须按变更频率切分属性并在关窗态门控离屏重排
+
+- 出处：2026-11-16 #726（`815c8d3`），对应 #723。`HostSessionStore` 仅暴露单一 `@Observable` 属性 `snapshot`，叠加 4 Hz 定时器、逐块 `[Int16]` JSON 序列化投影及 `isReleasedWhenClosed = false` 缓存主窗口，导致播放进度或采集电平每跳都触发全工作区视图重算与关窗离屏 `NSHostingView` 重排。
+- 修复：Rust 侧新增 `koe_host_session_ingest_pcm` 二进制采样快路径与 `trash_remaining_days` 24 小时阶跃水位线；Swift 侧将 `HostSessionStore` 按变更频率拆分为 `Equatable` 切片，仅 4 个叶子栏允许读取 4 Hz 切片并由 `verify-ui-principles.py` 静态门禁守护；`NativeCapture` 合并批次后再单次刷新；`KoeWindowPresenter` 在关窗及最小化稳态冻结 UI 切片广播并在恢复时同步追平；`CoreAudioInputMonitor` 用 HAL 属性监听替代 1 Hz 轮询。
+- 验证点：`session_tests`、`ScopedObservationTests`、`OffscreenAndTimerTests`、`HardeningRegressionTests` 与 `test_verify_ui_principles.py` 均先红后绿；Release 基准关窗回放 40 拍耗时中位数从 `307.60 ms` 降至 `0.23 ms`，双路采集 20 拍 CPU 从 `696.66 ms` 降至 `131.30 ms`。
+- Seen 1x（2026-11-16）。
