@@ -273,7 +273,7 @@
         "updated_at": "2026-11-16T15:31:13Z"
       }
     ],
-    "main": "fb412c6359fbc47bb26ddc741196af1361d06c07",
+    "main": "8fdd15d41b7f7f8078c1f4dd0bbde0d56aa02e4c",
     "open_pulls": [],
     "pulls": [
       {
@@ -766,7 +766,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-16T23:29:09.589657Z",
+  "observed_at": "2026-11-17T00:07:13.545248Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -776,7 +776,6 @@
     "metasequoiaime/msime",
     "screenpipe/screenpipe",
     "tacshi/Soundcore",
-    "semantic-craft/responsay-macos",
     "0xCoach/TaoSheng",
     "wquguru/cicada"
   ],
@@ -801,21 +800,21 @@
             },
             {
               "kind": "file",
-              "note": "已明确实现、原型与未验收边界。",
+              "note": "已明确三模式工作区实现与未验收边界。",
               "ref": "docs/mode-workspaces.md"
             }
           ],
           "id": "mode-workspaces-spec",
-          "next": "正式页面实现已由 PR #712 合并主线，沿用同一 Rust 工作区与既有 MCP。",
+          "next": "正式页面实现已由 PR #712 合并主线并收敛为三模式工作区，沿用同一 Rust 工作区与既有 MCP。",
           "status": "done",
-          "summary": "随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。本项交付业务定义文档与交互稿，正式页面已由 PR #712 实现。",
-          "title": "四种业务与界面方案"
+          "summary": "随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。",
+          "title": "三种业务与界面方案"
         },
         {
           "evidence": [
             {
               "kind": "pull",
-              "note": "正式四工作区页面与纯导航解耦经全量 check、三模型对抗审查、独立 pro 复验（PASS+NOTES）与远端 CI 通过后 squash 合并为 9588aaa。",
+              "note": "正式工作区页面与纯导航解耦经全量 check、三模型对抗审查、独立 pro 复验（PASS+NOTES）与远端 CI 通过后 squash 合并为 9588aaa。",
               "ref": 712
             },
             {
@@ -842,45 +841,16 @@
               "kind": "file",
               "note": "实时纪要三项覆盖率指标、往期会议回看与响应式分栏。",
               "ref": "platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift"
-            },
-            {
-              "kind": "file",
-              "note": "语音输入六步联动检查与伴侣流感知光标输入测试。",
-              "ref": "platforms/apple-shared/Sources/KoeAppleShared/VoiceInputView.swift"
-            },
-            {
-              "kind": "note",
-              "note": "仅证明Responsay软件交付；不证明Koe新业务页面或物理效果。",
-              "ref": "https://github.com/semantic-craft/responsay-macos/pull/823"
             }
           ],
           "id": "mode-workspaces-pages",
           "next": "需要日常使用时运行 ./scripts/install-macos.sh 更新签名版 /Applications/Koe.app，在日常使用中直接检验界面与交互。",
           "status": "done",
-          "summary": "PR #712（9588aaa）已合入主线，落地随心闪记（收件箱/项目归类、原文对照 AI 理解与自定义 Markdown 导出）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议回看）、语音输入（六步联动检查与伴侣流感知测试框）、侧栏纯导航及所有记录按模式/收件箱筛选。全量 scripts/check、三模型对抗审查、独立 pro 分支复验（PASS+NOTES）与远端 CI 均通过；尚未基于 9588aaa 重装 /Applications/Koe.app，#711 手工验收单已按日常使用替代人工清单原则关闭。",
-          "title": "正式四工作区业务页面"
-        },
-        {
-          "evidence": [
-            {
-              "kind": "note",
-              "note": "机器实测与 2026-11-14 用户真机确认（originalCursor 与 physicalDoubleTap）均已闭环，#810 已关闭。",
-              "ref": "https://github.com/semantic-craft/responsay-macos/issues/810"
-            },
-            {
-              "kind": "pull",
-              "note": "Slice PCMHW 标记完成并记录机器证据、用户真机确认与未重跑边界。",
-              "ref": 701
-            }
-          ],
-          "id": "mode-workspaces-real-input",
-          "next": "Koe 与 Responsay PCMHW/#810 已结案；物理 Fn / 右 Option 系统按键继续按 Responsay #822 追踪。",
-          "status": "done",
-          "summary": "Koe 2.0.0（9）与 Responsay 1.27.1（203）及后续安装的 Responsay 1.28.0（204）已完成闭环验收。正式菜单成功弹出录音浮窗，真实录音豆声学收音经 Koe 和千问实时服务取得测试句终稿；2026-11-14 16:12 与 16:23 系统日志记录 Responsay[9949] 真实听写会话与 Spotlight 写入，用户在 Koe 2.0.0（9）与 Responsay 1.28.0（204）真机确认原光标插入（originalCursor）与D3200 实体双击启停（physicalDoubleTap）均已通过，semantic-craft/responsay-macos#810 已关闭，Slice PCMHW 已于 PR #701 结案。物理蓝牙断连恢复与三种快捷键录制器本轮未单独再作机器回放。",
-          "title": "真实识别与光标上屏"
+          "summary": "PR #712（9588aaa）已合入主线并收敛为三模式工作区：随心闪记（收件箱/项目归类、原文对照 AI 理解与自定义 Markdown 导出）、全天听记（跨切片事件/暂停/未录音空档时间轴与集中复查）、实时纪要（三项覆盖率与往期会议回看）、侧栏纯导航及所有记录按模式/收件箱筛选。全量 scripts/check、三模型对抗审查、独立 pro 分支复验（PASS+NOTES）与远端 CI 均通过；#711 手工验收单已按日常使用替代人工清单原则关闭。",
+          "title": "正式三工作区业务页面"
         }
       ],
-      "title": "四模式工作区业务定义"
+      "title": "三模式工作区业务定义"
     },
     {
       "id": "rust-product",
@@ -1247,7 +1217,7 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "16 工具实时 MCP 桥接与 D3200 领口伴侣接口需求及验收范围。",
+              "note": "16 工具实时 MCP 本地桥接需求及验收范围。",
               "ref": 640
             },
             {
@@ -1256,18 +1226,8 @@
               "ref": 642
             },
             {
-              "kind": "issue",
-              "note": "独立真机验收工单：实体 04.92 D3200 自动待命、闪存回收、敲击门控与蓝牙控制权移交。",
-              "ref": 641
-            },
-            {
               "kind": "file",
-              "note": "纯函数领口伴侣状态机、双向脉冲边沿与双击敲击闷响门控（跳过前 3 片 60 ms、裁剪尾 12 片 240 ms）。",
-              "ref": "crates/koe-runtime/src/companion.rs"
-            },
-            {
-              "kind": "file",
-              "note": "属主私有 0600 koe.sock JSON-RPC 桥接、有界订阅推送与作用域化手动门控引用计数。",
+              "note": "属主私有 0600 koe.sock JSON-RPC 服务，处理 koe/status、koe/doctor 与 MCP 工具调用。",
               "ref": "crates/koe-host-api/src/local_bridge.rs"
             },
             {
@@ -1277,15 +1237,15 @@
             },
             {
               "kind": "file",
-              "note": "原生设置页伴侣模式选择、蓝牙自动连接开关与释放蓝牙控制权卡片。",
+              "note": "原生设置页蓝牙自动连接开关与释放蓝牙控制权卡片。",
               "ref": "platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift"
             }
           ],
           "id": "collar-companion-mcp-bridge",
-          "next": "现有PCM接口保留；#661增加通用听写文字，硬件验收见 #662。",
+          "next": "koe.sock 仅服务本地 CLI 与 16 项 MCP stdio 工具；实体 D3200 真机验收见 #588、#662 与 #731。",
           "status": "done",
-          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。面向通用外部语音输入法；实体 D3200 真机行为拆入 #641 验收。",
-          "title": "16 工具实时 MCP 桥接与 D3200 领口伴侣接口"
+          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 本地 RPC（0700 目录与 0600 套接字、getpeereid 同 UID 校验），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。后续已移除语音输入模式与外部伴侣流接口。",
+          "title": "16 工具实时 MCP 本地桥接"
         },
         {
           "evidence": [
@@ -1408,15 +1368,15 @@
             },
             {
               "kind": "pull",
-              "note": "修复蓝牙断连收尾、分段队列归属与 koe.sock 听写事件冲刷，完成禁外网沙盒验收。",
+              "note": "修复蓝牙断连收尾、分段队列归属与 koe.sock 离线链路校验，完成禁外网沙盒验收。",
               "ref": 704
             }
           ],
           "id": "all-day-offline-models",
-          "next": "超过五分钟真人说话、物理蓝牙断连、锁屏、外部输入法与本机 LLM 留交用户按 #662 真机验收。",
+          "next": "超过五分钟真人说话、物理蓝牙断连、锁屏与本机 LLM 留交用户按 #662 真机验收。",
           "status": "done",
-          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 听写圈定零泄漏、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；最新签名版 CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22 已重装并核对双场景演示、日常 59 条既有记录与蓝牙自动重连，物理长说话、物理蓝牙断连、锁屏与外部输入法按 #662 留待用户实测。",
-          "title": "全天听记、下载模型与通用听写文字"
+          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 本地 RPC 校验、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；最新签名版 CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22 已重装并核对日常 59 条既有记录与蓝牙自动重连，物理长说话、物理蓝牙断连与锁屏按 #662 留待用户实测。",
+          "title": "全天听记与本机下载模型"
         },
         {
           "evidence": [
@@ -1427,7 +1387,7 @@
             },
             {
               "kind": "issue",
-              "note": "真实录音、外部输入法与签名版连续使用验收。",
+              "note": "真实录音与签名版连续使用验收。",
               "ref": 668
             },
             {
@@ -1437,24 +1397,24 @@
             },
             {
               "kind": "file",
-              "note": "四模式跨页、跨午夜刷新、真实导入原文及已有摘要。",
+              "note": "三模式跨页、跨午夜刷新、真实导入原文及已有摘要。",
               "ref": "crates/koe-runtime/tests/day_journal.rs"
             },
             {
               "kind": "file",
-              "note": "语音输入恢复和结束尾块以外部桥定稿事件先红后绿。",
+              "note": "全天听记与连续实时识别回归。",
               "ref": "crates/koe-runtime/tests/all_day_speech.rs"
             },
             {
               "kind": "note",
-              "note": "真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。",
+              "note": "真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页。非物理录音验收，QA应用和进程已清理。",
               "ref": "2026-11-13 隔离原生验收"
             }
           ],
           "id": "day-journal-native",
-          "next": "模式选择入口版 e383b2c 的首页、侧栏和两端一键联动已在真实界面通过，既有数据保留；合入最新主线后的构建待重新安装验收。其余物理采集和外部输入法按 #668 最新记录推进。只留文字后删除音频、整天合并分析仍未接入；持续实时纪要已由 #681 接入，真实云端流程通过但内容质量失败。",
+          "next": "模式选择入口版首页、侧栏和联动已在真实界面通过，既有数据保留；其余物理采集按 #668 最新记录推进。只留文字后删除音频、整天合并分析仍未接入；持续实时纪要已由 #681 接入。",
           "status": "done",
-          "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。2026-11-13 已安装签名版，使用开发工作区执行真实设备验收。 PR #669 已通过 CI 并 squash 合并为 c127845。",
+          "summary": "随心闪记、全天听记、实时纪要、当天片段/已有纪要、行动与设置内录音管理已接入原生界面；完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航与原文来源。PR #669 已通过 CI 并 squash 合并为 c127845。",
           "title": "一天一页原生界面"
         },
         {
@@ -1501,34 +1461,10 @@
             }
           ],
           "id": "live-minutes-workspace",
-          "next": "持续实时纪要由 #681 接入。系统音频、只留文字删音频和全天跨段综合分析另行推进；外部输入法验收保持 #679 的新记录。",
+          "next": "持续实时纪要由 #681 接入。系统音频、只留文字删音频和全天跨段综合分析另行推进。",
           "status": "done",
           "summary": "问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。",
           "title": "问 Koe 主导航与实时纪要专页"
-        },
-        {
-          "evidence": [
-            {
-              "kind": "issue",
-              "note": "外部音频协议实现范围。",
-              "ref": 675
-            },
-            {
-              "kind": "file",
-              "note": "通用本地伴侣桥接（companion/subscribe、set_dictation_active、set_capture_active）契约；Responsay 专属 external_pcm_v1 独占租约已随双端解耦移除。",
-              "ref": "docs/local-text-bridge.md"
-            },
-            {
-              "kind": "file",
-              "note": "伴侣订阅与听写/采集控制回归。",
-              "ref": "crates/koe-runtime/src/companion_mcp_tests.rs"
-            }
-          ],
-          "id": "responsay-external-pcm",
-          "next": "Responsay 已移除安克录音豆支持，Koe 同步清理 external_pcm_v1 独占 PCM 租约与 open_responsay 宿主动作，保留通用 companion/subscribe 本地桥接。",
-          "status": "done",
-          "summary": "历史曾实现按 socket 独占的 external_pcm_v1 外部 PCM 采集并通过 Responsay #810 与 Slice PCMHW 实测；随 Responsay 移除安克录音豆支持，Koe 已清理 external_pcm_v1 独占租约与 open_responsay 跨应用拉起胶水，保留通用本地伴侣事件流与控制接口。",
-          "title": "外部 PCM 独占租约清理与通用伴侣桥保留"
         },
         {
           "evidence": [
@@ -1567,35 +1503,6 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "Rust 持有语音输入待命配置与录制保护。",
-              "ref": "crates/koe-runtime/src/voice_input.rs"
-            },
-            {
-              "kind": "file",
-              "note": "首页移除录音与摘要展示，提供语音输入入口。",
-              "ref": "platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift"
-            },
-            {
-              "kind": "file",
-              "note": "开启语音输入会话仅待命录音豆、不拉起外部应用的宿主动作回归。",
-              "ref": "platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift"
-            },
-            {
-              "kind": "note",
-              "note": "Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。",
-              "ref": "2026-11-13 入口版真实界面验收"
-            }
-          ],
-          "id": "voice-input-mode-entry",
-          "next": "已移除 open_responsay 跨应用 URL 拉起动作，保留四模式工作区与通用语音输入待命模式。",
-          "status": "done",
-          "summary": "首页提供四模式选择，侧栏提供语音输入工作区；随 Responsay 移除安克录音豆支持，已清理 open_responsay 跨应用拉起动作，语音输入模式仅管理本机录音豆领口待命与通用本地伴侣桥接。",
-          "title": "模式选择与语音输入工作区"
-        },
-        {
-          "evidence": [
-            {
               "kind": "issue",
               "note": "用户最新决定与交付范围。",
               "ref": 685
@@ -1607,9 +1514,9 @@
             }
           ],
           "id": "record-button-default-quick-note",
-          "next": "Responsay 通道实体双击与原光标插入已于 #810 结案；Koe 独立侧键物理长按/松开及相关模式真机项继续按 #668 追踪。",
+          "next": "Koe 独立侧键物理长按/松开及相关模式真机项继续按 #668 追踪。",
           "status": "done",
-          "summary": "普通设备与麦克风录音默认随心闪记，其他模式由macOS明确启用。修复持续纪要误入、冷启动自动待命和会话授权继承；普通最终转写/摘要保留。完整本地门禁、91项运行时单元及独立审查通过；签名安装后真实D3200闪记录音、Koe转写和保存通过，显式纪要/语音入口及重启空闲通过。",
+          "summary": "普通设备与麦克风录音默认随心闪记，其他模式由macOS明确启用。修复持续纪要误入、冷启动自动待命和会话授权继承；普通最终转写/摘要保留。完整本地门禁、91项运行时单元及独立审查通过；签名安装后真实D3200闪记录音、Koe转写和保存通过，显式纪要入口及重启空闲通过。",
           "title": "录音键默认随心闪记"
         },
         {
@@ -1913,20 +1820,6 @@
             {
               "kind": "issue",
               "note": "独立真机验收工单，保持开放未验。",
-              "ref": 641
-            }
-          ],
-          "id": "collar-companion-device-acceptance",
-          "next": "连接实体 04.92 D3200 按 #641 逐项核对。",
-          "status": "unverified",
-          "summary": "本轮已完成沙盒态运行中 Koe.app 的 0600 koe.sock 实时 16 工具连接验收与模拟 BLE 协议回归；尚未连接实体 04.92 国行 D3200 录音豆验证出仓自动待命指示灯与续航、闪存临时文件自动回收、正面双击与快捷键混用敲击门控听感及释放蓝牙控制权后的外部配对。",
-          "title": "D3200 领口伴侣与蓝牙控制权移交真机验收"
-        },
-        {
-          "evidence": [
-            {
-              "kind": "issue",
-              "note": "独立真机验收工单，保持开放未验。",
               "ref": 645
             }
           ],
@@ -2018,7 +1911,7 @@
             }
           ],
           "id": "private-release-200",
-          "next": "正式四业务页面代码已于 PR #712 合入主线（v2.0.0 之后）；Responsay #810 与 PCMHW 已结案，物理 Fn / 右 Option 继续按 Responsay #822 追踪。",
+          "next": "正式页面代码已于 PR #712 合入主线并收敛为三模式工作区（v2.0.0 之后）。",
           "status": "done",
           "summary": "2026-11-14 已在私有仓库发布 v2.0.0（构建 9），提供 Apple silicon 签名包、校验和及验收回执。完整门禁、独立评审、Apple 公证、票据装订与解压包 Gatekeeper、自检和冒烟均通过。授权下载回读与发布哈希一致。本机已从正式发行包安装构建 9，签名、Gatekeeper 与实际启动通过；配置、绑定与权限保留。",
           "title": "Koe 2.0.0 私有发行包"
@@ -2062,7 +1955,7 @@
             },
             {
               "kind": "file",
-              "note": "导航、回放与四模式选择态单一持有者及 detach_records 统一清理。",
+              "note": "导航、回放与工作区选择态单一持有者及 detach_records 统一清理。",
               "ref": "crates/koe-runtime/src/selection.rs"
             },
             {
@@ -2139,7 +2032,7 @@
             }
           ],
           "id": "private-release-210",
-          "next": "独立物理硬件核对继续按 #722、#725 与 Responsay #822 追踪。",
+          "next": "独立物理硬件核对继续按 #722 与 #725 追踪。",
           "status": "done",
           "summary": "2026-11-16 已在私有仓库发布 v2.1.0（构建 10），提供 Apple silicon Developer ID 时间戳签名包、SHA256SUMS 与无秘密验收回执。完整门禁、独立审查、Apple Notary 公证（Accepted，2671c580-1bea-4eb5-936f-f1b15b941edf）、票据装订与解压包 Gatekeeper（Notarized Developer ID）、verify-self、smoke-test 及 8 份许可证逐字节核对全部通过，回读下载哈希与发布哈希一致；本机已从正式发行包完成 /Applications/Koe.app 2.1.0（构建 10）平滑升级并验证记录、连接与权限保留。",
           "title": "Koe 2.1.0 私有发行包"

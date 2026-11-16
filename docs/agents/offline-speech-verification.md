@@ -10,7 +10,7 @@ cargo run -p koe-cli --example verify_offline -- /absolute/fresh-qwen-workspace 
 cargo run -p koe-cli --example verify_offline -- /absolute/fresh-day-workspace /absolute/speech.wav sensevoice-small --all-day
 ```
 
-`crates/koe-cli/examples/verify_offline_socket.rs` 进一步经 C ABI（`HostSessionGuard`）与真实 `koe.sock`（`UnixStream`）驱动同一链路，可在 macOS 内核禁外网沙盒下离线运行：
+`crates/koe-cli/examples/verify_offline_socket.rs` 进一步经 C ABI（`HostSessionGuard`）与真实 `koe.sock`（`UnixStream`）驱动同一链路并校验本地 RPC/MCP 查询（`koe/status`、`koe/mcp_tools_list`、`koe/mcp_tool_call`），可在 macOS 内核禁外网沙盒下离线运行：
 
 ```sh
 cargo build --release -p koe-cli --example verify_offline_socket
@@ -22,9 +22,9 @@ sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip))' 
 
 模型首次准备需要网络。重复验证可把已下载的固定模型文件放入新工作区 `speech-models/`；产品仍会校验大小和 SHA-256，再加载。显式工作区路径须保证 `<workspace>/koe.sock` 短于 Unix 套接字路径上限。
 
-文件流程验证导入、实际识别、持久化、关闭和重开后文字一致。全天流程重复回放输入 WAV，累计 303 秒，检查五分钟边界后有两条包含原文的记录；只圈定最初 15 秒为听写，确认文字事件没有越出范围。最后重开工作区并比对两条记录原文。
+文件流程验证导入、实际识别、持久化、关闭和重开后文字一致。全天流程重复回放输入 WAV，累计 303 秒，检查五分钟边界后有两条包含原文的记录，最后重开工作区并比对两条记录原文。
 
-这些命令验证生产 Runtime 和真实推理，不代表麦克风、D3200、耗电或长时间实际环境已通过。原生应用需操作设置、模型准备、全天听记和演示，再读回保存状态；硬件场景见 [#662](https://github.com/semantic-craft/koe/issues/662)。
+这些命令验证生产 Runtime 和真实推理，不代表麦克风、D3200、耗电或长时间实际环境已通过。原生应用需操作设置、模型准备和全天听记，再读回保存状态；硬件场景见 [#662](https://github.com/semantic-craft/koe/issues/662)。
 
 模型生命周期、取消、故障、音频时间和持久化边界运行仓库统一检查。
 
