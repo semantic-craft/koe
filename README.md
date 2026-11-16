@@ -56,7 +56,7 @@ Koe 采用纯 Rust 内核（8 个 crate 中有 6 个开启 `#![forbid(unsafe_cod
 | **随心闪记**（默认） | 灵感、临时交代、书单备忘 | 按下录音豆或快捷键默认落入闪记收件箱，保留原始时间戳并支持归入项目；AI 提炼与转写原文并排展示，绝不改写你说过的原话。 |
 | **全天听记** | 领口全天连续佩戴 | 自动按 5 分钟封段保存，前一段后台生成摘要与待办时当前段继续录音不断流；按墙钟合并同批事件，在单调时间线上如实标出暂停与未录音空档，供日终集中复查。 |
 | **实时纪要** | 线上或线下会议、访谈 | 通过 CoreAudio `CATapDescription` 同步录制 **Mac 系统声音与麦克风双路音轨**，戴耳机开会也能录齐双方声音；满 3 句或 20 秒出首版议题，后续按 45 秒防抖滚动刷新且不叠加并发请求，停录封口后单次提取待确认行动项。 |
-| **语音输入** | 任意应用光标处听写 | 通过本机 `koe.sock` 将干净语音流与双击边沿桥接给 Responsay 等外部输入法，内置六步联动自检与跨重连代次的光标测试框，Koe 与输入法不重复识别同一段声音。 |
+| **语音输入** | 任意应用光标处听写 | 通过本机 `koe.sock` 将干净语音流、双击边沿与听写定稿桥接给外部输入工具，内置六步联动自检与跨重连代次的光标测试框。 |
 
 四种采集模式共用同一份本地资料库，并受三条硬规则约束：
 
@@ -88,7 +88,7 @@ cargo run --package koe-cli -- companion-listen
 ```
 
 - **16 项 MCP stdio 工具。** 按需投影并提供全文检索、今日简报、记录列表与详情、带来源问答、待办与记忆审核及完成、新建笔记、分段批注、转写修订、说话人改名合并、归档与回收站恢复、D3200 状态控制与代次轮询。**按设计不向 Agent 暴露彻底清除接口**，防止不可逆删库。
-- **本机输入法文字与音频桥。** 通过 [本地文字桥协议](docs/local-text-bridge.md) 输出 `transcript_final` 定稿事件、`control_edge` 物理双击边沿与 `external_pcm_v1` 独占租约音频流，供 Responsay 等外部输入法直接消费干净的 `16 kHz` `PCM16` 语音。
+- **本机输入法文字与音频桥。** 通过 [本地文字桥协议](docs/local-text-bridge.md) 输出 `transcript_final` 定稿事件、`control_edge` 物理双击边沿与 `audio_pcm16` 实时音频流，供外部输入工具直接消费干净的 `16 kHz` `PCM16` 语音与定稿文本。
 
 ## 构建与安装
 
@@ -143,7 +143,7 @@ Koe 在独立实现的 Rust 与 SwiftUI 代码底座上吸收了多个开源项�
 | 状态 | 覆盖范围 |
 | --- | --- |
 | **已交付并完成验证（`v2.1.0` 构建 `10`）** | Rust 8-crate 内核、通过 Apple Notary 公证的 Developer ID `arm64` 安装包、正式四大 SwiftUI 工作区、CoreAudio `CATapDescription` 双路采集、离线 GGUF 与 macOS 26 `SpeechAnalyzer` 本机识别、分域 `@Observable` 切片与二进制 PCM FFI、BM25 检索与纪要证据门禁、16 项 MCP 工具，以及 `/Applications/Koe.app` 本机覆盖升级保留工作区与 Keychain 凭据验证。 |
-| **已合入主线，追踪物理硬件核对（`ready-for-human`）** | 今天页音源状态条与一键切换录音豆实机核对（[#722](https://github.com/semantic-craft/koe/issues/722)）、关窗离屏态实体 D3200 按键唤醒与外接耳机热插拔核对（[#725](https://github.com/semantic-craft/koe/issues/725)），以及 Responsay 侧物理快捷键联调核对（[Responsay #822](https://github.com/semantic-craft/responsay-macos/issues/822)）。 |
+| **已合入主线，追踪物理硬件核对（`ready-for-human`）** | 今天页音源状态条与一键切换录音豆实机核对（[#722](https://github.com/semantic-craft/koe/issues/722)），以及关窗离屏态实体 D3200 按键唤醒与外接耳机热插拔核对（[#725](https://github.com/semantic-craft/koe/issues/725)）。 |
 | **下一阶段规划（`2.1.0` 未接入）** | iOS 与 Android 移动宿主及双端同步（[#124](https://github.com/semantic-craft/koe/issues/124)、[#149](https://github.com/semantic-craft/koe/issues/149) 至 [#151](https://github.com/semantic-craft/koe/issues/151)）、外部 AI 委派协作（[#152](https://github.com/semantic-craft/koe/issues/152) 至 [#155](https://github.com/semantic-craft/koe/issues/155)）、Wi-Fi SoftAP 快传、固件 OTA、基于静音的 VAD 动态切段与本机离线声纹聚类。 |
 
 ## 许可证

@@ -204,13 +204,13 @@ fn mode_stamping_and_stay_on_page_across_capture_and_note_creation() {
 }
 
 #[test]
-fn voice_input_session_and_open_responsay_decoupled_from_page_navigation() {
+fn voice_input_session_decoupled_from_page_navigation() {
     let (mut rt, _sb) = runtime();
 
     let snap = send_at(
         &mut rt,
         NOW,
-        json!({ "type": "set_voice_input_session", "enabled": true, "openResponsay": false }),
+        json!({ "type": "set_voice_input_session", "enabled": true }),
     );
     assert_eq!(snap["section"], "today");
     assert_eq!(snap["device"]["companionMode"], "collar_standby");
@@ -228,13 +228,15 @@ fn voice_input_session_and_open_responsay_decoupled_from_page_navigation() {
 
     let steps = snap["workspaces"]["voiceInput"]["steps"].as_array().unwrap();
     assert_eq!(steps.len(), 6);
-    assert_eq!(steps[2]["statusLabel"], "状态由 Responsay 管理");
-    assert_eq!(steps[3]["statusLabel"], "状态由 Responsay 管理");
+    assert_eq!(steps[2]["id"], "companion_bridge");
+    assert_eq!(steps[2]["statusLabel"], "等待订阅");
+    assert_eq!(steps[3]["id"], "shortcut_guide");
+    assert_eq!(steps[3]["statusLabel"], "双击或命令");
     assert!(
-        steps[3]["detail"].as_str().unwrap().contains("Fn")
-            && steps[3]["detail"].as_str().unwrap().contains("右 Option")
+        steps[3]["detail"].as_str().unwrap().contains("双击录音豆正面")
+            && steps[3]["detail"].as_str().unwrap().contains("听写控制命令")
     );
-    assert_eq!(steps[4]["statusLabel"], "待验证");
+    assert_eq!(steps[4]["statusLabel"], "待配置");
     assert_eq!(steps[5]["statusLabel"], "待测试");
 
     let raw_json = rt.snapshot_json(NOW);
@@ -242,10 +244,6 @@ fn voice_input_session_and_open_responsay_decoupled_from_page_navigation() {
         !raw_json.contains('·'),
         "snapshot JSON must not contain middle-dot characters"
     );
-
-    let opened = send_at(&mut rt, NOW + 1, json!({ "type": "open_responsay_app" }));
-    assert_eq!(opened["section"], "today");
-    assert_eq!(rt.drain_host_actions_json(), r#"[{"type":"open_responsay"}]"#);
 
     let disabled = send_at(
         &mut rt,
@@ -708,7 +706,7 @@ fn voice_input_reopen_disarms_session_and_retains_dictation_across_companion_dra
         let armed = send_at(
             &mut rt,
             NOW,
-            json!({ "type": "set_voice_input_session", "enabled": true, "openResponsay": false }),
+            json!({ "type": "set_voice_input_session", "enabled": true }),
         );
         assert_eq!(armed["workspaces"]["voiceInput"]["sessionEnabled"], true);
     }
@@ -869,7 +867,7 @@ fn create_note_stay_on_page_session_exclusivity_can_start_and_archived_quick_not
     let armed = send_at(
         &mut rt,
         NOW + 3,
-        json!({ "type": "set_voice_input_session", "enabled": true, "openResponsay": false }),
+        json!({ "type": "set_voice_input_session", "enabled": true }),
     );
     assert_eq!(armed["workspaces"]["voiceInput"]["sessionEnabled"], true);
 

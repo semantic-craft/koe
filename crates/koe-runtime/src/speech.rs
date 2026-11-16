@@ -834,11 +834,6 @@ impl KoeRuntime {
     }
 
     pub(super) fn set_source_dictation(&mut self, source: DictationSource, active: bool) {
-        if !self.external_pcm_unleased()
-            && matches!(source, DictationSource::Bean | DictationSource::Standby)
-        {
-            return;
-        }
         if self.dictation_active(source) == active {
             return;
         }

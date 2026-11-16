@@ -24,7 +24,7 @@ impl KoeRuntime {
         match source {
             "microphone" => {
                 if self.active_companion_mode() == CompanionRoutingMode::CollarStandby {
-                    self.set_voice_input_session(false, false, now)?;
+                    self.set_voice_input_session(false, now)?;
                 }
                 self.start_microphone(input_id, false, None, now)?;
             }
@@ -38,7 +38,7 @@ impl KoeRuntime {
                 if self.active_companion_mode() == CompanionRoutingMode::CollarStandby
                     && !self.companion.standby_stream_owned
                 {
-                    self.set_voice_input_session(false, false, now)?;
+                    self.set_voice_input_session(false, now)?;
                 }
                 self.ensure_device_idle()?;
                 let outcome = self.device.session.start_realtime_recording_with_options(

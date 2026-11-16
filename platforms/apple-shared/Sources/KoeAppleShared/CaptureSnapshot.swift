@@ -138,10 +138,6 @@ public struct ActiveCaptureSnapshot: Codable, Equatable, Sendable {
     public let level: Double?
 }
 
-public struct HostAction: Decodable, Sendable {
-    public enum Kind: String, Decodable, Sendable {
-        case openResponsay = "open_responsay"
-    }
-
-    public let type: Kind
+public struct HostAction: Decodable, Equatable, Sendable {
+    public let type: String
 }
