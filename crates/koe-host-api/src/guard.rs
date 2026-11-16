@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     ffi::{CStr, CString, c_char},
     path::Path,
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -59,12 +59,29 @@ pub(crate) fn sessions() -> &'static Mutex<Sessions> {
     SESSIONS.get_or_init(|| Mutex::new(Sessions::default()))
 }
 
+pub(crate) fn lock_sessions() -> MutexGuard<'static, Sessions> {
+    sessions().lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(crate) fn with_session_broadcast<R>(
+    handle: u64,
+    op: impl FnOnce(&mut KoeRuntime) -> R,
+) -> Option<R> {
+    let (result, hub, events) = {
+        let mut table = lock_sessions();
+        let entry = table.entries.get_mut(&handle)?;
+        let result = op(&mut entry.runtime);
+        let events = entry.runtime.drain_companion_events();
+        (result, entry.subscribers.clone(), events)
+    };
+    hub.broadcast(&events);
+    Some(result)
+}
+
 pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
     let subscribers = local_bridge::SubscriberHub::default();
     let handle = {
-        let Ok(mut table) = sessions().lock() else {
-            return 0;
-        };
+        let mut table = lock_sessions();
         table.next = table.next.saturating_add(1);
         let id = table.next;
         table.entries.insert(
@@ -78,13 +95,13 @@ pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
     };
     if let Some(bridge) = local_bridge::BridgeServer::start(handle, workspace, subscribers) {
         let mut orphan_bridge = Some(bridge);
-        if let Ok(mut table) = sessions().lock() {
-            if table.entries.contains_key(&handle) {
-                if let Some(active) = orphan_bridge.take() {
-                    table.bridges.insert(handle, active);
-                }
+        let mut table = lock_sessions();
+        if table.entries.contains_key(&handle) {
+            if let Some(active) = orphan_bridge.take() {
+                table.bridges.insert(handle, active);
             }
         }
+        drop(table);
         drop(orphan_bridge);
     }
     handle
@@ -221,15 +238,10 @@ impl HostSessionGuard {
     #[must_use]
     pub fn drain_ble_tx(&self) -> Vec<Vec<u8>> {
         crate::guarded(|| {
-            sessions()
-                .lock()
-                .ok()
-                .and_then(|mut table| {
-                    table
-                        .entries
-                        .get_mut(&self.0)
-                        .map(|entry| entry.runtime.drain_outbound_ble_frames())
-                })
+            lock_sessions()
+                .entries
+                .get_mut(&self.0)
+                .map(|entry| entry.runtime.drain_outbound_ble_frames())
                 .unwrap_or_default()
         })
     }

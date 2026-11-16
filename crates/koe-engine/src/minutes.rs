@@ -1480,10 +1480,11 @@ fn replace_minute_terms(text: &str, replacements: &[(&str, &str)]) -> String {
         if let Some((from, to)) = matched {
             out.push_str(to);
             rest = &rest[from.len()..];
-        } else {
-            let ch = rest.chars().next().unwrap();
+        } else if let Some(ch) = rest.chars().next() {
             out.push(ch);
             rest = &rest[ch.len_utf8()..];
+        } else {
+            break;
         }
     }
     out

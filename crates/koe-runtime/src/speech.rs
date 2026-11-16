@@ -340,8 +340,10 @@ impl KoeRuntime {
             if s.engine == SpeechEngine::AppleSpeech && self.speech.apple_owner.is_some() {
                 continue;
             }
+            let Some(audio) = s.file_audio.as_mut() else {
+                continue;
+            };
             changed = true;
-            let audio = s.file_audio.as_mut().unwrap();
             let n = audio.len().min(WINDOW_SAMPLES * 2);
             let chunk: Vec<u8> = audio.drain(..n).collect();
             let finished = audio.is_empty();
@@ -426,19 +428,24 @@ impl KoeRuntime {
                     s.active_operation = Some(op);
                 }
                 if let Some(op) = s.active_operation {
-                    let current =
-                        (s.consumed_samples / 16 - s.operations[&op].offset_ms) as usize * 16;
+                    let Some(offset) = s.operations.get(&op).map(|o| o.offset_ms) else {
+                        s.active_operation = None;
+                        return Ok(());
+                    };
+                    let current = (s.consumed_samples / 16 - offset) as usize * 16;
                     let n = s.pcm.len().min(WINDOW_SAMPLES.saturating_sub(current));
                     let bytes: Vec<u8> = s.pcm.drain(..n).flat_map(i16::to_le_bytes).collect();
                     self.local_asr.audio(op, &bytes)?;
                     s.consumed_samples += bytes.len() as u64 / 2;
-                    let offset = s.operations[&op].offset_ms;
-                    s.operations.get_mut(&op).unwrap().duration_ms =
-                        s.consumed_samples / 16 - offset;
+                    if let Some(entry) = s.operations.get_mut(&op) {
+                        entry.duration_ms = s.consumed_samples / 16 - offset;
+                    }
                     if finish || current + n == WINDOW_SAMPLES {
                         self.local_asr.finish(op);
                         s.active_operation = None;
-                        s.operations.get_mut(&op).unwrap().phase = LocalPhase::Finishing;
+                        if let Some(entry) = s.operations.get_mut(&op) {
+                            entry.phase = LocalPhase::Finishing;
+                        }
                     }
                 }
             }
@@ -587,7 +594,9 @@ impl KoeRuntime {
         if text.trim().is_empty() {
             return Ok(());
         }
-        let op = s.operations.get_mut(&operation_id).unwrap();
+        let Some(op) = s.operations.get_mut(&operation_id) else {
+            return Ok(());
+        };
         op.elapsed_ms = 0;
         if is_final {
             op.draft.clear();
@@ -666,7 +675,9 @@ impl KoeRuntime {
         let Some(id) = id else {
             return false;
         };
-        let mut s = self.captures.sessions.remove(&id).unwrap();
+        let Some(mut s) = self.captures.sessions.remove(&id) else {
+            return false;
+        };
         let finish = s.input_closed;
         if let Err(error) = self.flush_speech_window(&mut s, finish) {
             s.results.push_back(LiveEvent::Failed(error));
@@ -804,7 +815,11 @@ impl KoeRuntime {
     }
     fn complete_model_preparation(&mut self, id: &str) -> bool {
         if self.speech.preparation.as_ref().is_some_and(|p| p.id == id) {
-            return !self.speech.preparation.take().unwrap().cancelled;
+            return self
+                .speech
+                .preparation
+                .take()
+                .is_some_and(|p| !p.cancelled);
         }
         false
     }
@@ -989,7 +1004,9 @@ impl KoeRuntime {
                                         && end.is_none_or(|end| segment.end_ms <= end)
                                 });
                                 if selected && s.published.insert(delivery) {
-                                    self.publish_transcript(id, segment_id.unwrap(), segment);
+                                    if let Some(seg_id) = segment_id {
+                                        self.publish_transcript(id, seg_id, segment);
+                                    }
                                 }
                             }
                             LiveEvent::Finished => {

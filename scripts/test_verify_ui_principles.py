@@ -568,6 +568,41 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         )
         self.assertEqual(res_page["violations"], [])
 
+        app_delegate_snapshot_leak = """
+        import AppKit
+        final class KoeAppDelegate: NSObject {
+            var store: HostSessionStore?
+            func check() {
+                let _ = store?.snapshot.lifecycle
+            }
+        }
+        """
+        res_delegate = verifier.check_ui_file(
+            "platforms/macos/Sources/Koe/KoeMacApp.swift",
+            app_delegate_snapshot_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_delegate["violations"]),
+            res_delegate["violations"],
+        )
+
+        adapter_snapshot_ok = """
+        import Foundation
+        final class NativeCapture {
+            var store: HostSessionStore?
+            func apply() {
+                let _ = store?.snapshot.microphone
+            }
+        }
+        """
+        res_adapter = verifier.check_ui_file(
+            "platforms/macos/Sources/Koe/NativeCapture.swift",
+            adapter_snapshot_ok,
+            strict_scale=True,
+        )
+        self.assertEqual(res_adapter["violations"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

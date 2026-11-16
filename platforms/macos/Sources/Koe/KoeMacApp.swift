@@ -3,10 +3,6 @@ import Foundation
 import KoeAppleShared
 import SwiftUI
 
-private struct UncheckedWindowBox: @unchecked Sendable {
-    let window: NSWindow
-}
-
 @MainActor
 public enum KoeWindowPresenter {
     private static var cachedWorkspaceWindow: NSWindow?
@@ -15,7 +11,7 @@ public enum KoeWindowPresenter {
     private static let miniaturizedWindows = NSHashTable<NSWindow>.weakObjects()
     private static let deminiaturizingWindows = NSHashTable<NSWindow>.weakObjects()
     private static let windowStores = NSMapTable<NSWindow, HostSessionStore>.weakToWeakObjects()
-    private static var observersInstalled = false
+    private static var observers: [NSObjectProtocol] = []
 
     public static func isWorkspaceWindow(_ window: NSWindow) -> Bool {
         guard window.sheetParent == nil, !window.styleMask.contains(.docModalWindow) else { return false }
@@ -115,8 +111,7 @@ public enum KoeWindowPresenter {
     }
 
     private static func installObserversIfNeeded() {
-        guard !observersInstalled else { return }
-        observersInstalled = true
+        guard observers.isEmpty else { return }
         let names = [
             NSWindow.didBecomeKeyNotification,
             NSWindow.didBecomeMainNotification,
@@ -124,16 +119,10 @@ public enum KoeWindowPresenter {
             NSWindow.didMiniaturizeNotification,
             NSWindow.willCloseNotification
         ]
-        for name in names {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { notification in
-                if Thread.isMainThread {
-                    MainActor.assumeIsolated {
-                        handleWindowEvent(name: notification.name, window: notification.object as? NSWindow)
-                    }
-                } else {
-                    let windowBox = (notification.object as? NSWindow).map(UncheckedWindowBox.init)
-                    let notifName = notification.name
-                    Task { @MainActor in handleWindowEvent(name: notifName, window: windowBox?.window) }
+        observers = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { notification in
+                MainActor.assumeIsolated {
+                    handleWindowEvent(name: notification.name, window: notification.object as? NSWindow)
                 }
             }
         }
@@ -183,6 +172,9 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public var store: HostSessionStore? {
         didSet {
             oldValue?.onSnapshotChanged = nil
+            if let oldValue, oldValue !== store {
+                oldValue.shutdown()
+            }
             lastSyncedInputs = nil
             lastObservedHardwareGeneration = 0
             bluetoothBridge.store = store
@@ -191,14 +183,17 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             capture.store = store
             localTranscription.store = store
             lastLiveRecordId = nil
-            store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
+            store?.onSnapshotChanged = { [weak self] snapshot in
+                self?.applyLifecycle(device: snapshot.device, lifecycle: snapshot.lifecycle)
+            }
             if let store {
                 KoeWindowPresenter.bind(store: store, onlyUnboundWindows: oldValue == nil)
                 audioInputMonitor.start { [weak self] in
                     self?.syncAudioInputsIfNeeded()
                 }
                 syncAudioInputsIfNeeded(force: true)
-                applyLifecycle(store.snapshot)
+                store.reconcileMenuSlicesIfNeeded()
+                applyLifecycle(device: store.device, lifecycle: store.lifecycle)
             } else {
                 KoeWindowPresenter.unbind(store: oldValue)
                 audioInputMonitor.stop()
@@ -328,16 +323,15 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
         return true
     }
-    private func applyLifecycle(_ snapshot: HostSnapshot) {
-        let liveRecordId = snapshot.device.liveRecordId
+    private func applyLifecycle(device: DeviceSnapshot, lifecycle current: LifecycleSnapshot?) {
+        let liveRecordId = device.liveRecordId
         if let liveRecordId, liveRecordId != lastLiveRecordId {
             KoeWindowPresenter.presentPrimaryWorkspaceWindow()
         }
         lastLiveRecordId = liveRecordId
-        bluetoothBridge.syncWithRuntimeDevice(store?.snapshot.device ?? snapshot.device)
+        bluetoothBridge.syncWithRuntimeDevice(device)
         playback.tick()
         capture.apply()
-        let current = store?.snapshot.lifecycle ?? snapshot.lifecycle
         lifecycle.apply(current)
         quitPanel?.update(current)
     }
@@ -349,12 +343,14 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         if result == .terminateLater {
             let panel = NativeQuitPanel { [weak self] in self?.lifecycle.cancel() }
             quitPanel = panel
-            panel.show(store.snapshot.lifecycle)
+            panel.show(store.lifecycle)
         }
         return result
     }
     public func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
         timer?.invalidate()
+        timer = nil
         audioInputMonitor.stop()
         playback.stop()
         lifecycle.shutdown()

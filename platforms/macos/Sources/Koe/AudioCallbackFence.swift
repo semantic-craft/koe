@@ -1,23 +1,42 @@
+import Dispatch
 import Foundation
+import os
 
 final class AudioCallbackFence: @unchecked Sendable {
-    private let condition = NSCondition()
-    private var accepting = true
-    private var active = 0
+    private struct State {
+        var accepting = true
+        var active = 0
+        var waiting = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let drained = DispatchSemaphore(value: 0)
+
     func enter() -> Bool {
-        condition.lock(); defer { condition.unlock() }
-        guard accepting else { return false }
-        active += 1
-        return true
+        state.withLock { state in
+            guard state.accepting else { return false }
+            state.active += 1
+            return true
+        }
     }
+
     func leave() {
-        condition.lock(); defer { condition.unlock() }
-        active -= 1
-        if active == 0 { condition.broadcast() }
+        let shouldSignal = state.withLock { state in
+            state.active -= 1
+            guard !state.accepting, state.active == 0, state.waiting else { return false }
+            state.waiting = false
+            return true
+        }
+        if shouldSignal { drained.signal() }
     }
+
     func closeAndWait() {
-        condition.lock(); defer { condition.unlock() }
-        accepting = false
-        while active > 0 { condition.wait() }
+        let shouldWait = state.withLock { state in
+            state.accepting = false
+            guard state.active > 0 else { return false }
+            state.waiting = true
+            return true
+        }
+        if shouldWait { drained.wait() }
     }
 }

@@ -1,5 +1,19 @@
 import SwiftUI
 
+private struct DraftItem: Identifiable {
+    let id: String
+    let text: String
+
+    static func keyed(_ drafts: [String]) -> [DraftItem] {
+        var counts: [String: Int] = [:]
+        return drafts.map { draft in
+            let count = (counts[draft] ?? 0) + 1
+            counts[draft] = count
+            return DraftItem(id: count == 1 ? draft : "\(draft)#\(count)", text: draft)
+        }
+    }
+}
+
 private enum MinutesStageTab: String, CaseIterable, Identifiable {
     case live
     case consolidated
@@ -77,10 +91,10 @@ struct LiveMinutesSplitBody: View {
                         ForEach(Array(lm.segments.enumerated()), id: \.element.id) { idx, segment in
                             transcriptSegmentRow(index: idx + 1, segment: segment)
                         }
-                        ForEach(Array(lm.drafts.enumerated()), id: \.offset) { _, draft in
+                        ForEach(DraftItem.keyed(lm.drafts)) { draft in
                             VStack(alignment: .leading, spacing: 5) {
                                 KoeBadge("识别中", tint: AppColors.accent)
-                                Text(draft)
+                                Text(draft.text)
                                     .font(.system(size: AppFontSizes.sm))
                                     .foregroundStyle(AppColors.textSecondary)
                             }
@@ -204,7 +218,8 @@ struct LiveMinutesSplitBody: View {
                 .foregroundStyle(AppColors.textMuted)
                 .padding(.vertical, 6)
         } else {
-            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+            ForEach(SummarySectionItem.keyed(sections)) { item in
+                let section = item.section
                 VStack(alignment: .leading, spacing: 6) {
                     Text(section.title)
                         .font(.system(size: AppFontSizes.sm, weight: .semibold))

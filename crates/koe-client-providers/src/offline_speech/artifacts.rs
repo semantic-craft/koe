@@ -29,14 +29,15 @@ pub(super) fn artifact_for(model_id: &str) -> Result<Artifact, String> {
         ),
         _ => return Err(format!("unknown offline speech model: {model_id}")),
     };
+    let bytes = super::offline_speech_models()
+        .iter()
+        .find(|model| model.id == model_id)
+        .ok_or_else(|| format!("unknown offline speech model: {model_id}"))?
+        .size_bytes;
     Ok(Artifact {
         filename,
         url: format!("https://huggingface.co/{repository}/resolve/{revision}/{filename}"),
-        bytes: super::offline_speech_models()
-            .iter()
-            .find(|model| model.id == model_id)
-            .expect("artifact has a catalog entry")
-            .size_bytes,
+        bytes,
         sha256,
     })
 }

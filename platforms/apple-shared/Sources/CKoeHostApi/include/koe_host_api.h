@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 /* Synchronous, serialized callback. No host API reentry or retained pointers.
- * op: 0 read, 1 create, 2 delete, 3 read legacy, 4 authorize.
+ * op: 0 read, 1 create, 2 delete, 3 read legacy, 4 authorize, 5 prepare.
  * Return 0 success, 1 missing, -1 failure. Write terminated UTF-8 into output.
  * Context and callback remain valid until session destruction. */
 typedef int32_t (*KoeCredentialCallback)(void *context, uint32_t operation,

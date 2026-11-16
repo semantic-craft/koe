@@ -23,6 +23,27 @@ final class NativeCaptureTests: XCTestCase {
         for sequence in 0..<64 { box.acknowledge(UInt64(sequence)) }
         XCTAssertNil(box.peek())
     }
+    func testRingBufferWraparoundPreservesFIFOAcrossCycles() {
+        let box = MicrophoneMailbox(nextSequence: 10, limit: 4)
+        for index in 0..<10 {
+            let expectedSeq = UInt64(10 + index)
+            box.append(CapturedPCM(samples: [Int16(index)], capturedStartNs: UInt64(index) * 100))
+            XCTAssertEqual(box.peek()?.sequence, expectedSeq)
+            XCTAssertEqual(box.peek()?.pcm.samples, [Int16(index)])
+            box.acknowledge(expectedSeq)
+            XCTAssertNil(box.peek())
+        }
+        for index in 10..<14 {
+            box.append(CapturedPCM(samples: [Int16(index)], capturedStartNs: 0))
+        }
+        XCTAssertNil(box.error)
+        XCTAssertEqual(box.finalSequence, 24)
+        box.acknowledge(20)
+        box.acknowledge(21)
+        box.append(CapturedPCM(samples: [99], capturedStartNs: 0))
+        XCTAssertNil(box.error)
+        XCTAssertEqual(box.peek()?.sequence, 22)
+    }
 }
 
 import KoeAppleShared

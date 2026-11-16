@@ -226,7 +226,9 @@ impl KoeRuntime {
         if m.phase != Phase::Pausing {
             return Err("当前未请求暂停".into());
         }
-        let l = m.lanes.get_mut(lane).unwrap();
+        let Some(l) = m.lanes.get_mut(lane) else {
+            return Ok(());
+        };
         if sequence != l.next_sequence {
             return Err("仍有音频等待保存".into());
         }
@@ -299,7 +301,9 @@ impl KoeRuntime {
         if !matches!(m.phase, Phase::Starting | Phase::Recording) {
             return Ok(());
         }
-        let l = m.lanes.get_mut(lane).unwrap();
+        let Some(l) = m.lanes.get_mut(lane) else {
+            return Ok(());
+        };
         if l.sample_rate.is_some() || l.producer_stopped {
             return Ok(());
         }
@@ -341,7 +345,9 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) {
             return Ok(());
         }
-        let l = m.lanes.get_mut(lane).unwrap();
+        let Some(l) = m.lanes.get_mut(lane) else {
+            return Ok(());
+        };
         if l.paused || timing.is_some_and(|t| t.epoch != m.epoch) {
             return Err("采集代次已结束".into());
         }
@@ -381,7 +387,11 @@ impl KoeRuntime {
                 Ok(AppendOutcome::Written) => {
                     if let Some((span, merge)) = placement {
                         if merge {
-                            *l.timeline.last_mut().unwrap() = span;
+                            if let Some(last) = l.timeline.last_mut() {
+                                *last = span;
+                            } else {
+                                l.timeline.push(span);
+                            }
                         } else {
                             l.timeline.push(span);
                         }
@@ -425,7 +435,9 @@ impl KoeRuntime {
                 }
             }
         }
-        let l = m.lanes.get_mut(lane).unwrap();
+        let Some(l) = m.lanes.get_mut(lane) else {
+            return Ok(());
+        };
         l.next_sequence += 1;
         l.save_error = None;
         let rate = l.sample_rate.unwrap_or(16000);
@@ -440,9 +452,9 @@ impl KoeRuntime {
             .run
             .as_ref()
             .is_some_and(|r| r.source == "microphone" && !r.stopping)
-            && m.lanes["microphone"]
-                .asset
-                .as_ref()
+            && m.lanes
+                .get("microphone")
+                .and_then(|l| l.asset.as_ref())
                 .is_some_and(|a| a.duration_ms() >= crate::all_day::SEGMENT_MS);
         if written {
             if self.workspace().record(&id).is_none() {
@@ -501,7 +513,9 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) || (m.clock_ns.is_some() && epoch != Some(m.epoch)) {
             return;
         }
-        let l = m.lanes.get_mut(lane).unwrap();
+        let Some(l) = m.lanes.get_mut(lane) else {
+            return;
+        };
         if l.producer_stopped {
             return;
         }
@@ -536,7 +550,9 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) || (m.clock_ns.is_some() && epoch != Some(m.epoch)) {
             return Ok(());
         }
-        let l = m.lanes.get_mut(lane).unwrap();
+        let Some(l) = m.lanes.get_mut(lane) else {
+            return Ok(());
+        };
         if sequence != l.next_sequence {
             return Err("仍有音频等待保存".into());
         }

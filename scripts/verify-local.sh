@@ -29,6 +29,10 @@ python3 scripts/test_install_macos.py
 python3 scripts/test_ci.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
+perf_check="${KOE_SWIFTUI_PERF_CHECK:-$HOME/Projects/agent-home/tools/swiftui-perf-check/scripts/check_swiftui_perf.py}"
+if [[ -f "$perf_check" ]]; then
+  python3 "$perf_check" "$root"
+fi
 python3 progress/progress.py check
 
 note "compile & clippy: rust workspace"

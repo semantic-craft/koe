@@ -27,7 +27,7 @@ use koe_runtime::{
 };
 use serde_json::{Value, json};
 
-use crate::{now, sessions};
+use crate::{lock_sessions, now, with_session_broadcast};
 
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
 const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
@@ -145,14 +145,13 @@ impl Drop for ManualGateGuard {
         if !self.subscribed && !self.active {
             return;
         }
-        if let Ok(mut table) = sessions().lock() {
-            if let Some(entry) = table.entries.get_mut(&self.handle) {
-                if self.subscribed {
-                    entry.runtime.release_companion_subscriber();
-                }
-                if self.active {
-                    entry.runtime.release_companion_manual_gate();
-                }
+        let mut table = lock_sessions();
+        if let Some(entry) = table.entries.get_mut(&self.handle) {
+            if self.subscribed {
+                entry.runtime.release_companion_subscriber();
+            }
+            if self.active {
+                entry.runtime.release_companion_manual_gate();
             }
         }
     }
@@ -500,40 +499,14 @@ fn handle_rpc_call(
     shutdown: &Arc<AtomicBool>,
 ) -> Result<Value, (i64, String)> {
     match method {
-        "koe/status" => {
-            let snap = {
-                let mut table = sessions()
-                    .lock()
-                    .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
-                let entry = table
-                    .entries
-                    .get_mut(&handle)
-                    .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?;
-                let t = now(0);
-                entry.runtime.poll_timers(0, t);
-                let snap = entry.runtime.snapshot(t);
-                let events = entry.runtime.drain_companion_events();
-                entry.subscribers.broadcast(&events);
-                snap
-            };
-            Ok(snap)
-        }
-        "koe/doctor" => {
-            let doctor = {
-                let mut table = sessions()
-                    .lock()
-                    .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
-                let entry = table
-                    .entries
-                    .get_mut(&handle)
-                    .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?;
-                let payload = entry.runtime.doctor_snapshot(now(0));
-                let events = entry.runtime.drain_companion_events();
-                entry.subscribers.broadcast(&events);
-                payload
-            };
-            Ok(doctor)
-        }
+        "koe/status" => with_session_broadcast(handle, |rt| {
+            let t = now(0);
+            rt.poll_timers(0, t);
+            rt.snapshot(t)
+        })
+        .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string())),
+        "koe/doctor" => with_session_broadcast(handle, |rt| rt.doctor_snapshot(now(0)))
+            .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string())),
         "koe/mcp_tools_list" => Ok(KoeRuntime::mcp_tools_list()),
         "koe/mcp_tool_call" => handle_mcp_tool_call(handle, request, shutdown),
         _ => Err((-32601, "未知方法".to_string())),
@@ -558,34 +531,20 @@ fn handle_mcp_tool_call(
     let outcome = drive_mcp_tool_blocking(
         (),
         |()| {
-            let mut table = sessions().lock().map_err(|_| McpToolError {
-                code: -32603,
-                message: "会话锁不可用".to_string(),
-            })?;
-            let entry = table.entries.get_mut(&handle).ok_or_else(|| McpToolError {
+            with_session_broadcast(handle, |rt| {
+                rt.call_mcp_tool_step(name, &arguments, now(0))
+            })
+            .ok_or_else(|| McpToolError {
                 code: -32000,
                 message: "Koe 会话已关闭".to_string(),
-            })?;
-            let res = entry.runtime.call_mcp_tool_step(name, &arguments, now(0));
-            let events = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&events);
-            res
+            })?
         },
         |(), _elapsed_ms| {
             if shutdown.load(Ordering::Acquire) {
                 return Ok(Some(Err("Koe 会话正在关闭".into())));
             }
-            let mut table = sessions().lock().map_err(|_| McpToolError {
-                code: -32603,
-                message: "会话锁不可用".to_string(),
-            })?;
-            let Some(entry) = table.entries.get_mut(&handle) else {
-                return Ok(Some(Err("Koe 会话已关闭".into())));
-            };
-            let res = entry.runtime.poll_mcp_ask(0, now(0));
-            let evs = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&evs);
-            Ok(res)
+            Ok(with_session_broadcast(handle, |rt| rt.poll_mcp_ask(0, now(0)))
+                .unwrap_or_else(|| Some(Err("Koe 会话已关闭".into()))))
         },
     );
 
@@ -618,11 +577,10 @@ fn serve_companion_subscription(
 ) {
     let manual_gate = matches!(policy, SubscriptionPolicy::ManualGate);
     let evict_socket = writer.try_clone().ok();
+    let _ = with_session_broadcast(handle, |_| ());
     let setup = {
-        sessions().lock().ok().and_then(|mut table| {
-            let entry = table.entries.get_mut(&handle)?;
-            let drained = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&drained);
+        let mut table = lock_sessions();
+        table.entries.get_mut(&handle).and_then(|entry| {
             let hello = entry.runtime.companion_hello();
             let hello_line = serde_json::to_string(&hello).ok()?;
             let subs = entry.subscribers.clone();
@@ -709,25 +667,13 @@ fn serve_companion_subscription(
 }
 
 fn apply_dictation_active(handle: u64, active: bool) {
-    if let Ok(mut table) = sessions().lock() {
-        if let Some(entry) = table.entries.get_mut(&handle) {
-            entry.runtime.set_dictation_active_at(active, now(0));
-            let events = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&events);
-        }
-    }
+    let _ = with_session_broadcast(handle, |rt| rt.set_dictation_active_at(active, now(0)));
 }
 
 fn apply_capture_active(handle: u64, active: bool, reason: Option<String>) {
-    if let Ok(mut table) = sessions().lock() {
-        if let Some(entry) = table.entries.get_mut(&handle) {
-            entry
-                .runtime
-                .set_companion_capture_active_at(active, reason, now(0));
-            let events = entry.runtime.drain_companion_events();
-            entry.subscribers.broadcast(&events);
-        }
-    }
+    let _ = with_session_broadcast(handle, |rt| {
+        rt.set_companion_capture_active_at(active, reason, now(0));
+    });
 }
 
 fn extract_auto_gate(request: &Value) -> Option<bool> {
@@ -797,7 +743,7 @@ pub(crate) mod tests {
     use std::sync::atomic::AtomicU64;
     use std::time::Instant;
 
-    use crate::HostSessionGuard;
+    use crate::{HostSessionGuard, sessions};
 
     use super::*;
 

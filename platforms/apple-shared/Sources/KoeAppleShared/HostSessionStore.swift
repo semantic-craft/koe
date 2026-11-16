@@ -17,6 +17,7 @@ public struct ViewRequestGeneration {
 @Observable
 public final class HostSessionStore {
     @ObservationIgnored public private(set) var snapshot: HostSnapshot = .empty
+    @ObservationIgnored public var lifecycle: LifecycleSnapshot? { snapshot.lifecycle }
     @ObservationIgnored public private(set) var nativeError: String? {
         didSet {
             guard nativeError != oldValue else { return }

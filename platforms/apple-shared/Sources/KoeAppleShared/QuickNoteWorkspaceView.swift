@@ -132,21 +132,29 @@ public struct QuickNoteWorkspaceView: View {
         }
     }
 
+    private struct WorkflowStage: Identifiable {
+        let step: Int
+        let title: String
+        var id: Int { step }
+    }
+
     private var workflowStrip: some View {
-        let stages = ["录音或输入", "原文保留", "AI 理解", "收件箱与项目归类", "复查与导出"]
+        let stages = [
+            "录音或输入", "原文保留", "AI 理解", "收件箱与项目归类", "复查与导出"
+        ].enumerated().map { WorkflowStage(step: $0.offset + 1, title: $0.element) }
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
+                ForEach(stages) { stage in
                     HStack(spacing: 6) {
-                        Text("\(index + 1)")
+                        Text("\(stage.step)")
                             .font(.system(size: AppFontSizes.xs, weight: .semibold))
                             .foregroundStyle(AppColors.accent)
                             .frame(width: 20, height: 20)
                             .background(AppColors.accentSoft, in: RoundedRectangle(cornerRadius: 4))
-                        Text(stage)
+                        Text(stage.title)
                             .font(.system(size: AppFontSizes.xs))
                             .foregroundStyle(AppColors.textSecondary)
-                        if index < stages.count - 1 {
+                        if stage.step < stages.count {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: AppFontSizes.xs))
                                 .foregroundStyle(AppColors.textMuted)

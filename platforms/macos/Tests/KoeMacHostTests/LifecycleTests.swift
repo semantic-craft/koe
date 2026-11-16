@@ -128,6 +128,28 @@ struct LifecycleTests {
         #expect(reopened.snapshot.records.map(\.id) == [id])
     }
 
+    @Test("Replacing KoeAppDelegate.store shuts down the superseded store")
+    func storeReplacementShutsDownPreviousStore() throws {
+        let root1 = FileManager.default.temporaryDirectory.appendingPathComponent("koe-swap-1-\(UUID().uuidString)")
+        let root2 = FileManager.default.temporaryDirectory.appendingPathComponent("koe-swap-2-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root1, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root2, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root1)
+            try? FileManager.default.removeItem(at: root2)
+        }
+        let store1 = HostSessionStore(workspacePath: root1.path)
+        let store2 = HostSessionStore(workspacePath: root2.path)
+        let delegate = KoeAppDelegate()
+        delegate.store = store1
+        #expect(store1.handle != 0)
+        delegate.store = store2
+        #expect(store1.handle == 0)
+        #expect(store2.handle != 0)
+        delegate.store = nil
+        store2.shutdown()
+    }
+
     private func frame(group: UInt8, command: UInt8, payload: [UInt8]) -> Data {
         let count = UInt16(payload.count + 10)
         var bytes: [UInt8] = [0x09, 0xff, 0, 0, 1, group, command, UInt8(count & 0xff), UInt8(count >> 8)] + payload

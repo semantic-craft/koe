@@ -109,7 +109,8 @@ struct RecordDetailView: View {
             if detail.minutesStale {
                 StaleMinutesBanner(recordId: detail.id, isProcessing: detail.isProcessing, store: store)
             }
-            ForEach(Array(detail.summary.enumerated()), id: \.offset) { _, block in
+            ForEach(SummarySectionItem.keyed(detail.summary)) { item in
+                let block = item.section
                 VStack(alignment: .leading, spacing: 12) {
                     Text(block.title).font(.system(size: AppFontSizes.md, weight: .semibold))
                     Text(block.text).font(.system(size: AppFontSizes.sm)).lineSpacing(7).textSelection(.enabled)

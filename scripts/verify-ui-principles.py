@@ -33,9 +33,9 @@ HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
 }
 
 
-def extract_swiftui_type_blocks(text: str) -> list[str]:
+def extract_blocks_by_pattern(text: str, pattern: str) -> list[str]:
     blocks: list[str] = []
-    for match in re.finditer(r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{", text):
+    for match in re.finditer(pattern, text):
         start = match.end() - 1
         depth = 0
         in_string = False
@@ -60,6 +60,14 @@ def extract_swiftui_type_blocks(text: str) -> list[str]:
                     blocks.append(text[start : idx + 1])
                     break
     return blocks
+
+
+def extract_swiftui_type_blocks(text: str) -> list[str]:
+    return extract_blocks_by_pattern(text, r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{")
+
+
+def extract_app_delegate_blocks(text: str) -> list[str]:
+    return extract_blocks_by_pattern(text, r"\bclass\s+KoeAppDelegate\b[^{]*\{")
 
 
 def parse_hex_color(hex_str: str) -> tuple[int, int, int]:
@@ -320,11 +328,17 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                     )
         elif "/platforms/macos/Sources/Koe/" in norm_path:
             swiftui_blocks = "\n".join(extract_swiftui_type_blocks(text))
+            snapshot_guarded_blocks = swiftui_blocks
+            if Path(norm_path).name == "KoeMacApp.swift":
+                delegate_blocks = "\n".join(extract_app_delegate_blocks(text))
+                snapshot_guarded_blocks = "\n".join(
+                    b for b in (swiftui_blocks, delegate_blocks) if b
+                )
+            if snapshot_guarded_blocks and re.search(r"\bstore\??\.snapshot\b", snapshot_guarded_blocks):
+                violations.append(
+                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                )
             if swiftui_blocks:
-                if re.search(r"\bstore\.snapshot\b", swiftui_blocks):
-                    violations.append(
-                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
-                    )
                 hf_hits = sorted(
                     set(
                         re.findall(
