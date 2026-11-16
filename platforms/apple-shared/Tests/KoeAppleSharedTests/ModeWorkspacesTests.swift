@@ -77,14 +77,12 @@ struct ModeWorkspacesTests {
             #expect(store.snapshot.section == destination)
             #expect(store.snapshot.activeCapture == nil)
             #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == false)
-            #expect(store.drainHostActions().isEmpty)
         }
 
         let voiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
         store.toggleModeSession(voiceCard)
         #expect(store.snapshot.section == "today")
         #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == true)
-        #expect(store.drainHostActions().isEmpty)
 
         let activeVoiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
         store.toggleModeSession(activeVoiceCard)
@@ -315,5 +313,80 @@ struct ModeWorkspacesTests {
         #expect(dayMarkdown.contains("2026-11-15"))
 
         _ = AllDayWorkspaceView(store: store).body
+    }
+
+    @Test("ModePickerSnapshot decodes phone handoff fields with legacy fallback and HostCommand encodes deviceRelease")
+    @MainActor
+    func modePickerPhoneHandoffSnapshotAndCommands() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let initialPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(initialPicker.beanControlOwner == "mac")
+        #expect(initialPicker.beanBadgeTone == "muted")
+        #expect(initialPicker.canReleaseToPhone == true)
+
+        #expect(HostCommand.deviceRelease.commandType == "device_release")
+        let encodedCommand = try JSONEncoder().encode(HostCommand.deviceRelease)
+        let decodedCommand = try JSONSerialization.jsonObject(with: encodedCommand) as? [String: Any]
+        #expect(decodedCommand?["type"] as? String == "device_release")
+
+        store.send(.deviceRelease)
+        #expect(store.snapshot.device.autoConnect == false)
+        let releasedPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(releasedPicker.beanControlOwner == "phone")
+        #expect(releasedPicker.beanBadge == "已让出给手机")
+        #expect(releasedPicker.beanBadgeTone == "muted")
+        #expect(releasedPicker.canReleaseToPhone == true)
+        _ = TodayView(store: store).body
+        _ = CaptureView(store: store).body
+        _ = SettingsDoctorView(store: store).body
+        _ = CompanionSettingsCard(store: store).body
+
+        store.send(.deviceOpenGuide)
+        #expect(store.snapshot.device.autoConnect == true)
+        let reclaimedPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(reclaimedPicker.beanControlOwner == "mac")
+
+        store.send("device_event", ["event": "scanning", "connectionId": "scan-tone"])
+        let scanningPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(scanningPicker.beanBadgeTone == "warning")
+
+        let legacyPickerJSON = """
+        {
+          "sourceLabel": "系统默认麦克风",
+          "sourceBadge": "系统默认",
+          "beanBadge": "录音豆 未连接",
+          "guidanceText": "当前使用电脑麦克风",
+          "canSwitchToBean": false,
+          "canConnectBean": true,
+          "cards": []
+        }
+        """
+        let legacyPicker = try JSONDecoder().decode(ModePickerSnapshot.self, from: Data(legacyPickerJSON.utf8))
+        #expect(legacyPicker.beanControlOwner == "mac")
+        #expect(legacyPicker.beanBadgeTone == "muted")
+        #expect(legacyPicker.canReleaseToPhone == true)
+
+        let phonePickerJSON = """
+        {
+          "sourceLabel": "系统默认麦克风",
+          "sourceBadge": "系统默认",
+          "beanBadge": "已让出给手机",
+          "beanBadgeTone": "success",
+          "beanControlOwner": "phone",
+          "guidanceText": "已释放 Mac 蓝牙占用",
+          "canSwitchToBean": false,
+          "canConnectBean": true,
+          "canReleaseToPhone": false,
+          "cards": []
+        }
+        """
+        let phonePicker = try JSONDecoder().decode(ModePickerSnapshot.self, from: Data(phonePickerJSON.utf8))
+        #expect(phonePicker.beanControlOwner == "phone")
+        #expect(phonePicker.beanBadgeTone == "success")
+        #expect(phonePicker.canReleaseToPhone == false)
     }
 }

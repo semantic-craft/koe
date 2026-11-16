@@ -183,31 +183,40 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
     public let sourceLabel: String
     public let sourceBadge: String
     public let beanBadge: String
+    public let beanBadgeTone: String
+    public let beanControlOwner: String
     public let guidanceText: String
     public let canSwitchToBean: Bool
     public let canConnectBean: Bool
+    public let canReleaseToPhone: Bool
     public let cards: [ModePickerCardSnapshot]
 
     private enum CodingKeys: String, CodingKey {
-        case sourceLabel, sourceBadge, beanBadge, guidanceText
-        case canSwitchToBean, canConnectBean, cards
+        case sourceLabel, sourceBadge, beanBadge, beanBadgeTone, beanControlOwner, guidanceText
+        case canSwitchToBean, canConnectBean, canReleaseToPhone, cards
     }
 
     public init(
         sourceLabel: String,
         sourceBadge: String,
         beanBadge: String = "录音豆 未连接",
+        beanBadgeTone: String = "muted",
+        beanControlOwner: String = "mac",
         guidanceText: String = "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。",
         canSwitchToBean: Bool = false,
         canConnectBean: Bool = true,
+        canReleaseToPhone: Bool = true,
         cards: [ModePickerCardSnapshot]
     ) {
         self.sourceLabel = sourceLabel
         self.sourceBadge = sourceBadge
         self.beanBadge = beanBadge
+        self.beanBadgeTone = beanBadgeTone
+        self.beanControlOwner = beanControlOwner
         self.guidanceText = guidanceText
         self.canSwitchToBean = canSwitchToBean
         self.canConnectBean = canConnectBean
+        self.canReleaseToPhone = canReleaseToPhone
         self.cards = cards
     }
 
@@ -216,10 +225,13 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
         sourceBadge = try c.decode(String.self, forKey: .sourceBadge)
         beanBadge = try c.decodeIfPresent(String.self, forKey: .beanBadge) ?? "录音豆 未连接"
+        beanBadgeTone = try c.decodeIfPresent(String.self, forKey: .beanBadgeTone) ?? "muted"
+        beanControlOwner = try c.decodeIfPresent(String.self, forKey: .beanControlOwner) ?? "mac"
         guidanceText = try c.decodeIfPresent(String.self, forKey: .guidanceText)
             ?? "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
         canSwitchToBean = try c.decodeIfPresent(Bool.self, forKey: .canSwitchToBean) ?? false
         canConnectBean = try c.decodeIfPresent(Bool.self, forKey: .canConnectBean) ?? true
+        canReleaseToPhone = try c.decodeIfPresent(Bool.self, forKey: .canReleaseToPhone) ?? true
         cards = try c.decode([ModePickerCardSnapshot].self, forKey: .cards)
     }
 
@@ -409,6 +421,10 @@ public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
 }
 
 extension HostSessionStore {
+    public var canReleaseToPhone: Bool {
+        today.picker?.canReleaseToPhone ?? (device.transferPhase != "pulling_offline")
+    }
+
     public func toggleModeSession(_ card: ModePickerCardSnapshot) {
         if card.id == "voice_input" || card.mode == "dictation" {
             send(.setVoiceInputSession(enabled: !card.isSessionActive))

@@ -49,18 +49,17 @@ struct TodayView: View {
                     Text(picker?.sourceLabel ?? today.captureSelectedLabel)
                         .font(.system(size: AppFontSizes.sm, weight: .semibold))
                         .foregroundStyle(AppColors.textPrimary)
+                        .lineLimit(1)
                     KoeBadge(
                         beanBadge,
-                        tint: today.deviceConnected ? AppColors.success : AppColors.textMuted
+                        tint: beanBadgeTint(today, picker: picker)
                     )
                     Spacer()
+                    beanOwnershipSwitch(today, picker: picker)
+                        .fixedSize()
                     if picker?.canSwitchToBean == true {
                         KoeActionButton("切换为录音豆", systemImage: "wave.3.right") {
                             store.send(.selectCaptureSource(source: "bean"))
-                        }
-                    } else if picker?.canConnectBean == true {
-                        KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right") {
-                            store.send(.deviceOpenGuide)
                         }
                     }
                     KoeActionButton("设置音源", systemImage: "slider.horizontal.3") {
@@ -73,6 +72,45 @@ struct TodayView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func beanBadgeTint(_ today: TodaySlice, picker: ModePickerSnapshot?) -> Color {
+        switch picker?.beanBadgeTone {
+        case "success": return AppColors.success
+        case "warning": return AppColors.warning
+        case "muted": return AppColors.textMuted
+        default:
+            if today.deviceConnected { return AppColors.success }
+            switch store.device.phase {
+            case "scanning", "connecting", "handshaking": return AppColors.warning
+            default: return AppColors.textMuted
+            }
+        }
+    }
+
+    private func beanOwnershipSwitch(_ today: TodaySlice, picker: ModePickerSnapshot?) -> some View {
+        let isMacOwner = (picker?.beanControlOwner ?? "mac") != "phone"
+        let canRelease = store.canReleaseToPhone
+        return HStack(spacing: 2) {
+            OwnershipSegmentButton(title: "Mac 使用", active: isMacOwner) {
+                if !isMacOwner {
+                    store.send(.deviceOpenGuide)
+                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                } else if !today.deviceConnected, store.device.phase == "disconnected" {
+                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                }
+            }
+            OwnershipSegmentButton(title: "手机接管", active: !isMacOwner) {
+                if isMacOwner {
+                    store.send(.deviceRelease)
+                }
+            }
+            .disabled(!canRelease)
+            .opacity(canRelease ? 1.0 : 0.45)
+        }
+        .padding(2)
+        .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+        .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(AppColors.border))
     }
 
     private func behaviorRulesCard(_ today: TodaySlice) -> some View {
@@ -163,5 +201,35 @@ private struct ModePickerCardView: View, Equatable {
                 }
             }
         }
+    }
+}
+
+private struct OwnershipSegmentButton: View {
+    @Environment(\.isFocused) private var isFocused
+    let title: String
+    let active: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: AppFontSizes.xs, weight: active ? .semibold : .medium))
+                .foregroundStyle(active ? AppColors.onAccent : AppColors.textSecondary)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 28)
+                .background(
+                    active ? AppColors.accent : Color.clear,
+                    in: RoundedRectangle(cornerRadius: AppRadii.control - 2)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppRadii.control - 2)
+                        .stroke(isFocused ? AppColors.accent : Color.clear, lineWidth: 1.5)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 }

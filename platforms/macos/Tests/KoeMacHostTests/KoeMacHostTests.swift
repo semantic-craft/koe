@@ -200,7 +200,7 @@ struct KoeMacHostTests {
         #expect(store.snapshot.device.guide?.mode == "connect_guide")
 
         UserDefaults.standard.set(savedUUID, forKey: key)
-        delegate.bluetoothBridge.releaseControl()
+        store.send(.deviceRelease)
         #expect(store.snapshot.device.autoConnect == false)
         #expect(!delegate.bluetoothBridge.isScanRequested)
         #expect(UserDefaults.standard.string(forKey: key) == nil)
@@ -251,7 +251,8 @@ struct KoeMacHostTests {
 
         bridge.lastTeardownStopFrames = []
         bridge.reportedReady = true
-        bridge.releaseControl()
+        store.send(.deviceRelease)
+        bridge.syncWithRuntimeDevice(store.snapshot.device)
         #expect(!bridge.reportedReady)
         #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
         #expect(store.snapshot.device.autoConnect == false)
@@ -259,16 +260,17 @@ struct KoeMacHostTests {
         #expect(UserDefaults.standard.string(forKey: key) == nil)
     }
 
-    @Test("Re-enabling autoConnect after releaseControl syncs bridge without headless CBCentralManager instantiation")
+    @Test("Re-enabling autoConnect after deviceRelease syncs bridge without headless CBCentralManager instantiation")
     @MainActor
-    func reenableAutoConnectAfterReleaseControl() throws {
+    func reenableAutoConnectAfterDeviceRelease() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
         let bridge = BluetoothBridge(store: store)
-        bridge.releaseControl()
+        store.send(.deviceRelease)
+        bridge.syncWithRuntimeDevice(store.snapshot.device)
         #expect(bridge.lastObservedAutoConnect == false)
 
         store.send("set_ble_auto_connect", ["enabled": true])
@@ -336,7 +338,7 @@ struct KoeMacHostTests {
         delegate.bluetoothBridge.activateHost(allowsCoreBluetooth: false)
         #expect(delegate.bluetoothBridge.scanStartCount == 1)
 
-        delegate.bluetoothBridge.releaseControl()
+        store.send(.deviceRelease)
         #expect(delegate.bluetoothBridge.scanStartCount == 1)
         #expect(!delegate.bluetoothBridge.isScanRequested)
         #expect(store.snapshot.device.autoConnect == false)

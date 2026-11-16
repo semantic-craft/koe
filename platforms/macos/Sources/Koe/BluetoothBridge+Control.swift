@@ -25,36 +25,23 @@ extension BluetoothBridge {
         }
     }
 
-    private func stopActiveStandbyBeforeTeardown() {
-        guard let device = store?.snapshot.device, reportedReady || device.connected else { return }
-        let fallback = device.teardownStopFramesHex.compactMap(Self.decodeHex)
-        guard !fallback.isEmpty else { return }
-        store?.send("device_stop")
-        let drained = (store?.drainOutboundBleFramesHex() ?? []).compactMap(Self.decodeHex)
-        let frames = drained.isEmpty ? fallback : drained
-        lastTeardownStopFrames = frames
-        writeImmediateFrames(frames, on: peripheral, via: writeCharacteristic)
-    }
-
-    public func releaseControl() {
-        stopActiveStandbyBeforeTeardown()
-        teardownLocalBleLink()
-        UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
-        lastObservedAutoConnect = false
-        store?.send("device_release")
-    }
-
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {
         let wasAutoConnectDisabled = (lastObservedAutoConnect == false)
         lastObservedAutoConnect = device.autoConnect
         if !device.autoConnect {
             UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
-            if reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
+            if !wasAutoConnectDisabled,
+               reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
                 writeProjectedTeardownStopFramesIfReady(for: device)
                 teardownLocalBleLink()
                 if device.phase != "disconnected" {
                     store?.send("device_disconnect")
                 }
+            } else if !device.connected,
+                      device.phase == "disconnected",
+                      reportedReady || peripheral != nil || reconnectingPeripheral != nil {
+                writeProjectedTeardownStopFramesIfReady(for: device)
+                teardownLocalBleLink()
             }
             return
         }

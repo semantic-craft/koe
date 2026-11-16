@@ -58,6 +58,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case deviceOnboardingNext
     case deviceCloseGuide
     case deviceRefresh
+    case deviceRelease
     case deviceDownload(fileId: UInt32)
     case setCompanionMode(mode: String)
     case setBleAutoConnect(enabled: Bool)
@@ -131,6 +132,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .deviceOnboardingNext: "device_onboarding_next"
         case .deviceCloseGuide: "device_close_guide"
         case .deviceRefresh: "device_refresh"
+        case .deviceRelease: "device_release"
         case .deviceDownload: "device_download"
         case .setCompanionMode: "set_companion_mode"
         case .setBleAutoConnect: "set_ble_auto_connect"
@@ -149,7 +151,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         try c.encode(commandType, forKey: .type)
         switch self {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
-             .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh,
+             .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh, .deviceRelease,
              .cancelSpeechModel, .clearProviderCredential:
             break
         case let .navigate(section):

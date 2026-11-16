@@ -333,16 +333,23 @@ fn aborted_empty_bean_capture_purges_shell_and_device_release_finishes_all_day()
     runtime.ingest_ble_chunk(&file_head_rx_with_key(&sk, 961, u32::MAX), NOW + 2);
     runtime.ingest_ble_chunk(&encrypted_slices(0..3), NOW + 2);
 
-    let released = command(&mut runtime, json!({"type":"device_release"}));
-    assert!(released["error"].is_null(), "{released}");
+    let rejected_release: Value = serde_json::from_str(
+        &runtime.dispatch_json(&json!({"type":"device_release"}).to_string(), NOW + 2),
+    )
+    .unwrap();
+    assert!(rejected_release["error"].is_string(), "{rejected_release}");
+    let disconnected = command(&mut runtime, json!({"type":"device_disconnect"}));
+    assert!(disconnected["error"].is_null(), "{disconnected}");
     settle_local_speech(&mut runtime, NOW + 3);
     runtime.poll_timers(0, NOW + 3);
 
     let snap = runtime.snapshot(NOW + 3);
+    let released = command(&mut runtime, json!({"type":"device_release"}));
+    assert!(released["error"].is_null(), "{released}");
     let quit = command(&mut runtime, json!({"type":"request_quit"}));
     assert!(
         snap["allDay"]["state"] == "idle" && quit["lifecycle"]["quitPhase"] == "ready",
-        "device_release during active bean all_day must finish run and allow clean quit; got allDay.state={}, quitPhase={}",
+        "device_disconnect during active bean all_day must finish run and allow clean quit; got allDay.state={}, quitPhase={}",
         snap["allDay"]["state"],
         quit["lifecycle"]["quitPhase"]
     );

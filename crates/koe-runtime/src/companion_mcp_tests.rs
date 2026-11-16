@@ -2101,7 +2101,6 @@ fn prepare_voice_input_reuses_owned_standby_and_preserves_an_existing_recording(
         assert!(snapshot["activeCapture"].is_null());
     }
     assert!(runtime.drain_outbound_ble_frames().is_empty());
-    assert_eq!(runtime.drain_host_actions_json(), "[]");
 
     let busy_sandbox = Sandbox::new();
     let mut busy = KoeRuntime::open(&busy_sandbox.0).unwrap();
@@ -2113,7 +2112,6 @@ fn prepare_voice_input_reuses_owned_standby_and_preserves_an_existing_recording(
     assert!(rejected["error"].is_string());
     assert_eq!(rejected["activeCapture"], original["activeCapture"]);
     assert_eq!(rejected["device"]["companionMode"], "disabled");
-    assert_eq!(busy.drain_host_actions_json(), "[]");
 }
 
 #[test]

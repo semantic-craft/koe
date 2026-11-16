@@ -39,8 +39,7 @@ public enum KoeSelfCheckRunner {
             store.send("navigate", ["section": modeSection])
             guard store.snapshot.section == modeSection,
                   store.snapshot.device.companionMode == "disabled",
-                  store.snapshot.activeCapture == nil,
-                  store.drainHostActions().isEmpty else {
+                  store.snapshot.activeCapture == nil else {
                 return fail("pure navigation \(modeSection)")
             }
         }

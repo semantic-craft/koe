@@ -51,7 +51,6 @@ KoePlaybackReceipt koe_host_session_report_playback_progress(
     uint64_t position_ms, bool is_playing, uint64_t last_projected_now_sec, uint64_t now_epoch_sec);
 char *koe_host_session_drain_ble_tx_json(uint64_t handle);
 char *koe_host_session_drain_local_asr_json(uint64_t handle);
-char *koe_host_session_drain_host_actions_json(uint64_t handle);
 uint64_t koe_host_session_poll_timers(uint64_t handle, uint64_t elapsed_ms, uint64_t now_epoch_sec);
 void koe_host_string_free(char *ptr);
 

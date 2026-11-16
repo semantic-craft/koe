@@ -41,15 +41,14 @@ public struct CompanionSettingsCard: View {
                             set: { store.send(.setBleAutoConnect(enabled: $0)) }
                         )
                     )
+                    .disabled(device.autoConnect && !store.canReleaseToPhone)
                     InfoTip("关闭后 Koe 启动时不再自动回连已配对的录音豆。手动点击连接录音豆时会自动重新打开。")
                 }
                 HStack(spacing: 10) {
                     KoeActionButton("释放蓝牙控制权", systemImage: "xmark.circle") {
-                        NotificationCenter.default.post(
-                            name: Notification.Name("KoeReleaseBleControl"),
-                            object: nil
-                        )
+                        store.send(.deviceRelease)
                     }
+                    .disabled((store.today.picker?.beanControlOwner == "phone") || !store.canReleaseToPhone)
                     Text("断开当前蓝牙连接并关闭自动重连，方便手机或其他应用接管。")
                         .font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(AppColors.textMuted)
