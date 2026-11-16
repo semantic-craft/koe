@@ -9,10 +9,8 @@ mod local_bridge;
 pub use credentials::KoeCredentialCallback;
 pub use guard::HostSessionGuard;
 pub(crate) use guard::{
-    guarded, lock_sessions, now, read_string, register_session, string, with_session_broadcast,
+    guarded, lock_sessions, now, read_string, register_session, string, with_session,
 };
-#[cfg(test)]
-pub(crate) use guard::sessions;
 use koe_runtime::{KoeRuntime, PcmIngestStatus};
 use std::{
     ffi::{CString, c_char},
@@ -188,7 +186,7 @@ pub unsafe extern "C" fn koe_host_session_dispatch_json(
             return std::ptr::null_mut();
         };
         let Some(json_out) =
-            with_session_broadcast(handle, |rt| rt.dispatch_json(&command, now(epoch)))
+            with_session(handle, |rt| rt.dispatch_json(&command, now(epoch)))
         else {
             return std::ptr::null_mut();
         };
@@ -235,7 +233,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_pcm(
         };
         let slice = unsafe { std::slice::from_raw_parts(samples, sample_count) };
         let timing = has_timing.then_some((epoch, captured_start_ns));
-        let Some(receipt) = with_session_broadcast(handle, |rt| {
+        let Some(receipt) = with_session(handle, |rt| {
             rt.ingest_microphone_pcm(
                 &record_id,
                 &session_id,
@@ -274,7 +272,7 @@ pub unsafe extern "C" fn koe_host_session_report_playback_progress(
         let Some(record_id) = (unsafe { read_string(record_id) }) else {
             return KoePlaybackReceipt::default();
         };
-        let Some(receipt) = with_session_broadcast(handle, |rt| {
+        let Some(receipt) = with_session(handle, |rt| {
             rt.report_playback_progress(
                 &record_id,
                 request_id,
@@ -318,7 +316,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
         } else {
             unsafe { std::slice::from_raw_parts(bytes, length) }
         };
-        with_session_broadcast(handle, |rt| {
+        with_session(handle, |rt| {
             rt.ingest_ble_chunk(bytes, now(epoch));
             rt.generation()
         })
@@ -360,7 +358,7 @@ pub extern "C" fn koe_host_session_drain_local_asr_json(handle: u64) -> *mut c_c
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epoch: u64) -> u64 {
     guarded(|| {
-        with_session_broadcast(handle, |rt| {
+        with_session(handle, |rt| {
             rt.poll_timers(elapsed_ms, now(epoch));
             rt.generation()
         })
@@ -381,7 +379,3 @@ pub unsafe extern "C" fn koe_host_string_free(pointer: *mut c_char) {
 
 #[cfg(test)]
 mod session_tests;
-
-#[cfg(test)]
-#[path = "local_bridge_dictation_tests.rs"]
-mod local_bridge_dictation_tests;

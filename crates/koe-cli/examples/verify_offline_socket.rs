@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::{fs, net::Shutdown, sync::mpsc, thread};
+use std::{fs, thread};
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
@@ -52,59 +52,18 @@ fn record_ready(snap: &Value, id: &str) -> bool {
     snap["records"].as_array().into_iter().flatten().any(|r| r["id"] == id && r["status"] == "已有文字" && r["segmentCount"].as_u64().unwrap_or(0) > 0)
 }
 
-struct Subscriber {
-    writer: UnixStream,
-    reader: Option<thread::JoinHandle<Result<Vec<Value>, String>>>,
-}
-
-impl Subscriber {
-    fn connect(sock_path: &Path) -> Result<Self, String> {
-        let stream = UnixStream::connect(sock_path).map_err(|e| format!("{}: {e}", sock_path.display()))?;
-        let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
-        writeln!(writer, "{}", json!({"method":"companion/subscribe"})).and_then(|()| writer.flush()).map_err(|e| e.to_string())?;
-        let (tx, rx) = mpsc::channel();
-        let reader = thread::spawn(move || {
-            let (mut events, mut greeted) = (Vec::new(), false);
-            for line in BufReader::new(stream).lines() {
-                let line = line.map_err(|e| e.to_string())?;
-                if line.trim().is_empty() { continue; }
-                let val: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-                if !greeted {
-                    greeted = true;
-                    if val["event"] != "hello" {
-                        let err = format!("expected hello, got {val}");
-                        let _ = tx.send(Err(err.clone()));
-                        return Err(err);
-                    }
-                    let _ = tx.send(Ok(()));
-                }
-                events.push(val);
-            }
-            if !greeted { let _ = tx.send(Err("EOF before hello".to_string())); }
-            Ok(events)
-        });
-        let sub = Self { writer, reader: Some(reader) };
-        rx.recv_timeout(Duration::from_secs(5)).map_err(|e| e.to_string())??;
-        Ok(sub)
+fn rpc_call(sock_path: &Path, id: u64, method: &str, params: Value) -> Result<Value, String> {
+    let mut stream = UnixStream::connect(sock_path).map_err(|e| format!("{}: {e}", sock_path.display()))?;
+    writeln!(stream, "{}", json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
+        .and_then(|()| stream.flush())
+        .map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).map_err(|e| e.to_string())?;
+    let resp: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+    if let Some(err) = resp.get("error").filter(|e| !e.is_null()) {
+        return Err(format!("{method} rpc error: {err}"));
     }
-
-    fn set_dictation(&mut self, active: bool) -> Result<(), String> {
-        writeln!(self.writer, "{}", json!({"method":"set_dictation_active","active":active})).and_then(|()| self.writer.flush()).map_err(|e| e.to_string())
-    }
-
-    fn finish(mut self) -> Result<Vec<Value>, String> {
-        let _ = self.writer.shutdown(Shutdown::Write);
-        self.reader.take().ok_or("missing reader")?.join().map_err(|_| "reader thread panicked".to_string())?
-    }
-}
-
-impl Drop for Subscriber {
-    fn drop(&mut self) {
-        let _ = self.writer.shutdown(Shutdown::Both);
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
-        }
-    }
+    Ok(resp["result"].clone())
 }
 
 struct WorkspaceBlockGuard {
@@ -220,20 +179,16 @@ fn wait_model(s: &HostSessionGuard, model: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
-fn run_capture(s: &HostSessionGuard, sub: &mut Subscriber, ws: &Path, samples: &[i16], all_day: bool) -> Result<(String, Vec<String>), String> {
+fn run_capture(s: &HostSessionGuard, ws: &Path, samples: &[i16], all_day: bool) -> Result<Vec<String>, String> {
     let mut mic = MicDriver::start(s, all_day)?;
-    sub.set_dictation(true)?;
-    wait(s, 10, |v| Ok(v["dictation"]["active"] == true))?;
     mic.feed(s, samples, 15)?;
     wait(s, 600, |v| Ok(seg_total(v) > 0))?;
-    sub.set_dictation(false)?;
-    wait(s, 10, |v| Ok(v["dictation"]["active"] == false))?;
     let seg1 = mic.record_id.clone();
     if !all_day {
         dispatch(s, json!({"type":"stop_microphone"}))?;
         dispatch(s, mic.stopped())?;
         wait(s, 600, |v| Ok(record_ready(v, &seg1)))?;
-        return Ok((seg1.clone(), vec![seg1]));
+        return Ok(vec![seg1]);
     }
     mic.pause_resume(s)?;
     for _ in 1..20 {
@@ -260,7 +215,7 @@ fn run_capture(s: &HostSessionGuard, sub: &mut Subscriber, ws: &Path, samples: &
     }
     dispatch(s, json!({"type":"retry_microphone_save"}))?;
     wait(s, 300, |v| Ok(v["allDay"]["state"] == "idle" && record_ready(v, &seg1) && record_ready(v, &seg2)))?;
-    Ok((seg1, vec![mic.record_id, seg2]))
+    Ok(vec![mic.record_id, seg2])
 }
 
 fn run() -> Result<(), String> {
@@ -292,8 +247,7 @@ fn run() -> Result<(), String> {
     wait_model(&session, &model)?;
     dispatch(&session, json!({"type":"configure_speech","engine":"downloaded","modelId":model}))?;
 
-    let mut sub = Subscriber::connect(&sock_path)?;
-    let (dict_id, mic_ids) = run_capture(&session, &mut sub, &ws, &samples, all_day)?;
+    let mic_ids = run_capture(&session, &ws, &samples, all_day)?;
 
     let imp = dispatch(&session, json!({"type":"import_file","path":audio}))?;
     let imp_id = imp["selectedRecordId"].as_str().ok_or("no imported id")?.to_owned();
@@ -318,24 +272,16 @@ fn run() -> Result<(), String> {
     persisted.push(check_record(&session, &imp_id, None, false)?);
 
     let _ = session.poll_timers(25, now());
-    let finals: Vec<Value> = sub.finish()?.into_iter().filter(|e| e["event"] == "transcript_final").collect();
+    let status_rpc = rpc_call(&sock_path, 1, "koe/status", json!({}))?;
+    let doctor_rpc = rpc_call(&sock_path, 2, "koe/doctor", json!({}))?;
+    let tools_rpc = rpc_call(&sock_path, 3, "koe/mcp_tools_list", json!({}))?;
+    let get_rec_rpc = rpc_call(&sock_path, 4, "koe/mcp_tool_call", json!({"name":"get_record","arguments":{"record_id":imp_id}}))?;
+    if status_rpc["records"].as_array().is_none() || doctor_rpc["workspaceReadable"] != true || tools_rpc["tools"].as_array().is_none_or(|t| t.len() != 16) || get_rec_rpc["isError"] != false {
+        return Err("koe.sock JSON-RPC verification failed".into());
+    }
     drop(session);
     if sock_path.exists() {
         return Err("socket not unlinked on drop".into());
-    }
-    let leaked = finals.iter().filter(|e| e["recordId"] == imp_id).count();
-    if finals.is_empty() || leaked != 0 {
-        return Err(format!("bad finals: leaked={leaked}, finals={finals:?}"));
-    }
-    let first_segs = persisted[0]["segments"].as_array().ok_or("no mic segs")?;
-    for ev in &finals {
-        if ev["dictation"] != true || ev["recordId"] != dict_id || ev["startMs"].as_u64().is_none() || ev["endMs"].as_u64().unwrap_or(u64::MAX) > 15_000 {
-            return Err(format!("dictation escaped bracket: {ev}"));
-        }
-        let saved = first_segs.iter().find(|s| s["id"] == ev["segmentId"]).ok_or("missing saved seg")?;
-        if saved["text"] != ev["text"] || saved["startMs"] != ev["startMs"] || saved["endMs"] != ev["endMs"] {
-            return Err(format!("dictation mismatch: {ev} vs {saved}"));
-        }
     }
 
     let reopened = HostSessionGuard::open(&ws).ok_or("reopen failed")?;
@@ -356,7 +302,7 @@ fn run() -> Result<(), String> {
     if sock_path.exists() {
         return Err("reopened socket not unlinked".into());
     }
-    println!("{}", json!({"result":"PASS","model":model,"mode":if all_day{"all_day"}else{"single_segment"},"socketPath":sock_path,"meetingAudioPolicyAfterReopen":"local_only","reopenAutoReady":true,"saveRetryRecovered":all_day,"dictationEvents":finals,"backgroundTranscribeLeakedEvents":leaked,"records":persisted}));
+    println!("{}", json!({"result":"PASS","model":model,"mode":if all_day{"all_day"}else{"single_segment"},"socketPath":sock_path,"meetingAudioPolicyAfterReopen":"local_only","reopenAutoReady":true,"saveRetryRecovered":all_day,"records":persisted}));
     Ok(())
 }
 

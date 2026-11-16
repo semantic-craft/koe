@@ -407,14 +407,7 @@ fn ingest_pcm_matches_microphone_chunk_json_across_chunk0_dual_lanes_rejection_a
         .replace(&json_rec, &fast_rec)
         .replace(ws_json.0.to_str().unwrap(), ws_fast.0.to_str().unwrap());
     let final_fast: Value = serde_json::from_str(&final_fast_raw).unwrap();
-    let mut final_json: Value = serde_json::from_str(&final_json_normalized).unwrap();
-    assert!(
-        final_fast["workspaces"]["voiceInput"]["companionEpoch"]
-            .as_str()
-            .is_some_and(|s| !s.is_empty())
-    );
-    final_json["workspaces"]["voiceInput"]["companionEpoch"] =
-        final_fast["workspaces"]["voiceInput"]["companionEpoch"].clone();
+    let final_json: Value = serde_json::from_str(&final_json_normalized).unwrap();
     assert_eq!(final_fast, final_json);
 
     let audio_dir_fast = ws_fast.0.join("audio");
