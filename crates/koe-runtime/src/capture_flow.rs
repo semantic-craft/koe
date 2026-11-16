@@ -81,7 +81,7 @@ impl KoeRuntime {
         if mode != CaptureMode::Dictation
             && self.active_companion_mode() == CompanionRoutingMode::CollarStandby
         {
-            self.set_voice_input_session(false, false, now)?;
+            self.set_voice_input_session(false, now)?;
         }
         let bean = selection.source == "bean";
         if mode == CaptureMode::AllDay {

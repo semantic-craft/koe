@@ -1,12 +1,4 @@
 use super::*;
-use serde::Serialize;
-use serde_json::json;
-
-#[derive(PartialEq, Eq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum HostAction {
-    OpenResponsay,
-}
 
 impl KoeRuntime {
     pub(super) fn ensure_voice_input_available(&self) -> Result<(), String> {
@@ -22,12 +14,7 @@ impl KoeRuntime {
         Ok(())
     }
 
-    pub(super) fn set_voice_input_session(
-        &mut self,
-        enabled: bool,
-        open_responsay: bool,
-        now: u64,
-    ) -> Result<(), String> {
+    pub(super) fn set_voice_input_session(&mut self, enabled: bool, now: u64) -> Result<(), String> {
         if enabled {
             self.ensure_voice_input_available()?;
             self.commit(|workspace| {
@@ -36,9 +23,6 @@ impl KoeRuntime {
                 Ok(())
             })?;
             self.apply_companion_mode(CompanionRoutingMode::CollarStandby, now)?;
-            if open_responsay {
-                self.open_responsay_app();
-            }
             Ok(())
         } else {
             self.commit(|workspace| {
@@ -49,14 +33,8 @@ impl KoeRuntime {
         }
     }
 
-    pub(super) fn open_responsay_app(&mut self) {
-        if !self.host_actions.contains(&HostAction::OpenResponsay) {
-            self.host_actions.push(HostAction::OpenResponsay);
-        }
-    }
-
     pub(super) fn prepare_voice_input(&mut self, now: u64) -> Result<(), String> {
-        self.set_voice_input_session(true, true, now)?;
+        self.set_voice_input_session(true, now)?;
         self.go(Location {
             page: Page::VoiceInput,
             ..Location::default()
@@ -84,6 +62,6 @@ impl KoeRuntime {
 
     /// Transfers one-shot application actions to the native platform adapter.
     pub fn drain_host_actions_json(&mut self) -> String {
-        json!(std::mem::take(&mut self.host_actions)).to_string()
+        "[]".to_string()
     }
 }

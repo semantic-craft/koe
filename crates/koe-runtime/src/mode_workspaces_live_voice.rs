@@ -8,7 +8,7 @@ use crate::{
 };
 
 const VOICE_INPUT_BOUNDARY_NOTE: &str =
-    "Koe 负责维护录音豆低延迟待命音频流与桥接通道；快捷键监听、语音识别与系统光标上屏由 Responsay 管理。";
+    "Koe 负责维护录音豆低延迟待命音频流、双击控制边沿与本地伴侣桥接通道（koe.sock）。";
 
 fn voice_step(
     number: u8,
@@ -279,8 +279,7 @@ impl KoeRuntime {
         let companion_subscribers = self
             .companion
             .bridge_subscribers
-            .max(self.companion.manual_gate_subscribers)
-            .max(usize::from(self.has_external_pcm_lease()));
+            .max(self.companion.manual_gate_subscribers);
         let companion_epoch = &self.companion.epoch;
         let companion_sequence = self.companion.sequence;
         let forwarded_audio_frames = self.companion.forwarded_audio_frames;
@@ -292,7 +291,6 @@ impl KoeRuntime {
         let bridge_socket_path = crate::companion::resolve_bridge_socket_path(&self.root)
             .map(|p| p.to_string_lossy().into_owned());
         let has_companion_dictation = last_dictation_text.is_some();
-        let external_pcm_ready = self.has_external_pcm_lease();
         let engine_speech_ready =
             self.speech_ready(&self.workspace().provider_configuration().speech_engine);
 
@@ -363,33 +361,33 @@ impl KoeRuntime {
         let step3 = if companion_subscribers > 0 {
             voice_step(
                 3,
-                "responsay_bridge",
-                "Responsay 桥接",
+                "companion_bridge",
+                "伴侣桥接",
                 "ready",
                 "已连接桥接",
-                format!("已检测到 {companion_subscribers} 个伴侣订阅连接，音频帧可实时转发。"),
-                Some(("打开 Responsay", "open_responsay_app")),
+                format!("已检测到 {companion_subscribers} 个伴侣订阅连接，音频帧与听写事件可实时转发。"),
+                None,
             )
         } else {
             voice_step(
                 3,
-                "responsay_bridge",
-                "Responsay 桥接",
-                "external",
-                "状态由 Responsay 管理",
-                "请确认 Responsay 正在运行并已启用 Koe 录音豆桥接音源。",
-                Some(("打开 Responsay", "open_responsay_app")),
+                "companion_bridge",
+                "伴侣桥接",
+                "pending",
+                "等待订阅",
+                "外部输入工具或伴侣客户端可通过本机 koe.sock 订阅实时语音与听写事件。",
+                None,
             )
         };
 
         let step4 = voice_step(
             4,
             "shortcut_guide",
-            "快捷键引导",
-            "external",
-            "状态由 Responsay 管理",
-            "在 Responsay 中检查听写快捷键（如 Fn 或 右 Option），或直接双击录音豆正面触发。",
-            Some(("在 Responsay 查看", "open_responsay_app")),
+            "触发方式",
+            "ready",
+            "双击或命令",
+            "开启待命后可直接双击录音豆正面，或由伴侣客户端发送听写控制命令触发收音。",
+            None,
         );
 
         let step5 = if has_companion_dictation {
@@ -400,16 +398,6 @@ impl KoeRuntime {
                 "ready",
                 "已验证",
                 "已收到伴侣识别结果，语音转写链路工作正常。",
-                None,
-            )
-        } else if external_pcm_ready {
-            voice_step(
-                5,
-                "speech_readiness",
-                "语音识别就绪",
-                "ready",
-                "已连接外部识别",
-                "已连接外部 PCM 伴侣识别流，语音识别由伴侣实时承接。",
                 None,
             )
         } else if engine_speech_ready {
@@ -428,9 +416,9 @@ impl KoeRuntime {
                 "speech_readiness",
                 "语音识别就绪",
                 "pending",
-                "待验证",
-                "语音识别模型与权限状态由 Responsay 管理，完成一次语音输入后自动确认。",
-                Some(("打开 Responsay", "open_responsay_app")),
+                "待配置",
+                "在设置中配置语音识别引擎或准备本机识别模型后，即可生成听写文本。",
+                None,
             )
         };
 

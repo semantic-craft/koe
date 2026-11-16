@@ -91,9 +91,10 @@ struct ModeWorkspacesLiveVoiceTests {
         #expect(enabledVoice.sessionEnabled)
         #expect(store.drainHostActions().isEmpty)
 
-        store.performVoiceInputStepAction("open_responsay_app")
-        let hostActions = store.drainHostActions()
-        #expect(hostActions.count == 1)
+        let step3 = try #require(enabledVoice.steps.first(where: { $0.id == "companion_bridge" }))
+        #expect(step3.statusLabel == "等待订阅")
+        store.performVoiceInputStepAction("device_open_guide")
+        #expect(store.snapshot.device.guide?.mode == "connect_guide")
 
         let idleEval = enabledVoice.evaluateCursorTest(
             text: "   ",

@@ -73,10 +73,7 @@ pub(crate) enum Command {
     PrepareVoiceInput,
     SetVoiceInputSession {
         enabled: bool,
-        #[serde(default)]
-        open_responsay: bool,
     },
-    OpenResponsayApp,
     StartCaptureMode {
         mode: CaptureMode,
         #[serde(default)]

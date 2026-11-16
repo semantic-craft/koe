@@ -63,7 +63,7 @@ public struct VoiceInputView: View {
             VStack(alignment: .leading, spacing: 10) {
                 PageHeading(
                     title: "语音输入",
-                    subtitle: "将 soundcore Work 作为领夹麦待命音源桥接给 Responsay，在任意输入框光标处语音听写。"
+                    subtitle: "将 soundcore Work 作为领夹麦待命音源，经本机桥接通道在光标处语音听写。"
                 )
                 HStack(spacing: 8) {
                     KoeBadge(
@@ -92,8 +92,7 @@ public struct VoiceInputView: View {
                     isPrimary: !vi.sessionEnabled
                 ) {
                     store.send(.setVoiceInputSession(
-                        enabled: !vi.sessionEnabled,
-                        openResponsay: false
+                        enabled: !vi.sessionEnabled
                     ))
                     NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                 }
@@ -133,7 +132,7 @@ public struct VoiceInputView: View {
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(AppColors.textSecondary)
 
-                if step.id == "responsay_bridge", let socketPath = vi.bridgeSocketPath {
+                if step.id == "companion_bridge", let socketPath = vi.bridgeSocketPath {
                     Text("桥接通道：\(socketPath)")
                         .font(.system(size: AppFontSizes.xs, design: .monospaced))
                         .foregroundStyle(AppColors.textMuted)
