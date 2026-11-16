@@ -1,4 +1,9 @@
-use koe_engine::{crypto::DeviceCrypto, frame::ProtocolFrame};
+use koe_engine::{
+    crypto::{AesCtrStreamDecrypt, DeviceCrypto},
+    frame::ProtocolFrame,
+    session::REAL_OPUS_20MS_440HZ_PACKET,
+    transport::{OPUS_FRAME_BYTES, SLICE_RECORD_BYTES},
+};
 use koe_runtime::KoeRuntime;
 use serde_json::{json, Value};
 use std::{
@@ -63,6 +68,15 @@ fn catalog_1b0e_rx(file_id: u32, duration_ms: u32, end_time: u32) -> Vec<u8> {
 }
 
 fn connect_bean(runtime: &mut KoeRuntime, connection_id: &str, name: &str, now: u64) {
+    let _ = connect_bean_with_session_key(runtime, connection_id, name, now);
+}
+
+fn connect_bean_with_session_key(
+    runtime: &mut KoeRuntime,
+    connection_id: &str,
+    name: &str,
+    now: u64,
+) -> [u8; 32] {
     dispatch_ok(
         runtime,
         json!({
@@ -110,6 +124,49 @@ fn connect_bean(runtime: &mut KoeRuntime, connection_id: &str, name: &str, now: 
     runtime.ingest_ble_chunk(&rx_frame(0x2e, 0x01, &ecdh_reply), now);
     runtime.drain_outbound_ble_frames();
     assert_eq!(runtime.snapshot(now)["device"]["connected"], true);
+
+    let derived = DeviceCrypto::hkdf_sha256(&shared, &[1, 2, 3], &[1, 2, 3], 32);
+    let mut session_key = [0u8; 32];
+    session_key.copy_from_slice(&derived);
+    session_key
+}
+
+fn complete_offline_pull(
+    runtime: &mut KoeRuntime,
+    session_key: &[u8; 32],
+    file_id: u32,
+    now: u64,
+) {
+    let file_key = [0x55u8; 32];
+    let file_nonce = [0x66u8; 16];
+    let session_nonce = [0x33u8; 16];
+    let mut plain_key_mat = Vec::with_capacity(44);
+    plain_key_mat.extend_from_slice(b"soundcored3200");
+    plain_key_mat.extend_from_slice(&file_key);
+    let enc_file_key =
+        DeviceCrypto::aes_ctr_decrypt(&plain_key_mat, session_key, &session_nonce).unwrap();
+
+    let mut head_payload = Vec::with_capacity(87);
+    head_payload.extend_from_slice(&file_id.to_le_bytes());
+    head_payload.extend_from_slice(&(SLICE_RECORD_BYTES as u32).to_le_bytes());
+    head_payload.extend_from_slice(&file_nonce);
+    head_payload.extend_from_slice(&enc_file_key);
+    head_payload.extend_from_slice(&session_nonce);
+    head_payload.push(0);
+    runtime.ingest_ble_chunk(&rx_frame(0x1a, 0x07, &head_payload), now);
+
+    let dec = AesCtrStreamDecrypt::new(&file_key, &file_nonce).unwrap();
+    let mut slice_payload = Vec::with_capacity(SLICE_RECORD_BYTES);
+    slice_payload.extend_from_slice(&0u32.to_le_bytes());
+    slice_payload.push(0x00);
+    let mut opus = [0u8; OPUS_FRAME_BYTES];
+    opus[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+    dec.decrypt_contiguous_in_place(&mut opus, 0);
+    slice_payload.extend_from_slice(&opus);
+    slice_payload.push(0);
+    runtime.ingest_ble_chunk(&rx_frame(0x1a, 0x08, &slice_payload), now);
+    runtime.ingest_ble_chunk(&rx_frame(0x1a, 0x0a, &[]), now);
+    runtime.drain_outbound_ble_frames();
 }
 
 #[test]
@@ -727,4 +784,64 @@ fn mode_picker_projects_bean_badge_guidance_and_one_click_switch() {
         picker["guidanceText"],
         "请先将录音豆放入充电仓长按 2 秒连接，或切换为电脑麦克风后再选模式。"
     );
+}
+
+#[test]
+fn mode_picker_projects_phone_handoff_fallback_and_offline_pull_guard() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+
+    let session_key =
+        connect_bean_with_session_key(&mut runtime, "c-handoff", "soundcore Work (63:9D)", NOW);
+    let selected = dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "bean"}),
+        NOW + 1,
+    );
+    assert_eq!(selected["capture"]["selectedSource"], "bean");
+    assert_eq!(selected["workspaces"]["picker"]["beanControlOwner"], "mac");
+    assert_eq!(selected["workspaces"]["picker"]["canReleaseToPhone"], true);
+
+    runtime.ingest_ble_chunk(&catalog_1b0e_rx(901, 20, NOW as u32 + 1), NOW + 1);
+    let _ = runtime.drain_outbound_ble_frames();
+    complete_offline_pull(&mut runtime, &session_key, 901, NOW + 1);
+
+    let pulling = dispatch_ok(
+        &mut runtime,
+        json!({"type": "device_download", "fileId": 901}),
+        NOW + 2,
+    );
+    assert_eq!(pulling["workspaces"]["picker"]["canReleaseToPhone"], false);
+    assert_eq!(
+        pulling["workspaces"]["picker"]["guidanceText"],
+        "正在从录音豆拉取离线录音，请等待完成后再切回手机，避免传输中断。"
+    );
+
+    complete_offline_pull(&mut runtime, &session_key, 901, NOW + 2);
+    let after_pull = runtime.snapshot(NOW + 2);
+    assert_eq!(after_pull["device"]["transferPhase"], "idle");
+    assert_eq!(after_pull["workspaces"]["picker"]["canReleaseToPhone"], true);
+
+    let released = dispatch_ok(&mut runtime, json!({"type": "device_release"}), NOW + 3);
+    let picker = &released["workspaces"]["picker"];
+    assert_eq!(picker["beanControlOwner"], "phone");
+    assert_eq!(picker["beanBadge"], "已让出给手机");
+    assert!(
+        picker["guidanceText"]
+            .as_str()
+            .unwrap()
+            .contains("iPhone 飞书妙记"),
+        "expected guidanceText to mention iPhone 飞书妙记, got: {}",
+        picker["guidanceText"]
+    );
+    assert_ne!(released["capture"]["selectedSource"], "bean");
+    assert_eq!(released["capture"]["canStart"], true);
+
+    let reclaimed = dispatch_ok(
+        &mut runtime,
+        json!({"type": "set_ble_auto_connect", "enabled": true}),
+        NOW + 4,
+    );
+    assert_eq!(reclaimed["workspaces"]["picker"]["beanControlOwner"], "mac");
+    assert_eq!(reclaimed["workspaces"]["picker"]["beanBadge"], "录音豆 未连接");
 }

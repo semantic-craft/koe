@@ -812,6 +812,9 @@ impl KoeRuntime {
                     w.set_ble_auto_connect(false);
                     Ok(())
                 })?;
+                if self.capture_studio.preference == capture_studio::CaptureSourcePreference::Bean {
+                    self.capture_studio.preference = capture_studio::CaptureSourcePreference::Auto;
+                }
                 if self.companion.standby_stream_owned || self.companion.pending_standby_stop {
                     if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
                         if self.can_own_as_standby_scratch(fid) {
