@@ -19,12 +19,12 @@ struct WorkspaceDto {
     provider: Option<ProviderDto>,
     #[serde(default = "default_ble_auto_connect")]
     ble_auto_connect: bool,
-    #[serde(default)]
-    companion_mode: Option<String>,
-    #[serde(default)]
-    standby_scratch_file_ids: Vec<u32>,
-    #[serde(default)]
-    reclaimed_standby_file_ids: Vec<u32>,
+    #[serde(default, skip_serializing)]
+    companion_mode: Option<serde::de::IgnoredAny>,
+    #[serde(default, skip_serializing)]
+    standby_scratch_file_ids: Option<serde::de::IgnoredAny>,
+    #[serde(default, skip_serializing)]
+    reclaimed_standby_file_ids: Option<serde::de::IgnoredAny>,
     #[serde(default)]
     migrations: Vec<MigrationDto>,
     #[serde(default)]
@@ -369,9 +369,9 @@ pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError>
     let dto = WorkspaceDto {
         provider: Some(state.provider_configuration.into()),
         ble_auto_connect: state.ble_auto_connect,
-        companion_mode: Some(state.companion_mode.as_str().to_string()),
-        standby_scratch_file_ids: state.standby_scratch_file_ids.iter().copied().collect(),
-        reclaimed_standby_file_ids: state.reclaimed_standby_file_ids.iter().copied().collect(),
+        companion_mode: None,
+        standby_scratch_file_ids: None,
+        reclaimed_standby_file_ids: None,
         migrations: state
             .migrations
             .iter()
@@ -442,17 +442,14 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
     if dto.version != 1 {
         return Err(invalid("unsupported workspace version"));
     }
-    let companion_mode = match dto.companion_mode.as_deref() {
-        None => CompanionRoutingMode::Disabled,
-        Some(raw_mode) => CompanionRoutingMode::parse(raw_mode)
-            .ok_or_else(|| invalid("invalid companion routing mode"))?,
-    };
+    let _ = (
+        dto.companion_mode,
+        dto.standby_scratch_file_ids,
+        dto.reclaimed_standby_file_ids,
+    );
     let state = WorkspaceState {
         provider_configuration: dto.provider.map(Into::into).unwrap_or_default(),
         ble_auto_connect: dto.ble_auto_connect,
-        companion_mode,
-        standby_scratch_file_ids: dto.standby_scratch_file_ids.into_iter().collect(),
-        reclaimed_standby_file_ids: dto.reclaimed_standby_file_ids.into_iter().collect(),
         migrations: dto
             .migrations
             .into_iter()
@@ -694,7 +691,8 @@ impl RecordDto {
             None => None,
             _ => return Err(invalid("invalid speech engine")),
         };
-        let parsed_mode = match self.mode.as_deref() {
+        let parsed_mode = match self.mode.as_deref().map(str::trim) {
+            Some("dictation") => Some(RecordMode::QuickNote),
             Some(raw_mode) => {
                 Some(RecordMode::parse(raw_mode).ok_or_else(|| invalid("invalid recording mode"))?)
             }

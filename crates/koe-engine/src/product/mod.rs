@@ -56,41 +56,6 @@ pub enum RecordOrigin {
     Note,
 }
 
-/// Routing policy for D3200 collar-microphone companion streaming.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum CompanionRoutingMode {
-    /// Standard meeting recorder mode; companion streaming disabled.
-    #[default]
-    Disabled,
-    /// Typeless-style collar standby: auto-starts silent realtime stream on BLE connect without creating meeting records.
-    CollarStandby,
-    /// Retains full Koe meeting records while also exposing double-tap and PCM16 capture to companion subscribers.
-    MeetingAndCollar,
-}
-
-impl CompanionRoutingMode {
-    /// Stable snake_case wire and storage identifier.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::CollarStandby => "collar_standby",
-            Self::MeetingAndCollar => "meeting_and_collar",
-        }
-    }
-
-    /// Parses a snake_case companion routing mode identifier.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim() {
-            "disabled" => Some(Self::Disabled),
-            "collar_standby" => Some(Self::CollarStandby),
-            "meeting_and_collar" => Some(Self::MeetingAndCollar),
-            _ => None,
-        }
-    }
-}
-
 /// Maximum Unicode scalar value count for an optional QuickNote project name.
 pub const MAX_PROJECT_NAME_CHARS: usize = 64;
 
@@ -104,8 +69,6 @@ pub enum RecordMode {
     AllDay,
     /// Dedicated live meeting session (`实时纪要`).
     Meeting,
-    /// Ephemeral or auxiliary voice dictation (`语音输入`).
-    Dictation,
 }
 
 impl RecordMode {
@@ -116,7 +79,6 @@ impl RecordMode {
             Self::QuickNote => "quick_note",
             Self::AllDay => "all_day",
             Self::Meeting => "meeting",
-            Self::Dictation => "dictation",
         }
     }
 
@@ -127,7 +89,6 @@ impl RecordMode {
             Self::QuickNote => "随心闪记",
             Self::AllDay => "全天听记",
             Self::Meeting => "实时纪要",
-            Self::Dictation => "语音输入",
         }
     }
 
@@ -138,7 +99,6 @@ impl RecordMode {
             "quick_note" => Some(Self::QuickNote),
             "all_day" => Some(Self::AllDay),
             "meeting" => Some(Self::Meeting),
-            "dictation" => Some(Self::Dictation),
             _ => None,
         }
     }
@@ -415,12 +375,6 @@ pub struct WorkspaceState {
     pub provider_configuration: ProviderConfiguration,
     /// Whether BLE auto-connect to paired D3200 devices is enabled.
     pub ble_auto_connect: bool,
-    /// Durable collar-microphone companion routing mode.
-    pub companion_mode: CompanionRoutingMode,
-    /// Temporary D3200 `file_id`s created during collar standby awaiting flash deletion.
-    pub standby_scratch_file_ids: BTreeSet<u32>,
-    /// Standby D3200 `file_id`s whose flash deletion was issued and must be re-verified on reconnect.
-    pub reclaimed_standby_file_ids: BTreeSet<u32>,
     /// Completed imports, including preserved material that has not been mapped.
     pub migrations: Vec<MigrationReceipt>,
     /// Hardware Bean `file_id` tombstones preventing automatic re-pull after purge.
@@ -448,9 +402,6 @@ pub struct WorkspaceState {
 pub struct ProductWorkspace {
     provider_configuration: ProviderConfiguration,
     ble_auto_connect: bool,
-    companion_mode: CompanionRoutingMode,
-    standby_scratch_file_ids: BTreeSet<u32>,
-    reclaimed_standby_file_ids: BTreeSet<u32>,
     migrations: Vec<MigrationReceipt>,
     purged_bean_file_ids: BTreeSet<u32>,
     revision: u64,
@@ -476,9 +427,6 @@ impl ProductWorkspace {
         Self {
             provider_configuration: ProviderConfiguration::default(),
             ble_auto_connect: true,
-            companion_mode: CompanionRoutingMode::Disabled,
-            standby_scratch_file_ids: BTreeSet::new(),
-            reclaimed_standby_file_ids: BTreeSet::new(),
             migrations: Vec::new(),
             purged_bean_file_ids: BTreeSet::new(),
             revision: 0,
@@ -502,46 +450,6 @@ impl ProductWorkspace {
     pub fn set_ble_auto_connect(&mut self, enabled: bool) {
         if self.ble_auto_connect != enabled {
             self.ble_auto_connect = enabled;
-            self.changed();
-        }
-    }
-
-    /// Active collar-microphone companion routing mode.
-    #[must_use]
-    pub fn companion_mode(&self) -> CompanionRoutingMode {
-        self.companion_mode
-    }
-
-    /// Updates the durable collar-microphone companion routing mode.
-    pub fn set_companion_mode(&mut self, mode: CompanionRoutingMode) {
-        if self.companion_mode != mode {
-            self.companion_mode = mode;
-            self.changed();
-        }
-    }
-
-    /// Temporary D3200 `file_id`s created during collar standby awaiting flash deletion.
-    #[must_use]
-    pub fn standby_scratch_file_ids(&self) -> &BTreeSet<u32> {
-        &self.standby_scratch_file_ids
-    }
-
-    /// Returns `true` when `file_id` belongs to a temporary collar-standby session.
-    #[must_use]
-    pub fn is_standby_scratch_file(&self, file_id: u32) -> bool {
-        file_id != 0 && self.standby_scratch_file_ids.contains(&file_id)
-    }
-
-    /// Records a temporary collar-standby D3200 `file_id` for deferred flash deletion.
-    pub fn record_standby_scratch_file_id(&mut self, file_id: u32) {
-        if file_id != 0 && self.standby_scratch_file_ids.insert(file_id) {
-            self.changed();
-        }
-    }
-
-    /// Clears a temporary collar-standby D3200 `file_id` after flash deletion is queued.
-    pub fn clear_standby_scratch_file_id(&mut self, file_id: u32) {
-        if self.standby_scratch_file_ids.remove(&file_id) {
             self.changed();
         }
     }

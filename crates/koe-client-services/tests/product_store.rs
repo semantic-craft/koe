@@ -640,7 +640,7 @@ fn rename_speaker_keeps_near_cap_minutes_immutable_without_corrupting_numbers_or
 }
 
 #[test]
-fn companion_fields_and_edited_segments_round_trip_and_accept_legacy_json() {
+fn ble_auto_connect_and_edited_segments_round_trip_and_accept_legacy_json() {
     let dir = Directory::new();
     let mut store = ProductStore::open(&dir.0).unwrap();
     seed(&mut store);
@@ -655,9 +655,6 @@ fn companion_fields_and_edited_segments_round_trip_and_accept_legacy_json() {
             w.complete_summary(&key, minutes)?;
             w.edit_segment_text(&source("a"), "alpha decision edited")?;
             w.set_ble_auto_connect(false);
-            w.set_companion_mode(CompanionRoutingMode::CollarStandby);
-            w.record_standby_scratch_file_id(9101);
-            w.record_standby_scratch_file_id(9102);
             Ok(())
         })
         .unwrap();
@@ -666,14 +663,6 @@ fn companion_fields_and_edited_segments_round_trip_and_accept_legacy_json() {
     let reopened = ProductStore::open(&dir.0).unwrap();
     let ws = reopened.workspace();
     assert!(!ws.ble_auto_connect());
-    assert_eq!(ws.companion_mode(), CompanionRoutingMode::CollarStandby);
-    assert_eq!(
-        ws.standby_scratch_file_ids()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>(),
-        vec![9101, 9102]
-    );
     assert_eq!(
         ws.resolve_source(&source("a")).unwrap().quote,
         "alpha decision edited"
@@ -687,34 +676,35 @@ fn companion_fields_and_edited_segments_round_trip_and_accept_legacy_json() {
     let mut legacy_val: serde_json::Value = serde_json::from_str(&baseline).unwrap();
     let obj = legacy_val.as_object_mut().unwrap();
     obj.remove("ble_auto_connect");
-    obj.remove("companion_mode");
-    obj.remove("standby_scratch_file_ids");
+    obj.insert(
+        "companion_mode".into(),
+        serde_json::json!("collar_standby"),
+    );
+    obj.insert(
+        "standby_scratch_file_ids".into(),
+        serde_json::json!([9101, 9102]),
+    );
+    obj.insert(
+        "reclaimed_standby_file_ids".into(),
+        serde_json::json!([9103]),
+    );
     fs::write(&json_path, serde_json::to_string(&legacy_val).unwrap()).unwrap();
 
-    let legacy = ProductStore::open(&dir.0).unwrap();
+    let mut legacy = ProductStore::open(&dir.0).unwrap();
     assert!(legacy.workspace().ble_auto_connect());
-    assert_eq!(
-        legacy.workspace().companion_mode(),
-        CompanionRoutingMode::Disabled
-    );
-    assert!(legacy.workspace().standby_scratch_file_ids().is_empty());
+    legacy
+        .transact(|w| {
+            w.set_ble_auto_connect(false);
+            Ok(())
+        })
+        .unwrap();
     drop(legacy);
 
-    let mut bad_mode: serde_json::Value = serde_json::from_str(&baseline).unwrap();
-    bad_mode["companion_mode"] = serde_json::json!("bogus_mode");
-    fs::write(&json_path, serde_json::to_string(&bad_mode).unwrap()).unwrap();
-    assert!(matches!(
-        ProductStore::open(&dir.0),
-        Err(StoreError::InvalidData(_))
-    ));
-
-    let mut bad_scratch: serde_json::Value = serde_json::from_str(&baseline).unwrap();
-    bad_scratch["standby_scratch_file_ids"] = serde_json::json!([0]);
-    fs::write(&json_path, serde_json::to_string(&bad_scratch).unwrap()).unwrap();
-    assert!(matches!(
-        ProductStore::open(&dir.0),
-        Err(StoreError::InvalidData(_))
-    ));
+    let resaved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert!(resaved.get("companion_mode").is_none());
+    assert!(resaved.get("standby_scratch_file_ids").is_none());
+    assert!(resaved.get("reclaimed_standby_file_ids").is_none());
 }
 
 #[test]
@@ -919,16 +909,6 @@ fn record_mode_and_project_roundtrip_and_legacy_fallback_on_reopen() {
                 w.set_record_mode("rec-meeting", RecordMode::Meeting)?;
 
                 w.insert_record(
-                    "rec-dictation".into(),
-                    "语音输入片段".into(),
-                    RecordOrigin::Bean,
-                    12,
-                    1_800_100_200,
-                    5_000,
-                )?;
-                w.set_record_mode("rec-dictation", RecordMode::Dictation)?;
-
-                w.insert_record(
                     "rec-allday".into(),
                     "全天分段".into(),
                     RecordOrigin::Microphone,
@@ -967,10 +947,6 @@ fn record_mode_and_project_roundtrip_and_legacy_fallback_on_reopen() {
         RecordMode::Meeting
     );
     assert_eq!(
-        reopened.workspace().record("rec-dictation").unwrap().mode,
-        RecordMode::Dictation
-    );
-    assert_eq!(
         reopened.workspace().record("rec-allday").unwrap().mode,
         RecordMode::AllDay
     );
@@ -978,6 +954,42 @@ fn record_mode_and_project_roundtrip_and_legacy_fallback_on_reopen() {
 
     let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
     let baseline = fs::read_to_string(&json_path).unwrap();
+
+    let mut legacy_dictation: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    legacy_dictation["companion_mode"] = serde_json::json!("collar_standby");
+    for rec in legacy_dictation["records"].as_array_mut().unwrap() {
+        if rec["id"] == "rec-qn" {
+            rec["mode"] = serde_json::json!("dictation");
+        }
+    }
+    fs::write(
+        &json_path,
+        serde_json::to_string(&legacy_dictation).unwrap(),
+    )
+    .unwrap();
+    let mut legacy_dictation_store = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        legacy_dictation_store
+            .workspace()
+            .record("rec-qn")
+            .unwrap()
+            .mode,
+        RecordMode::QuickNote
+    );
+    legacy_dictation_store
+        .transact(|w| w.set_record_project("rec-qn", Some("Koe 工作区（迁移）")))
+        .unwrap();
+    drop(legacy_dictation_store);
+    let migrated_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert!(migrated_json.get("companion_mode").is_none());
+    let migrated_qn = migrated_json["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rec| rec["id"] == "rec-qn")
+        .unwrap();
+    assert_eq!(migrated_qn["mode"], "quick_note");
 
     let mut legacy_json: serde_json::Value = serde_json::from_str(&baseline).unwrap();
     for rec in legacy_json["records"].as_array_mut().unwrap() {
