@@ -267,7 +267,7 @@
         "updated_at": "2026-11-16T04:56:10Z"
       }
     ],
-    "main": "d5da243fc7678860c2efefdf660d6f13643fd79a",
+    "main": "5262789278e535d7eb78dc1a2e20792431d7d552",
     "open_pulls": [],
     "pulls": [
       {
@@ -677,6 +677,22 @@
         "merged": true,
         "number": 727,
         "state": "closed"
+      },
+      {
+        "base": "d5da243fc7678860c2efefdf660d6f13643fd79a",
+        "head": "d4183c3669ff49d39b927c21e1c08125fe5a6d4f",
+        "merge_commit": "c5bdd5d6b40965688eb023e26fb02a8dd57432b4",
+        "merged": true,
+        "number": 728,
+        "state": "closed"
+      },
+      {
+        "base": "c5bdd5d6b40965688eb023e26fb02a8dd57432b4",
+        "head": "3d774fcbdf8aff190736c3a8ca3523724ec2fdc9",
+        "merge_commit": "5262789278e535d7eb78dc1a2e20792431d7d552",
+        "merged": true,
+        "number": 729,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -697,7 +713,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-16T09:09:23.609958Z",
+  "observed_at": "2026-11-16T10:05:32.404399Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1751,12 +1767,17 @@
               "kind": "pull",
               "note": "基于 2bcac49 重装 Developer ID 签名版 /Applications/Koe.app（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），通过 verify-self 与 smoke-test，完成四个浅色弹窗实机复核并结案 #654。",
               "ref": 706
+            },
+            {
+              "kind": "release",
+              "note": "本机 /Applications/Koe.app 已从正式公证发行包升级至 2.1.0 构建 10（CDHash 10fe6b57bbbd3e64c0555e8269583456c3c70b49，PID 40289），Gatekeeper 通过，68 条记录与 Keychain 授权完整保留，soundcore Work (63:9D) 自动重连并输出「录音豆 已连接」状态胶囊。",
+              "ref": "v2.1.0"
             }
           ],
           "id": "merge-install",
-          "next": "物理长时说话、断连与锁屏验收由用户按 #662 推进。",
+          "next": "独立物理按键与热插拔手测继续按 #722、#725 追踪。",
           "status": "done",
-          "summary": "2026-11-15 已安装包含 #702 浅色弹窗锁定与 #704 全天听记修复的 Developer ID 签名版 /Applications/Koe.app（2.0.0 构建 9，CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），签名要求与旧版一致，Keychain 凭据静默继承。verify-self 与 smoke-test 前后均通过；日常界面 59 条记录可见、无旧版迁移入口、D3200 自动重连、设置与双场景演示及四个浅色弹窗均已核对；不代表物理录制通过。",
+          "summary": "2026-11-16 本机 /Applications/Koe.app 已从正式 Apple Notary 公证发行包平滑升级至 2.1.0 构建 10（CDHash 10fe6b57bbbd3e64c0555e8269583456c3c70b49，运行 PID 40289），Designated Requirement 与旧版逐字节一致，Keychain 凭据静默继承，spctl 返回 Notarized Developer ID；既有 68 条闪记记录完整可见，soundcore Work (63:9D) 自动重连并实时投影「录音豆 已连接」胶囊与操作引导。",
           "title": "本机签名安装"
         },
         {
@@ -1977,6 +1998,11 @@
               "ref": 724
             },
             {
+              "kind": "pull",
+              "note": "升级视觉化中英双语 README.md 与 README.en.md（首屏插画、互译导语、四步硬件图示栏与 v2.1.0 性能及验证状态同步）。",
+              "ref": 729
+            },
+            {
               "kind": "file",
               "note": "导航、回放与四模式选择态单一持有者及 detach_records 统一清理。",
               "ref": "crates/koe-runtime/src/selection.rs"
@@ -1995,7 +2021,7 @@
           "id": "code-quality-cleanup",
           "next": "四层单向依赖、文件行数上限与 4 Hz 观测边界继续由 scripts/check 静态守护。",
           "status": "done",
-          "summary": "PR #695、#697、#708、#724 完成跨四层收敛清理：删除未接入子系统与往返换算胶水，新增 WorkspaceSelection 统一清理删档或取消录音后的悬垂选择，MCP 改为按需定向切片投影，Swift 宿主改发强类型 HostCommand；PR #718 与 #720 同步清理过时文档并重写中英双语 README 产品与 D3200 协议说明。",
+          "summary": "PR #695、#697、#708、#724 完成跨四层收敛清理：删除未接入子系统与往返换算胶水，新增 WorkspaceSelection 统一清理删档或取消录音后的悬垂选择，MCP 改为按需定向切片投影，Swift 宿主改发强类型 HostCommand；PR #718、#720 与 #729 同步清理过时文档并完成视觉化中英双语 README 与 D3200 协议说明升级。",
           "title": "跨四层架构收敛与文档重写"
         },
         {
@@ -2055,9 +2081,9 @@
             }
           ],
           "id": "private-release-210",
-          "next": "用户按需退出日常运行实例后升级替换 /Applications/Koe.app；独立物理核对继续按 #722、#725 与 Responsay #822 追踪。",
+          "next": "独立物理硬件核对继续按 #722、#725 与 Responsay #822 追踪。",
           "status": "done",
-          "summary": "2026-11-16 已在私有仓库发布 v2.1.0（构建 10），提供 Apple silicon Developer ID 时间戳签名包、SHA256SUMS 与无秘密验收回执。完整门禁、独立审查、Apple Notary 公证（Accepted，2671c580-1bea-4eb5-936f-f1b15b941edf）、票据装订与解压包 Gatekeeper（Notarized Developer ID）、verify-self、smoke-test 及 8 份许可证逐字节核对全部通过，回读下载哈希与发布哈希一致；本机运行中日常会话与 Keychain 凭据保留未动。",
+          "summary": "2026-11-16 已在私有仓库发布 v2.1.0（构建 10），提供 Apple silicon Developer ID 时间戳签名包、SHA256SUMS 与无秘密验收回执。完整门禁、独立审查、Apple Notary 公证（Accepted，2671c580-1bea-4eb5-936f-f1b15b941edf）、票据装订与解压包 Gatekeeper（Notarized Developer ID）、verify-self、smoke-test 及 8 份许可证逐字节核对全部通过，回读下载哈希与发布哈希一致；本机已从正式发行包完成 /Applications/Koe.app 2.1.0（构建 10）平滑升级并验证记录、连接与权限保留。",
           "title": "Koe 2.1.0 私有发行包"
         }
       ],
@@ -2183,7 +2209,9 @@
       721,
       724,
       726,
-      727
+      727,
+      728,
+      729
     ]
   }
 }
