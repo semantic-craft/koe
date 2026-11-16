@@ -26,6 +26,7 @@ struct TodayView: View {
                 ) {
                     ForEach(cards) { card in
                         ModePickerCardView(card: card, store: store)
+                            .equatable()
                     }
                 }
 
@@ -98,9 +99,13 @@ struct TodayView: View {
     }
 }
 
-private struct ModePickerCardView: View {
+private struct ModePickerCardView: View, Equatable {
     let card: ModePickerCardSnapshot
     let store: HostSessionStore
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.card == rhs.card && lhs.store === rhs.store
+    }
 
     private var iconName: String {
         switch card.id {
