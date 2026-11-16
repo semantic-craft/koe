@@ -48,8 +48,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case selectPlaybackLane(lane: String)
     case seek(positionMs: UInt64)
 
-    case setVoiceInputSession(enabled: Bool, openResponsay: Bool = false)
-    case openResponsayApp
+    case setVoiceInputSession(enabled: Bool)
     case startCaptureMode(mode: CaptureMode, stayOnPage: Bool = false)
     case captureAction(action: CaptureAction, clockNs: UInt64? = nil)
     case selectCaptureSource(source: String)
@@ -82,7 +81,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case project, date, archived, includeAnalysis, includeSources
         case itemId, decision, completed, due, speaker, fromSpeaker, toSpeaker
         case question, scope, positionMs, isPlaying, lane
-        case enabled, openResponsay, mode, action, clockNs, source, fileId
+        case enabled, mode, action, clockNs, source, fileId
         case engine, modelId, policy, apiKey, model, asrEndpoint, chatEndpoint, authorize
     }
 
@@ -125,7 +124,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .selectPlaybackLane: "select_playback_lane"
         case .seek: "seek"
         case .setVoiceInputSession: "set_voice_input_session"
-        case .openResponsayApp: "open_responsay_app"
         case .startCaptureMode: "start_capture_mode"
         case .captureAction: "capture_action"
         case .selectCaptureSource: "select_capture_source"
@@ -153,7 +151,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         try c.encode(commandType, forKey: .type)
         switch self {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
-             .openResponsayApp,
              .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh, .deviceRelease,
              .cancelSpeechModel, .clearProviderCredential:
             break
@@ -236,9 +233,8 @@ public enum HostCommand: Encodable, Equatable, Sendable {
             try c.encode(lane, forKey: .lane)
         case let .seek(positionMs):
             try c.encode(positionMs, forKey: .positionMs)
-        case let .setVoiceInputSession(enabled, openResponsay):
+        case let .setVoiceInputSession(enabled):
             try c.encode(enabled, forKey: .enabled)
-            try c.encode(openResponsay, forKey: .openResponsay)
         case let .startCaptureMode(mode, stayOnPage):
             try c.encode(mode, forKey: .mode)
             try c.encode(stayOnPage, forKey: .stayOnPage)

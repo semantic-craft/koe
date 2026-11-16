@@ -419,7 +419,7 @@ public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
 extension HostSessionStore {
     public func toggleModeSession(_ card: ModePickerCardSnapshot) {
         if card.id == "voice_input" || card.mode == "dictation" {
-            send(.setVoiceInputSession(enabled: !card.isSessionActive, openResponsay: false))
+            send(.setVoiceInputSession(enabled: !card.isSessionActive))
         } else if card.isSessionActive {
             send(.captureAction(action: .end))
         } else if let mode = CaptureMode(rawValue: card.mode) {
@@ -431,10 +431,8 @@ extension HostSessionStore {
     public func performVoiceInputStepAction(_ command: String) {
         switch command {
         case "enable_voice_input", "set_voice_input_session":
-            send(.setVoiceInputSession(enabled: true, openResponsay: false))
+            send(.setVoiceInputSession(enabled: true))
             NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-        case "open_responsay_app":
-            send(.openResponsayApp)
         case "device_open_guide":
             send(.deviceOpenGuide)
         default:

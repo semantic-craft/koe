@@ -56,7 +56,7 @@ Koe centers its Today screen on four daily capture workspaces. Starting or stopp
 | **Quick Note** (default) | Fleeting thoughts, quick handoffs, reading lists | A D3200 button press or shortcut drops spoken notes into the inbox with original timestamps and project tags. AI notes sit beside your transcript without overwriting your words. |
 | **All-Day Listening** | Continuous collar wear across the day | Splits capture into 5-minute records automatically without dropping audio while prior segments summarize in the background. Merges wall-clock events, records pauses and unrecorded gaps honestly on a monotonic timeline, and groups end-of-day review. |
 | **Live Minutes** | Remote calls, in-person meetings, interviews | Captures **Mac dual-lane system audio and microphone** on a shared timeline via CoreAudio `CATapDescription` so headphone calls record both sides. Generates initial topics after 3 utterances or 20 seconds, refreshes on a 45-second debounce without overlapping jobs, tracks 3 coverage metrics, and extracts action items in one pass after stop. |
-| **Voice Input** | Cursor dictation inside any macOS app | Bridges clean `16 kHz` `PCM16` audio and physical `control_edge` gestures over `koe.sock` to Responsay or external IMEs with a 6-step link check and cursor test box, avoiding double ASR on the same utterance. |
+| **Voice Input** | Cursor dictation inside any macOS app | Bridges clean `16 kHz` `PCM16` audio, physical `control_edge` gestures, and `transcript_final` events over `koe.sock` to external IMEs with a 6-step link check and cursor test box. |
 
 All four workspaces share one local library governed by three guarantees:
 
@@ -88,7 +88,7 @@ cargo run --package koe-cli -- companion-listen
 ```
 
 - **16 MCP stdio tools.** Serves targeted projections for full-text search, today brief, record list and details, cited Q&A, task and memory review or completion, note creation, segment annotation, transcript editing, speaker rename and merge, archive and Trash recovery, D3200 status and control, and generation polling. **Permanent purge is excluded by design** so agents cannot trigger irreversible deletion.
-- **Local text and audio bridge for external IMEs.** The [local text bridge](docs/local-text-bridge.md) streams finalized `transcript_final` events, physical `control_edge` double-tap edges, and exclusive `external_pcm_v1` audio leases to Responsay and third-party voice input methods.
+- **Local text and audio bridge for external IMEs.** The [local text bridge](docs/local-text-bridge.md) streams finalized `transcript_final` events, physical `control_edge` double-tap edges, and `audio_pcm16` frames to third-party voice input methods.
 
 ## Build and install
 
@@ -143,7 +143,7 @@ Koe separates shipped and verified functionality, merged code awaiting physical 
 | Status | Scope |
 | --- | --- |
 | **Shipped & verified (`v2.1.0` build `10`)** | 8-crate Rust core, notarized Developer ID `arm64` bundle, 4 formal SwiftUI workspaces, CoreAudio `CATapDescription` dual-lane capture, offline GGUF plus macOS 26 `SpeechAnalyzer`, scoped `@Observable` slices plus binary PCM FFI, BM25 search plus `validate_minutes_grounding` gate, 16 MCP tools, and verified local `/Applications/Koe.app` upgrade preserving workspace and Keychain items. |
-| **Merged, tracked for physical hardware check (`ready-for-human`)** | Today source strip and one-click bean switch physical check ([#722](https://github.com/semantic-craft/koe/issues/722)), closed-window physical D3200 wakeup and external headset hot-plug check ([#725](https://github.com/semantic-craft/koe/issues/725)), and Responsay physical shortcut check ([Responsay #822](https://github.com/semantic-craft/responsay-macos/issues/822)). |
+| **Merged, tracked for physical hardware check (`ready-for-human`)** | Today source strip and one-click bean switch physical check ([#722](https://github.com/semantic-craft/koe/issues/722)), and closed-window physical D3200 wakeup and external headset hot-plug check ([#725](https://github.com/semantic-craft/koe/issues/725)). |
 | **Next-stage roadmap (not wired in `2.1.0`)** | iOS and Android mobile hosts plus dual-device sync ([#124](https://github.com/semantic-craft/koe/issues/124), [#149](https://github.com/semantic-craft/koe/issues/149) to [#151](https://github.com/semantic-craft/koe/issues/151)), external AI delegation ([#152](https://github.com/semantic-craft/koe/issues/152) to [#155](https://github.com/semantic-craft/koe/issues/155)), Wi-Fi SoftAP fast transfer, firmware OTA, VAD dynamic segmentation, and local speaker diarization. |
 
 ## License

@@ -368,7 +368,7 @@ public struct VoiceInputWorkspaceSnapshot: Codable, Equatable, Sendable {
         captureActive: false, companionSubscribers: 0, companionEpoch: "",
         companionSequence: 0, forwardedAudioFrames: 0, lastDictationText: nil,
         bridgeSocketPath: nil,
-        boundaryNote: "Koe 负责维护录音豆低延迟待命音频流与桥接通道；快捷键监听、语音识别与系统光标上屏由 Responsay 管理。",
+        boundaryNote: "Koe 负责维护录音豆低延迟待命音频流、双击控制边沿与本地伴侣桥接通道（koe.sock）。",
         steps: []
     )
 

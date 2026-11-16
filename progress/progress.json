@@ -1462,20 +1462,20 @@
             },
             {
               "kind": "file",
-              "note": "external_pcm_v1 能力、采集身份与停止确认契约。",
+              "note": "通用本地伴侣桥接（companion/subscribe、set_dictation_active、set_capture_active）契约；Responsay 专属 external_pcm_v1 独占租约已随双端解耦移除。",
               "ref": "docs/local-text-bridge.md"
             },
             {
               "kind": "file",
-              "note": "重复记录先红后绿，键盘尾音、取消与旧 epoch 回归。",
+              "note": "伴侣订阅与听写/采集控制回归。",
               "ref": "crates/koe-runtime/src/companion_mcp_tests.rs"
             }
           ],
           "id": "responsay-external-pcm",
-          "next": "Responsay #810 与 PCMHW 已结案；物理断连恢复与三种快捷键未重跑，Fn / 右 Option 继续 #822。",
+          "next": "Responsay 已移除安克录音豆支持，Koe 同步清理 external_pcm_v1 独占 PCM 租约与 open_responsay 宿主动作，保留通用 companion/subscribe 本地桥接。",
           "status": "done",
-          "summary": "已实现按 socket 独占的外部 PCM 采集，停止确认排在音频尾部之后。软件回归覆盖不重复启动 Koe 听写；2026-11-13 真实 D3200 提供 11.56 秒非静音 PCM、软件起止确认及千问实时识别终稿，2026-11-14 用户在 Koe 2.0.0（9）与 Responsay 1.28.0（204）实测原光标插入与实体双击通过，Responsay #810 与 Slice PCMHW 已结案；恢复普通模式时仍正常保存设备录音。",
-          "title": "Responsay 独占外部 PCM 输入"
+          "summary": "历史曾实现按 socket 独占的 external_pcm_v1 外部 PCM 采集并通过 Responsay #810 与 Slice PCMHW 实测；随 Responsay 移除安克录音豆支持，Koe 已清理 external_pcm_v1 独占租约与 open_responsay 跨应用拉起胶水，保留通用本地伴侣事件流与控制接口。",
+          "title": "外部 PCM 独占租约清理与通用伴侣桥保留"
         },
         {
           "evidence": [
@@ -1515,7 +1515,7 @@
           "evidence": [
             {
               "kind": "file",
-              "note": "Rust 持有待命配置、录制保护与去重宿主动作。",
+              "note": "Rust 持有语音输入待命配置与录制保护。",
               "ref": "crates/koe-runtime/src/voice_input.rs"
             },
             {
@@ -1525,7 +1525,7 @@
             },
             {
               "kind": "file",
-              "note": "固定 URL、去重打开及失败重试回归。",
+              "note": "开启语音输入会话仅待命录音豆、不拉起外部应用的宿主动作回归。",
               "ref": "platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift"
             },
             {
@@ -1535,10 +1535,10 @@
             }
           ],
           "id": "voice-input-mode-entry",
-          "next": "入口与 Responsay #810（原光标及 D3200 实体双击）均已完成并关闭；物理 Fn / 右 Option 继续 #822。",
+          "next": "已移除 open_responsay 跨应用 URL 拉起动作，保留四模式工作区与通用语音输入待命模式。",
           "status": "done",
-          "summary": "首页改为模式选择并移除录音摘要展示，侧栏增加语音输入。点击入口自动准备录音豆待命并打开 Responsay，保留已有连接地址与记录。合入最新纪要主线后以 19d75d5 签名安装，真实首页联动显示两端已就绪；原入口版另验证了冷启动及侧栏重复进入。",
-          "title": "模式选择与一键语音输入入口"
+          "summary": "首页提供四模式选择，侧栏提供语音输入工作区；随 Responsay 移除安克录音豆支持，已清理 open_responsay 跨应用拉起动作，语音输入模式仅管理本机录音豆领口待命与通用本地伴侣桥接。",
+          "title": "模式选择与语音输入工作区"
         },
         {
           "evidence": [

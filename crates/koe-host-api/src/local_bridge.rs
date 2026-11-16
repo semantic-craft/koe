@@ -128,7 +128,6 @@ struct ManualGateGuard {
     handle: u64,
     subscribed: bool,
     active: bool,
-    external_owner: Option<u64>,
 }
 
 impl ManualGateGuard {
@@ -137,14 +136,13 @@ impl ManualGateGuard {
             handle,
             subscribed: true,
             active,
-            external_owner: None,
         }
     }
 }
 
 impl Drop for ManualGateGuard {
     fn drop(&mut self) {
-        if !self.subscribed && !self.active && self.external_owner.is_none() {
+        if !self.subscribed && !self.active {
             return;
         }
         if let Ok(mut table) = sessions().lock() {
@@ -154,9 +152,6 @@ impl Drop for ManualGateGuard {
                 }
                 if self.active {
                     entry.runtime.release_companion_manual_gate();
-                }
-                if let Some(owner) = self.external_owner {
-                    entry.runtime.release_external_pcm(owner);
                 }
             }
         }
@@ -429,15 +424,9 @@ fn serve_client(
 
         if matches!(method, "companion/subscribe" | "subscribe") {
             let auto_gate = extract_auto_gate(&request);
-            let external_pcm = request
-                .pointer("/params/capability")
-                .and_then(Value::as_str)
-                == Some("external_pcm_v1");
             serve_companion_subscription(
                 handle,
-                if external_pcm {
-                    SubscriptionPolicy::ExternalPcm
-                } else if auto_gate == Some(false) {
+                if auto_gate == Some(false) {
                     SubscriptionPolicy::ManualGate
                 } else {
                     SubscriptionPolicy::Observe
@@ -616,7 +605,6 @@ fn handle_mcp_tool_call(
 enum SubscriptionPolicy {
     Observe,
     ManualGate,
-    ExternalPcm,
 }
 
 fn serve_companion_subscription(
@@ -629,7 +617,6 @@ fn serve_companion_subscription(
     worker_state: Arc<WorkerState>,
 ) {
     let manual_gate = matches!(policy, SubscriptionPolicy::ManualGate);
-    let external_pcm = matches!(policy, SubscriptionPolicy::ExternalPcm);
     let evict_socket = writer.try_clone().ok();
     let setup = {
         sessions().lock().ok().and_then(|mut table| {
@@ -640,10 +627,6 @@ fn serve_companion_subscription(
             let hello_line = serde_json::to_string(&hello).ok()?;
             let subs = entry.subscribers.clone();
             let (sub_id, rx) = subs.subscribe(hello_line, evict_socket);
-            if external_pcm && !entry.runtime.acquire_external_pcm(sub_id) {
-                subs.unsubscribe(sub_id);
-                return None;
-            }
             entry.runtime.acquire_companion_subscriber();
             if manual_gate {
                 entry.runtime.acquire_companion_manual_gate();
@@ -655,8 +638,7 @@ fn serve_companion_subscription(
         let _ = writer.shutdown(Shutdown::Both);
         return;
     };
-    let mut _manual_gate_guard = ManualGateGuard::new(handle, manual_gate);
-    _manual_gate_guard.external_owner = external_pcm.then_some(sub_id);
+    let _manual_gate_guard = ManualGateGuard::new(handle, manual_gate);
 
     let _ = writer.set_write_timeout(Some(Duration::from_secs(2)));
     let writer_shutdown = Arc::clone(&shutdown);
@@ -695,30 +677,6 @@ fn serve_companion_subscription(
         let Ok(cmd_val) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if external_pcm {
-            if cmd_val.get("method").and_then(Value::as_str) == Some("external_pcm") {
-                let result = sessions().lock().ok().and_then(|mut table| {
-                    let entry = table.entries.get_mut(&handle)?;
-                    let epoch = cmd_val.get("epoch")?.as_str()?;
-                    let capture = cmd_val.get("captureId")?.as_str()?;
-                    let action = cmd_val.get("action")?.as_str()?;
-                    let reason = cmd_val
-                        .get("reason")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    let result = entry
-                        .runtime
-                        .external_pcm_command(sub_id, epoch, capture, action, reason);
-                    let events = entry.runtime.drain_companion_events();
-                    entry.subscribers.broadcast(&events);
-                    Some(result)
-                });
-                if !matches!(result, Some(Ok(()))) {
-                    break;
-                }
-            }
-            continue;
-        }
         if let Some(active) = match serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
         {
             Ok(CompanionClientCommand::SetDictationActive { active }) => Some(active),
@@ -928,74 +886,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn external_pcm_lease_is_exclusive_and_released_with_the_socket() {
-        let ws = temp_workspace();
-        let session = HostSessionGuard::open(&ws).unwrap();
-        let path = resolve_bridge_socket_path(&ws).unwrap();
-        let subscribe = || {
-            let mut stream = UnixStream::connect(&path).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            writeln!(
-                stream,
-                "{}",
-                json!({"method":"subscribe","params":{"capability":"external_pcm_v1"}})
-            )
-            .unwrap();
-            stream.flush().unwrap();
-            BufReader::new(stream)
-        };
-        let mut first = subscribe();
-        let mut line = String::new();
-        first.read_line(&mut line).unwrap();
-        let hello: Value = serde_json::from_str(&line).unwrap();
-        assert!(
-            hello["capabilities"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("external_pcm_v1"))
-        );
-        let mut second = subscribe();
-        line.clear();
-        assert_eq!(
-            second.read_line(&mut line).unwrap(),
-            0,
-            "second socket must not acquire the lease"
-        );
-        drop(first);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if sessions()
-                .lock()
-                .unwrap()
-                .entries
-                .get(&session.handle())
-                .unwrap()
-                .runtime
-                .external_pcm_unleased()
-            {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "socket close did not release lease"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-        let mut next = subscribe();
-        line.clear();
-        next.read_line(&mut line).unwrap();
-        assert_eq!(
-            serde_json::from_str::<Value>(&line).unwrap()["event"],
-            "hello"
-        );
-        drop(next);
-        drop(session);
-        let _ = fs::remove_dir_all(ws);
-    }
-
-    #[test]
     fn local_bridge_start_preserves_non_socket_files() {
         let ws = temp_workspace();
         fs::create_dir_all(&ws).unwrap();
@@ -1139,28 +1029,28 @@ pub(crate) mod tests {
         let session = HostSessionGuard::open(&ws).expect("host session should open");
 
         let initial_gen = crate::koe_host_session_generation(session.handle());
-        let mut ext_client = UnixStream::connect(&sock_path).unwrap();
+        let mut manual_client = UnixStream::connect(&sock_path).unwrap();
         writeln!(
-            ext_client,
+            manual_client,
             "{}",
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "companion/subscribe",
-                "params": { "capability": "external_pcm_v1" }
+                "params": { "autoGate": false }
             })
         )
         .unwrap();
-        ext_client.flush().unwrap();
-        let mut ext_reader = BufReader::new(ext_client.try_clone().unwrap());
+        manual_client.flush().unwrap();
+        let mut manual_reader = BufReader::new(manual_client.try_clone().unwrap());
         let mut hello_line = String::new();
-        ext_reader.read_line(&mut hello_line).unwrap();
+        manual_reader.read_line(&mut hello_line).unwrap();
         assert!(hello_line.contains("\"hello\""));
 
         let subscribed_gen = crate::koe_host_session_generation(session.handle());
         assert!(
             subscribed_gen > initial_gen,
-            "subscribing via external_pcm_v1 must bump host session generation ({subscribed_gen} <= {initial_gen})"
+            "subscribing via companion/subscribe must bump host session generation ({subscribed_gen} <= {initial_gen})"
         );
 
         let snap = {
@@ -1168,13 +1058,13 @@ pub(crate) mod tests {
             table.entries.get(&session.handle()).unwrap().runtime.snapshot(1_800_000_000)
         };
         assert_eq!(snap["workspaces"]["voiceInput"]["companionSubscribers"], 1);
-        let step5 = snap["workspaces"]["voiceInput"]["steps"]
+        let step3 = snap["workspaces"]["voiceInput"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|s| s["id"] == "speech_readiness")
+            .find(|s| s["id"] == "companion_bridge")
             .unwrap();
-        assert_eq!(step5["status"], "ready");
+        assert_eq!(step3["status"], "ready");
 
         let mut obs_client = UnixStream::connect(&sock_path).unwrap();
         writeln!(obs_client, "{}", json!({"method": "companion/subscribe"})).unwrap();
@@ -1193,8 +1083,8 @@ pub(crate) mod tests {
         let before_drop_gen = crate::koe_host_session_generation(session.handle());
         drop(obs_reader);
         drop(obs_client);
-        drop(ext_reader);
-        drop(ext_client);
+        drop(manual_reader);
+        drop(manual_client);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {

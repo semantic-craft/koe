@@ -140,7 +140,6 @@ pub struct KoeRuntime {
     dictation_capture: Option<dictation_capture::DictationCapture>,
     all_day: all_day::AllDayState,
     capture_studio: capture_studio::CaptureStudioState,
-    host_actions: Vec<voice_input::HostAction>,
     microphone: Option<microphone::Microphone>,
     bean_capture_mode: Option<command::CaptureMode>,
     auto_transcribe: std::collections::BTreeSet<String>,
@@ -187,7 +186,6 @@ impl KoeRuntime {
             captures: Default::default(),
             local_asr: Default::default(),
             capture_studio: Default::default(),
-            host_actions: Vec::new(),
             microphone: None,
             bean_capture_mode: None,
             auto_transcribe: Default::default(),
@@ -489,11 +487,9 @@ impl KoeRuntime {
         }
         match command {
             Command::PrepareVoiceInput => self.prepare_voice_input(now)?,
-            Command::SetVoiceInputSession {
-                enabled,
-                open_responsay,
-            } => self.set_voice_input_session(enabled, open_responsay, now)?,
-            Command::OpenResponsayApp => self.open_responsay_app(),
+            Command::SetVoiceInputSession { enabled } => {
+                self.set_voice_input_session(enabled, now)?
+            }
             Command::StartCaptureMode { mode, stay_on_page } => {
                 self.start_capture_mode(mode, stay_on_page, now)?
             }

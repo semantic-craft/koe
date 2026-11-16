@@ -1,6 +1,6 @@
 # Koe 路线图
 
-先完成一条完整的 macOS 使用流程，再让移动端复用相同的 Rust 领域与服务。新的工作区目标是**模式选择下的随心闪记、全天听记、实时纪要与语音输入**，并接问 AI、所有记录和行动。四工作区正式页面、分层侧栏导航、模式选择独立会话开关与所有记录按模式/收件箱筛选已在本机实现并通过契约自检；业务定义与当前真机验收边界见[四模式工作区](docs/mode-workspaces.md)，物理 D3200 与 Responsay 真机交互验收见 [#668](https://github.com/semantic-craft/koe/issues/668)。架构约束见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+先完成一条完整的 macOS 使用流程，再让移动端复用相同的 Rust 领域与服务。新的工作区目标是**模式选择下的随心闪记、全天听记、实时纪要与语音输入**，并接问 AI、所有记录和行动。四工作区正式页面、分层侧栏导航、模式选择独立会话开关与所有记录按模式/收件箱筛选已在本机实现并通过契约自检；业务定义与当前真机验收边界见[四模式工作区](docs/mode-workspaces.md)，物理 D3200 与外部输入法真机交互验收见 [#668](https://github.com/semantic-craft/koe/issues/668)。架构约束见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 当前产品范围
 
