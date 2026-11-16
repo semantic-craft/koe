@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2.2.0 (11) · 2026-11-17
+
+- 准备 `2.2.0`（构建 11）私有 GitHub Release，整合蓝牙控制权切换、本地桥接解耦与 Rust/SwiftUI 全栈指南加固，范围与硬件验收边界见[发行说明](docs/releases/v2.2.0.md)。
+- 统一 Mac 到手机蓝牙控制权切换：首页音源条新增「Mac 使用 / 手机接管」分段开关，状态栏菜单与设置/录音页共享 `HostCommand.deviceRelease` 与 Rust 边界守门（拦截离线拉取、暂停拉取及录音中释放），消除中文字符串比对与重复引导触发。（#732）
+- 清理 `external_pcm_v1` 独占租约与跨四层 `HostAction` / `open_responsay` 空壳胶水，保留通用 `koe.sock` 伴侣订阅与听写定稿接口。（#733、#732）
+- 全栈可靠性与实时线程加固：清除 Rust 生产路径 `.unwrap()` / `.expect()`，将 `koe-host-api` Socket 广播移出 `sessions()` 全局锁并在加锁前拦截超长 PCM 块；修复 SwiftUI 4 处 `ForEach(..., id: \.offset)` 身份抖动、CoreBluetooth `MainActor.assumeIsolated` 严格 FIFO 派发、`AudioCallbackFence` 并发等待计数唤醒与固定容量无扩容环形 `MicrophoneMailbox`；将 `KoeAppDelegate` / `KoeWindowPresenter` 纳入 `verify-ui-principles.py` 静态门禁并在 `verify-local.sh` 联动 `check_swiftui_perf.py`。（#734）
+
 ## 2.1.0 (10) · 2026-11-16
 
 - 准备 `2.1.0`（构建 10）私有 GitHub Release，完整交付 macOS 2.x 四大业务工作区、系统音频双路采集、跨四层架构收敛与宿主性能重构，范围与硬件验收边界见[发行说明](docs/releases/v2.1.0.md)。
