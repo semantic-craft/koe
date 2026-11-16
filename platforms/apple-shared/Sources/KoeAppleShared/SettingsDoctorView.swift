@@ -67,7 +67,7 @@ public struct SettingsDoctorView: View {
                                 }
                                 KoeActionButton("切回手机", systemImage: "iphone") {
                                     store.send(.deviceRelease)
-                                }.disabled(!(store.today.picker?.canReleaseToPhone ?? true))
+                                }.disabled(!store.canReleaseToPhone)
                             }
                         } else {
                             Text("将麦克风放入充电仓，短按充电仓下方按钮开启蓝牙广播后点击连接。")
@@ -83,7 +83,7 @@ public struct SettingsDoctorView: View {
                                 if device.autoConnect {
                                     KoeActionButton("切回手机", systemImage: "iphone") {
                                         store.send(.deviceRelease)
-                                    }.disabled(!(store.today.picker?.canReleaseToPhone ?? true))
+                                    }.disabled(!store.canReleaseToPhone)
                                 }
                             }
                         }

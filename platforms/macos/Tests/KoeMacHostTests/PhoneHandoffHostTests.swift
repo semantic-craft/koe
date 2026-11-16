@@ -38,10 +38,9 @@ struct PhoneHandoffHostTests {
         store.send(.deviceRelease)
         delegate.menuNeedsUpdate(macMenu)
         #expect(macMenu.items.first?.title == "录音豆：已让出给手机")
-        let phoneScanIndex = try #require(macMenu.items.firstIndex(where: { $0.title == "查找录音豆" }))
-        let reconnectItem = macMenu.items[phoneScanIndex + 1]
-        #expect(reconnectItem.title == "连回 Mac 录音豆")
+        let reconnectItem = try #require(macMenu.items.first(where: { $0.title == "连回 Mac 录音豆" }))
         #expect(reconnectItem.isEnabled == true)
+        #expect(!macMenu.items.contains(where: { $0.title == "查找录音豆" }))
         #expect(!macMenu.items.contains(where: { $0.title == "切回手机（释放控制权）" }))
 
         delegate.prepareManualScan()
@@ -51,6 +50,7 @@ struct PhoneHandoffHostTests {
         #expect(macMenu.items.first?.title == store.device.state)
         let restoredScanIndex = try #require(macMenu.items.firstIndex(where: { $0.title == "查找录音豆" }))
         #expect(macMenu.items[restoredScanIndex + 1].title == "切回手机（释放控制权）")
+        #expect(!macMenu.items.contains(where: { $0.title == "连回 Mac 录音豆" }))
 
         store.send("device_event", ["event": "scanning", "connectionId": "c-handoff"])
         store.ingestBleChunk(rxFrame(group: 0x18, command: 0x81, payload: [0x93, 0x03, 0, 0]), nowEpochSec: 1_800_000_000)
@@ -62,10 +62,61 @@ struct PhoneHandoffHostTests {
         #expect(blockedReleaseItem.isEnabled == false)
 
         delegate.bluetoothBridge.isScanRequested = true
-        delegate.bluetoothBridge.releaseControl()
+        store.send(.deviceRelease)
         #expect(store.device.autoConnect == true)
         #expect(delegate.bluetoothBridge.isScanRequested == true)
         #expect(store.navigation.effectiveError != nil)
+    }
+
+    @Test("Rejected deviceRelease when autoConnect is false and bean recording is active preserves error and keeps BLE bridge active")
+    @MainActor
+    func rejectedReleaseWithAutoConnectFalsePreservesErrorAndBleBridge() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let delegate = KoeAppDelegate()
+        delegate.store = store
+        defer { delegate.store = nil }
+        delegate.bluetoothBridge.activateHost(allowsCoreBluetooth: false)
+
+        store.send(.setBleAutoConnect(enabled: false))
+        #expect(store.device.autoConnect == false)
+
+        delegate.bluetoothBridge.startScanningIfPoweredOn()
+        store.ingestBleChunk(rxFrame(group: 0x18, command: 0x81, payload: [0x93, 0x03, 0, 0]), nowEpochSec: 1_800_000_000)
+        #expect(store.device.recording == true)
+        #expect(delegate.bluetoothBridge.isScanRequested == true)
+
+        store.send(.deviceRelease)
+        #expect(store.navigation.effectiveError != nil)
+        #expect(store.device.autoConnect == false)
+        #expect(store.device.recording == true)
+        #expect(delegate.bluetoothBridge.isScanRequested == true)
+    }
+
+    @Test("BLE scan request enables autoConnect and starts scanning without opening connect guide")
+    @MainActor
+    func bleScanRequestDoesNotOpenConnectGuide() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let delegate = KoeAppDelegate()
+        delegate.store = store
+        defer { delegate.store = nil }
+        delegate.bluetoothBridge.activateHost(allowsCoreBluetooth: false)
+
+        store.send(.deviceRelease)
+        #expect(store.device.autoConnect == false)
+        #expect(store.device.guide == nil)
+
+        delegate.handleBleScanRequest()
+        #expect(store.device.autoConnect == true)
+        #expect(store.device.guide == nil)
+        #expect(delegate.bluetoothBridge.isScanRequested == true)
     }
 }
 }

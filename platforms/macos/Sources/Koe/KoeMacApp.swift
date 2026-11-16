@@ -399,17 +399,19 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let scanItem = NSMenuItem(title: "查找录音豆", action: #selector(scan), keyEquivalent: "")
-        scanItem.target = self
-        menu.addItem(scanItem)
-        let handoffItem = isPhoneOwner
-            ? NSMenuItem(title: "连回 Mac 录音豆", action: #selector(scan), keyEquivalent: "")
-            : NSMenuItem(title: "切回手机（释放控制权）", action: #selector(releaseBleControl), keyEquivalent: "")
-        handoffItem.target = self
-        if !isPhoneOwner {
-            handoffItem.isEnabled = picker?.canReleaseToPhone ?? (device?.transferPhase != "pulling_offline")
+        if isPhoneOwner {
+            let reconnectItem = NSMenuItem(title: "连回 Mac 录音豆", action: #selector(scanFromMenu), keyEquivalent: "")
+            reconnectItem.target = self
+            menu.addItem(reconnectItem)
+        } else {
+            let scanItem = NSMenuItem(title: "查找录音豆", action: #selector(scanFromMenu), keyEquivalent: "")
+            scanItem.target = self
+            menu.addItem(scanItem)
+            let handoffItem = NSMenuItem(title: "切回手机（释放控制权）", action: #selector(releaseBleControl), keyEquivalent: "")
+            handoffItem.target = self
+            handoffItem.isEnabled = store?.canReleaseToPhone ?? (device?.transferPhase != "pulling_offline")
+            menu.addItem(handoffItem)
         }
-        menu.addItem(handoffItem)
         let open = NSMenuItem(title: "打开 Koe", action: #selector(openWindow), keyEquivalent: "o")
         open.target = self
         menu.addItem(open)
@@ -425,7 +427,16 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     func prepareManualScan() {
         store?.send(.deviceOpenGuide)
     }
+    func handleBleScanRequest() {
+        if store?.device.autoConnect == false {
+            store?.send(.setBleAutoConnect(enabled: true))
+        }
+        bluetoothBridge.startScanningIfPoweredOn()
+    }
     @objc private func scan() {
+        handleBleScanRequest()
+    }
+    @objc private func scanFromMenu() {
         prepareManualScan()
         bluetoothBridge.startScanningIfPoweredOn()
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()

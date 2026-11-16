@@ -949,3 +949,97 @@ fn device_release_rejected_during_pull_and_bean_recording_and_auto_connect_syncs
     );
     assert_ne!(disabled_auto["capture"]["selectedSource"], "bean");
 }
+
+#[test]
+fn set_ble_auto_connect_false_and_device_release_rejected_during_active_or_suspended_pull_and_bean_recording() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+
+    let session_key =
+        connect_bean_with_session_key(&mut runtime, "c-guard2", "soundcore Work (63:9D)", NOW);
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "bean"}),
+        NOW + 1,
+    );
+    runtime.ingest_ble_chunk(&catalog_1b0e_rx(903, 20, NOW as u32 + 1), NOW + 1);
+    let _ = runtime.drain_outbound_ble_frames();
+    complete_offline_pull(&mut runtime, &session_key, 903, NOW + 1);
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "device_download", "fileId": 903}),
+        NOW + 2,
+    );
+    let rejected_auto_during_pull = dispatch(
+        &mut runtime,
+        json!({"type": "set_ble_auto_connect", "enabled": false}),
+        NOW + 2,
+    );
+    assert!(rejected_auto_during_pull["error"].is_string());
+    assert_eq!(rejected_auto_during_pull["device"]["autoConnect"], true);
+    assert_eq!(
+        rejected_auto_during_pull["capture"]["selectedSource"],
+        "bean"
+    );
+
+    let suspended = dispatch_ok(
+        &mut runtime,
+        json!({"type": "device_event", "event": "disconnected", "connectionId": "c-guard2"}),
+        NOW + 3,
+    );
+    assert_eq!(suspended["device"]["transferPhase"], "suspended");
+    assert_eq!(
+        suspended["workspaces"]["picker"]["canReleaseToPhone"],
+        false
+    );
+
+    let rejected_auto_suspended = dispatch(
+        &mut runtime,
+        json!({"type": "set_ble_auto_connect", "enabled": false}),
+        NOW + 3,
+    );
+    assert!(rejected_auto_suspended["error"].is_string());
+    assert_eq!(rejected_auto_suspended["device"]["autoConnect"], true);
+
+    let rejected_release_suspended =
+        dispatch(&mut runtime, json!({"type": "device_release"}), NOW + 3);
+    assert!(rejected_release_suspended["error"].is_string());
+    assert_eq!(rejected_release_suspended["device"]["autoConnect"], true);
+    assert_eq!(
+        rejected_release_suspended["device"]["transferPhase"],
+        "suspended"
+    );
+
+    let session_key_2 =
+        connect_bean_with_session_key(&mut runtime, "c-guard3", "soundcore Work (63:9D)", NOW + 4);
+    complete_offline_pull(&mut runtime, &session_key_2, 903, NOW + 4);
+    assert_eq!(runtime.snapshot(NOW + 4)["device"]["transferPhase"], "idle");
+
+    dispatch_ok(&mut runtime, json!({"type": "device_start"}), NOW + 5);
+    let rejected_auto_recording = dispatch(
+        &mut runtime,
+        json!({"type": "set_ble_auto_connect", "enabled": false}),
+        NOW + 5,
+    );
+    assert!(rejected_auto_recording["error"].is_string());
+    assert_eq!(rejected_auto_recording["device"]["autoConnect"], true);
+    assert_eq!(rejected_auto_recording["device"]["recording"], true);
+
+    dispatch_ok(&mut runtime, json!({"type": "device_stop"}), NOW + 6);
+    runtime.ingest_ble_chunk(&rx_frame(0x18, 0x82, &[2]), NOW + 6);
+    runtime.poll_timers(2_100, NOW + 9);
+
+    let released = dispatch_ok(&mut runtime, json!({"type": "device_release"}), NOW + 9);
+    assert_eq!(released["device"]["autoConnect"], false);
+    assert_eq!(released["workspaces"]["picker"]["beanControlOwner"], "phone");
+    assert_eq!(released["notice"], "已释放录音豆蓝牙控制权");
+
+    let second_release = dispatch_ok(&mut runtime, json!({"type": "device_release"}), NOW + 10);
+    assert!(second_release["error"].is_null());
+    assert!(second_release["notice"].is_null());
+    assert_eq!(
+        second_release["workspaces"]["picker"]["beanControlOwner"],
+        "phone"
+    );
+}

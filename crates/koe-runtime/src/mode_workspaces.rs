@@ -15,7 +15,7 @@ pub(super) const QUICK_NOTE_MCP_READ_NOTE: &str =
     "外部 Agent 可通过只读 MCP 检索已保存闪记原文与已采纳行动，不会自动改写记录。";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BeanControlOwner {
+pub(super) enum BeanControlOwner {
     Mac,
     Phone,
 }
@@ -214,7 +214,7 @@ impl KoeRuntime {
         }))
     }
 
-    fn bean_control_owner(&self) -> BeanControlOwner {
+    pub(super) fn bean_control_owner(&self) -> BeanControlOwner {
         if !self.workspace().ble_auto_connect()
             && !self.device.is_connected()
             && matches!(

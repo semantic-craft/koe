@@ -803,16 +803,23 @@ impl KoeRuntime {
                 if let Some(reason) = self.release_to_phone_block_reason() {
                     return Err(reason.into());
                 }
-                self.stop_bean_dictation();
-                self.commit(|w| {
-                    w.set_ble_auto_connect(false);
-                    Ok(())
-                })?;
-                self.reset_bean_preference_if_needed();
-                self.disconnect_device_session(true, now)?;
-                self.notice = Some("已释放录音豆蓝牙控制权".into());
+                if self.bean_control_owner() != mode_workspaces::BeanControlOwner::Phone {
+                    self.stop_bean_dictation();
+                    self.commit(|w| {
+                        w.set_ble_auto_connect(false);
+                        Ok(())
+                    })?;
+                    self.reset_bean_preference_if_needed();
+                    self.disconnect_device_session(true, now)?;
+                    self.notice = Some("已释放录音豆蓝牙控制权".into());
+                }
             }
             Command::SetBleAutoConnect { enabled } => {
+                if !enabled {
+                    if let Some(reason) = self.release_to_phone_block_reason() {
+                        return Err(reason.into());
+                    }
+                }
                 self.commit(|w| {
                     w.set_ble_auto_connect(enabled);
                     Ok(())
@@ -917,7 +924,8 @@ impl KoeRuntime {
         if matches!(
             self.device.session.transfer.phase,
             TransferPhaseTag::PullingOffline
-        ) {
+        ) || self.device.session.is_offline_pull_suspended()
+        {
             return Some("正在从录音豆拉取离线录音，请等待完成后再切回手机");
         }
         if self.is_bean_meeting_recording()

@@ -137,7 +137,7 @@ public struct CaptureView: View {
             if device.connected || device.autoConnect {
                 KoeActionButton("切回手机", systemImage: "iphone") {
                     store.send(.deviceRelease)
-                }.disabled(!(store.today.picker?.canReleaseToPhone ?? true))
+                }.disabled(!store.canReleaseToPhone)
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)

@@ -421,6 +421,10 @@ public struct QuickNoteWorkspaceSnapshot: Codable, Equatable, Sendable {
 }
 
 extension HostSessionStore {
+    public var canReleaseToPhone: Bool {
+        today.picker?.canReleaseToPhone ?? (device.transferPhase != "pulling_offline")
+    }
+
     public func toggleModeSession(_ card: ModePickerCardSnapshot) {
         if card.id == "voice_input" || card.mode == "dictation" {
             send(.setVoiceInputSession(enabled: !card.isSessionActive))

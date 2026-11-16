@@ -25,24 +25,23 @@ extension BluetoothBridge {
         }
     }
 
-    public func releaseControl() {
-        store?.send(.deviceRelease)
-        if let device = store?.snapshot.device, !device.autoConnect {
-            syncWithRuntimeDevice(device)
-        }
-    }
-
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {
         let wasAutoConnectDisabled = (lastObservedAutoConnect == false)
         lastObservedAutoConnect = device.autoConnect
         if !device.autoConnect {
             UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
-            if reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
+            if !wasAutoConnectDisabled,
+               reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
                 writeProjectedTeardownStopFramesIfReady(for: device)
                 teardownLocalBleLink()
                 if device.phase != "disconnected" {
                     store?.send("device_disconnect")
                 }
+            } else if !device.connected,
+                      device.phase == "disconnected",
+                      reportedReady || peripheral != nil || reconnectingPeripheral != nil {
+                writeProjectedTeardownStopFramesIfReady(for: device)
+                teardownLocalBleLink()
             }
             return
         }

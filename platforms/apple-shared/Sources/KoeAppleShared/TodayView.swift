@@ -90,11 +90,13 @@ struct TodayView: View {
 
     private func beanOwnershipSwitch(_ today: TodaySlice, picker: ModePickerSnapshot?) -> some View {
         let isMacOwner = (picker?.beanControlOwner ?? "mac") != "phone"
-        let canRelease = picker?.canReleaseToPhone ?? true
+        let canRelease = store.canReleaseToPhone
         return HStack(spacing: 2) {
             OwnershipSegmentButton(title: "Mac 使用", active: isMacOwner) {
-                if !today.deviceConnected || !isMacOwner {
+                if !isMacOwner {
                     store.send(.deviceOpenGuide)
+                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                } else if !today.deviceConnected, store.device.phase == "disconnected" {
                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
                 }
             }
