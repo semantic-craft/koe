@@ -273,7 +273,7 @@
         "updated_at": "2026-11-16T15:31:13Z"
       }
     ],
-    "main": "b043f3a3b9439c837ebc82d4f6c325ef6be683c6",
+    "main": "fb412c6359fbc47bb26ddc741196af1361d06c07",
     "open_pulls": [],
     "pulls": [
       {
@@ -766,7 +766,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-16T18:38:23.525019Z",
+  "observed_at": "2026-11-16T23:29:09.589657Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1828,14 +1828,14 @@
             },
             {
               "kind": "release",
-              "note": "基于 b043f3a 构建安装 Developer ID 签名版 /Applications/Koe.app 2.2.0 构建 11（CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，PID 62382），Designated Requirement 逐字节一致，--verify-self 与 --smoke-test 通过；koe status 读回 70 条记录与 21 条待办，mac-ax 验证模式切换卡片与设置导航；未运行 Apple Notary 公证（spctl 为 Unnotarized Developer ID）。",
+              "note": "基于 b043f3a 签名加时间戳并经 xw-notary 完成 Apple 公证（提交 61f297ad-1554-49a6-9612-4e670ddab3da Accepted）与票据装订，升级 /Applications/Koe.app 2.2.0 构建 11（CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，PID 43309），Designated Requirement 逐字节一致，xcrun stapler validate 与 spctl 返回 Notarized Developer ID，mac-ax 验证 70 条记录、21 条待办与模式切换四卡正常。",
               "ref": "v2.2.0"
             }
           ],
           "id": "merge-install",
           "next": "独立物理按键、热插拔与手机控制权切回手测继续按 #722、#725、#731 追踪。",
           "status": "done",
-          "summary": "2026-11-17 本机 /Applications/Koe.app 已从 2.1.0（构建 10）平顺升级为 Developer ID 签名版 2.2.0（构建 11，CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，运行 PID 62382），Designated Requirement 逐字节保留；--verify-self 与 --smoke-test 通过，koe status 返回 70 条记录、21 条待办、localAsr ready、voiceInput companion_bridge（generation 4），mac-ax 验证「模式选择 / 已让出给手机 / Mac 使用 / 手机接管」四卡及设置导航正常。本机安装与私有发行包均已完成 Developer ID 签名，未提交 Apple Notary 公证（spctl 显示 Unnotarized Developer ID）。",
+          "summary": "2026-11-17 本机 /Applications/Koe.app 已安装并运行经 Apple 公证装订的 Developer ID 签名版 2.2.0（构建 11，CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，Apple Notary 提交 61f297ad-1554-49a6-9612-4e670ddab3da Accepted，运行 PID 43309），Designated Requirement 逐字节保留，xcrun stapler validate 与 spctl 均返回 Notarized Developer ID；koe status 与 mac-ax 验证 70 条记录、21 条待办、localAsr ready 与「模式选择 / 已让出给手机 / Mac 使用 / 手机接管」四卡正常。",
           "title": "本机签名安装"
         },
         {
@@ -2167,7 +2167,7 @@
           "evidence": [
             {
               "kind": "release",
-              "note": "私有 GitHub Release v2.2.0（tag 指向 b043f3a），arm64 zip、SHA256SUMS.txt 与 Koe-2.2.0-release-receipt.json 均已上传并完成下载 SHA-256 回读校验；zip SHA-256 8631eafac82e3f0a100ce5d8ea92adc3e049f02743c8277e1f2848cc679af3d2。",
+              "note": "私有 GitHub Release v2.2.0（tag 指向 b043f3a）已刷新为经 xw-notary 公证（61f297ad-1554-49a6-9612-4e670ddab3da Accepted）并装订票据的发行包、SHA256SUMS.txt 与 Koe-2.2.0-release-receipt.json，下载回读 SHA-256（06a3039fdf20cf4a3356103f413bea2b641f3796d19661836eca6c1852d9c018）一致，spctl 为 Notarized Developer ID。",
               "ref": "v2.2.0"
             },
             {
@@ -2197,9 +2197,9 @@
             }
           ],
           "id": "private-release-220",
-          "next": "独立物理硬件核对继续按 #722、#725 与 #731 追踪；如需跨机 Gatekeeper 免拦截分发，可另补 Apple Notary 公证。",
+          "next": "独立物理硬件核对继续按 #722、#725 与 #731 追踪。",
           "status": "done",
-          "summary": "2026-11-17 已在私有仓库发布 v2.2.0（构建 11，tag 指向 b043f3a），提供 Developer ID 签名 arm64 zip、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 sign-macos.sh --verify-only、--verify-self 与 --smoke-test，GitHub Release 下载回读 SHA-256（8631eafac82e3f0a100ce5d8ea92adc3e049f02743c8277e1f2848cc679af3d2）一致，本机 /Applications/Koe.app（PID 62382）已完成实时数据与 UI 验收。未运行 Apple Notary 公证（spctl 为 Unnotarized Developer ID）。",
+          "summary": "2026-11-17 已在私有仓库发布并更新经 xw-notary 完成 Apple 公证（提交 61f297ad-1554-49a6-9612-4e670ddab3da Accepted）与票据装订的 v2.2.0（构建 11，tag 指向 b043f3a）发行包，提供 arm64 zip、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（Notarized Developer ID）、--verify-self 与 --smoke-test，GitHub Release 下载回读 SHA-256（06a3039fdf20cf4a3356103f413bea2b641f3796d19661836eca6c1852d9c018）一致，本机 /Applications/Koe.app（PID 43309）已完成 Gatekeeper、实时数据与 AX UI 验收。",
           "title": "Koe 2.2.0 私有发行包"
         }
       ],
