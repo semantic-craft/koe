@@ -110,13 +110,17 @@ public struct SummarySectionItem: Identifiable, Equatable, Sendable {
     public let section: SummarySnapshot
 
     public static func keyed(_ sections: [SummarySnapshot]) -> [SummarySectionItem] {
-        var counts: [String: Int] = [:]
+        var used: Set<String> = []
         return sections.map { section in
             let base = section.id
-            let count = (counts[base] ?? 0) + 1
-            counts[base] = count
-            let key = count == 1 ? base : "\(base)#\(count)"
-            return SummarySectionItem(id: key, section: section)
+            var candidate = base
+            var suffix = 2
+            while used.contains(candidate) {
+                candidate = "\(base)#\(suffix)"
+                suffix += 1
+            }
+            used.insert(candidate)
+            return SummarySectionItem(id: candidate, section: section)
         }
     }
 }

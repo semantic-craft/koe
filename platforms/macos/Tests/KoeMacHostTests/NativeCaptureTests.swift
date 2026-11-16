@@ -249,6 +249,44 @@ extension NativeCaptureTests {
         XCTAssertEqual(box.peek()?.pcm.samples, [42])
         XCTAssertFalse(fence.enter())
     }
+
+    func testConcurrentCloseAndWaitBothUnblockWhenLeaveFinishes() {
+        let fence = AudioCallbackFence()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let firstWaiting = DispatchSemaphore(value: 0)
+        let secondWaiting = DispatchSemaphore(value: 0)
+        let firstDone = DispatchSemaphore(value: 0)
+        let secondDone = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            guard fence.enter() else { return }
+            entered.signal()
+            release.wait()
+            fence.leave()
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+
+        DispatchQueue.global().async {
+            firstWaiting.signal()
+            fence.closeAndWait()
+            firstDone.signal()
+        }
+        DispatchQueue.global().async {
+            secondWaiting.signal()
+            fence.closeAndWait()
+            secondDone.signal()
+        }
+
+        XCTAssertEqual(firstWaiting.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(secondWaiting.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(firstDone.wait(timeout: .now() + 0.02), .timedOut)
+        XCTAssertEqual(secondDone.wait(timeout: .now() + 0.02), .timedOut)
+
+        release.signal()
+        XCTAssertEqual(firstDone.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(secondDone.wait(timeout: .now() + 2), .success)
+    }
 }
 
 

@@ -337,6 +337,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store, store.handle != 0 else { return .terminateNow }
+        store.reconcileMenuSlicesIfNeeded()
         if quitPanel != nil { return .terminateLater }
         let result = lifecycle.request()
         bluetoothBridge.flushOutboundFrames()
@@ -424,6 +425,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         store?.send(.deviceOpenGuide)
     }
     func handleBleScanRequest() {
+        store?.reconcileMenuSlicesIfNeeded()
         if store?.device.autoConnect == false {
             store?.send(.setBleAutoConnect(enabled: true))
         }

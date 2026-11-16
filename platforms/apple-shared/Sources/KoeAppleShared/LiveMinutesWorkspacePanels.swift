@@ -1,16 +1,11 @@
 import SwiftUI
 
 private struct DraftItem: Identifiable {
-    let id: String
+    let id: Int
     let text: String
 
-    static func keyed(_ drafts: [String]) -> [DraftItem] {
-        var counts: [String: Int] = [:]
-        return drafts.map { draft in
-            let count = (counts[draft] ?? 0) + 1
-            counts[draft] = count
-            return DraftItem(id: count == 1 ? draft : "\(draft)#\(count)", text: draft)
-        }
+    static func slots(_ drafts: [String]) -> [DraftItem] {
+        drafts.enumerated().map { DraftItem(id: $0.offset, text: $0.element) }
     }
 }
 
@@ -91,7 +86,7 @@ struct LiveMinutesSplitBody: View {
                         ForEach(Array(lm.segments.enumerated()), id: \.element.id) { idx, segment in
                             transcriptSegmentRow(index: idx + 1, segment: segment)
                         }
-                        ForEach(DraftItem.keyed(lm.drafts)) { draft in
+                        ForEach(DraftItem.slots(lm.drafts)) { draft in
                             VStack(alignment: .leading, spacing: 5) {
                                 KoeBadge("识别中", tint: AppColors.accent)
                                 Text(draft.text)

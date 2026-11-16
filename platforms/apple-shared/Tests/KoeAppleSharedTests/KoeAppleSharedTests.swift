@@ -267,4 +267,20 @@ struct KoeAppleSharedTests {
         store.send("select_capture_source", ["source": "bean"])
         #expect(store.snapshot.microphone == nil && !store.snapshot.capture.canIncludeSystemAudio)
     }
+
+    @Test("SummarySectionItem.keyed avoids collisions when an item already ends with a #N suffix")
+    func summarySectionItemKeyedAvoidsCollisions() {
+        let x1 = SummarySnapshot(title: "t", text: "x", sources: [])
+        let x2 = SummarySnapshot(title: "t", text: "x", sources: [])
+        let xHash2 = SummarySnapshot(title: "t", text: "x#2", sources: [])
+        let items = SummarySectionItem.keyed([x1, x2, xHash2])
+        #expect(items.count == 3)
+        #expect(Set(items.map(\.id)).count == 3)
+        #expect(items.map(\.section) == [x1, x2, xHash2])
+
+        let reversed = SummarySectionItem.keyed([xHash2, x1, x2])
+        #expect(reversed.count == 3)
+        #expect(Set(reversed.map(\.id)).count == 3)
+        #expect(reversed.map(\.section) == [xHash2, x1, x2])
+    }
 }
