@@ -181,7 +181,7 @@ struct TranscriptDetailView: View {
             segmentFooter(segment)
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(store.snapshot.focusSegmentId == segment.id ? AppColors.accentSoft : AppColors.surface1,
+        .background(store.recordDetail.focusSegmentId == segment.id ? AppColors.accentSoft : AppColors.surface1,
                     in: RoundedRectangle(cornerRadius: 7)).id(segment.id)
     }
 
@@ -285,7 +285,7 @@ struct TranscriptDetailView: View {
 
     private func applySegmentText(_ segmentId: String, text: String) {
         store.send(.editSegmentText(recordId: detail.id, segmentId: segmentId, text: text))
-        if store.snapshot.error == nil && store.nativeError == nil && editingSegmentId == segmentId {
+        if store.navigation.effectiveError == nil && editingSegmentId == segmentId {
             editingSegmentId = nil
         }
     }
@@ -296,7 +296,7 @@ struct TranscriptDetailView: View {
 
     private func applySegmentSpeaker(_ segmentId: String, speaker: String) {
         store.send(.setSegmentSpeaker(recordId: detail.id, segmentId: segmentId, speaker: speaker))
-        if store.snapshot.error == nil && store.nativeError == nil { namingSegmentId = nil }
+        if store.navigation.effectiveError == nil { namingSegmentId = nil }
     }
 
     private func submitBatchRename(from fromSpeaker: String) {
@@ -305,7 +305,7 @@ struct TranscriptDetailView: View {
 
     private func mergeSpeaker(from fromSpeaker: String, to toSpeaker: String) {
         store.send(.renameSpeaker(recordId: detail.id, fromSpeaker: fromSpeaker, toSpeaker: toSpeaker))
-        if store.snapshot.error == nil && store.nativeError == nil {
+        if store.navigation.effectiveError == nil {
             renamingBatchSpeaker = nil
             batchSpeakerDraft = ""
         }

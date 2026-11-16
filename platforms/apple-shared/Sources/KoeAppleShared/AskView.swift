@@ -3,27 +3,32 @@ import SwiftUI
 struct AskView: View {
     let store: HostSessionStore
     @State private var draft = ""
+    private var ask: AskSnapshot { store.ask }
     private var latestSources: [SourceSnapshot] {
-        store.snapshot.ask.messages.last(where: { $0.role == "assistant" })?.sources ?? []
+        ask.messages.last(where: { $0.role == "assistant" })?.sources ?? []
     }
     var body: some View {
+        let ask = store.ask
+        let records = store.records
+        let selectedRecordId = store.navigation.selectedRecordId
+        let providerConfigured = store.settings.provider.configured
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 18) {
                     PageHeading(title: "问 Koe", subtitle: "从记下来的事情中，找到有出处的回答。")
                     HStack {
-                        scopeButton("all", title: "所有记录")
-                        if let recordId = store.snapshot.ask.recordId,
-                           let record = store.snapshot.records.first(where: { $0.id == recordId }) {
-                            scopeButton("record", title: record.title, recordId: record.id)
+                        scopeButton("all", title: "所有记录", ask: ask)
+                        if let recordId = ask.recordId,
+                           let record = records.first(where: { $0.id == recordId }) {
+                            scopeButton("record", title: record.title, recordId: record.id, ask: ask)
                         }
-                        if let recordId = store.snapshot.selectedRecordId,
-                           recordId != store.snapshot.ask.recordId,
-                           let record = store.snapshot.records.first(where: { $0.id == recordId }) {
-                            scopeButton("record", title: record.title, recordId: record.id)
+                        if let recordId = selectedRecordId,
+                           recordId != ask.recordId,
+                           let record = records.first(where: { $0.id == recordId }) {
+                            scopeButton("record", title: record.title, recordId: record.id, ask: ask)
                         }
                         Spacer()
-                        if !store.snapshot.provider.configured {
+                        if !providerConfigured {
                             KoeBadge("本地检索", tint: AppColors.textMuted)
                         }
                     }
@@ -32,18 +37,18 @@ struct AskView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 26) {
-                            if store.snapshot.ask.messages.isEmpty {
+                            if ask.messages.isEmpty {
                                 EmptyState(icon: "sparkles", title: "有些事，不必再从头想起", detail: "提问一段讨论、一项决定，或接下来要做的事。回答会连接到真实的原文。")
-                                if !store.snapshot.provider.configured {
+                                if !providerConfigured {
                                     Text("尚未配置 AI 服务。现在可以搜索原文，配置后可以生成回答。")
                                         .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                                         .frame(maxWidth: .infinity)
                                 }
                             }
-                            ForEach(store.snapshot.ask.messages) { message in
+                            ForEach(ask.messages) { message in
                                 messageView(message).id(message.id)
                             }
-                            if store.snapshot.ask.phase == "pending" {
+                            if ask.phase == "pending" {
                                 HStack(spacing: 10) {
                                     ProgressView().controlSize(.small)
                                     Text("正在查阅相关记录…").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
@@ -51,8 +56,8 @@ struct AskView: View {
                             }
                         }.padding(28)
                     }
-                    .onChange(of: store.snapshot.ask.messages.count) { _, _ in
-                        if let last = store.snapshot.ask.messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    .onChange(of: ask.messages.count) { _, _ in
+                        if let last = ask.messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
                 HStack(alignment: .bottom, spacing: 12) {
@@ -60,7 +65,7 @@ struct AskView: View {
                         .textFieldStyle(.plain).lineLimit(1...5).font(.system(size: AppFontSizes.sm))
                         .onSubmit { submit() }
                     KoeActionButton("发送", systemImage: "arrow.up", isPrimary: true) { submit() }
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.snapshot.ask.phase == "pending")
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || ask.phase == "pending")
                 }.padding(14).background(AppColors.surface1, in: RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppColors.border)).padding(24)
             }
@@ -81,9 +86,9 @@ struct AskView: View {
             }
         }
     }
-    private func scopeButton(_ scope: String, title: String, recordId: String? = nil) -> some View {
-        let isSelected = store.snapshot.ask.scope == scope
-            && (scope != "record" || store.snapshot.ask.recordId == recordId)
+    private func scopeButton(_ scope: String, title: String, recordId: String? = nil, ask: AskSnapshot) -> some View {
+        let isSelected = ask.scope == scope
+            && (scope != "record" || ask.recordId == recordId)
         return Button {
             store.send(.setAskScope(scope: scope, recordId: recordId))
         } label: {
@@ -92,7 +97,7 @@ struct AskView: View {
                 .padding(.horizontal, 10).frame(minHeight: 30)
                 .background(isSelected ? AppColors.accentSoft : AppColors.bgSubtle,
                             in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(store.snapshot.ask.phase == "pending")
+        }.buttonStyle(.plain).disabled(ask.phase == "pending")
     }
     private func messageView(_ message: AskMessageSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -109,12 +114,13 @@ struct AskView: View {
     }
     private func submit() {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, store.snapshot.ask.phase != "pending" else { return }
+        let ask = store.ask
+        guard !question.isEmpty, ask.phase != "pending" else { return }
         store.send(.ask(
             question: question,
-            scope: store.snapshot.ask.scope,
-            recordId: store.snapshot.ask.recordId
+            scope: ask.scope,
+            recordId: ask.recordId
         ))
-        if store.snapshot.error == nil && store.nativeError == nil { draft = "" }
+        if store.navigation.effectiveError == nil { draft = "" }
     }
 }

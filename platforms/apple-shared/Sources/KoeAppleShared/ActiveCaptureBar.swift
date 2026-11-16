@@ -46,43 +46,44 @@ extension HostSessionStore {
 }
 
 struct ActiveCaptureBar: View {
-    let capture: ActiveCaptureSnapshot
     let store: HostSessionStore
+    var isLiveMinutesSection: Bool = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: capture.mode.icon)
-                .foregroundStyle(capture.phase == "recording" ? AppColors.danger : AppColors.textSecondary)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("\(capture.mode.title)  \(phaseLabel)")
-                    .font(.system(size: AppFontSizes.sm, weight: .semibold))
-                Text(capture.error ?? "\(capture.sourceLabel)  \(TimeLabel.duration(capture.durationMs))")
-                    .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
-            }
-            if let level = capture.level {
-                ProgressView(value: level).frame(width: 68)
-                    .accessibilityLabel("麦克风电平")
-            }
-            Spacer(minLength: 4)
-            if (capture.mode == .meeting || capture.mode == .allDay)
-                && store.snapshot.section != "live_minutes" {
-                KoeActionButton("查看实时纪要", systemImage: "doc.text") {
-                    store.send(.navigate(section: "live_minutes"))
+        if let capture = store.activeCapture {
+            HStack(spacing: 12) {
+                Image(systemName: capture.mode.icon)
+                    .foregroundStyle(capture.phase == "recording" ? AppColors.danger : AppColors.textSecondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("\(capture.mode.title)  \(phaseLabel(capture))")
+                        .font(.system(size: AppFontSizes.sm, weight: .semibold))
+                    Text(capture.error ?? "\(capture.sourceLabel)  \(TimeLabel.duration(capture.durationMs))")
+                        .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
+                }
+                if let level = capture.level {
+                    ProgressView(value: level).frame(width: 68)
+                        .accessibilityLabel("麦克风电平")
+                }
+                Spacer(minLength: 4)
+                if (capture.mode == .meeting || capture.mode == .allDay) && !isLiveMinutesSection {
+                    KoeActionButton("查看实时纪要", systemImage: "doc.text") {
+                        store.send(.navigate(section: "live_minutes"))
+                    }
+                }
+                ForEach(capture.actions, id: \.self) { action in
+                    KoeActionButton(actionTitle(action)) { store.performCaptureAction(action) }
                 }
             }
-            ForEach(capture.actions, id: \.self) { action in
-                KoeActionButton(actionTitle(action)) { store.performCaptureAction(action) }
-            }
+            .padding(.horizontal, 22).padding(.vertical, 10)
+            .background(AppColors.bgSubtle)
+            .overlay(alignment: .top) { Rectangle().fill(AppColors.border).frame(height: 1) }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("active-capture-bar")
         }
-        .padding(.horizontal, 22).padding(.vertical, 10)
-        .background(AppColors.bgSubtle)
-        .overlay(alignment: .top) { Rectangle().fill(AppColors.border).frame(height: 1) }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("active-capture-bar")
     }
 
-    private var phaseLabel: String {
+    private func phaseLabel(_ capture: ActiveCaptureSnapshot) -> String {
         switch capture.phase {
         case "starting": "正在启动"
         case "recording": capture.dictating && capture.mode == .allDay ? "正在记录  语音输入中" : "正在记录"

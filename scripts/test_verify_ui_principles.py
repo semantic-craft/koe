@@ -404,6 +404,170 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         self.assertEqual(report["violations"], [])
         self.assertGreaterEqual(report["checked_files_count"], 1)
 
+    def test_enforces_two_tier_scoped_observation_slice_gates(self) -> None:
+        bad_snapshot_view = """
+        import SwiftUI
+        struct BadSnapshotView: View {
+            let store: HostSessionStore
+            var body: some View {
+                Text(store.snapshot.section).font(.system(size: AppFontSizes.sm))
+            }
+        }
+        """
+        res_snapshot = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/SidebarView.swift",
+            bad_snapshot_view,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_snapshot["violations"]),
+            res_snapshot["violations"],
+        )
+
+        allowed_store = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/HostSessionStore.swift",
+            bad_snapshot_view,
+            strict_scale=True,
+        )
+        self.assertEqual(allowed_store["violations"], [])
+
+        allowed_slices = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/HostSessionSlices.swift",
+            bad_snapshot_view,
+            strict_scale=True,
+        )
+        self.assertEqual(allowed_slices["violations"], [])
+
+        for prop in ("playback", "activeCapture", "liveCaption", "liveMinutesCoverage"):
+            bad_hf_view = f"""
+            import SwiftUI
+            struct BadHighFreqView: View {{
+                let store: HostSessionStore
+                var body: some View {{
+                    let _ = store.{prop}
+                    Text("标题").font(.system(size: AppFontSizes.sm))
+                }}
+            }}
+            """
+            res_hf = verifier.check_ui_file(
+                "platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift",
+                bad_hf_view,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("4 Hz high-frequency slice(s)" in v for v in res_hf["violations"]),
+                res_hf["violations"],
+            )
+
+        for leaf_file, prop in (
+            ("PlayerBarView.swift", "playback"),
+            ("ActiveCaptureBar.swift", "activeCapture"),
+            ("LiveCaptionBar.swift", "liveCaption"),
+            ("LiveMinutesCoverageSlotView.swift", "liveMinutesCoverage"),
+        ):
+            compliant_leaf = f"""
+            import SwiftUI
+            struct LeafView: View {{
+                let store: HostSessionStore
+                var body: some View {{
+                    let _ = store.{prop}
+                    Text("叶子组件").font(.system(size: AppFontSizes.xs))
+                }}
+            }}
+            """
+            res_leaf = verifier.check_ui_file(
+                f"platforms/apple-shared/Sources/KoeAppleShared/{leaf_file}",
+                compliant_leaf,
+                strict_scale=True,
+            )
+            self.assertEqual(res_leaf["violations"], [], res_leaf["violations"])
+
+        live_minutes_parent_leak = """
+        import SwiftUI
+        struct LiveMinutesView: View {
+            let store: HostSessionStore
+            var body: some View {
+                let _ = store.liveMinutesCoverage
+                Text("实时纪要").font(.system(size: AppFontSizes.sm))
+            }
+        }
+        """
+        res_lm_leak = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift",
+            live_minutes_parent_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("4 Hz high-frequency slice(s)" in v for v in res_lm_leak["violations"]),
+            res_lm_leak["violations"],
+        )
+
+        cross_leaf_leak = """
+        import SwiftUI
+        struct PlayerBarView: View {
+            let store: HostSessionStore
+            var body: some View {
+                let _ = store.playback
+                let _ = store.activeCapture
+                Text("播放").font(.system(size: AppFontSizes.xs))
+            }
+        }
+        """
+        res_cross_leak = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/PlayerBarView.swift",
+            cross_leaf_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("4 Hz high-frequency slice(s)" in v for v in res_cross_leak["violations"]),
+            res_cross_leak["violations"],
+        )
+
+        macos_host_view_leak = """
+        import SwiftUI
+        final class HostAdapter {
+            func check(store: HostSessionStore) -> String { store.snapshot.section }
+        }
+        struct HostBadScene: App {
+            let store: HostSessionStore
+            var body: some Scene {
+                let _ = store.snapshot.section
+                let _ = store.playback
+                WindowGroup("Koe") { EmptyView() }
+            }
+        }
+        """
+        res_macos_leak = verifier.check_ui_file(
+            "platforms/macos/Sources/Koe/KoeMacApp.swift",
+            macos_host_view_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_macos_leak["violations"]),
+            res_macos_leak["violations"],
+        )
+        self.assertTrue(
+            any("4 Hz high-frequency slice(s)" in v for v in res_macos_leak["violations"]),
+            res_macos_leak["violations"],
+        )
+
+        compliant_page = """
+        import SwiftUI
+        struct CompliantPageView: View {
+            let store: HostSessionStore
+            var body: some View {
+                let nav = store.navigation
+                Text(nav.section).font(.system(size: AppFontSizes.sm))
+            }
+        }
+        """
+        res_page = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift",
+            compliant_page,
+            strict_scale=True,
+        )
+        self.assertEqual(res_page["violations"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

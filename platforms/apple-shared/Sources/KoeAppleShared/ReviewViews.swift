@@ -4,7 +4,7 @@ struct TasksView: View {
     let store: HostSessionStore
     @State private var filter = "active"
     private var items: [TaskSnapshot] {
-        store.snapshot.tasks.filter { item in
+        store.tasks.filter { item in
             switch filter {
             case "completed": return item.completed && item.state == "accepted"
             case "dismissed": return item.state == "dismissed"
@@ -74,7 +74,7 @@ struct MemoryView: View {
     let store: HostSessionStore
     @State private var showDismissed = false
     private var items: [MemorySnapshot] {
-        store.snapshot.memories.filter { showDismissed ? $0.state == "dismissed" : $0.state != "dismissed" }
+        store.memories.filter { showDismissed ? $0.state == "dismissed" : $0.state != "dismissed" }
     }
     var body: some View {
         ScrollView {
@@ -153,7 +153,7 @@ public struct ItemEditor: View {
                 TextField("截止日期，例如 2026-11-20（可留空）", text: $due)
                     .textFieldStyle(.roundedBorder).onSubmit { save() }
             }
-            if let error = store.nativeError ?? store.snapshot.error {
+            if let error = store.navigation.effectiveError {
                 Text(error).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
             }
             HStack {
@@ -171,6 +171,6 @@ public struct ItemEditor: View {
     }
     private func save() {
         store.send(.editItem(itemId: id, text: text, due: due.isEmpty ? nil : due))
-        if store.snapshot.error == nil && store.nativeError == nil { dismiss() }
+        if store.navigation.effectiveError == nil { dismiss() }
     }
 }

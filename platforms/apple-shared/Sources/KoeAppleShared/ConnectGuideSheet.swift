@@ -41,9 +41,24 @@ public struct ProductAssetImage: View {
         return nil
     }
 
+    @MainActor
+    private static var imageCache: [String: NSImage] = [:]
+
+    @MainActor
+    private static func loadCachedImage(named name: String) -> NSImage? {
+        if let cached = imageCache[name] {
+            return cached
+        }
+        guard let url = resolveImageURL(named: name), let loaded = NSImage(contentsOf: url) else {
+            return nil
+        }
+        imageCache[name] = loaded
+        return loaded
+    }
+
     public var body: some View {
         Group {
-            if let url = Self.resolveImageURL(named: name), let nsImage = NSImage(contentsOf: url) {
+            if let nsImage = Self.loadCachedImage(named: name) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .interpolation(.high)
@@ -87,7 +102,7 @@ public struct ConnectGuideSheet: View {
     }
 
     private var device: DeviceSnapshot {
-        store.snapshot.device
+        store.device
     }
 
     public var body: some View {

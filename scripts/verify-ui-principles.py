@@ -20,6 +20,47 @@ TOKEN_FONT_SIZES = {
     "lg": 22.0,
 }
 
+SNAPSHOT_ALLOWED_APPLE_SHARED_FILES = {
+    "HostSessionStore.swift",
+    "HostSessionSlices.swift",
+}
+
+HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
+    "PlayerBarView.swift": "playback",
+    "ActiveCaptureBar.swift": "activeCapture",
+    "LiveCaptionBar.swift": "liveCaption",
+    "LiveMinutesCoverageSlotView.swift": "liveMinutesCoverage",
+}
+
+
+def extract_swiftui_type_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    for match in re.finditer(r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{", text):
+        start = match.end() - 1
+        depth = 0
+        in_string = False
+        escaped = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    blocks.append(text[start : idx + 1])
+                    break
+    return blocks
+
 
 def parse_hex_color(hex_str: str) -> tuple[int, int, int]:
     cleaned = hex_str.strip().upper()
@@ -254,6 +295,48 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
             violations.append(
                 f"UX violation: {path_str} must mark playheadMs instead of inflating durationMs + 1000 on add_slice_mark"
             )
+
+        norm_path = "/" + path_str.replace("\\", "/").lstrip("/")
+        if "/platforms/apple-shared/Sources/KoeAppleShared/" in norm_path:
+            filename = Path(norm_path).name
+            if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
+                if re.search(r"\bstore\.snapshot\b", text):
+                    violations.append(
+                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                    )
+                allowed_prop = HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename)
+                hf_props = sorted(
+                    set(
+                        re.findall(
+                            r"\bstore\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
+                            text,
+                        )
+                    )
+                )
+                disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
+                if disallowed:
+                    violations.append(
+                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
+                    )
+        elif "/platforms/macos/Sources/Koe/" in norm_path:
+            swiftui_blocks = "\n".join(extract_swiftui_type_blocks(text))
+            if swiftui_blocks:
+                if re.search(r"\bstore\.snapshot\b", swiftui_blocks):
+                    violations.append(
+                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                    )
+                hf_hits = sorted(
+                    set(
+                        re.findall(
+                            r"\bstore\.(?:playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
+                            swiftui_blocks,
+                        )
+                    )
+                )
+                if hf_hits:
+                    violations.append(
+                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {hf_hits} outside designated leaf views"
+                    )
 
     return {
         "file": path_str,

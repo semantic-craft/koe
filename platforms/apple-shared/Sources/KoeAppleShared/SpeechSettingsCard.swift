@@ -2,7 +2,8 @@ import SwiftUI
 
 struct SpeechSettingsCard: View {
     let store: HostSessionStore
-    private var speech: SpeechSnapshot { store.snapshot.speech }
+    private var speech: SpeechSnapshot { store.settings.speech }
+    private var provider: ProviderSnapshot { store.settings.provider }
 
     var body: some View {
         KoeCard {
@@ -37,12 +38,12 @@ struct SpeechSettingsCard: View {
                 Divider()
                 HStack {
                     Toggle("允许将录音音频上传到云端", isOn: Binding(
-                        get: { store.snapshot.provider.meetingAudioPolicy == "cloud_allowed" },
+                        get: { provider.meetingAudioPolicy == "cloud_allowed" },
                         set: { store.send(.setMeetingAudioPolicy(policy: $0 ? "cloud_allowed" : "local_only")) }
                     ))
                     InfoTip("这是独立的音频上传授权。切换识别引擎或下载模型不会改变此授权。关闭后音频保存在本机，文字整理服务仍可接收转写文字。")
                 }
-                if let message = store.snapshot.provider.meetingAudioPolicyError ?? store.snapshot.provider.meetingAudioStatus {
+                if let message = provider.meetingAudioPolicyError ?? provider.meetingAudioStatus {
                     Text(message).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
                 }
             }

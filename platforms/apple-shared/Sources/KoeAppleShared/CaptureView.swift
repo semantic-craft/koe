@@ -4,9 +4,9 @@ public struct CaptureView: View {
     let store: HostSessionStore
     public init(store: HostSessionStore) { self.store = store }
 
-    private var device: DeviceSnapshot { store.snapshot.device }
-    private var capture: CaptureStudioSnapshot { store.snapshot.capture }
-    private var isRecordingLocked: Bool { store.snapshot.activeCapture != nil }
+    private var device: DeviceSnapshot { store.device }
+    private var capture: CaptureStudioSnapshot { store.captureStudio.studio }
+    private var isRecordingLocked: Bool { store.captureStudio.isRecordingLocked }
 
     public var body: some View {
         ScrollView {

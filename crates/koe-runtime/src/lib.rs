@@ -68,6 +68,48 @@ use std::{
 /// Version of the native JSON snapshot and command contract.
 pub const KOE_HOST_SNAPSHOT_VERSION: u32 = 2;
 
+/// Outcome of attempting to ingest a native microphone PCM chunk.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PcmIngestStatus {
+    /// Chunk was accepted and lane sequence advanced by one.
+    Accepted = 0,
+    /// No active microphone session or lane matches the caller's identity.
+    StaleSession = 1,
+    /// Session matched, but the chunk was rejected or failed to persist.
+    Rejected = 2,
+}
+
+/// Summary receipt returned by [`KoeRuntime::ingest_microphone_pcm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PcmIngestReceipt {
+    /// Resulting runtime view generation after processing the chunk.
+    pub generation: u64,
+    /// Current expected sequence number for the addressed lane (`0` when stale).
+    pub next_sequence: u64,
+    /// Acceptance classification for the chunk.
+    pub status: PcmIngestStatus,
+}
+
+/// Summary receipt returned by [`KoeRuntime::report_playback_progress`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaybackProgressReceipt {
+    /// Resulting runtime view generation.
+    pub generation: u64,
+    /// Runtime view generation immediately prior to this progress report.
+    pub prev_generation: u64,
+    /// Clamped playback position in milliseconds (`0` when unmatched).
+    pub position_ms: u64,
+    /// Effective wall-clock timestamp in epoch seconds resolved for this receipt.
+    pub now_epoch_sec: u64,
+    /// Resulting playing state (`false` when unmatched).
+    pub is_playing: bool,
+    /// Whether active playback state was applied.
+    pub applied: bool,
+    /// Whether day rollover, trash retention, or session reconciliation requires a full snapshot.
+    pub needs_full_snapshot: bool,
+}
+
 #[derive(Clone)]
 enum PendingWork {
     Transcription(RequestKey),
@@ -215,6 +257,178 @@ impl KoeRuntime {
         }
         self.generation = self.generation.saturating_add(1);
         self.snapshot_json(now)
+    }
+
+    /// Appends a microphone PCM16 chunk without JSON command serialization or full snapshot projection.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ingest_microphone_pcm(
+        &mut self,
+        record_id: &str,
+        session_id: &str,
+        lane: &str,
+        sequence: u64,
+        samples: &[i16],
+        timing: Option<(u64, u64)>,
+        now: u64,
+    ) -> PcmIngestReceipt {
+        self.error = None;
+        self.notice = None;
+        if now > 0 {
+            self.last_now_sec = now;
+        }
+        if !self.is_quitting() {
+            self.reconcile_expired_trash(now);
+        }
+        let capture_timing = timing.map(|(epoch, captured_start_ns)| command::CaptureTiming {
+            epoch,
+            captured_start_ns,
+        });
+        let result = self.microphone_chunk(
+            (record_id, session_id, lane),
+            sequence,
+            samples,
+            capture_timing,
+        );
+        match result {
+            Ok(()) => {
+                self.reconcile_all_day();
+                self.reconcile_bean_capture_mode();
+            }
+            Err(ref error) => {
+                self.error = Some(error.clone());
+            }
+        }
+        self.generation = self.generation.saturating_add(1);
+        let Some((next_sequence, has_lane_error)) = self
+            .microphone
+            .as_ref()
+            .and_then(|m| m.lane_receipt_state(record_id, session_id, lane))
+        else {
+            return PcmIngestReceipt {
+                generation: self.generation,
+                next_sequence: 0,
+                status: PcmIngestStatus::StaleSession,
+            };
+        };
+        let status = if result.is_ok()
+            && sequence.checked_add(1) == Some(next_sequence)
+            && !has_lane_error
+        {
+            PcmIngestStatus::Accepted
+        } else {
+            PcmIngestStatus::Rejected
+        };
+        PcmIngestReceipt {
+            generation: self.generation,
+            next_sequence,
+            status,
+        }
+    }
+
+    /// Updates native playhead progress, eliding generation bumps when unchanged and clock state is clean.
+    pub fn report_playback_progress(
+        &mut self,
+        record_id: &str,
+        request_id: u64,
+        position_ms: u64,
+        is_playing: bool,
+        last_projected_now_sec: u64,
+        now: u64,
+    ) -> PlaybackProgressReceipt {
+        let prev_generation = self.generation;
+        if now > 0 {
+            self.last_now_sec = now;
+        }
+        let rev_before = self.workspace().revision();
+        let trash_reconciled = if !self.is_quitting() {
+            self.reconcile_expired_trash(now)
+        } else {
+            false
+        };
+        let eff_now = if now > 0 { now } else { self.last_now_sec };
+        let today = projection::local_date(eff_now);
+        let prev_day = if last_projected_now_sec > 0 {
+            projection::local_date(last_projected_now_sec)
+        } else {
+            None
+        };
+        let trash_countdown_dirty = self.workspace().records().values().any(|r| {
+            r.is_trashed()
+                && (last_projected_now_sec == 0
+                    || projection::trash_remaining_days(r, eff_now)
+                        != projection::trash_remaining_days(r, last_projected_now_sec))
+        });
+        let all_day_stopping_before = self.all_day.run.as_ref().map(|r| r.stopping);
+        let bean_mode_before = self.bean_capture_mode;
+        let all_day_done = self.reconcile_all_day();
+        self.reconcile_bean_capture_mode();
+        let post_hook_changed = all_day_done
+            || self.all_day.run.as_ref().map(|r| r.stopping) != all_day_stopping_before
+            || self.bean_capture_mode != bean_mode_before;
+        let clock_dirty = last_projected_now_sec == 0
+            || eff_now == 0
+            || today.is_none()
+            || today != prev_day
+            || trash_reconciled
+            || trash_countdown_dirty
+            || self.workspace().revision() != rev_before
+            || post_hook_changed;
+
+        let Some(clamped_pos) = self.clamped_playback_position(record_id, request_id, position_ms)
+        else {
+            if !clock_dirty {
+                return PlaybackProgressReceipt {
+                    generation: prev_generation,
+                    prev_generation,
+                    position_ms: 0,
+                    now_epoch_sec: eff_now,
+                    is_playing: false,
+                    applied: false,
+                    needs_full_snapshot: false,
+                };
+            }
+            self.generation = self.generation.saturating_add(1);
+            return PlaybackProgressReceipt {
+                generation: self.generation,
+                prev_generation,
+                position_ms: 0,
+                now_epoch_sec: eff_now,
+                is_playing: false,
+                applied: false,
+                needs_full_snapshot: true,
+            };
+        };
+
+        if (clamped_pos, is_playing)
+            == (
+                self.selection.playback.position_ms,
+                self.selection.playback.playing,
+            )
+            && !clock_dirty
+        {
+            return PlaybackProgressReceipt {
+                generation: prev_generation,
+                prev_generation,
+                position_ms: clamped_pos,
+                now_epoch_sec: eff_now,
+                is_playing,
+                applied: false,
+                needs_full_snapshot: false,
+            };
+        }
+
+        self.selection.playback.position_ms = clamped_pos;
+        self.selection.playback.playing = is_playing;
+        self.generation = self.generation.saturating_add(1);
+        PlaybackProgressReceipt {
+            generation: self.generation,
+            prev_generation,
+            position_ms: clamped_pos,
+            now_epoch_sec: eff_now,
+            is_playing,
+            applied: true,
+            needs_full_snapshot: clock_dirty,
+        }
     }
 
     fn commit<T>(

@@ -3,11 +3,22 @@ import Foundation
 import KoeAppleShared
 import SwiftUI
 
+private struct UncheckedWindowBox: @unchecked Sendable {
+    let window: NSWindow
+}
+
 @MainActor
 public enum KoeWindowPresenter {
     private static var cachedWorkspaceWindow: NSWindow?
+    private static weak var boundStore: HostSessionStore?
+    private static let trackedWindows = NSHashTable<NSWindow>.weakObjects()
+    private static let miniaturizedWindows = NSHashTable<NSWindow>.weakObjects()
+    private static let deminiaturizingWindows = NSHashTable<NSWindow>.weakObjects()
+    private static let windowStores = NSMapTable<NSWindow, HostSessionStore>.weakToWeakObjects()
+    private static var observersInstalled = false
 
     public static func isWorkspaceWindow(_ window: NSWindow) -> Bool {
+        guard window.sheetParent == nil, !window.styleMask.contains(.docModalWindow) else { return false }
         let className = String(describing: type(of: window))
         if className.contains("StatusBar") || className.contains("Popup") || window is NSPanel {
             return false
@@ -15,24 +26,81 @@ public enum KoeWindowPresenter {
         return window.styleMask.contains(.titled) || window.styleMask.contains(.closable)
     }
 
-    public static func rememberWindow(_ window: NSWindow?) {
-        guard let window, isWorkspaceWindow(window) else { return }
+    private static func registerWorkspaceWindow(_ window: NSWindow) -> HostSessionStore? {
         window.isReleasedWhenClosed = false
         cachedWorkspaceWindow = window
+        trackedWindows.add(window)
+        if windowStores.object(forKey: window) == nil, let boundStore {
+            windowStores.setObject(boundStore, forKey: window)
+        }
+        return windowStores.object(forKey: window) ?? boundStore
     }
 
-    public static func presentWindow(_ window: NSWindow?) {
-        guard let window else { return }
-        rememberWindow(window)
-        if let app = NSApp, app.activationPolicy() != .regular {
-            _ = app.setActivationPolicy(.regular)
+    public static func bind(store: HostSessionStore?, onlyUnboundWindows: Bool = false) {
+        installObserversIfNeeded()
+        boundStore = store
+        guard let store else { return }
+        if let cached = cachedWorkspaceWindow, isWorkspaceWindow(cached) {
+            trackedWindows.add(cached)
         }
+        var ownsAnyWindow = false
+        for win in trackedWindows.allObjects where isWorkspaceWindow(win) {
+            let existing = windowStores.object(forKey: win)
+            guard !onlyUnboundWindows || existing == nil || existing?.handle == 0 || existing === store else {
+                continue
+            }
+            ownsAnyWindow = true
+            win.isReleasedWhenClosed = false
+            windowStores.setObject(store, forKey: win)
+            if win.isMiniaturized {
+                miniaturizedWindows.add(win)
+            } else {
+                miniaturizedWindows.remove(win)
+            }
+        }
+        if ownsAnyWindow {
+            recomputeUISlicesActive(for: store, closingWindow: nil)
+        }
+    }
+
+    static func unbind(store: HostSessionStore?) {
+        if let store, boundStore === store {
+            boundStore = nil
+        }
+    }
+
+    public static func rememberWindow(_ window: NSWindow?) {
+        installObserversIfNeeded()
+        guard let window, isWorkspaceWindow(window) else { return }
+        let targetStore = registerWorkspaceWindow(window)
         if window.isMiniaturized {
-            window.deminiaturize(nil)
+            miniaturizedWindows.add(window)
+        } else {
+            miniaturizedWindows.remove(window)
         }
-        NSApp?.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
+        if let targetStore { recomputeUISlicesActive(for: targetStore, closingWindow: nil) }
+    }
+
+    public static func presentWindow(_ window: NSWindow?, activateApp: Bool = true) {
+        guard let window else { return }
+        installObserversIfNeeded()
+        if isWorkspaceWindow(window) {
+            let targetStore = registerWorkspaceWindow(window)
+            miniaturizedWindows.remove(window)
+            if window.isMiniaturized { deminiaturizingWindows.add(window) }
+            targetStore?.setUISlicesActive(true)
+        }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        if activateApp {
+            if let app = NSApp, app.activationPolicy() != .regular {
+                _ = app.setActivationPolicy(.regular)
+            }
+            NSApp?.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        } else {
+            window.orderBack(nil)
+        }
     }
 
     public static func presentPrimaryWorkspaceWindow() {
@@ -41,13 +109,73 @@ public enum KoeWindowPresenter {
         }
         NSApp?.activate(ignoringOtherApps: true)
         let target = NSApp?.windows.first(where: { isWorkspaceWindow($0) && $0.isVisible })
+            ?? (cachedWorkspaceWindow.flatMap { isWorkspaceWindow($0) ? $0 : nil })
             ?? NSApp?.windows.first(where: { isWorkspaceWindow($0) })
-            ?? cachedWorkspaceWindow
-        if let target {
-            presentWindow(target)
+        if let target { presentWindow(target) }
+    }
+
+    private static func installObserversIfNeeded() {
+        guard !observersInstalled else { return }
+        observersInstalled = true
+        let names = [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didBecomeMainNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.willCloseNotification
+        ]
+        for name in names {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { notification in
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        handleWindowEvent(name: notification.name, window: notification.object as? NSWindow)
+                    }
+                } else {
+                    let windowBox = (notification.object as? NSWindow).map(UncheckedWindowBox.init)
+                    let notifName = notification.name
+                    Task { @MainActor in handleWindowEvent(name: notifName, window: windowBox?.window) }
+                }
+            }
         }
     }
 
+    private static func handleWindowEvent(name: Notification.Name, window: NSWindow?) {
+        guard let window else { return }
+        if name == NSWindow.willCloseNotification {
+            guard trackedWindows.contains(window) else { return }
+        }
+        guard isWorkspaceWindow(window), let targetStore = registerWorkspaceWindow(window) else { return }
+        switch name {
+        case NSWindow.willCloseNotification:
+            deminiaturizingWindows.remove(window)
+            miniaturizedWindows.remove(window)
+            recomputeUISlicesActive(for: targetStore, closingWindow: window)
+        case NSWindow.didMiniaturizeNotification:
+            deminiaturizingWindows.remove(window)
+            miniaturizedWindows.add(window)
+            recomputeUISlicesActive(for: targetStore, closingWindow: nil)
+        case NSWindow.didDeminiaturizeNotification:
+            deminiaturizingWindows.remove(window)
+            miniaturizedWindows.remove(window)
+            recomputeUISlicesActive(for: targetStore, closingWindow: nil)
+        default:
+            miniaturizedWindows.remove(window)
+            recomputeUISlicesActive(for: targetStore, closingWindow: nil)
+        }
+    }
+
+    private static func recomputeUISlicesActive(for store: HostSessionStore, closingWindow: NSWindow?) {
+        let windows = trackedWindows.allObjects.filter {
+            isWorkspaceWindow($0) && (windowStores.object(forKey: $0) ?? boundStore) === store
+        }
+        guard !windows.isEmpty else { return }
+        let anyActive = windows.contains { window in
+            window !== closingWindow
+                && (window.isVisible || deminiaturizingWindows.contains(window))
+                && !miniaturizedWindows.contains(window)
+        }
+        store.setUISlicesActive(anyActive)
+    }
 }
 
 @MainActor
@@ -56,7 +184,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         didSet {
             oldValue?.onSnapshotChanged = nil
             lastSyncedInputs = nil
-            inputSyncTickCounter = 0
+            lastObservedHardwareGeneration = 0
             bluetoothBridge.store = store
             files.store = store
             playback.store = store
@@ -65,21 +193,30 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             lastLiveRecordId = nil
             store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
             if let store {
+                KoeWindowPresenter.bind(store: store, onlyUnboundWindows: oldValue == nil)
+                audioInputMonitor.start { [weak self] in
+                    self?.syncAudioInputsIfNeeded()
+                }
                 syncAudioInputsIfNeeded(force: true)
                 applyLifecycle(store.snapshot)
+            } else {
+                KoeWindowPresenter.unbind(store: oldValue)
+                audioInputMonitor.stop()
             }
         }
     }
     public let bluetoothBridge = BluetoothBridge()
     let files = NativeFileActions()
     private let playback: NativePlayback
+    private let audioInputMonitor: CoreAudioInputMonitor
+    private let defaultInputsProvider: () -> [MicrophoneInput]
     private let capture = NativeCapture()
     private let hostActions = NativeHostActions()
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
     private var lastSyncedInputs: [MicrophoneInput]?
-    private var inputSyncTickCounter: UInt8 = 0
+    private var lastObservedHardwareGeneration: UInt64 = 0
 
     public override convenience init() {
         self.init(playback: NativePlayback())
@@ -91,9 +228,13 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
 
     init(
         playback: NativePlayback,
+        audioInputMonitor: CoreAudioInputMonitor = CoreAudioInputMonitor(),
+        defaultInputsProvider: @escaping () -> [MicrophoneInput] = NativeAudioSource.inputs,
         makeDefaultStore: @escaping @MainActor () -> HostSessionStore = { KoeAppDelegate.createDefaultStore() }
     ) {
         self.playback = playback
+        self.audioInputMonitor = audioInputMonitor
+        self.defaultInputsProvider = defaultInputsProvider
         self.makeDefaultStore = makeDefaultStore
         super.init()
     }
@@ -137,8 +278,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         NotificationCenter.default.addObserver(self, selector: #selector(disconnectBle), name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(releaseBleControl), name: Notification.Name("KoeReleaseBleControl"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(flushBle), name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(resumeMicrophone), name: Notification.Name("KoeResumeMicrophone"), object: nil)
         lastTick = ProcessInfo.processInfo.systemUptime
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -152,10 +291,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = UInt64(max(0, now - lastTick) * 1000)
         lastTick = now
-        inputSyncTickCounter = (inputSyncTickCounter + 1) % 4
-        if inputSyncTickCounter == 0 {
-            syncAudioInputsIfNeeded()
-        }
         store?.pollTimers(elapsedMs: elapsed)
         bluetoothBridge.flushOutboundFrames()
         playback.tick()
@@ -165,10 +300,17 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
 
     public func syncAudioInputsIfNeeded(
         force: Bool = false,
-        inputsProvider: () -> [MicrophoneInput] = NativeAudioSource.inputs
+        inputsProvider: (() -> [MicrophoneInput])? = nil
     ) {
         guard let store, store.handle != 0 else { return }
-        let current = Array(inputsProvider().prefix(64))
+        let observedGeneration = audioInputMonitor.currentChangeGeneration
+        if !force, inputsProvider == nil, lastSyncedInputs != nil, observedGeneration == lastObservedHardwareGeneration {
+            return
+        }
+        if inputsProvider == nil {
+            lastObservedHardwareGeneration = observedGeneration
+        }
+        let current = Array((inputsProvider ?? defaultInputsProvider)().prefix(64))
         guard force || lastSyncedInputs != current else { return }
         lastSyncedInputs = current
         let payload: [[String: Any]] = current.map { input in
@@ -183,9 +325,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
 
     @objc private func resumeMicrophone() { capture.resume() }
-    @objc private func rememberWindow(_ notification: Notification) {
-        KoeWindowPresenter.rememberWindow(notification.object as? NSWindow)
-    }
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
@@ -219,6 +358,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
     public func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        audioInputMonitor.stop()
         playback.stop()
         lifecycle.shutdown()
         localTranscription.shutdown()

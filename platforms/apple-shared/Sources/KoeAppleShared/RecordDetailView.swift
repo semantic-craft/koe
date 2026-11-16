@@ -6,7 +6,8 @@ struct RecordDetailView: View {
     @State private var renaming = false
     @State private var titleDraft = ""
     var body: some View {
-        if let detail = store.snapshot.detail {
+        let slice = store.recordDetail
+        if let detail = slice.detail {
             VStack(alignment: .leading, spacing: 0) {
                 heading(detail).padding(28)
                 HStack(spacing: 22) {
@@ -30,7 +31,7 @@ struct RecordDetailView: View {
                                 }
                             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .onChange(of: store.snapshot.focusSegmentId, initial: true) { _, focus in
+                        .onChange(of: slice.focusSegmentId, initial: true) { _, focus in
                             guard let focus else { return }
                             tab = "transcript"
                             Task { @MainActor in
@@ -40,12 +41,12 @@ struct RecordDetailView: View {
                         }
                     }
                     Rectangle().fill(AppColors.border).frame(width: 1)
-                    inspector(detail).padding(20).frame(width: 250)
+                    inspector(tasks: slice.recordTasks, memories: slice.recordMemories).padding(20).frame(width: 250)
                 }
             }
             .onChange(of: detail.id) { _, _ in
                 renaming = false
-                tab = store.snapshot.focusSegmentId == nil ? "summary" : "transcript"
+                tab = store.recordDetail.focusSegmentId == nil ? "summary" : "transcript"
             }
         } else {
             EmptyState(icon: "doc.text", title: "请选择一条记录", detail: "从所有记录或今天的时间线打开。")
@@ -130,11 +131,10 @@ struct RecordDetailView: View {
             }
         }
     }
-    private func inspector(_ detail: RecordDetailSnapshot) -> some View {
+    private func inspector(tasks: [TaskSnapshot], memories: [MemorySnapshot]) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("记录里的行动").font(.system(size: AppFontSizes.sm, weight: .medium))
-                let tasks = store.snapshot.tasks.filter { $0.state != "dismissed" && $0.sources.contains { $0.recordId == detail.id } }
                 if tasks.isEmpty { Text("从原文中提取一项待办。").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted) }
                 ForEach(tasks) { item in
                     VStack(alignment: .leading, spacing: 9) {
@@ -153,7 +153,6 @@ struct RecordDetailView: View {
                 }
                 Divider().overlay(AppColors.border)
                 Text("值得记住").font(.system(size: AppFontSizes.sm, weight: .medium))
-                let memories = store.snapshot.memories.filter { $0.state != "dismissed" && $0.sources.contains { $0.recordId == detail.id } }
                 if memories.isEmpty { Text("选择一段原文，留作长期记忆。").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted) }
                 ForEach(memories) { item in
                     VStack(alignment: .leading, spacing: 9) {
@@ -168,6 +167,6 @@ struct RecordDetailView: View {
     }
     private func rename(_ id: String) {
         store.send(.renameRecord(recordId: id, title: titleDraft))
-        if store.snapshot.error == nil { renaming = false }
+        if store.navigation.effectiveError == nil { renaming = false }
     }
 }

@@ -92,31 +92,62 @@ final class NativeCapture {
             stopAll()
             orderedRuns.forEach(reportFailure)
         }
-        for run in orderedRuns where !drain(run) { return }
+        var maxIngestGeneration: UInt64 = 0
+        for run in orderedRuns where drain(run, maxIngestGeneration: &maxIngestGeneration) == .awaitingSessionSync {
+            store.refreshSnapshotIfNeeded(minGeneration: maxIngestGeneration)
+            return
+        }
+        store.refreshSnapshotIfNeeded(minGeneration: maxIngestGeneration)
+        if ["pausing", "stopping", "cancelling", "saving"].contains(store.snapshot.microphone?.phase ?? "") {
+            pendingPermission = nil
+            stopAll()
+            orderedRuns.forEach(reportFailure)
+            var tailGeneration: UInt64 = 0
+            for run in orderedRuns where run.mailbox.peek() != nil {
+                if drain(run, maxIngestGeneration: &tailGeneration) == .awaitingSessionSync {
+                    store.refreshSnapshotIfNeeded(minGeneration: tailGeneration)
+                    return
+                }
+            }
+            store.refreshSnapshotIfNeeded(minGeneration: tailGeneration)
+        }
         for run in orderedRuns { finish(run) }
     }
 
-    /// Sends accepted blocks in order; returns false when the session ended or must wait for Rust.
-    private func drain(_ run: LaneRun) -> Bool {
-        guard let store else { return false }
+    private enum DrainOutcome {
+        case drained
+        case awaitingSessionSync
+    }
+
+    private func drain(_ run: LaneRun, maxIngestGeneration: inout UInt64) -> DrainOutcome {
+        guard let store else { return .awaitingSessionSync }
         for _ in 0..<run.mailbox.limit {
             guard let block = run.mailbox.peek() else { break }
-            send("microphone_chunk", run, ["sequence": block.sequence, "samples": block.pcm.samples,
-                "timing": ["epoch": run.identity.epoch, "capturedStartNs": block.pcm.capturedStartNs]])
-            guard let latest = store.snapshot.microphone, CaptureSession(latest) == session,
-                  let lane = latest.lanes[run.lane] else { return false }
-            if lane.nextSequence == block.sequence + 1 {
+            let receipt = store.ingestMicrophonePCM(
+                recordId: run.identity.recordId,
+                sessionId: run.identity.sessionId,
+                lane: run.lane,
+                sequence: block.sequence,
+                epoch: run.identity.epoch,
+                capturedStartNs: block.pcm.capturedStartNs,
+                samples: block.pcm.samples
+            )
+            maxIngestGeneration = max(maxIngestGeneration, receipt.generation)
+            if receipt.status == .accepted, receipt.nextSequence == block.sequence + 1 {
                 run.mailbox.acknowledge(block.sequence)
             } else {
+                store.refreshSnapshotIfNeeded(minGeneration: maxIngestGeneration)
+                guard let latest = store.snapshot.microphone, CaptureSession(latest) == session,
+                      let lane = latest.lanes[run.lane] else { return .awaitingSessionSync }
                 stop(run)
-                if lane.error != nil { return false }
+                if lane.error != nil { return .awaitingSessionSync }
                 run.mailbox.fail(store.snapshot.error ?? "音频块未被接纳，已停止并保留此前收到的音频。")
                 reportFailure(run)
                 run.mailbox.discardUnaccepted(nextSequence: lane.nextSequence)
                 break
             }
         }
-        return true
+        return .drained
     }
 
     /// Terminal barrier per lane: paused/stopped carries the final sequence once callbacks are fenced.

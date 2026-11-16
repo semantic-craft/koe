@@ -76,6 +76,18 @@ impl Microphone {
     fn matches(&self, record: &str, session: &str, lane: &str) -> bool {
         self.record_id == record && self.session_id == session && self.lanes.contains_key(lane)
     }
+    pub(super) fn lane_receipt_state(
+        &self,
+        record: &str,
+        session: &str,
+        lane: &str,
+    ) -> Option<(u64, bool)> {
+        if !self.matches(record, session, lane) {
+            return None;
+        }
+        let lane = self.lanes.get(lane)?;
+        Some((lane.next_sequence, lane.save_error.is_some()))
+    }
     fn refresh_error(&mut self) {
         self.save_error = self.lanes.values().find_map(|l| l.save_error.clone());
     }

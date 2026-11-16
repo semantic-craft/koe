@@ -5,12 +5,8 @@ public struct SidebarView: View {
 
     public init(store: HostSessionStore) { self.store = store }
 
-    private var proposedActionCount: Int {
-        store.snapshot.tasks.filter { $0.state == "proposed" }.count
-            + store.snapshot.memories.filter { $0.state == "proposed" }.count
-    }
-
     public var body: some View {
+        let sidebar = store.sidebar
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 Image(systemName: "waveform")
@@ -24,13 +20,13 @@ public struct SidebarView: View {
             .padding(.top, 14)
             .padding(.bottom, 18)
 
-            navigationRow("today", title: "模式选择", icon: "square.grid.2x2")
-            modeRow("notes", title: "随心闪记", icon: "bolt.horizontal")
-            modeRow("all_day", title: "全天听记", icon: "clock")
-            modeRow("live_minutes", title: "实时纪要", icon: "waveform.path.ecg")
-            modeRow("voice_input", title: "语音输入", icon: "character.cursor.ibeam")
+            navigationRow("today", title: "模式选择", icon: "square.grid.2x2", section: sidebar.section)
+            modeRow("notes", title: "随心闪记", icon: "bolt.horizontal", sidebar: sidebar)
+            modeRow("all_day", title: "全天听记", icon: "clock", sidebar: sidebar)
+            modeRow("live_minutes", title: "实时纪要", icon: "waveform.path.ecg", sidebar: sidebar)
+            modeRow("voice_input", title: "语音输入", icon: "character.cursor.ibeam", sidebar: sidebar)
 
-            navigationRow("ask", title: "问 AI", icon: "bubble.left.and.text.bubble.right")
+            navigationRow("ask", title: "问 AI", icon: "bubble.left.and.text.bubble.right", section: sidebar.section)
                 .padding(.top, 4)
 
             Text("资料")
@@ -44,39 +40,43 @@ public struct SidebarView: View {
                 "records",
                 title: "所有记录",
                 icon: "tray.full",
-                count: store.snapshot.records.isEmpty ? nil : store.snapshot.records.count
+                section: sidebar.section,
+                count: sidebar.recordCount == 0 ? nil : sidebar.recordCount
             )
             navigationRow(
                 "tasks",
                 title: "行动",
                 icon: "checklist",
-                count: proposedActionCount > 0 ? proposedActionCount : nil
+                section: sidebar.section,
+                count: sidebar.proposedActionCount > 0 ? sidebar.proposedActionCount : nil
             )
 
             Spacer(minLength: 16)
-            navigationRow("settings", title: "设置", icon: "gearshape")
+            navigationRow("settings", title: "设置", icon: "gearshape", section: sidebar.section)
         }
         .padding(12)
         .frame(width: 196)
         .background(AppColors.bgPanel)
     }
 
-    private func isSelected(_ id: String) -> Bool {
+    private func isSelected(_ id: String, section: String) -> Bool {
         if id == "settings" {
-            return store.snapshot.section == "settings" || store.snapshot.section == "capture"
+            return section == "settings" || section == "capture"
         }
         if id == "tasks" {
-            return store.snapshot.section == "tasks" || store.snapshot.section == "memory"
+            return section == "tasks" || section == "memory"
         }
-        return store.snapshot.section == id
+        return section == id
     }
 
-    private func isModeSessionActive(_ id: String) -> Bool {
-        store.snapshot.workspaces?.picker.cards.first(where: { $0.id == id })?.isSessionActive == true
-    }
-
-    private func navigationRow(_ id: String, title: String, icon: String, count: Int? = nil) -> some View {
-        let selected = isSelected(id)
+    private func navigationRow(
+        _ id: String,
+        title: String,
+        icon: String,
+        section: String,
+        count: Int? = nil
+    ) -> some View {
+        let selected = isSelected(id, section: section)
         return Button {
             store.send(.navigate(section: id))
         } label: {
@@ -101,9 +101,9 @@ public struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
-    private func modeRow(_ id: String, title: String, icon: String) -> some View {
-        let selected = isSelected(id)
-        let active = isModeSessionActive(id)
+    private func modeRow(_ id: String, title: String, icon: String, sidebar: SidebarSlice) -> some View {
+        let selected = isSelected(id, section: sidebar.section)
+        let active = sidebar.activeModeIds.contains(id)
         return Button {
             store.send(.navigate(section: id))
         } label: {

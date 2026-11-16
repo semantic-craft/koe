@@ -5,6 +5,7 @@ public struct SettingsDoctorView: View {
     @State private var showAllDayDemo = false
     public init(store: HostSessionStore) { self.store = store }
     public var body: some View {
+        let device = store.device
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 PageHeading(title: "设置", subtitle: "管理录音音源、语音识别和文字整理服务。")
@@ -26,41 +27,41 @@ public struct SettingsDoctorView: View {
                 KoeCard {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Label(store.snapshot.device.deviceName, systemImage: "waveform.badge.mic")
+                            Label(device.deviceName, systemImage: "waveform.badge.mic")
                                 .font(.system(size: AppFontSizes.md, weight: .medium))
                             Spacer()
-                            KoeBadge(store.snapshot.device.state, tint: deviceStatusTint)
+                            KoeBadge(device.state, tint: deviceStatusTint(device))
                         }
-                        Text(store.snapshot.device.statusDetail)
+                        Text(device.statusDetail)
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
-                        if store.snapshot.device.connected {
+                        if device.connected {
                             HStack(spacing: 12) {
                                 telemetryTile(
                                     label: "麦克风电量",
-                                    value: store.snapshot.device.batteryPercent.map {
-                                        store.snapshot.device.charging ? "\($0)% 充电中" : "\($0)%"
+                                    value: device.batteryPercent.map {
+                                        device.charging ? "\($0)% 充电中" : "\($0)%"
                                     } ?? "—"
                                 )
                                 telemetryTile(
                                     label: "充电仓电量",
-                                    value: store.snapshot.device.boxBatteryPercent.map {
-                                        store.snapshot.device.boxCharging ? "\($0)% 充电中" : "\($0)%"
+                                    value: device.boxBatteryPercent.map {
+                                        device.boxCharging ? "\($0)% 充电中" : "\($0)%"
                                     } ?? "—"
                                 )
                                 telemetryTile(
                                     label: "设备存储",
-                                    value: store.snapshot.device.storageLabel
+                                    value: device.storageLabel
                                 )
                                 telemetryTile(
                                     label: "固件版本",
-                                    value: store.snapshot.device.firmwareVersion.isEmpty ? "—" : store.snapshot.device.firmwareVersion
+                                    value: device.firmwareVersion.isEmpty ? "—" : device.firmwareVersion
                                 )
                             }
                             HStack(spacing: 10) {
                                 KoeActionButton("刷新状态", systemImage: "arrow.clockwise") {
                                     store.send(.deviceRefresh)
                                     NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-                                }.disabled(store.snapshot.device.busy)
+                                }.disabled(device.busy)
                                 KoeActionButton("使用引导", systemImage: "questionmark.circle") {
                                     store.send(.deviceOpenGuide)
                                 }
@@ -75,10 +76,10 @@ public struct SettingsDoctorView: View {
                                 KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right", isPrimary: true) {
                                     store.send(.deviceOpenGuide)
                                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
-                                }.disabled(store.snapshot.device.busy)
+                                }.disabled(device.busy)
                                 KoeActionButton("重新扫描", systemImage: "arrow.clockwise") {
                                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
-                                }.disabled(store.snapshot.device.busy)
+                                }.disabled(device.busy)
                             }
                         }
                     }
@@ -114,9 +115,9 @@ public struct SettingsDoctorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
     }
-    private var deviceStatusTint: Color {
-        if store.snapshot.device.connected { return AppColors.success }
-        if store.snapshot.device.phase == "disconnected" { return AppColors.textMuted }
+    private func deviceStatusTint(_ device: DeviceSnapshot) -> Color {
+        if device.connected { return AppColors.success }
+        if device.phase == "disconnected" { return AppColors.textMuted }
         return AppColors.warning
     }
 }

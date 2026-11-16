@@ -3,21 +3,11 @@ import SwiftUI
 struct TodayView: View {
     let store: HostSessionStore
 
-    private var cards: [ModePickerCardSnapshot] {
-        let projected = store.snapshot.workspaces?.picker.cards ?? []
-        return projected.isEmpty ? ModePickerSnapshot.defaultCards : projected
-    }
-
-    private var liveRecordCount: Int {
-        store.snapshot.records.count
-    }
-
-    private var pendingActionCount: Int {
-        store.snapshot.tasks.filter { $0.state == "proposed" }.count
-            + store.snapshot.memories.filter { $0.state == "proposed" }.count
-    }
-
     var body: some View {
+        let today = store.today
+        let projected = today.picker?.cards ?? []
+        let cards = projected.isEmpty ? ModePickerSnapshot.defaultCards : projected
+
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 PageHeading(
@@ -25,7 +15,7 @@ struct TodayView: View {
                     subtitle: "先确认下方录音音源，再打开模式开关。单按录音豆侧键默认记入随心闪记。"
                 )
 
-                sourceStrip
+                sourceStrip(today)
 
                 LazyVGrid(
                     columns: [
@@ -36,10 +26,11 @@ struct TodayView: View {
                 ) {
                     ForEach(cards) { card in
                         ModePickerCardView(card: card, store: store)
+                            .equatable()
                     }
                 }
 
-                behaviorRulesCard
+                behaviorRulesCard(today)
             }
             .padding(30)
             .frame(maxWidth: 960, alignment: .leading)
@@ -47,20 +38,20 @@ struct TodayView: View {
         }
     }
 
-    private var sourceStrip: some View {
-        let picker = store.snapshot.workspaces?.picker
-        let beanBadge = picker?.beanBadge ?? "录音豆 \(store.snapshot.device.state)"
+    private func sourceStrip(_ today: TodaySlice) -> some View {
+        let picker = today.picker
+        let beanBadge = picker?.beanBadge ?? "录音豆 \(today.deviceState)"
         let guidanceText = picker?.guidanceText ?? "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
         return KoeCard {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
-                    KoeBadge(picker?.sourceBadge ?? store.snapshot.capture.selectedBadge, tint: AppColors.accent)
-                    Text(picker?.sourceLabel ?? store.snapshot.capture.selectedLabel)
+                    KoeBadge(picker?.sourceBadge ?? today.captureSelectedBadge, tint: AppColors.accent)
+                    Text(picker?.sourceLabel ?? today.captureSelectedLabel)
                         .font(.system(size: AppFontSizes.sm, weight: .semibold))
                         .foregroundStyle(AppColors.textPrimary)
                     KoeBadge(
                         beanBadge,
-                        tint: store.snapshot.device.connected ? AppColors.success : AppColors.textMuted
+                        tint: today.deviceConnected ? AppColors.success : AppColors.textMuted
                     )
                     Spacer()
                     if picker?.canSwitchToBean == true {
@@ -84,17 +75,17 @@ struct TodayView: View {
         }
     }
 
-    private var behaviorRulesCard: some View {
+    private func behaviorRulesCard(_ today: TodaySlice) -> some View {
         KoeCard {
             HStack(spacing: 10) {
                 KoeActionButton(
-                    "浏览所有记录 (\(liveRecordCount))",
+                    "浏览所有记录 (\(today.recordCount))",
                     systemImage: "tray.full"
                 ) {
                     store.send(.navigate(section: "records"))
                 }
                 KoeActionButton(
-                    "待确认行动 (\(pendingActionCount))",
+                    "待确认行动 (\(today.proposedActionCount))",
                     systemImage: "checklist"
                 ) {
                     store.send(.navigate(section: "tasks"))
@@ -108,9 +99,13 @@ struct TodayView: View {
     }
 }
 
-private struct ModePickerCardView: View {
+private struct ModePickerCardView: View, Equatable {
     let card: ModePickerCardSnapshot
     let store: HostSessionStore
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.card == rhs.card && lhs.store === rhs.store
+    }
 
     private var iconName: String {
         switch card.id {
