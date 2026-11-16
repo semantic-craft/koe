@@ -316,4 +316,68 @@ struct ModeWorkspacesTests {
 
         _ = AllDayWorkspaceView(store: store).body
     }
+
+    @Test("ModePickerSnapshot decodes phone handoff fields with legacy fallback and HostCommand encodes deviceRelease")
+    @MainActor
+    func modePickerPhoneHandoffSnapshotAndCommands() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let initialPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(initialPicker.beanControlOwner == "mac")
+        #expect(initialPicker.canReleaseToPhone == true)
+
+        #expect(HostCommand.deviceRelease.commandType == "device_release")
+        let encodedCommand = try JSONEncoder().encode(HostCommand.deviceRelease)
+        let decodedCommand = try JSONSerialization.jsonObject(with: encodedCommand) as? [String: Any]
+        #expect(decodedCommand?["type"] as? String == "device_release")
+
+        store.send(.deviceRelease)
+        #expect(store.snapshot.device.autoConnect == false)
+        let releasedPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(releasedPicker.beanControlOwner == "phone")
+        #expect(releasedPicker.beanBadge == "已让出给手机")
+        #expect(releasedPicker.canReleaseToPhone == true)
+        _ = TodayView(store: store).body
+        _ = CaptureView(store: store).body
+        _ = SettingsDoctorView(store: store).body
+
+        store.send(.setBleAutoConnect(enabled: true))
+        let reclaimedPicker = try #require(store.snapshot.workspaces?.picker)
+        #expect(reclaimedPicker.beanControlOwner == "mac")
+
+        let legacyPickerJSON = """
+        {
+          "sourceLabel": "系统默认麦克风",
+          "sourceBadge": "系统默认",
+          "beanBadge": "录音豆 未连接",
+          "guidanceText": "当前使用电脑麦克风",
+          "canSwitchToBean": false,
+          "canConnectBean": true,
+          "cards": []
+        }
+        """
+        let legacyPicker = try JSONDecoder().decode(ModePickerSnapshot.self, from: Data(legacyPickerJSON.utf8))
+        #expect(legacyPicker.beanControlOwner == "mac")
+        #expect(legacyPicker.canReleaseToPhone == true)
+
+        let phonePickerJSON = """
+        {
+          "sourceLabel": "系统默认麦克风",
+          "sourceBadge": "系统默认",
+          "beanBadge": "已让出给手机",
+          "beanControlOwner": "phone",
+          "guidanceText": "已释放 Mac 蓝牙占用",
+          "canSwitchToBean": false,
+          "canConnectBean": true,
+          "canReleaseToPhone": false,
+          "cards": []
+        }
+        """
+        let phonePicker = try JSONDecoder().decode(ModePickerSnapshot.self, from: Data(phonePickerJSON.utf8))
+        #expect(phonePicker.beanControlOwner == "phone")
+        #expect(phonePicker.canReleaseToPhone == false)
+    }
 }

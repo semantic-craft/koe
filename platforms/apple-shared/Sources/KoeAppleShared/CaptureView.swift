@@ -134,6 +134,11 @@ public struct CaptureView: View {
                     NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
                 }.disabled(device.busy || isRecordingLocked)
             }
+            if device.connected || device.autoConnect {
+                KoeActionButton("切回手机", systemImage: "iphone") {
+                    NotificationCenter.default.post(name: Notification.Name("KoeReleaseBleControl"), object: nil)
+                }.disabled(device.transferPhase == "pulling_offline" || isRecordingLocked)
+            }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .background(selected ? AppColors.accentSoft : AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))

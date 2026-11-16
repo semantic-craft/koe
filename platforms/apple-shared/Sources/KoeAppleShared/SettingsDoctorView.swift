@@ -65,9 +65,9 @@ public struct SettingsDoctorView: View {
                                 KoeActionButton("使用引导", systemImage: "questionmark.circle") {
                                     store.send(.deviceOpenGuide)
                                 }
-                                KoeActionButton("断开连接", systemImage: "xmark.circle") {
-                                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
-                                }
+                                KoeActionButton("切回手机", systemImage: "iphone") {
+                                    NotificationCenter.default.post(name: Notification.Name("KoeReleaseBleControl"), object: nil)
+                                }.disabled(device.transferPhase == "pulling_offline")
                             }
                         } else {
                             Text("将麦克风放入充电仓，短按充电仓下方按钮开启蓝牙广播后点击连接。")

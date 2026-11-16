@@ -374,7 +374,11 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
     private func populate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let status = NSMenuItem(title: store?.snapshot.device.state ?? "未连接录音豆", action: nil, keyEquivalent: "")
+        let device = store?.snapshot.device
+        let owner = store?.snapshot.workspaces?.picker.beanControlOwner
+            ?? ((device?.autoConnect == false && device?.connected != true) ? "phone" : "mac")
+        let statusTitle = owner == "phone" ? "录音豆：已让出给手机" : (device?.state ?? "未连接录音豆")
+        let status = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
@@ -399,6 +403,14 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         let scanItem = NSMenuItem(title: "查找录音豆", action: #selector(scan), keyEquivalent: "")
         scanItem.target = self
         menu.addItem(scanItem)
+        let handoffItem = owner == "phone"
+            ? NSMenuItem(title: "连回 Mac 录音豆", action: #selector(scan), keyEquivalent: "")
+            : NSMenuItem(title: "切回手机（释放控制权）", action: #selector(releaseBleControl), keyEquivalent: "")
+        handoffItem.target = self
+        if owner != "phone" {
+            handoffItem.isEnabled = (device?.transferPhase != "pulling_offline")
+        }
+        menu.addItem(handoffItem)
         let open = NSMenuItem(title: "打开 Koe", action: #selector(openWindow), keyEquivalent: "o")
         open.target = self
         menu.addItem(open)

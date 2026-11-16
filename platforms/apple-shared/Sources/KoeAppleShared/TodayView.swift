@@ -49,18 +49,17 @@ struct TodayView: View {
                     Text(picker?.sourceLabel ?? today.captureSelectedLabel)
                         .font(.system(size: AppFontSizes.sm, weight: .semibold))
                         .foregroundStyle(AppColors.textPrimary)
+                        .lineLimit(1)
                     KoeBadge(
                         beanBadge,
-                        tint: today.deviceConnected ? AppColors.success : AppColors.textMuted
+                        tint: beanBadgeTint(today, picker: picker)
                     )
                     Spacer()
+                    beanOwnershipSwitch(today, picker: picker)
+                        .fixedSize()
                     if picker?.canSwitchToBean == true {
                         KoeActionButton("切换为录音豆", systemImage: "wave.3.right") {
                             store.send(.selectCaptureSource(source: "bean"))
-                        }
-                    } else if picker?.canConnectBean == true {
-                        KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right") {
-                            store.send(.deviceOpenGuide)
                         }
                     }
                     KoeActionButton("设置音源", systemImage: "slider.horizontal.3") {
@@ -73,6 +72,53 @@ struct TodayView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func beanBadgeTint(_ today: TodaySlice, picker: ModePickerSnapshot?) -> Color {
+        if today.deviceConnected { return AppColors.success }
+        let badge = picker?.beanBadge ?? "录音豆 \(today.deviceState)"
+        if badge == "录音豆 查找中" || badge == "录音豆 连接中" {
+            return AppColors.warning
+        }
+        return AppColors.textMuted
+    }
+
+    private func beanOwnershipSwitch(_ today: TodaySlice, picker: ModePickerSnapshot?) -> some View {
+        let isMacOwner = (picker?.beanControlOwner ?? "mac") != "phone"
+        let canRelease = picker?.canReleaseToPhone ?? true
+        return HStack(spacing: 2) {
+            ownershipSegment("Mac 使用", active: isMacOwner) {
+                if !today.deviceConnected || !isMacOwner {
+                    store.send(.deviceOpenGuide)
+                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                }
+            }
+            ownershipSegment("手机接管", active: !isMacOwner) {
+                if isMacOwner {
+                    NotificationCenter.default.post(name: Notification.Name("KoeReleaseBleControl"), object: nil)
+                }
+            }
+            .disabled(!canRelease)
+            .opacity(canRelease ? 1.0 : 0.45)
+        }
+        .padding(2)
+        .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+        .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(AppColors.border))
+    }
+
+    private func ownershipSegment(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: AppFontSizes.xs, weight: active ? .semibold : .medium))
+                .foregroundStyle(active ? AppColors.onAccent : AppColors.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    active ? AppColors.accent : Color.clear,
+                    in: RoundedRectangle(cornerRadius: AppRadii.control - 2)
+                )
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 
     private func behaviorRulesCard(_ today: TodaySlice) -> some View {
