@@ -96,7 +96,6 @@ public struct KoeWorkspaceRootView: View {
 
     private func sectionTitle(_ nav: NavigationChromeSlice) -> String {
         switch nav.section {
-        case "voice_input": "语音输入"
         case "capture": "设置 / 录音管理"
         case "notes": "随心闪记"
         case "all_day": "全天听记"
@@ -114,7 +113,6 @@ public struct KoeWorkspaceRootView: View {
 
     @ViewBuilder private func page(_ section: String) -> some View {
         switch section {
-        case "voice_input": VoiceInputView(store: store)
         case "capture": CaptureView(store: store)
         case "notes": QuickNoteWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)
         case "all_day": AllDayWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)

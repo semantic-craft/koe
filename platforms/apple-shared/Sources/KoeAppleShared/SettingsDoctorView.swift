@@ -2,7 +2,6 @@ import SwiftUI
 
 public struct SettingsDoctorView: View {
     let store: HostSessionStore
-    @State private var showAllDayDemo = false
     public init(store: HostSessionStore) { self.store = store }
     public var body: some View {
         let device = store.device
@@ -20,7 +19,6 @@ public struct SettingsDoctorView: View {
                             KoeActionButton("录音管理", systemImage: "mic") {
                                 store.send(.navigate(section: "capture"))
                             }
-                            KoeActionButton("全天听记演示", systemImage: "play.rectangle") { showAllDayDemo = true }
                         }
                     }
                 }
@@ -92,24 +90,12 @@ public struct SettingsDoctorView: View {
                 CompanionSettingsCard(store: store)
                 SpeechSettingsCard(store: store)
                 TextServiceSettingsCard(store: store)
-                KoeCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Label("外部应用接入", systemImage: "app.connected.to.app.below.fill")
-                                .font(.system(size: AppFontSizes.md, weight: .medium))
-                            InfoTip("外部应用通过本机桥接协议请求语音输入并读取圈定片段。开始、结束语音输入与全天听记相互独立；是否将文字插入其他应用由接入方处理。")
-                        }
-                        Text("全天听记保留完整对话，外部应用可单独使用圈定的听写片段。")
-                            .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
-                    }
-                }
                 KoeActionButton("管理记忆", systemImage: "square.stack.3d.up") {
                     store.send(.navigate(section: "memory"))
                 }
             }.padding(30).frame(maxWidth: 850, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .sheet(isPresented: $showAllDayDemo) { AllDayDemoView() }
     }
     private func telemetryTile(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {

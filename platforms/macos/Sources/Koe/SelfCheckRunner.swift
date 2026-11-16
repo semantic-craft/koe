@@ -9,17 +9,11 @@ public enum KoeSelfCheckRunner {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
         guard store.handle != 0, store.snapshot.records.isEmpty else { return fail("initial workspace") }
-        guard store.snapshot.device.autoConnect == true,
-              store.snapshot.device.companionMode == "disabled",
-              store.snapshot.device.standbyReady == false else { return fail("initial companion state") }
-        store.send("set_companion_mode", ["mode": "collar_standby"])
-        guard store.snapshot.device.companionMode == "collar_standby" else { return fail("set companion mode") }
+        guard store.snapshot.device.autoConnect == true else { return fail("initial device state") }
         store.send("device_release")
         guard store.snapshot.device.autoConnect == false else { return fail("device release") }
         store.send("set_ble_auto_connect", ["enabled": true])
-        store.send("set_companion_mode", ["mode": "disabled"])
-        guard store.snapshot.device.autoConnect == true,
-              store.snapshot.device.companionMode == "disabled" else { return fail("restore companion defaults") }
+        guard store.snapshot.device.autoConnect == true else { return fail("restore device autoConnect") }
         store.send("sync_audio_inputs", ["inputs": [
             ["id": "built-in-mic", "name": "MacBook Pro 麦克风", "transport": "built_in", "isDefault": true],
             ["id": "bt-airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": false]
@@ -35,10 +29,9 @@ public enum KoeSelfCheckRunner {
         store.send("back")
         guard store.snapshot.section == "today" else { return fail("navigate back from capture") }
         guard store.snapshot.workspaces != nil else { return fail("mode workspaces projection") }
-        for modeSection in ["notes", "all_day", "live_minutes", "voice_input", "today"] {
+        for modeSection in ["notes", "all_day", "live_minutes", "today"] {
             store.send("navigate", ["section": modeSection])
             guard store.snapshot.section == modeSection,
-                  store.snapshot.device.companionMode == "disabled",
                   store.snapshot.activeCapture == nil else {
                 return fail("pure navigation \(modeSection)")
             }
@@ -140,7 +133,6 @@ public enum KoeSelfCheckRunner {
             store.shutdown()
             return fail("set record project inbox count")
         }
-        store.send("set_companion_mode", ["mode": "meeting_and_collar"])
         store.send("set_ble_auto_connect", ["enabled": false])
         store.shutdown()
         let restored = HostSessionStore(workspacePath: directory.path)
@@ -150,7 +142,6 @@ public enum KoeSelfCheckRunner {
               restored.snapshot.records.first?.project == "自检项目",
               restored.snapshot.detail?.segments == detail.segments,
               restored.snapshot.memories.contains(where: { $0.id == memory.id && $0.state == "accepted" }),
-              restored.snapshot.device.companionMode == "meeting_and_collar",
               restored.snapshot.device.autoConnect == false,
               restored.snapshot.error == nil, restored.nativeError == nil else { return fail("restore saved state") }
         print("koe-smoke-test: PASS (version=2, persisted_record=1, accepted_memory=1)")

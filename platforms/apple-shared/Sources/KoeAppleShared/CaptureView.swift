@@ -95,7 +95,7 @@ public struct CaptureView: View {
             .disabled(isRecordingLocked || !capture.canIncludeSystemAudio)
             .accessibilityLabel("同时采集系统音频")
             .accessibilityValue(on ? "已开启" : "已关闭")
-            InfoTip("使用 Mac 麦克风进行随心闪记或实时纪要时，另存一路本机播放的声音（不含 Koe 自身）。全天听记、语音输入和录音豆只录麦克风。首次使用需在系统设置中允许 Koe 录制系统音频；任一路失败会标记采集不完整并保留另一路。")
+            InfoTip("使用 Mac 麦克风进行随心闪记或实时纪要时，另存一路本机播放的声音（不含 Koe 自身）。全天听记和录音豆只录麦克风。首次使用需在系统设置中允许 Koe 录制系统音频；任一路失败会标记采集不完整并保留另一路。")
         }
     }
 

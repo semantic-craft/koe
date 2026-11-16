@@ -13,14 +13,13 @@ struct ModeWorkspacesTests {
         defer { store.shutdown() }
 
         let workspaces = try #require(store.snapshot.workspaces)
-        #expect(workspaces.picker.cards.map(\.id) == ["notes", "all_day", "live_minutes", "voice_input"])
-        #expect(workspaces.picker.cards.map(\.title) == ["随心闪记", "全天听记", "实时纪要", "语音输入"])
+        #expect(workspaces.picker.cards.map(\.id) == ["notes", "all_day", "live_minutes"])
+        #expect(workspaces.picker.cards.map(\.title) == ["随心闪记", "全天听记", "实时纪要"])
         #expect(workspaces.picker.beanBadge == "录音豆 未连接")
         #expect(workspaces.picker.canConnectBean == true)
         #expect(workspaces.picker.canSwitchToBean == false)
         #expect(workspaces.picker.guidanceText == "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。")
         _ = TodayView(store: store).body
-        #expect(workspaces.voiceInput.steps.count == 6)
         #expect(!workspaces.quickNote.mcpReadNote.isEmpty)
 
         let legacyJSON = """
@@ -64,7 +63,7 @@ struct ModeWorkspacesTests {
         #expect(legacyRecord.matches(filter: .inbox, query: ""))
     }
 
-    @Test("Sidebar navigation across four modes stays side-effect-free while Mode Picker session switches stay on page")
+    @Test("Sidebar navigation across three modes stays side-effect-free while Mode Picker session switches stay on page")
     @MainActor
     func decoupledNavigationAndModePickerSwitches() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -72,21 +71,11 @@ struct ModeWorkspacesTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        for destination in ["notes", "all_day", "live_minutes", "voice_input", "today"] {
+        for destination in ["notes", "all_day", "live_minutes", "today"] {
             store.send("navigate", ["section": destination])
             #expect(store.snapshot.section == destination)
             #expect(store.snapshot.activeCapture == nil)
-            #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == false)
         }
-
-        let voiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
-        store.toggleModeSession(voiceCard)
-        #expect(store.snapshot.section == "today")
-        #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == true)
-
-        let activeVoiceCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "voice_input" }))
-        store.toggleModeSession(activeVoiceCard)
-        #expect(store.snapshot.workspaces?.voiceInput.sessionEnabled == false)
 
         let meetingCard = try #require(store.snapshot.workspaces?.picker.cards.first(where: { $0.id == "live_minutes" }))
         store.toggleModeSession(meetingCard)

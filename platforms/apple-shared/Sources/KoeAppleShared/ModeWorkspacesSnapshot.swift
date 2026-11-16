@@ -122,7 +122,6 @@ extension RecordSnapshot {
         switch effectiveMode {
         case "all_day": "全天听记"
         case "meeting": "实时纪要"
-        case "dictation": "语音输入"
         default: "随心闪记"
         }
     }
@@ -157,7 +156,6 @@ extension RecordDetailSnapshot {
         switch mode ?? "quick_note" {
         case "all_day": "全天听记"
         case "meeting": "实时纪要"
-        case "dictation": "语音输入"
         default: "随心闪记"
         }
     }
@@ -168,14 +166,12 @@ public struct ModeWorkspacesSnapshot: Codable, Equatable, Sendable {
     public let quickNote: QuickNoteWorkspaceSnapshot
     public let allDay: AllDayWorkspaceSnapshot
     public let liveMinutes: LiveMinutesWorkspaceSnapshot
-    public let voiceInput: VoiceInputWorkspaceSnapshot
 
     public static let empty = ModeWorkspacesSnapshot(
         picker: .empty,
         quickNote: .empty,
         allDay: .empty,
-        liveMinutes: .empty,
-        voiceInput: .empty
+        liveMinutes: .empty
     )
 }
 
@@ -265,16 +261,6 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
             canToggleSession: true,
             statusBadge: "就绪",
             metricText: "往期会议 0 场"
-        ),
-        ModePickerCardSnapshot(
-            id: "voice_input",
-            mode: "dictation",
-            title: "语音输入",
-            subtitle: "录音豆待命流桥接光标听写，一步步检查可用状态",
-            isSessionActive: false,
-            canToggleSession: true,
-            statusBadge: "未开启",
-            metricText: "等待录音豆连接"
         )
     ]
 
@@ -426,25 +412,11 @@ extension HostSessionStore {
     }
 
     public func toggleModeSession(_ card: ModePickerCardSnapshot) {
-        if card.id == "voice_input" || card.mode == "dictation" {
-            send(.setVoiceInputSession(enabled: !card.isSessionActive))
-        } else if card.isSessionActive {
+        if card.isSessionActive {
             send(.captureAction(action: .end))
         } else if let mode = CaptureMode(rawValue: card.mode) {
             send(.startCaptureMode(mode: mode, stayOnPage: true))
         }
         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-    }
-
-    public func performVoiceInputStepAction(_ command: String) {
-        switch command {
-        case "enable_voice_input", "set_voice_input_session":
-            send(.setVoiceInputSession(enabled: true))
-            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-        case "device_open_guide":
-            send(.deviceOpenGuide)
-        default:
-            send(command)
-        }
     }
 }

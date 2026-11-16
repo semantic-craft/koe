@@ -60,15 +60,6 @@ struct LightModalAppearanceTests {
         }
     }
 
-    @Test("AllDayDemoView stays light under a darkAqua window")
-    func allDayDemoViewStaysLight() throws {
-        let view = AllDayDemoView()
-        let rendered = try renderOffscreen(view, fallbackSize: CGSize(width: 660, height: 520), snapshotName: "all-day-demo.png")
-
-        let corners = sampleCornerLuminances(in: rendered.bitmap, inset: 16)
-        #expect(corners.allSatisfy { $0 > 0.85 }, "AllDayDemoView corner luminances \(corners) should stay > 0.85")
-    }
-
     @Test("NativeQuitPanel keeps aqua appearance and white background when app is darkAqua")
     func nativeQuitPanelStaysLight() throws {
         let app = NSApplication.shared

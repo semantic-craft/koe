@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import KoeAppleShared
 
-@Suite("LiveMinutes and VoiceInput mode workspaces")
+@Suite("LiveMinutes mode workspace")
 struct ModeWorkspacesLiveVoiceTests {
     @Test("LiveMinutes workspace resolves coverage, retrospective meeting switching, legacy fallback, and meeting Markdown export")
     @MainActor
@@ -73,78 +73,9 @@ struct ModeWorkspacesLiveVoiceTests {
         _ = LiveMinutesView(store: store).body
     }
 
-    @Test("VoiceInput 6-step actions dispatch truthful commands and cursor input evaluator distinguishes manual typing from companion stream")
+    @Test("Legacy idle fallback, stayOnPage quick note creation, and workspace canStart")
     @MainActor
-    func voiceInputStepsAndCursorStreamEvaluator() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = HostSessionStore(workspacePath: directory.path)
-        defer { store.shutdown() }
-
-        let initialVoice = try #require(store.snapshot.workspaces?.voiceInput)
-        #expect(!initialVoice.sessionEnabled)
-        let step2 = try #require(initialVoice.steps.first(where: { $0.id == "standby_stream" }))
-        let command = try #require(step2.actionCommand)
-        store.performVoiceInputStepAction(command)
-
-        let enabledVoice = try #require(store.snapshot.workspaces?.voiceInput)
-        #expect(enabledVoice.sessionEnabled)
-
-        let step3 = try #require(enabledVoice.steps.first(where: { $0.id == "companion_bridge" }))
-        #expect(step3.statusLabel == "等待订阅")
-        store.performVoiceInputStepAction("device_open_guide")
-        #expect(store.snapshot.device.guide?.mode == "connect_guide")
-
-        let idleEval = enabledVoice.evaluateCursorTest(
-            text: "   ",
-            baselineEpoch: enabledVoice.companionEpoch,
-            baselineAudioFrames: enabledVoice.forwardedAudioFrames,
-            baselineDictationText: enabledVoice.lastDictationText
-        )
-        #expect(idleEval.state == .idle)
-        #expect(idleEval.statusBadge == "待测试")
-
-        let manualEval = enabledVoice.evaluateCursorTest(
-            text: "手动敲入的测试句子",
-            baselineEpoch: enabledVoice.companionEpoch,
-            baselineAudioFrames: enabledVoice.forwardedAudioFrames,
-            baselineDictationText: enabledVoice.lastDictationText
-        )
-        #expect(manualEval.state == .manualInputOnly)
-        #expect(manualEval.statusBadge == "仅检测到手动输入")
-
-        let streamedFixture = VoiceInputWorkspaceSnapshot(
-            sessionEnabled: true,
-            canToggleSession: true,
-            standbyReady: true,
-            deviceConnected: true,
-            deviceName: "Soundcore Work",
-            batteryPercent: 85,
-            captureActive: false,
-            companionSubscribers: 1,
-            companionEpoch: "ep-0",
-            companionSequence: 4,
-            forwardedAudioFrames: 2,
-            lastDictationText: "语音上屏结果",
-            bridgeSocketPath: "/tmp/koe.sock",
-            boundaryNote: enabledVoice.boundaryNote,
-            steps: enabledVoice.steps
-        )
-        let streamEval = streamedFixture.evaluateCursorTest(
-            text: "语音上屏结果",
-            baselineEpoch: "ep-0",
-            baselineAudioFrames: 0,
-            baselineDictationText: nil
-        )
-        #expect(streamEval.state == .streamVerified)
-        #expect(streamEval.statusBadge == "已观测伴侣流")
-
-        _ = VoiceInputView(store: store).body
-    }
-
-    @Test("Legacy idle fallback, stayOnPage quick note creation, workspace canStart, and epoch-aware cursor evaluator")
-    @MainActor
-    func legacyIdleStayOnPageCanStartAndEpochCursorEvaluator() throws {
+    func legacyIdleStayOnPageAndCanStart() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = HostSessionStore(workspacePath: directory.path)
@@ -195,55 +126,5 @@ struct ModeWorkspacesLiveVoiceTests {
         let emptyLiveMinutes = minimalDecoded.workspaces?.liveMinutes ?? .empty
         #expect(!emptyLiveMinutes.isActive)
         #expect(emptyLiveMinutes.activeRecordId == nil)
-
-        let controlEdgeOnly = VoiceInputWorkspaceSnapshot(
-            sessionEnabled: true,
-            canToggleSession: true,
-            standbyReady: true,
-            deviceConnected: true,
-            deviceName: "Soundcore Work",
-            batteryPercent: 80,
-            captureActive: false,
-            companionSubscribers: 1,
-            companionEpoch: "ep-1",
-            companionSequence: 5,
-            forwardedAudioFrames: 0,
-            lastDictationText: nil,
-            bridgeSocketPath: "/tmp/koe.sock",
-            boundaryNote: idleWs.voiceInput.boundaryNote,
-            steps: idleWs.voiceInput.steps
-        )
-        let edgeEval = controlEdgeOnly.evaluateCursorTest(
-            text: "纯手动输入无音频帧",
-            baselineEpoch: "ep-1",
-            baselineAudioFrames: 0,
-            baselineDictationText: nil
-        )
-        #expect(edgeEval.state == .manualInputOnly)
-
-        let reconnectedStream = VoiceInputWorkspaceSnapshot(
-            sessionEnabled: true,
-            canToggleSession: true,
-            standbyReady: true,
-            deviceConnected: true,
-            deviceName: "Soundcore Work",
-            batteryPercent: 80,
-            captureActive: false,
-            companionSubscribers: 1,
-            companionEpoch: "ep-2",
-            companionSequence: 1,
-            forwardedAudioFrames: 3,
-            lastDictationText: nil,
-            bridgeSocketPath: "/tmp/koe.sock",
-            boundaryNote: idleWs.voiceInput.boundaryNote,
-            steps: idleWs.voiceInput.steps
-        )
-        let reconnectEval = reconnectedStream.evaluateCursorTest(
-            text: "蓝牙重连后语音上屏",
-            baselineEpoch: "ep-1",
-            baselineAudioFrames: 12,
-            baselineDictationText: nil
-        )
-        #expect(reconnectEval.state == .streamVerified)
     }
 }

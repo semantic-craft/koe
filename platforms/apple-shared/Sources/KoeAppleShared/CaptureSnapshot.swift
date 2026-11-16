@@ -107,14 +107,12 @@ public enum CaptureMode: String, Codable, Sendable {
     case quickNote = "quick_note"
     case allDay = "all_day"
     case meeting
-    case dictation
 }
 
 public enum CaptureAction: String, Codable, Sendable {
     case pause
     case resume
     case end
-    case endDictation = "end_dictation"
     case retrySave = "retry_save"
     case retryStop = "retry_stop"
     case cancel
@@ -133,7 +131,6 @@ public struct ActiveCaptureSnapshot: Codable, Equatable, Sendable {
     public let sourceLabel: String
     public let durationMs: UInt64
     public let actions: [CaptureAction]
-    public let dictating: Bool
     public let error: String?
     public let level: Double?
 }

@@ -372,7 +372,6 @@ struct ScopedObservationTests {
             armObservation { _ = store.allDayWorkspace },
             armObservation { _ = store.liveMinutesWorkspace },
             armObservation { _ = store.liveMinutesCoverage },
-            armObservation { _ = store.voiceInputWorkspace },
             armObservation { _ = store.recordDetail },
             armObservation { _ = store.records },
             armObservation { _ = store.tasks },

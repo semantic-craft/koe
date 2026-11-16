@@ -6,7 +6,6 @@ extension CaptureMode {
         case .quickNote: "随心闪记"
         case .allDay: "全天听记"
         case .meeting: "实时纪要"
-        case .dictation: "语音输入"
         }
     }
 
@@ -15,7 +14,6 @@ extension CaptureMode {
         case .quickNote: "快速留下一段想法"
         case .allDay: "持续记录，随时回看"
         case .meeting: "记录讨论并整理纪要"
-        case .dictation: "将语音输入到光标位置"
         }
     }
 
@@ -24,7 +22,6 @@ extension CaptureMode {
         case .quickNote: "waveform"
         case .allDay: "sun.max"
         case .meeting: "person.2"
-        case .dictation: "character.cursor.ibeam"
         }
     }
 }
@@ -86,7 +83,7 @@ struct ActiveCaptureBar: View {
     private func phaseLabel(_ capture: ActiveCaptureSnapshot) -> String {
         switch capture.phase {
         case "starting": "正在启动"
-        case "recording": capture.dictating && capture.mode == .allDay ? "正在记录  语音输入中" : "正在记录"
+        case "recording": "正在记录"
         case "pausing": "正在暂停"
         case "paused": "已暂停"
         case "cancelling": "正在取消"
@@ -100,7 +97,6 @@ struct ActiveCaptureBar: View {
         case .resume: "继续"
         case .end: "结束"
         case .retryStop: "重试停止"
-        case .endDictation: "结束语音输入"
         case .retrySave: "重试保存"
         case .cancel: "取消录音"
         }
