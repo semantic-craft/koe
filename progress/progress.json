@@ -267,7 +267,7 @@
         "updated_at": "2026-11-16T04:56:10Z"
       }
     ],
-    "main": "815c8d31f0a3c05ef9d21cfd468ca95acc56356b",
+    "main": "d5da243fc7678860c2efefdf660d6f13643fd79a",
     "open_pulls": [],
     "pulls": [
       {
@@ -669,9 +669,24 @@
         "merged": true,
         "number": 726,
         "state": "closed"
+      },
+      {
+        "base": "815c8d31f0a3c05ef9d21cfd468ca95acc56356b",
+        "head": "d262fff59fc7f286ad590dbfd46a7af5054f1b2b",
+        "merge_commit": "d5da243fc7678860c2efefdf660d6f13643fd79a",
+        "merged": true,
+        "number": 727,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 446804077,
+        "prerelease": false,
+        "published_at": "2026-11-16T09:05:32Z",
+        "tag": "v2.1.0"
+      },
       {
         "draft": false,
         "id": 444456234,
@@ -682,7 +697,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-16T08:37:49.657181Z",
+  "observed_at": "2026-11-16T09:09:23.609958Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2024,26 +2039,26 @@
         {
           "evidence": [
             {
+              "kind": "release",
+              "note": "正式私有 Release，arm64 zip、SHA256SUMS 与无秘密验收回执均已上传并完成下载哈希回读校验。zip SHA-256 8701a8b6fa406a4c1ddc3469ff6d4dc96e43109888e30a0d0a2e445e9a278801。",
+              "ref": "v2.1.0"
+            },
+            {
+              "kind": "pull",
+              "note": "版本准备经独立审查与完整门禁通过，squash 合并为 d5da243fc7678860c2efefdf660d6f13643fd79a。",
+              "ref": 727
+            },
+            {
               "kind": "file",
               "note": "2.1.0 当前可用功能、未验收硬件边界与安装说明。",
               "ref": "docs/releases/v2.1.0.md"
-            },
-            {
-              "kind": "file",
-              "note": "2.1.0（构建 10）更新日志与 2.0.0 阶段历史归档标题。",
-              "ref": "CHANGELOG.md"
-            },
-            {
-              "kind": "file",
-              "note": "macOS 安装包 CFBundleShortVersionString 2.1.0 与 CFBundleVersion 10。",
-              "ref": "scripts/install-macos.sh"
             }
           ],
           "id": "private-release-210",
-          "next": "PR 独立评审与 CI 通过并 squash 合并后，构建 Developer ID 签名包完成自检、Apple 公证、票据装订、私有 GitHub Release 上传与本机升级验收；#722 与 #725 保持独立真机核对。",
-          "status": "in_progress",
-          "summary": "准备 Koe 2.1.0（构建 10）私有 GitHub Release：Cargo 工作区版本升至 2.1.0，macOS CFBundleShortVersionString 升至 2.1.0、CFBundleVersion 升至 10，补齐发行说明、更新日志与工程教训记录。正式四业务工作区、Mac 系统音频双路采集、两阶段 Keychain 孤儿回收、跨四层架构收敛与宿主分域观测性能重构均已合入主线；尚未创建 v2.1.0 Release 或执行公证上传。",
-          "title": "Koe 2.1.0 私有发行包准备"
+          "next": "用户按需退出日常运行实例后升级替换 /Applications/Koe.app；独立物理核对继续按 #722、#725 与 Responsay #822 追踪。",
+          "status": "done",
+          "summary": "2026-11-16 已在私有仓库发布 v2.1.0（构建 10），提供 Apple silicon Developer ID 时间戳签名包、SHA256SUMS 与无秘密验收回执。完整门禁、独立审查、Apple Notary 公证（Accepted，2671c580-1bea-4eb5-936f-f1b15b941edf）、票据装订与解压包 Gatekeeper（Notarized Developer ID）、verify-self、smoke-test 及 8 份许可证逐字节核对全部通过，回读下载哈希与发布哈希一致；本机运行中日常会话与 Keychain 凭据保留未动。",
+          "title": "Koe 2.1.0 私有发行包"
         }
       ],
       "title": "验收与交付"
@@ -2167,7 +2182,8 @@
       720,
       721,
       724,
-      726
+      726,
+      727
     ]
   }
 }
