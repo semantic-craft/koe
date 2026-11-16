@@ -247,15 +247,28 @@
         "reason": "not_planned",
         "state": "closed",
         "updated_at": "2026-11-15T08:24:53Z"
-      }
-    ],
-    "main": "0a86c1f4a944135fb1f7adf1916243b1ab552dd4",
-    "open_pulls": [
+      },
       {
-        "head": "e4bc8c9091b5818e8eb1721707794636dfcc2044",
-        "number": 720
+        "number": 722,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-15T12:24:12Z"
+      },
+      {
+        "number": 723,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-16T08:24:10Z"
+      },
+      {
+        "number": 725,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-16T04:56:10Z"
       }
     ],
+    "main": "815c8d31f0a3c05ef9d21cfd468ca95acc56356b",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -600,6 +613,62 @@
         "merged": true,
         "number": 716,
         "state": "closed"
+      },
+      {
+        "base": "5a6ecaba266b27d6c138a930e36d8d5424d39080",
+        "head": "59a5978ee4ad54cf31abd62c8716660b02f50c34",
+        "merge_commit": "db7787fca0b074383addbe1279cdb831c4eedf07",
+        "merged": true,
+        "number": 717,
+        "state": "closed"
+      },
+      {
+        "base": "db7787fca0b074383addbe1279cdb831c4eedf07",
+        "head": "4993f65ceb2d799638d58476d6446bf4e53cf51b",
+        "merge_commit": "97ad6fc18a2844ac978ee47d2709f2de9014af3b",
+        "merged": true,
+        "number": 718,
+        "state": "closed"
+      },
+      {
+        "base": "97ad6fc18a2844ac978ee47d2709f2de9014af3b",
+        "head": "bcde8951dbdfdf6a7ab54b5c0a165a895c6f4f09",
+        "merge_commit": "e1d4dca81f978d5e1af4c49c152f9cc8b16eef6e",
+        "merged": true,
+        "number": 719,
+        "state": "closed"
+      },
+      {
+        "base": "e1d4dca81f978d5e1af4c49c152f9cc8b16eef6e",
+        "head": "e4bc8c9091b5818e8eb1721707794636dfcc2044",
+        "merge_commit": "e0b3487df3cf99bdfed791211d34b4da8c4085c9",
+        "merged": true,
+        "number": 720,
+        "state": "closed"
+      },
+      {
+        "base": "e1d4dca81f978d5e1af4c49c152f9cc8b16eef6e",
+        "head": "b322db27f86e3eabea38252dab18b585a4ae854a",
+        "merge_commit": "0a86c1f4a944135fb1f7adf1916243b1ab552dd4",
+        "merged": true,
+        "number": 721,
+        "state": "closed"
+      },
+      {
+        "base": "0a86c1f4a944135fb1f7adf1916243b1ab552dd4",
+        "head": "f0cd9cb440febd2587e7eadc4f05eb373c53d3cd",
+        "merge_commit": "b6c4f3ab48aa06ca1073e9b1023088ca711024b9",
+        "merged": true,
+        "number": 724,
+        "state": "closed"
+      },
+      {
+        "base": "b6c4f3ab48aa06ca1073e9b1023088ca711024b9",
+        "head": "f89b6ed8c5229f3491d86dbffa25d8316422c176",
+        "merge_commit": "815c8d31f0a3c05ef9d21cfd468ca95acc56356b",
+        "merged": true,
+        "number": 726,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -613,7 +682,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-15T23:51:10.710862Z",
+  "observed_at": "2026-11-16T08:37:49.657181Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1458,6 +1527,74 @@
           "status": "done",
           "summary": "普通设备与麦克风录音默认随心闪记，其他模式由macOS明确启用。修复持续纪要误入、冷启动自动待命和会话授权继承；普通最终转写/摘要保留。完整本地门禁、91项运行时单元及独立审查通过；签名安装后真实D3200闪记录音、Koe转写和保存通过，显式纪要/语音入口及重启空闲通过。",
           "title": "录音键默认随心闪记"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "Rust 投影 beanBadge/guidanceText/canSwitchToBean 与 TodayView 顶部音源条拆分已 squash 合并为 0a86c1f4。",
+              "ref": 721
+            },
+            {
+              "kind": "issue",
+              "note": "独立真机核对工单：首页音源条录音豆状态胶囊、短句引导与一键切换。",
+              "ref": 722
+            },
+            {
+              "kind": "file",
+              "note": "mode_picker_json 统一派生音源状态胶囊、动态操作短句与一键切换动作。",
+              "ref": "crates/koe-runtime/src/mode_workspaces.rs"
+            },
+            {
+              "kind": "file",
+              "note": "首页顶部音源条解耦当前生效音源与录音豆连接状态并提供一键切换入口。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift"
+            }
+          ],
+          "id": "today-source-guidance",
+          "next": "安装新版签名包后，按 #722 在实机核对首页音源条状态胶囊、短句引导与录音豆一键切换。",
+          "status": "done",
+          "summary": "PR #721（0a86c1f4）在 Rust 侧统一派生录音豆状态胶囊、单行操作顺序短句与一键切换条件，拆分首页顶部音源条，消除外接麦克风名称与录音豆连接状态并排时的主语歧义，并在录音豆已连闲置但当前选源为电脑麦克风时提供一键切换为录音豆按钮。C ABI 快照回归、UI 原则门禁与远端 CI 全部通过。",
+          "title": "首页音源状态引导与一键切换录音豆"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "性能问题根因与改造范围。",
+              "ref": 723
+            },
+            {
+              "kind": "pull",
+              "note": "分域 @Observable 切片、二进制 PCM 快路径、离屏关窗重排门控与 CoreAudio HAL 监听已 squash 合并为 815c8d31。",
+              "ref": 726
+            },
+            {
+              "kind": "issue",
+              "note": "独立真机核对工单：关窗后台录音豆唤醒弹窗与外接麦克风热插拔。",
+              "ref": 725
+            },
+            {
+              "kind": "file",
+              "note": "按变更频率切分的 Equatable 宿主视图切片。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/HostSessionSlices.swift"
+            },
+            {
+              "kind": "file",
+              "note": "CoreAudio HAL 属性监听替代 1 Hz 音频设备轮询。",
+              "ref": "platforms/macos/Sources/Koe/CoreAudioInputMonitor.swift"
+            },
+            {
+              "kind": "file",
+              "note": "4 Hz 高频切片叶子栏读取边界静态门禁。",
+              "ref": "scripts/verify-ui-principles.py"
+            }
+          ],
+          "id": "host-scoped-observation-perf",
+          "next": "安装新版签名包后，按 #725 在实机核对关窗后台录音豆实体按键唤醒弹窗与外接耳机热插拔。",
+          "status": "done",
+          "summary": "PR #726（815c8d31，#723）新增 koe_host_session_ingest_pcm 二进制采样 C ABI 快路径与回收站剩余天数 24 小时阶跃水位线，将 HostSessionStore 拆分为按频率隔离的 Equatable 切片并由 verify-ui-principles 守护 4 Hz 叶子栏边界，合并 NativeCapture 批次刷新，在关窗与最小化稳态冻结 UI 切片广播并在恢复时同步追平，同时以 CoreAudio HAL 监听替代 1 Hz 轮询。Release 基准下关窗回放 40 拍耗时中位数由 307.60 ms 降至 0.23 ms（1314.5x），双路采集 20 拍 CPU 由 696.66 ms 降至 131.30 ms（降 81.15%）。",
+          "title": "宿主分域观测、二进制 PCM 快路径与离屏关窗重排门控"
         }
       ],
       "title": "当前产品实现"
@@ -1511,12 +1648,27 @@
               "kind": "pull",
               "note": "正式四工作区与解耦导航通过全量 scripts/check（80 文件 UI 原则零违规、全量 Rust/Clippy 与 Swift 测试）、三模型对抗审查、独立 pro 复验（PASS+NOTES）及远端 CI。",
               "ref": 712
+            },
+            {
+              "kind": "pull",
+              "note": "首页音源条引导与一键切换通过 C ABI 快照回归、UI 原则门禁与远端 CI。",
+              "ref": 721
+            },
+            {
+              "kind": "pull",
+              "note": "跨四层工作区选择态、定向 MCP 切片与强类型 HostCommand 收敛通过全量门禁与远端 CI。",
+              "ref": 724
+            },
+            {
+              "kind": "pull",
+              "note": "宿主分域 @Observable 切片、二进制 PCM 快路径与离屏重排门控通过全量 scripts/check、check_swiftui_perf 零告警、独立审查及远端 CI。",
+              "ref": 726
             }
           ],
           "id": "automated-check",
-          "next": "后续改动运行统一门禁。",
+          "next": "后续改动继续运行统一门禁与 SwiftUI 静态性能检查。",
           "status": "done",
-          "summary": "最新全量 scripts/check 通过 Python 契约测试、80 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #712 经三模型对抗审查、独立 pro 复验（PASS+NOTES）与远端 CI 通过后合并。此前切片的验收记录保留在各自条目。",
+          "summary": "最新全量 scripts/check 通过 48 项 Python 契约测试、89 文件 verify-ui-principles 零违规、check_swiftui_perf 零告警、391 项离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared（29 项）及 macos（38 项 Swift Testing + 57 项 XCTest）测试；PR #712、#714、#715、#721、#724、#726 均经独立审查与远端 CI 通过后 squash 合并。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -1788,13 +1940,110 @@
               "kind": "pull",
               "note": "独立审查及完整本地、远端门禁通过，合并树与受检候选一致。",
               "ref": 695
+            },
+            {
+              "kind": "pull",
+              "note": "消除双态矛盾、无消费者传输分支与跨 crate 胶水。",
+              "ref": 708
+            },
+            {
+              "kind": "pull",
+              "note": "清理过时文档、失效链接与陈旧忽略规则。",
+              "ref": 718
+            },
+            {
+              "kind": "pull",
+              "note": "重写中英双语 README.md 与 README.en.md 产品定位与 D3200 硬件协议深度说明。",
+              "ref": 720
+            },
+            {
+              "kind": "pull",
+              "note": "统一 WorkspaceSelection 会话分离清理、定向 MCP 切片投影与强类型 Swift HostCommand。",
+              "ref": 724
+            },
+            {
+              "kind": "file",
+              "note": "导航、回放与四模式选择态单一持有者及 detach_records 统一清理。",
+              "ref": "crates/koe-runtime/src/selection.rs"
+            },
+            {
+              "kind": "file",
+              "note": "强类型 Swift HostCommand 单向命令编码。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/HostCommand.swift"
+            },
+            {
+              "kind": "file",
+              "note": "中文主入口文档与当前诚实边界。",
+              "ref": "README.md"
             }
           ],
           "id": "code-quality-cleanup",
-          "next": "本轮仅内部清理，不另发安装包；现行正式版仍为 2.0.0。退出暂停帧与 ABI 失败降级规则需要独立行为验证，物理验收状态不变。",
+          "next": "四层单向依赖、文件行数上限与 4 Hz 观测边界继续由 scripts/check 静态守护。",
           "status": "done",
-          "summary": "删除无消费者的旧 MCP/ACP、Google/Copilot、分析队列、偏好和 memory hub，移除空余 core crate。UI 门禁改查真实 Swift 配色；完整 scripts/check、独立审查和远端 CI 通过，PR #695 已 squash 合并为 07d1e64。",
-          "title": "废弃子系统清理与实际 UI 门禁"
+          "summary": "PR #695、#697、#708、#724 完成跨四层收敛清理：删除未接入子系统与往返换算胶水，新增 WorkspaceSelection 统一清理删档或取消录音后的悬垂选择，MCP 改为按需定向切片投影，Swift 宿主改发强类型 HostCommand；PR #718 与 #720 同步清理过时文档并重写中英双语 README 产品与 D3200 协议说明。",
+          "title": "跨四层架构收敛与文档重写"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机核对工单，保持开放未验。",
+              "ref": 722
+            },
+            {
+              "kind": "pull",
+              "note": "首页音源条引导与一键切换实现。",
+              "ref": 721
+            }
+          ],
+          "id": "today-source-device-acceptance",
+          "next": "升级 /Applications/Koe.app 后按 #722 实机核对录音豆未连、外接麦下已连一键切换与录音中状态显示。",
+          "status": "unverified",
+          "summary": "代码实现、C ABI 快照回归与 UI 原则门禁已于 PR #721 通过；尚未覆盖安装新版签名包连接实体 D3200 与外接麦克风完成首页窗口核对。",
+          "title": "首页音源条与录音豆一键切换真机核对"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机核对工单，保持开放未验。",
+              "ref": 725
+            },
+            {
+              "kind": "pull",
+              "note": "宿主分域观测、离屏关窗重排门控与 CoreAudio HAL 监听实现。",
+              "ref": 726
+            }
+          ],
+          "id": "offscreen-wake-hotplug-acceptance",
+          "next": "升级 /Applications/Koe.app 后按 #725 实机核对 Cmd+W 关窗态实体录音键自动弹窗与蓝牙或 USB 耳机插拔即时刷新。",
+          "status": "unverified",
+          "summary": "关窗与最小化离屏重排门控、录音豆边缘唤醒回调及 CoreAudioInputMonitor HAL 监听已于 PR #726 通过 Swift 回归与 Release 基准验证；尚未在实体 D3200 与真实外接耳机上复测。",
+          "title": "离屏关窗后台唤醒与外接麦克风热插拔真机核对"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "2.1.0 当前可用功能、未验收硬件边界与安装说明。",
+              "ref": "docs/releases/v2.1.0.md"
+            },
+            {
+              "kind": "file",
+              "note": "2.1.0（构建 10）更新日志与 2.0.0 阶段历史归档标题。",
+              "ref": "CHANGELOG.md"
+            },
+            {
+              "kind": "file",
+              "note": "macOS 安装包 CFBundleShortVersionString 2.1.0 与 CFBundleVersion 10。",
+              "ref": "scripts/install-macos.sh"
+            }
+          ],
+          "id": "private-release-210",
+          "next": "PR 独立评审与 CI 通过并 squash 合并后，构建 Developer ID 签名包完成自检、Apple 公证、票据装订、私有 GitHub Release 上传与本机升级验收；#722 与 #725 保持独立真机核对。",
+          "status": "in_progress",
+          "summary": "准备 Koe 2.1.0（构建 10）私有 GitHub Release：Cargo 工作区版本升至 2.1.0，macOS CFBundleShortVersionString 升至 2.1.0、CFBundleVersion 升至 10，补齐发行说明、更新日志与工程教训记录。正式四业务工作区、Mac 系统音频双路采集、两阶段 Keychain 孤儿回收、跨四层架构收敛与宿主分域观测性能重构均已合入主线；尚未创建 v2.1.0 Release 或执行公证上传。",
+          "title": "Koe 2.1.0 私有发行包准备"
         }
       ],
       "title": "验收与交付"
@@ -1863,7 +2112,10 @@
       678,
       685,
       687,
-      711
+      711,
+      722,
+      723,
+      725
     ],
     "pulls": [
       589,
@@ -1908,7 +2160,14 @@
       713,
       714,
       715,
-      716
+      716,
+      717,
+      718,
+      719,
+      720,
+      721,
+      724,
+      726
     ]
   }
 }
