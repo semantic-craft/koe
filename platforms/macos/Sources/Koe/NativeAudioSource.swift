@@ -79,11 +79,13 @@ public final class NativeAudioSource: MicrophoneSource {
         let count = Int(buffer.frameLength)
         guard count > 0, count <= 8192 else { throw CaptureError("麦克风音频块超过接收上限。") }
         let channelCount = Int(buffer.format.channelCount)
-        var samples = [Int16](repeating: 0, count: count)
-        for frame in 0..<count {
-            var value: Float = 0
-            for channel in 0..<channelCount { value += channels[channel][frame] / Float(channelCount) }
-            samples[frame] = value.isFinite ? Int16(max(-1, min(1, value)) * 32767) : 0
+        let samples = [Int16](unsafeUninitializedCapacity: count) { output, initializedCount in
+            for frame in 0..<count {
+                var value: Float = 0
+                for channel in 0..<channelCount { value += channels[channel][frame] / Float(channelCount) }
+                output[frame] = value.isFinite ? Int16(max(-1, min(1, value)) * 32767) : 0
+            }
+            initializedCount = count
         }
         return CapturedPCM(samples: samples, capturedStartNs: try HostAudioClock.nanoseconds(when.hostTime))
     }

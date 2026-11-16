@@ -568,6 +568,145 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         )
         self.assertEqual(res_page["violations"], [])
 
+        app_delegate_snapshot_leak = """
+        import AppKit
+        final class KoeAppDelegate: NSObject {
+            var store: HostSessionStore?
+            func check() {
+                let _ = store?.snapshot.lifecycle
+            }
+        }
+        """
+        res_delegate = verifier.check_ui_file(
+            "platforms/macos/Sources/Koe/KoeMacApp.swift",
+            app_delegate_snapshot_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_delegate["violations"]),
+            res_delegate["violations"],
+        )
+
+        adapter_snapshot_ok = """
+        import Foundation
+        final class NativeCapture {
+            var store: HostSessionStore?
+            func apply() {
+                let _ = store?.snapshot.microphone
+            }
+        }
+        """
+        res_adapter = verifier.check_ui_file(
+            "platforms/macos/Sources/Koe/NativeCapture.swift",
+            adapter_snapshot_ok,
+            strict_scale=True,
+        )
+        self.assertEqual(res_adapter["violations"], [])
+
+        comment_brace_bypass = """
+        import AppKit
+        final class KoeAppDelegate: NSObject {
+            var store: HostSessionStore?
+            func check() {
+                // }
+                /* } /* } */ */
+                let _ = store?.snapshot.lifecycle
+            }
+        }
+        """
+        res_comment_brace = verifier.check_ui_file(
+            "platforms/macos/Sources/Koe/KoeMacApp.swift",
+            comment_brace_bypass,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_comment_brace["violations"]),
+            res_comment_brace["violations"],
+        )
+
+        for snippet in (
+            """
+            import AppKit
+            extension KoeAppDelegate {
+                func helper() { let _ = store?.snapshot.device }
+            }
+            """,
+            """
+            import AppKit
+            public enum KoeWindowPresenter {
+                static func open(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
+            }
+            """,
+            """
+            import AppKit
+            extension KoeWindowPresenter {
+                static func helper(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
+            }
+            """,
+        ):
+            res_ext = verifier.check_ui_file(
+                "platforms/macos/Sources/Koe/KoeMacApp.swift",
+                snippet,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("reads store.snapshot directly" in v for v in res_ext["violations"]),
+                res_ext["violations"],
+            )
+
+    def test_rejects_foreach_offset_identity_churn_outside_comments(self) -> None:
+        for bad_foreach in (
+            """
+            import SwiftUI
+            struct OffsetView: View {
+                let items: [String]
+                var body: some View {
+                    ForEach(Array(items.enumerated()), id: \\.offset) { _, text in
+                        Text(text).font(.system(size: AppFontSizes.sm))
+                    }
+                }
+            }
+            """,
+            """
+            import SwiftUI
+            struct DirectOffsetView: View {
+                let items: [(offset: Int, element: String)]
+                var body: some View {
+                    ForEach(items, id: \\.offset) { item in
+                        Text(item.element).font(.system(size: AppFontSizes.sm))
+                    }
+                }
+            }
+            """,
+        ):
+            res = verifier.check_ui_file(
+                "platforms/apple-shared/Sources/KoeAppleShared/OffsetView.swift",
+                bad_foreach,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("id: \\.offset" in v for v in res["violations"]),
+                res["violations"],
+            )
+
+        commented_offset = """
+        import SwiftUI
+        struct SafeView: View {
+            let items: [String]
+            var body: some View {
+                // Never use ForEach(items, id: \\.offset)
+                /* ForEach(Array(items.enumerated()), id: \\.offset) */
+                Text("ok").font(.system(size: AppFontSizes.sm))
+            }
+        }
+        """
+        res_ok = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/SafeView.swift",
+            commented_offset,
+            strict_scale=True,
+        )
+        self.assertEqual(res_ok["violations"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

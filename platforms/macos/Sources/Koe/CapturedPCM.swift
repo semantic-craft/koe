@@ -1,5 +1,6 @@
 import Foundation
 import KoeAppleShared
+import os
 
 struct CapturedPCM: Sendable {
     let samples: [Int16]
@@ -41,44 +42,82 @@ protocol MicrophoneSource: AnyObject {
 /// Bounded per-lane queue: overflow stops that lane instead of silently dropping audio.
 final class MicrophoneMailbox: @unchecked Sendable {
     struct Block { let sequence: UInt64; let pcm: CapturedPCM }
-    let limit: Int
-    private let lock = NSLock()
-    private var blocks: [Block] = []
-    private var sequence: UInt64
-    private var closed = false
-    private var failure: String?
-    init(nextSequence: UInt64, limit: Int = 64) {
-        sequence = nextSequence
-        self.limit = limit
-    }
-    func append(_ pcm: CapturedPCM) {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed else { return }
-        guard !pcm.samples.isEmpty, pcm.samples.count <= 8192, blocks.count < limit else {
-            failure = "音频处理未能跟上采集，已停止并保留已接收的音频。"
-            closed = true
-            return
+    private struct State {
+        var ring: [Block?]
+        var head = 0
+        var count = 0
+        var sequence: UInt64
+        var closed = false
+        var failure: String?
+
+        init(nextSequence: UInt64, capacity: Int) {
+            ring = Array(repeating: nil, count: max(1, capacity))
+            sequence = nextSequence
         }
-        blocks.append(Block(sequence: sequence, pcm: pcm))
-        sequence += 1
     }
+
+    let limit: Int
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(nextSequence: UInt64, limit: Int = 64) {
+        self.limit = limit
+        state = OSAllocatedUnfairLock(initialState: State(nextSequence: nextSequence, capacity: limit))
+    }
+
+    func append(_ pcm: CapturedPCM) {
+        state.withLock { state in
+            guard !state.closed else { return }
+            guard !pcm.samples.isEmpty, pcm.samples.count <= 8192, state.count < limit else {
+                state.failure = "音频处理未能跟上采集，已停止并保留已接收的音频。"
+                state.closed = true
+                return
+            }
+            let tail = (state.head + state.count) % state.ring.count
+            state.ring[tail] = Block(sequence: state.sequence, pcm: pcm)
+            state.count += 1
+            state.sequence += 1
+        }
+    }
+
     func fail(_ message: String) {
-        lock.lock(); defer { lock.unlock() }
-        failure = failure ?? message
-        closed = true
+        state.withLock { state in
+            state.failure = state.failure ?? message
+            state.closed = true
+        }
     }
-    func close() { lock.lock(); defer { lock.unlock() }; closed = true }
+
+    func close() {
+        state.withLock { $0.closed = true }
+    }
+
     func discardUnaccepted(nextSequence: UInt64) {
-        lock.lock(); defer { lock.unlock() }
-        closed = true
-        blocks.removeAll()
-        sequence = nextSequence
+        state.withLock { state in
+            state.closed = true
+            for offset in 0..<state.count {
+                state.ring[(state.head + offset) % state.ring.count] = nil
+            }
+            state.head = 0
+            state.count = 0
+            state.sequence = nextSequence
+        }
     }
-    func peek() -> Block? { lock.lock(); defer { lock.unlock() }; return blocks.first }
+
+    func peek() -> Block? {
+        state.withLock { state in
+            guard state.count > 0 else { return nil }
+            return state.ring[state.head]
+        }
+    }
+
     func acknowledge(_ sequence: UInt64) {
-        lock.lock(); defer { lock.unlock() }
-        if blocks.first?.sequence == sequence { blocks.removeFirst() }
+        state.withLock { state in
+            guard state.count > 0, state.ring[state.head]?.sequence == sequence else { return }
+            state.ring[state.head] = nil
+            state.head = (state.head + 1) % state.ring.count
+            state.count -= 1
+        }
     }
-    var error: String? { lock.lock(); defer { lock.unlock() }; return failure }
-    var finalSequence: UInt64 { lock.lock(); defer { lock.unlock() }; return sequence }
+
+    var error: String? { state.withLock(\.failure) }
+    var finalSequence: UInt64 { state.withLock(\.sequence) }
 }

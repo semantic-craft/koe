@@ -89,12 +89,33 @@ impl PcmWave<'_> {
     }
 }
 
+fn read_le_u16(bytes: &[u8], offset: usize) -> Result<u16, &'static str> {
+    let end = offset.checked_add(2).ok_or("WAV 文件不完整")?;
+    bytes
+        .get(offset..end)
+        .and_then(|slice| slice.try_into().ok())
+        .map(u16::from_le_bytes)
+        .ok_or("WAV 文件不完整")
+}
+
+fn read_le_u32(bytes: &[u8], offset: usize) -> Result<u32, &'static str> {
+    let end = offset.checked_add(4).ok_or("WAV 文件不完整")?;
+    bytes
+        .get(offset..end)
+        .and_then(|slice| slice.try_into().ok())
+        .map(u32::from_le_bytes)
+        .ok_or("WAV 文件不完整")
+}
+
 /// Parses RIFF chunks and rejects compressed, truncated, or misaligned audio.
 pub fn parse_pcm_wave(bytes: &[u8]) -> Result<PcmWave<'_>, &'static str> {
     if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err("请选择 PCM16 WAV 音频");
     }
-    let riff_size = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize + 8;
+    let riff_size = usize::try_from(read_le_u32(bytes, 4)?)
+        .ok()
+        .and_then(|n| n.checked_add(8))
+        .ok_or("WAV 文件不完整")?;
     if riff_size > bytes.len() {
         return Err("WAV 文件不完整");
     }
@@ -102,7 +123,7 @@ pub fn parse_pcm_wave(bytes: &[u8]) -> Result<PcmWave<'_>, &'static str> {
     let mut format = None;
     let mut data = None;
     while offset + 8 <= riff_size {
-        let length = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let length = read_le_u32(bytes, offset + 4)? as usize;
         let start = offset + 8;
         let end = start
             .checked_add(length)
@@ -110,10 +131,10 @@ pub fn parse_pcm_wave(bytes: &[u8]) -> Result<PcmWave<'_>, &'static str> {
             .ok_or("WAV 数据块不完整")?;
         match &bytes[offset..offset + 4] {
             b"fmt " if length >= 16 => {
-                let encoding = u16::from_le_bytes(bytes[start..start + 2].try_into().unwrap());
-                let channels = u16::from_le_bytes(bytes[start + 2..start + 4].try_into().unwrap());
-                let rate = u32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap());
-                let bits = u16::from_le_bytes(bytes[start + 14..start + 16].try_into().unwrap());
+                let encoding = read_le_u16(bytes, start)?;
+                let channels = read_le_u16(bytes, start + 2)?;
+                let rate = read_le_u32(bytes, start + 4)?;
+                let bits = read_le_u16(bytes, start + 14)?;
                 if encoding != 1
                     || bits != 16
                     || !(1..=2).contains(&channels)
@@ -442,5 +463,17 @@ mod tests {
         let far_from_mark = i16::from_le_bytes([pcm[100 * 2], pcm[100 * 2 + 1]]);
         assert_ne!(near_mark, 0);
         assert_eq!(far_from_mark, 0);
+    }
+
+    #[test]
+    fn parse_pcm_wave_rejects_truncated_chunks_without_panicking() {
+        let valid = OpusWave::wav_header_with_rate(4, 16_000);
+        let mut full = valid.to_vec();
+        full.extend_from_slice(&[1, 0, 2, 0]);
+        assert!(parse_pcm_wave(&full).is_ok());
+        assert!(parse_pcm_wave(&full[..12]).is_err());
+        assert!(parse_pcm_wave(&full[..20]).is_err());
+        assert!(parse_pcm_wave(&full[..35]).is_err());
+        assert!(parse_pcm_wave(&full[..44]).is_err());
     }
 }

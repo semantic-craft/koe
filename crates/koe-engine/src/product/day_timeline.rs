@@ -450,11 +450,14 @@ pub(super) fn segment_wall_epoch_sec(record: &ProductRecord, segment: &Utterance
             continue;
         }
         let target_sample = segment.start_ms.saturating_mul(u64::from(rate)) / 1_000;
-        let span = lane
+        let Some(span) = lane
             .timeline
             .iter()
             .find(|s| target_sample < s.sample_offset.saturating_add(s.sample_count))
-            .unwrap_or_else(|| lane.timeline.last().unwrap());
+            .or_else(|| lane.timeline.last())
+        else {
+            continue;
+        };
         let delta_samples = target_sample
             .saturating_sub(span.sample_offset)
             .min(span.sample_count);

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
 use tokio::sync::watch;
@@ -11,6 +11,10 @@ use super::artifacts::{artifact_for, ensure_artifact};
 use super::{OfflineSpeechEvent, OfflineSpeechSegment};
 
 const MAX_OUTSTANDING: usize = 4;
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 pub(super) struct Control {
     epoch: watch::Sender<u64>,
@@ -30,7 +34,7 @@ impl Control {
     pub(super) fn cancel(&self) {
         self.epoch
             .send_modify(|epoch| *epoch = epoch.wrapping_add(1));
-        if let Some(token) = self.inference.lock().expect("speech cancel lock").as_ref() {
+        if let Some(token) = lock_unpoisoned(&self.inference).as_ref() {
             token.cancel();
         }
     }
@@ -164,7 +168,7 @@ impl OfflineSpeechWorker {
                             }
                         }
                     };
-                    worker_events.lock().expect("speech event lock").push(event);
+                    lock_unpoisoned(&worker_events).push(event);
                 }
             })
             .map_err(|error| format!("start offline speech worker: {error}"))?;
@@ -190,7 +194,7 @@ impl OfflineSpeechWorker {
     }
 
     fn submit(&self, task: Task) -> Result<(), String> {
-        let mut events = self.events.lock().expect("speech event lock");
+        let mut events = lock_unpoisoned(&self.events);
         if events.outstanding >= MAX_OUTSTANDING {
             return Err(
                 "offline speech queue is full; poll completed operations before retrying".into(),
@@ -219,7 +223,7 @@ impl OfflineSpeechWorker {
     /// Takes current progress and terminal events and releases their queue slots.
     #[must_use]
     pub fn poll(&self) -> Vec<OfflineSpeechEvent> {
-        let mut events = self.events.lock().expect("speech event lock");
+        let mut events = lock_unpoisoned(&self.events);
         let result: Vec<_> = events.queue.drain(..).collect();
         let completed = result
             .iter()
@@ -255,14 +259,11 @@ fn prepare(
         control,
         epoch,
         |downloaded_bytes| {
-            events
-                .lock()
-                .expect("speech event lock")
-                .push(OfflineSpeechEvent::Preparing {
-                    model_id: model_id.into(),
-                    downloaded_bytes,
-                    total_bytes: artifact.bytes,
-                });
+            lock_unpoisoned(events).push(OfflineSpeechEvent::Preparing {
+                model_id: model_id.into(),
+                downloaded_bytes,
+                total_bytes: artifact.bytes,
+            });
         },
     ))?;
     control.check(epoch)?;
@@ -296,9 +297,9 @@ fn transcribe(
     let session = session.ok_or("offline speech model is not ready; prepare a model first")?;
     let token = CancelToken::new();
     session.set_cancel_token(&token);
-    *control.inference.lock().expect("speech cancel lock") = Some(token);
+    *lock_unpoisoned(&control.inference) = Some(token);
     let result = recognize(session, pcm16, control, epoch);
-    *control.inference.lock().expect("speech cancel lock") = None;
+    *lock_unpoisoned(&control.inference) = None;
     session.clear_cancel_token();
     result
 }

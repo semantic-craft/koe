@@ -120,23 +120,69 @@ enum SystemAudioConversion {
         return peak
     }
 
-    /// Averages every channel to mono PCM16.
-    static func mono(_ input: UnsafePointer<AudioBufferList>, format: SystemAudioFormat) throws -> [Int16] {
+    /// Mixes every channel into `mixScratch` and returns `(frameCount, channelCount)`.
+    private static func mixChannels(
+        _ input: UnsafePointer<AudioBufferList>,
+        format: SystemAudioFormat,
+        mixScratch: inout [Float]
+    ) throws -> (frames: Int, channels: Int) {
         let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
-        var mix: [Float] = []
+        var frameCount: Int?
         var channels = 0
         var mismatch = false
         forEachChannel(list, format: format) { frames, _, value in
-            if mix.isEmpty, channels == 0 { mix = [Float](repeating: 0, count: frames) }
-            guard frames == mix.count else { mismatch = true; return }
+            if frameCount == nil {
+                frameCount = frames
+                if mixScratch.count < frames {
+                    mixScratch = [Float](repeating: 0, count: frames)
+                } else {
+                    for index in 0..<frames { mixScratch[index] = 0 }
+                }
+            }
+            guard frames == frameCount else { mismatch = true; return }
             channels += 1
             for frame in 0..<frames {
                 let sample = value(frame)
-                mix[frame] += sample.isFinite ? sample : 0
+                mixScratch[frame] += sample.isFinite ? sample : 0
             }
         }
         guard !mismatch, channels == format.channels else { throw CaptureError("系统音频缓冲格式已改变。") }
-        return mix.map { Int16(max(-1, min(1, $0 / Float(channels))) * 32767) }
+        return (frameCount ?? 0, channels)
+    }
+
+    /// Averages every channel to mono PCM16.
+    static func mono(_ input: UnsafePointer<AudioBufferList>, format: SystemAudioFormat) throws -> [Int16] {
+        var mix: [Float] = []
+        let (frameCount, channels) = try mixChannels(input, format: format, mixScratch: &mix)
+        return [Int16](unsafeUninitializedCapacity: frameCount) { output, initializedCount in
+            for index in 0..<frameCount {
+                output[index] = Int16(max(-1, min(1, mix[index] / Float(channels))) * 32767)
+            }
+            initializedCount = frameCount
+        }
+    }
+
+    /// Mixes to mono using a pre-allocated scratch buffer and emits `<= 4096`-frame blocks without intermediate array churn.
+    static func emitMonoSlices(
+        _ input: UnsafePointer<AudioBufferList>,
+        format: SystemAudioFormat,
+        startNs: UInt64,
+        mixScratch: inout [Float],
+        emit: (CapturedPCM) -> Void
+    ) throws {
+        let (frameCount, channels) = try mixChannels(input, format: format, mixScratch: &mixScratch)
+        let divisor = Float(channels)
+        for offset in stride(from: 0, to: frameCount, by: maxFrames) {
+            let chunkCount = min(maxFrames, frameCount - offset)
+            let samples = [Int16](unsafeUninitializedCapacity: chunkCount) { output, initializedCount in
+                for index in 0..<chunkCount {
+                    output[index] = Int16(max(-1, min(1, mixScratch[offset + index] / divisor)) * 32767)
+                }
+                initializedCount = chunkCount
+            }
+            let blockStartNs = startNs + UInt64(offset) * 1_000_000_000 / UInt64(format.sampleRate)
+            emit(CapturedPCM(samples: samples, capturedStartNs: blockStartNs))
+        }
     }
 
     /// Splits PCM into at most 4096-frame blocks, each stamped with its own first-sample time.
@@ -279,16 +325,20 @@ private final class SystemAudioCapture {
         listen(graph.tapID, kAudioTapPropertyFormat, "系统音频格式发生变化，已停止系统音频采集。")
         let format = graph.format
         let failed = self.failed
+        var mixScratch = [Float](repeating: 0, count: SystemAudioConversion.maxFrames)
         try graph.start { input, time in
             do {
                 guard time.pointee.mFlags.contains(.hostTimeValid) else {
                     throw CaptureError("系统音频缺少有效采样时钟。")
                 }
                 let startNs = try HostAudioClock.nanoseconds(time.pointee.mHostTime)
-                let samples = try SystemAudioConversion.mono(input, format: format)
-                for block in SystemAudioConversion.slices(samples, startNs: startNs, sampleRate: format.sampleRate) {
-                    receive(block)
-                }
+                try SystemAudioConversion.emitMonoSlices(
+                    input,
+                    format: format,
+                    startNs: startNs,
+                    mixScratch: &mixScratch,
+                    emit: receive
+                )
             } catch {
                 failed(error.localizedDescription)
             }

@@ -140,10 +140,22 @@ final class NativeSystemAudioTests: XCTestCase {
         XCTAssertThrowsError(try SystemAudioConversion.mono(list.unsafePointer, format: mono))
     }
 
-    func testSlicesStayWithinFourKilobyteFramesWithSampleAccurateTimes() {
+    func testSlicesStayWithinFourKilobyteFramesWithSampleAccurateTimes() throws {
         let blocks = SystemAudioConversion.slices([Int16](repeating: 7, count: 9000), startNs: 1_000_000_000, sampleRate: 48_000)
         XCTAssertEqual(blocks.map(\.samples.count), [4096, 4096, 808])
         XCTAssertEqual(blocks.map(\.capturedStartNs), [1_000_000_000, 1_085_333_333, 1_170_666_666])
+
+        let stereo = bufferList([[Float](repeating: 0.5, count: 4500), [Float](repeating: -0.25, count: 4500)])
+        defer { release(stereo) }
+        let format = SystemAudioFormat(sampleRate: 48_000, channels: 2, isFloat: true, interleaved: false)
+        let expected = SystemAudioConversion.slices(try SystemAudioConversion.mono(stereo.unsafePointer, format: format), startNs: 5_000_000, sampleRate: 48_000)
+        var scratch = [Float](repeating: 0, count: 4096)
+        var actual: [CapturedPCM] = []
+        try SystemAudioConversion.emitMonoSlices(stereo.unsafePointer, format: format, startNs: 5_000_000, mixScratch: &scratch) {
+            actual.append($0)
+        }
+        XCTAssertEqual(actual.map(\.samples), expected.map(\.samples))
+        XCTAssertEqual(actual.map(\.capturedStartNs), expected.map(\.capturedStartNs))
     }
 
     func testTapFormatAcceptsSupportedLinearPCMOnly() throws {

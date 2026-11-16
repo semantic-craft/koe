@@ -23,6 +23,27 @@ final class NativeCaptureTests: XCTestCase {
         for sequence in 0..<64 { box.acknowledge(UInt64(sequence)) }
         XCTAssertNil(box.peek())
     }
+    func testRingBufferWraparoundPreservesFIFOAcrossCycles() {
+        let box = MicrophoneMailbox(nextSequence: 10, limit: 4)
+        for index in 0..<10 {
+            let expectedSeq = UInt64(10 + index)
+            box.append(CapturedPCM(samples: [Int16(index)], capturedStartNs: UInt64(index) * 100))
+            XCTAssertEqual(box.peek()?.sequence, expectedSeq)
+            XCTAssertEqual(box.peek()?.pcm.samples, [Int16(index)])
+            box.acknowledge(expectedSeq)
+            XCTAssertNil(box.peek())
+        }
+        for index in 10..<14 {
+            box.append(CapturedPCM(samples: [Int16(index)], capturedStartNs: 0))
+        }
+        XCTAssertNil(box.error)
+        XCTAssertEqual(box.finalSequence, 24)
+        box.acknowledge(20)
+        box.acknowledge(21)
+        box.append(CapturedPCM(samples: [99], capturedStartNs: 0))
+        XCTAssertNil(box.error)
+        XCTAssertEqual(box.peek()?.sequence, 22)
+    }
 }
 
 import KoeAppleShared
@@ -227,6 +248,44 @@ extension NativeCaptureTests {
         XCTAssertEqual(stopped.wait(timeout: .now() + 2), .success)
         XCTAssertEqual(box.peek()?.pcm.samples, [42])
         XCTAssertFalse(fence.enter())
+    }
+
+    func testConcurrentCloseAndWaitBothUnblockWhenLeaveFinishes() {
+        let fence = AudioCallbackFence()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let firstWaiting = DispatchSemaphore(value: 0)
+        let secondWaiting = DispatchSemaphore(value: 0)
+        let firstDone = DispatchSemaphore(value: 0)
+        let secondDone = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            guard fence.enter() else { return }
+            entered.signal()
+            release.wait()
+            fence.leave()
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+
+        DispatchQueue.global().async {
+            firstWaiting.signal()
+            fence.closeAndWait()
+            firstDone.signal()
+        }
+        DispatchQueue.global().async {
+            secondWaiting.signal()
+            fence.closeAndWait()
+            secondDone.signal()
+        }
+
+        XCTAssertEqual(firstWaiting.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(secondWaiting.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(firstDone.wait(timeout: .now() + 0.02), .timedOut)
+        XCTAssertEqual(secondDone.wait(timeout: .now() + 0.02), .timedOut)
+
+        release.signal()
+        XCTAssertEqual(firstDone.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(secondDone.wait(timeout: .now() + 2), .success)
     }
 }
 

@@ -166,10 +166,8 @@ fn receipt_abi_layouts_and_invalid_pointer_boundaries_reject_without_accepting()
         );
         assert_eq!(empty_chunk.status, PcmIngestStatus::Rejected as u32);
         assert_eq!(empty_chunk.next_sequence, 0);
-        assert_eq!(
-            parse_snapshot(&session, now)["error"].as_str(),
-            Some("音频块无效或过大")
-        );
+        assert_eq!(empty_chunk.generation, 0);
+        assert!(parse_snapshot(&session, now)["error"].is_null());
 
         let oversized_chunk = koe_host_session_ingest_pcm(
             session.handle(),
@@ -186,10 +184,8 @@ fn receipt_abi_layouts_and_invalid_pointer_boundaries_reject_without_accepting()
         );
         assert_eq!(oversized_chunk.status, PcmIngestStatus::Rejected as u32);
         assert_eq!(oversized_chunk.next_sequence, 0);
-        assert_eq!(
-            parse_snapshot(&session, now)["error"].as_str(),
-            Some("音频块无效或过大")
-        );
+        assert_eq!(oversized_chunk.generation, 0);
+        assert!(parse_snapshot(&session, now)["error"].is_null());
 
         let null_playback = koe_host_session_report_playback_progress(
             session.handle(),
@@ -625,4 +621,35 @@ fn report_playback_progress_clamps_elides_duplicates_and_tracks_day_and_trash_wa
     assert!(!purged_tick.is_playing);
     let after_purge = parse_snapshot(&session, expired_sec);
     assert!(after_purge["trashRecords"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn ingest_pcm_rejects_sample_count_8193_without_advancing_sequence_or_generation() {
+    let ws = TempWorkspace::new("pcm-8193");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
+    let now = 1_800_000_000u64;
+    let started = send_json(&session, json!({"type": "start_microphone", "inputId": ""}), now);
+    let rec_id = started["microphone"]["recordId"].as_str().unwrap().to_string();
+    let ses_id = started["microphone"]["sessionId"].as_str().unwrap().to_string();
+    let ready = send_json(
+        &session,
+        json!({
+            "type": "microphone_started",
+            "recordId": rec_id,
+            "sessionId": ses_id,
+            "lane": "microphone",
+            "sampleRate": 16_000
+        }),
+        now,
+    );
+    assert!(ready["error"].is_null());
+
+    let gen_before = koe_host_session_generation(session.handle());
+    let oversized = vec![7i16; 8193];
+    let receipt = session.ingest_pcm(&rec_id, &ses_id, "microphone", 0, None, &oversized, now);
+    assert_eq!(receipt.status, PcmIngestStatus::Rejected as u32);
+    assert_eq!(receipt.next_sequence, 0);
+    assert_eq!(receipt.generation, 0);
+    assert_eq!(koe_host_session_generation(session.handle()), gen_before);
+    assert!(parse_snapshot(&session, now)["error"].is_null());
 }

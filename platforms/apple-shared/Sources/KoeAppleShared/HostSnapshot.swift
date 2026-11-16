@@ -97,10 +97,32 @@ extension RecordSnapshot {
     }
 }
 
-public struct SummarySnapshot: Codable, Equatable, Sendable {
+public struct SummarySnapshot: Codable, Equatable, Identifiable, Sendable {
     public let title: String
     public let text: String
     public let sources: [SourceSnapshot]
+
+    public var id: String { "\(title)\u{1F}\(text)" }
+}
+
+public struct SummarySectionItem: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let section: SummarySnapshot
+
+    public static func keyed(_ sections: [SummarySnapshot]) -> [SummarySectionItem] {
+        var used: Set<String> = []
+        return sections.map { section in
+            let base = section.id
+            var candidate = base
+            var suffix = 2
+            while used.contains(candidate) {
+                candidate = "\(base)#\(suffix)"
+                suffix += 1
+            }
+            used.insert(candidate)
+            return SummarySectionItem(id: candidate, section: section)
+        }
+    }
 }
 
 public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {

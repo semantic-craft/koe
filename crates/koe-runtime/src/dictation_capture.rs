@@ -20,18 +20,20 @@ impl KoeRuntime {
 
     fn append_standby_dictation(&mut self, samples: &[i16]) -> Result<(), String> {
         self.retry_standby_dictation_save()?;
-        if self.dictation_capture.is_none() {
-            let created_at = self.last_now_sec;
-            let id = format!("dictation-{created_at}-{}", self.workspace().revision() + 1);
-            let asset = CaptureAsset::create(&self.root, &id, 16_000)?;
-            self.dictation_capture = Some(DictationCapture {
-                id,
-                created_at,
-                asset,
-                sealing: false,
-            });
-        }
-        let capture = self.dictation_capture.as_mut().unwrap();
+        let capture = match self.dictation_capture.as_mut() {
+            Some(capture) => capture,
+            None => {
+                let created_at = self.last_now_sec;
+                let id = format!("dictation-{created_at}-{}", self.workspace().revision() + 1);
+                let asset = CaptureAsset::create(&self.root, &id, 16_000)?;
+                self.dictation_capture.insert(DictationCapture {
+                    id,
+                    created_at,
+                    asset,
+                    sealing: false,
+                })
+            }
+        };
         capture.asset.append(samples)?;
         let id = capture.id.clone();
         let created_at = capture.created_at;

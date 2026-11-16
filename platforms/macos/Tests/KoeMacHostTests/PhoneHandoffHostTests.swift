@@ -118,5 +118,29 @@ struct PhoneHandoffHostTests {
         #expect(store.device.guide == nil)
         #expect(delegate.bluetoothBridge.isScanRequested == true)
     }
+
+    @Test("BLE scan request while offscreen reconciles deferred device slice before checking autoConnect")
+    @MainActor
+    func handleBleScanRequestWhileOffscreen() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let delegate = KoeAppDelegate()
+        delegate.store = store
+        defer { delegate.store = nil }
+        delegate.bluetoothBridge.activateHost(allowsCoreBluetooth: false)
+
+        store.setUISlicesActive(false)
+        store.send(.deviceRelease)
+        #expect(store.snapshot.device.autoConnect == false)
+
+        delegate.handleBleScanRequest()
+        #expect(store.snapshot.device.autoConnect == true)
+        #expect(delegate.bluetoothBridge.isScanRequested == true)
+        store.setUISlicesActive(true)
+        #expect(store.device.autoConnect == true)
+    }
 }
 }

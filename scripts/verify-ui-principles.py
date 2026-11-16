@@ -33,15 +33,94 @@ HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
 }
 
 
-def extract_swiftui_type_blocks(text: str) -> list[str]:
+def strip_swift_comments(text: str) -> str:
+    out: list[str] = []
+    idx = 0
+    n = len(text)
+    in_string = False
+    escaped = False
+    block_depth = 0
+    in_line_comment = False
+
+    while idx < n:
+        ch = text[idx]
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append("\n")
+            else:
+                out.append(" ")
+            idx += 1
+            continue
+        if block_depth > 0:
+            if text.startswith("/*", idx):
+                block_depth += 1
+                out.append("  ")
+                idx += 2
+            elif text.startswith("*/", idx):
+                block_depth -= 1
+                out.append("  ")
+                idx += 2
+            else:
+                out.append("\n" if ch == "\n" else " ")
+                idx += 1
+            continue
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            idx += 1
+            continue
+        if text.startswith("//", idx):
+            in_line_comment = True
+            out.append("  ")
+            idx += 2
+        elif text.startswith("/*", idx):
+            block_depth = 1
+            out.append("  ")
+            idx += 2
+        elif ch == '"':
+            in_string = True
+            out.append(ch)
+            idx += 1
+        else:
+            out.append(ch)
+            idx += 1
+    return "".join(out)
+
+
+def extract_blocks_by_pattern(text: str, pattern: str) -> list[str]:
     blocks: list[str] = []
-    for match in re.finditer(r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{", text):
+    n = len(text)
+    for match in re.finditer(pattern, text):
         start = match.end() - 1
         depth = 0
         in_string = False
         escaped = False
-        for idx in range(start, len(text)):
+        in_line_comment = False
+        block_depth = 0
+        idx = start
+        while idx < n:
             ch = text[idx]
+            if in_line_comment:
+                if ch == "\n":
+                    in_line_comment = False
+                idx += 1
+                continue
+            if block_depth > 0:
+                if text.startswith("/*", idx):
+                    block_depth += 1
+                    idx += 2
+                elif text.startswith("*/", idx):
+                    block_depth -= 1
+                    idx += 2
+                else:
+                    idx += 1
+                continue
             if in_string:
                 if escaped:
                     escaped = False
@@ -49,17 +128,71 @@ def extract_swiftui_type_blocks(text: str) -> list[str]:
                     escaped = True
                 elif ch == '"':
                     in_string = False
+                idx += 1
                 continue
-            if ch == '"':
+            if text.startswith("//", idx):
+                in_line_comment = True
+                idx += 2
+            elif text.startswith("/*", idx):
+                block_depth = 1
+                idx += 2
+            elif ch == '"':
                 in_string = True
+                idx += 1
             elif ch == "{":
                 depth += 1
+                idx += 1
             elif ch == "}":
                 depth -= 1
                 if depth == 0:
                     blocks.append(text[start : idx + 1])
                     break
+                idx += 1
+            else:
+                idx += 1
     return blocks
+
+
+def extract_swiftui_type_blocks(text: str) -> list[str]:
+    return extract_blocks_by_pattern(text, r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{")
+
+
+def extract_app_delegate_blocks(text: str) -> list[str]:
+    return extract_blocks_by_pattern(
+        text,
+        r"\b(?:(?:class|extension)\s+KoeAppDelegate|(?:enum|extension)\s+KoeWindowPresenter)\b[^{]*\{",
+    )
+
+
+def find_foreach_offset_churn(comment_stripped: str) -> bool:
+    n = len(comment_stripped)
+    for match in re.finditer(r"\bForEach\s*\(", comment_stripped):
+        open_idx = match.end() - 1
+        depth = 0
+        in_string = False
+        escaped = False
+        idx = open_idx
+        while idx < n:
+            ch = comment_stripped[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    if re.search(r",\s*id:\s*\\\.offset\b", comment_stripped[open_idx : idx + 1]):
+                        return True
+                    break
+            idx += 1
+    return False
 
 
 def parse_hex_color(hex_str: str) -> tuple[int, int, int]:
@@ -296,11 +429,17 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 f"UX violation: {path_str} must mark playheadMs instead of inflating durationMs + 1000 on add_slice_mark"
             )
 
+        comment_stripped = strip_swift_comments(text)
+        if find_foreach_offset_churn(comment_stripped):
+            violations.append(
+                f"Observation violation: {path_str} uses ForEach(..., id: \\.offset); use stable item identity instead"
+            )
+
         norm_path = "/" + path_str.replace("\\", "/").lstrip("/")
         if "/platforms/apple-shared/Sources/KoeAppleShared/" in norm_path:
             filename = Path(norm_path).name
             if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
-                if re.search(r"\bstore\.snapshot\b", text):
+                if re.search(r"\bstore\.snapshot\b", comment_stripped):
                     violations.append(
                         f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
                     )
@@ -309,7 +448,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                     set(
                         re.findall(
                             r"\bstore\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
-                            text,
+                            comment_stripped,
                         )
                     )
                 )
@@ -319,12 +458,18 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                         f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
                     )
         elif "/platforms/macos/Sources/Koe/" in norm_path:
-            swiftui_blocks = "\n".join(extract_swiftui_type_blocks(text))
+            swiftui_blocks = "\n".join(extract_swiftui_type_blocks(comment_stripped))
+            snapshot_guarded_blocks = swiftui_blocks
+            if Path(norm_path).name == "KoeMacApp.swift":
+                delegate_blocks = "\n".join(extract_app_delegate_blocks(comment_stripped))
+                snapshot_guarded_blocks = "\n".join(
+                    b for b in (swiftui_blocks, delegate_blocks) if b
+                )
+            if snapshot_guarded_blocks and re.search(r"\bstore\??\.snapshot\b", snapshot_guarded_blocks):
+                violations.append(
+                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                )
             if swiftui_blocks:
-                if re.search(r"\bstore\.snapshot\b", swiftui_blocks):
-                    violations.append(
-                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
-                    )
                 hf_hits = sorted(
                     set(
                         re.findall(

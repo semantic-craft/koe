@@ -125,9 +125,10 @@ impl KoeRuntime {
     }
 
     pub(super) fn reconcile_bean_capture_mode(&mut self) {
-        if !self.bean_capture_pending()
-            && self.bean_capture_mode.take() == Some(CaptureMode::Dictation)
-        {
+        if self.bean_capture_pending() {
+            return;
+        }
+        if self.bean_capture_mode.take() == Some(CaptureMode::Dictation) {
             self.set_source_dictation(DictationSource::Bean, false);
         }
     }
@@ -290,5 +291,44 @@ impl KoeRuntime {
             });
         }
         Value::Null
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let dir = std::env::temp_dir().join(format!(
+            "koe-capture-flow-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reconcile_bean_capture_mode_clears_finished_mode_and_stops_dictation_only_for_dictation() {
+        let root = temp_dir("reconcile-mode");
+        let mut runtime = KoeRuntime::open(&root).unwrap();
+        assert!(!runtime.bean_capture_pending());
+
+        runtime.bean_capture_mode = Some(CaptureMode::Meeting);
+        runtime.set_source_dictation(DictationSource::Bean, true);
+        runtime.reconcile_bean_capture_mode();
+        assert!(runtime.bean_capture_mode.is_none());
+        assert!(runtime.dictation_active(DictationSource::Bean));
+
+        runtime.bean_capture_mode = Some(CaptureMode::Dictation);
+        runtime.reconcile_bean_capture_mode();
+        assert!(runtime.bean_capture_mode.is_none());
+        assert!(!runtime.dictation_active(DictationSource::Bean));
+
+        drop(runtime);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

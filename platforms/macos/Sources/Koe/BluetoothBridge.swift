@@ -232,8 +232,18 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         return data
     }
 
+    private nonisolated func onMainActorIsolated(_ body: @MainActor @escaping () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(body)
+        } else {
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated(body)
+            }
+        }
+    }
+
     nonisolated public func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        Task { @MainActor in
+        onMainActorIsolated {
             switch central.state {
             case .poweredOn:
                 if self.isScanRequested { self.beginDiscoveryAndReconnect(central) }
@@ -258,7 +268,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             peripheralName: discovered.name,
             advertisementData: advertisementData
         ) else { return }
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.store?.snapshot.device.autoConnect != false else { return }
             guard self.isScanRequested, self.peripheral == nil else { return }
             if let pending = self.reconnectingPeripheral, pending !== discovered {
@@ -270,7 +280,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didConnect connected: CBPeripheral) {
-        Task { @MainActor in
+        onMainActorIsolated {
             if self.store?.snapshot.device.autoConnect == false {
                 central.cancelPeripheralConnection(connected)
                 if self.reconnectingPeripheral === connected {
@@ -298,7 +308,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didFailToConnect failed: CBPeripheral, error: (any Error)?) {
-        Task { @MainActor in
+        onMainActorIsolated {
             if self.reconnectingPeripheral === failed {
                 self.reconnectingPeripheral = nil
                 return
@@ -310,14 +320,14 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     nonisolated public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral disconnected: CBPeripheral,
                                            error: (any Error)?) {
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === disconnected else { return }
             self.disconnected()
         }
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didDiscoverServices error: (any Error)?) {
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === source else { return }
             guard error == nil, let services = source.services, !services.isEmpty else {
                 self.store?.reportNativeError("无法读取录音豆服务，请重新连接。")
@@ -333,7 +343,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     nonisolated public func peripheral(_ source: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
                                        error: (any Error)?) {
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === source else { return }
             guard error == nil else {
                 self.store?.reportNativeError("无法读取录音豆通信通道，请重新连接。")
@@ -366,7 +376,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === source, Self.isNotifyCharacteristic(characteristic.uuid) else { return }
             guard error == nil, characteristic.isNotifying else {
                 self.store?.reportNativeError("无法订阅录音豆通知，请重新连接。")
@@ -381,7 +391,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
         guard error == nil, Self.isNotifyCharacteristic(characteristic.uuid), let data = characteristic.value else { return }
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === source, self.reportedReady else { return }
             self.store?.ingestBleChunk(data)
             self.flushOutboundFrames()
@@ -389,7 +399,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func peripheralIsReady(toSendWriteWithoutResponse source: CBPeripheral) {
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === source else { return }
             self.flushOutboundFrames()
         }
@@ -397,7 +407,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     nonisolated public func peripheral(_ source: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
-        Task { @MainActor in
+        onMainActorIsolated {
             guard self.peripheral === source else { return }
             guard error == nil else {
                 self.store?.reportNativeError("设备指令发送失败，请重新连接。")
