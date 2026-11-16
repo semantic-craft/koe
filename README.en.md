@@ -1,139 +1,153 @@
+<p align="center">
+  <img src="assets/artwork/koe-schoolgirl-b-cheerful.png" width="132" alt="Koe">
+</p>
+
 <h1 align="center">Koe</h1>
 
-<p align="center"><strong>Take back local control of your Anker soundcore Work (D3200) recorder and daily meeting notes.</strong></p>
-<p align="center"><em>A pure-Rust domain and protocol core paired with a native SwiftUI macOS app for direct hardware pull, offline ASR, cited notes, and MCP.</em></p>
+<p align="center">
+  <strong>Bring your Anker soundcore Work (D3200) collar recorder and daily Mac meetings home to local disk.</strong><br>
+  <sub>把安克 soundcore Work（D3200）录音豆与日常 Mac 会议，完整带回本机磁盘。</sub>
+</p>
 
 <p align="center">
-  <img alt="Rust" src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white">
-  <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-5.10%2B-F05138?style=flat-square&logo=swift&logoColor=white">
+  <a href="docs/releases/v2.1.0.md"><img alt="v2.1.0" src="https://img.shields.io/badge/release-v2.1.0-1f6f54?style=flat-square"></a>
+  <img alt="Rust 2021" src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white">
+  <img alt="SwiftUI Native" src="https://img.shields.io/badge/SwiftUI-Native-F05138?style=flat-square&logo=swift&logoColor=white">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <img alt="Upstream license: MIT" src="https://img.shields.io/badge/Upstream_license-MIT-blue?style=flat-square">
+  <a href="assets/licenses/soundcore.txt"><img alt="Upstream license: MIT" src="https://img.shields.io/badge/Upstream_license-MIT-blue?style=flat-square"></a>
 </p>
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-Koe lets your Anker soundcore Work (D3200) recorder run standalone on macOS, independent of Feishu and cloud accounts. It brings direct hardware pull, local transcription, personal memory, and structured meeting notes together in one local-first desktop app.
+Anker's **soundcore Work (D3200)** is a coin-sized, hardware-encrypted collar recorder with tactile double-tap gestures, yet out of the box it locks your recordings behind Feishu or vendor cloud accounts. **Koe brings the D3200 and your daily Mac meetings home to local disk.**
 
-**Koe builds on proven ideas across the open-source ecosystem with a clear product philosophy of its own.** A pure-Rust core handles the BLE protocol, audio custody, BM25 retrieval, citation checks, and workspace persistence, paired with a native SwiftUI "one day, one page" interface. Even with zero cloud API keys configured, recording, offline transcription, playback, editing, and local search work out of the box.
+A pure-Rust core (`#![forbid(unsafe_code)]` in 6 of 8 crates) owns the BLE protocol, audio custody, citation verification, and single-writer storage, paired with a thin native SwiftUI macOS app. Even **offline with zero cloud API keys**, encrypted BLE sync, local ASR (`SenseVoice Small`, `Qwen3 ASR 0.6B`, or macOS 26 `SpeechAnalyzer`), dual-lane playback, transcript editing, and `<5 ms` BM25 search work right away.
 
-## Four workspace modes for daily work
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_connect_device.webp" width="120" alt="Direct BLE GATT"><br>
+      <sub><strong>1. Direct BLE GATT</strong><br>Connects to <code>020cf5da-...</code> with zero classic Bluetooth pairing so headphones stay in stereo A2DP, and zero Anker or Feishu login.</sub>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_wear.webp" width="120" alt="Wear and switch"><br>
+      <sub><strong>2. Collar wear &amp; instant switch</strong><br>Run all-day collar capture or one-press Quick Note, with one-click source switching on the Today strip.</sub>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_mark.webp" width="120" alt="Double-tap and thump gate"><br>
+      <sub><strong>3. Double-tap &amp; thump gate</strong><br>Logs <code>20 ms</code> bookmarks or triggers dictation while trimming <code>60 ms</code> head and <code>240 ms</code> tail housing thumps.</sub>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_sync.webp" width="120" alt="Verified local custody"><br>
+      <sub><strong>4. Custody before delete</strong><br>Requires disk <code>fsync</code> and a 64-hex SHA-256 <code>CustodyReceipt</code> before emitting <code>0x1A/0x10</code> hardware delete.</sub>
+    </td>
+  </tr>
+</table>
+</div>
 
-Koe organizes daily capture around what you are recording today, what was said earlier, and what needs action next. Switching sidebar views never interrupts an active capture session.
+## One day, four workspaces
 
-| Workspace mode | Best for | What it does in practice |
+Koe centers its Today screen on four daily capture workspaces. Starting or stopping a recording session is decoupled from opening a workspace view, and switching sidebar pages never interrupts active audio capture.
+
+| Workspace | Built for | How it runs |
 | --- | --- | --- |
-| **Quick Note** (default) | Fleeting ideas, quick reminders, reading lists | A D3200 button press or shortcut opens Quick Note by default. Spoken notes enter your inbox with original timestamps, and AI summaries appear beside the transcript without overwriting your words. |
-| **All-Day Listening** | Continuous background wear | Splits audio into 5-minute records automatically. While earlier segments summarize in the background, capture continues without dropping audio, and the day timeline preserves pauses and unrecorded gaps honestly. |
-| **Live Minutes** | Active meetings and interviews | Shows transcript and minutes side by side on wide windows or in tabs on narrow ones. Initial minutes trigger after 3 finalized segments or 20 seconds, then refresh with a 45-second debounce without overlapping in-flight jobs. Action items generate only after recording stops, preventing duplicate to-dos mid-call. |
-| **Voice Input** | Dictating at the cursor in any app | Turns the D3200 into a collar microphone wired over a local Unix socket to an external input method. The external IME handles text polish and cursor insertion, so audio is never transcribed twice. |
+| **Quick Note** (default) | Fleeting thoughts, quick handoffs, reading lists | A D3200 button press or shortcut drops spoken notes into the inbox with original timestamps and project tags. AI notes sit beside your transcript without overwriting your words. |
+| **All-Day Listening** | Continuous collar wear across the day | Splits capture into 5-minute records automatically without dropping audio while prior segments summarize in the background. Merges wall-clock events, records pauses and unrecorded gaps honestly on a monotonic timeline, and groups end-of-day review. |
+| **Live Minutes** | Remote calls, in-person meetings, interviews | Captures **Mac dual-lane system audio and microphone** on a shared timeline via CoreAudio `CATapDescription` so headphone calls record both sides. Generates initial topics after 3 utterances or 20 seconds, refreshes on a 45-second debounce without overlapping jobs, tracks 3 coverage metrics, and extracts action items in one pass after stop. |
+| **Voice Input** | Cursor dictation inside any macOS app | Bridges clean `16 kHz` `PCM16` audio and physical `control_edge` gestures over `koe.sock` to Responsay or external IMEs with a 6-step link check and cursor test box, avoiding double ASR on the same utterance. |
 
-Three guarantees govern daily review across all four modes:
+All four workspaces share one local library governed by three guarantees:
 
-- **Every summary bullet and task links back to spoken words.** Minutes, tasks, memories, and Q&A answers bind to composite `record_id + segment_id` citations. Clicking a source jumps straight to the utterance and seeks audio playback. Editing a transcript latches `original_text` for one-click restoration and flags existing minutes as stale.
-- **Ask your entire library without an LLM.** Koe builds a CJK bi-gram and Latin BM25 inverted index that searches 16,000 sentences (over 400,000 characters) in under 5 ms in unit benchmarks. When no text model is configured, Ask Koe returns cited `[S1]` and `[S2]` source lines directly. Ungrounded questions short-circuit locally instead of guessing.
-- **Safe import, export, and reversible deletion.** Import WAV, UTF-8 TXT, Markdown, or self-contained `.koepack` archives, and export clean Markdown. Archive lock prevents edits or deletion. Soft-deleted items stay in Trash for 30 days with an 8-second undo bar, and permanent purge runs in two phases: only trashed items can be purged, and `.wav` and `.opus` files leave disk only after metadata commits.
+- **Every bullet links back to spoken audio.** Minutes, tasks, memories, and Q&A answers bind to composite `record_id + segment_id` references for click-to-seek playback. Editing a transcript latches `original_text` for one-click restoration and marks prior minutes stale, while `validate_minutes_grounding` rejects ungrounded numbers, out-of-range segment IDs, or fabricated glossary edits.
+- **Sub-5 ms search across 400k characters without an LLM.** A CJK bi-gram and Latin BM25 inverted index searches 16,000 utterances in under `5 ms` in unit benchmarks. When no text model is configured, Ask Koe returns cited `[S1]` and `[S2]` source excerpts offline and refuses ungrounded questions locally instead of guessing.
+- **Reversible 30-day Trash, archive lock, and portable `.koepack`, Markdown, and WAV I/O.** Import WAV, UTF-8 TXT, Markdown, or self-contained `.koepack` archives, and export customizable Markdown. Archive lock blocks edits and deletion. Soft-deleted records stay in Trash for 30 days with an 8-second undo bar, and two-phase permanent purge removes `.wav` and `.opus` files from disk only after metadata commits.
 
-## Getting full value from Anker soundcore Work (D3200)
+## Hardware protocol and native performance
 
-Koe talks to the D3200 directly over BLE rather than treating it as a passive microphone, bringing its hardware encryption, slice-aligned resume, and physical gestures into daily desktop workflows:
+Koe handles encrypted BLE framing, high-rate audio buffers, and macOS permission quirks directly in Rust and thin CoreAudio adapters:
 
-1. **No classic Bluetooth pairing, Feishu, or Anker cloud auth.** CoreBluetooth connects directly to service UUID `020cf5da-0000-1000-8000-00805f9b34fb` without OS classic pairing or Anker license servers. An outbound queue enforces 300 ms command pacing and packet chunking.
-2. **In-process NIST P-256 ECDH and AES-256-CTR decryption.** Inside a `#![forbid(unsafe_code)]` Rust engine, Koe runs ephemeral P-256 key exchange (`0x2E/0x01`), RFC 5869 HKDF-SHA256 session key derivation, `soundcored3200` file-key verification, and T-table AES-256-CTR stream decryption with zero heap allocations per frame.
-3. **166-byte slice-aligned resume and dual-rate static Opus decoding.** Koe aligns offline pulls to exact 166-byte records (4-byte sequence, 1-byte flags, 160-byte 20 ms Opus frame, and 1-byte padding), resuming after disconnects at `received_slice_count * 166` with a 5-second inactivity watchdog. Static source-built `libopus 1.5.2` decodes 16 kHz mono PCM16 for live ASR alongside 48 kHz mono audio for playback, while muxing raw frames into standard RFC 7845 Ogg Opus files.
-4. **Disk `fsync` and SHA-256 custody before hardware deletion.** Modeled after wearable WAL custody, `CustodyReceipt` records exact byte count and 64-hex SHA-256 after `fsync`. Koe refuses to emit the `0x1A/0x10` delete command unless verified disk custody exists.
-5. **Front double-tap bookmarks and acoustic thump gating.** Parsing `flags & 0x01` captures double-tap bookmarks at 20 ms resolution and emits `ControlEdge` triggers in collar standby mode. To stop finger taps on the plastic housing from polluting dictation, Koe skips the first 3 slices (60 ms) after a start tap and holds back and discards the last 12 slices (240 ms) before a stop tap. Standby scratch files auto-reclaim when idle, and `releaseControl` cleanly hands Bluetooth back so your phone can reconnect anytime.
+- **Pure-Rust D3200 crypto and `166 * N` slice resume.** Inside `#![forbid(unsafe_code)]`, `koe-engine` runs ephemeral NIST P-256 ECDH (`0x2E/0x01`), RFC 5869 HKDF-SHA256 key derivation, `soundcored3200` file-key checks, and zero-allocation T-table AES-256-CTR stream decryption. Offline pulls align to exact 166-byte slices (4-byte sequence, 1-byte flags, 160-byte `20 ms` Opus frame, 1-byte delimiter) to resume after disconnects at `received_slice_count * 166` under a 5-second watchdog. Source-built static `libopus 1.5.2` decodes `16 kHz` mono PCM16 for ASR alongside `48 kHz` audio for playback while muxing standard RFC 7845 Ogg Opus archives (`10,000` packets decrypted, decoded, and muxed in `75.07 ms` in `koe-cli benchmark`).
+- **Scoped `@Observable` slices and `1,314x` offscreen gate (`v2.1.0`).** Passing raw `int16_t` pointers via `koe_host_session_ingest_pcm` removes per-chunk JSON serialization, batching 20-tick dual-lane snapshot projections from `323` down to `23` and cutting `48 kHz` dual-lane capture CPU by `81.15%` (`696.66 ms` to `131.30 ms`). `HostSessionStore` splits state into 21 `Equatable` domain slices guarded by a static 4 Hz leaf-bar lint gate in `scripts/verify-ui-principles.py`, replaces 1 Hz main-thread audio polling with a 50 ms debounced CoreAudio HAL property listener, and gates offscreen `NSHostingView.layout()` passes when windows close or miniaturize (`307.60 ms` to `0.23 ms` closed-window playback wall time across 40 ticks, `1,314.5x` faster).
+- **Inaudible `-100 dBFS` Barker-13 system-audio canary.** macOS provides no public callback for CoreAudio output tap consent, and `AudioDeviceStart` returns zeroed buffers silently when denied. During permission checks, Koe injects an inaudible `-100 dBFS` Barker-13 probe into the default output while inspecting visible system auth dialogs, marking access denied only after dialogs close with zero loopback correlation, and retaining the surviving lane if one audio stream fails.
+- **Crash-safe `.capture`, `RequestKey` billing guard, and two-phase Keychain.** Live microphone streams write incrementally to `<id>.capture`, updating the 44-byte WAV header at offset 0 and calling `sync_data()` per chunk so startup recovers interrupted recordings via verified `.wav` hard links. Cloud jobs persist `RequestKey(record_id, attempt, input_revision)` before dispatch and move to `Interrupted` across restarts with zero silent cloud re-billing. `meeting_audio_policy` defaults to `LocalOnly`, and signed Keychain writes record two-phase pending UUID references on disk first to reclaim pre-commit crash orphans by exact UUID without touching `.env` or `.envrc`.
 
-> **Hardware channel status.** [PROTOCOL.md](PROTOCOL.md) documents Wi-Fi SoftAP fast transfer, Classic Bluetooth SPP, firmware OTA, device time sync, and binding commands observed during reverse engineering, and those paths are **not wired** in Koe today. All transfers run over BLE GATT, and firmware updates stay in the vendor app. Long offline cloud pulls, standby battery endurance, and Bluetooth headset coexistence have active real-device checks.
-
-## Design principles and open-source foundations
-
-Four design principles shape how Koe works:
-
-- **Audio-focused and unobtrusive.** Koe stays centered on voice capture, transcription, daily review, and follow-up actions with a light footprint.
-- **Local single-writer source of truth.** Audio assets, verbatim transcripts, and review decisions live on disk under one writer. Edits latch `original_text`, and AI notes always point back to spoken segments rather than altering them.
-- **Hardware details brought into daily flow.** Encrypted BLE pull, 166-byte resume alignment, double-tap markers, and tap-thump gating fit together in one desktop pipeline.
-- **Composable local boundaries.** Koe exposes an owner-private Unix socket and MCP tools so external input methods handle text polish while AI agents collaborate against verified local records.
-
-Koe's architecture draws inspiration from open-source projects in this space. We preserve full attribution in the repository and combine their ideas into one unified Rust and SwiftUI implementation:
-
-| Reference project | Inspiration for Koe | How Koe implemented and extended it |
-| --- | --- | --- |
-| **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple UI four-layer split | Versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private Unix socket bridge so GUI, CLI, and MCP share one live runtime |
-| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | Reverse-engineered D3200 BLE protocol notes and Dart implementation | Ported to memory-safe Rust state machines, aligned offline pulls to exact `166 * N` byte boundaries, and added double-tap flag parsing and telemetry polling |
-| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Disconnect WAL custody and review confirmation cards | Made disk custody receipts a hard prerequisite for device file deletion, and wired `Proposed / Accepted / Dismissed` cards to a single-writer ledger and 16 MCP tools |
-| **[screenpipe](https://github.com/screenpipe/screenpipe)** | Timeline aggregation and global live subtitle bar | Wired `LiveCaptionBar` directly to Rust `SpeechSession` snapshots for both D3200 and Mac microphone input |
-| **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day memory segments, multi-mode workspaces, citation self-healing, and optimistic locking | Implemented four workspace modes, 5-minute segments, `RequestKey` stale-overwrite protection, and `relabel_citations` |
-| **[Shiyin](https://github.com/juinwei7/Shiyin)** | CoreAudio mic + system audio capture and structured templates | Added an inaudible `-100 dBFS` Barker-13 canary probe plus OS permission-window inspection to detect macOS system-audio grants reliably, coordinated by a Rust dual-lane timeline |
-| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | Structured topic/decision/action JSON schema and anti-fabrication rules | Added deterministic `validate_minutes_grounding` checks in Rust that reject missing citations, invalid segment IDs, or ungrounded glossary `heard` corrections |
-| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | Embedded CPU offline ASR runtime and pinned model manifest | Runs SenseVoice Small (~253 MB) and Qwen3 ASR 0.6B (~850 MB) in-process with streaming SHA-256 checks, atomic install, and RAII cleanup on abort |
-| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | Symlink traversal guards and bounded live-minutes pacing | Added `reject_symlink_path` checks before reads and writes, plus 3-segment/20s initial and 45s debounced live-minutes scheduling connected to external IMEs |
-
-## Practical reliability and privacy boundaries
-
-What keeps a daily voice tool trustworthy is how it behaves when hardware disconnects, permissions fail, or the app crashes mid-request:
-
-- **Crash-safe `.capture` recording.** Mac microphone streams append incrementally to `<id>.capture`, updating the 44-byte WAV header at offset 0 and calling `sync_data()` per chunk. After an unexpected termination, startup validates the wave file, hard-links it to `.wav`, syncs the directory, and removes `.capture` only after metadata commits.
-- **Inaudible canary probe for macOS system audio.** macOS provides no public callback for CoreAudio tap consent, and `AudioDeviceStart` succeeds silently with zeroed buffers when denied. Koe plays an inaudible `-100 dBFS` Barker-13 tone through default output while inspecting visible system auth dialogs, marking access denied only when no non-zero loopback arrives after prompts close.
-- **Zero silent cloud re-billing.** Every remote task saves `RequestKey(record_id, attempt, input_revision)` before starting. After any restart, incomplete jobs move to `Interrupted` so the user decides when to retry.
-- **Local-only audio default and two-phase Keychain commits.** `meeting_audio_policy` defaults to `LocalOnly`, and Koe never falls back to cloud engines silently. Signed macOS Keychain saves register `pending_credentials` on disk before creating items, clean up orphans on next boot by exact reference, and write a tombstone on clear so old keys never resurrect. Development builds keep session-isolated credentials and never read `.env` or `.envrc`.
-- **Workspace-wide safety guards.** The Cargo workspace sets `unsafe_code = "deny"`, with `#![forbid(unsafe_code)]` enforced in 6 of 8 crates and `unsafe` isolated strictly to `koe-opus` and `koe-host-api`. Static `libopus` builds forbid system library discovery, and `scripts/verify-ui-principles.py` caps every Swift source file at 500 lines.
+> **Hardware channel note.** [PROTOCOL.md](PROTOCOL.md) also documents Wi-Fi SoftAP fast transfer, Classic Bluetooth SPP, firmware OTA, time sync, and device binding commands observed during reverse engineering. Those paths are **intentionally not wired** in Koe today. All device transfers run over BLE GATT, and firmware updates remain in the vendor app.
 
 ## CLI and MCP
 
-While Koe is running, it exposes an owner-private Unix socket inside its container with `0700` directory permissions, `0600` socket permissions, and `getpeereid` same-UID peer verification. CLI commands and AI agents attach to the live `KoeRuntime` session over that bridge, or fall back to direct workspace locking when Koe is closed:
+While Koe is running, it opens an owner-private Unix domain socket inside its container (`.koe` directory mode `0700`, `koe.sock` mode `0600`, verified via `getpeereid` for the same UID). CLI commands and external AI agents attach to the live `KoeRuntime` session over that socket, or fall back to single-writer file locking when the GUI app is closed:
 
 ```bash
 cargo run --package koe-cli -- status
 cargo run --package koe-cli -- search "product decisions"
-cargo run --package koe-cli -- ask "what should happen next"
+cargo run --package koe-cli -- ask "what needs follow-up next"
 cargo run --package koe-cli -- mcp-stdio
 cargo run --package koe-cli -- companion-listen
 ```
 
-- **16 MCP stdio tools.** Exposes full-text search, today brief, record listing and details, grounded Q&A, task/memory review and completion, note creation, segment annotation, transcript editing, speaker management, archive/trash operations, D3200 status/control, and generation polling. Permanent purge is deliberately excluded from agent tools.
-- **External IME text and audio bridge.** The [local text bridge](docs/local-text-bridge.md) streams `transcript_final`, physical `control_edge` gestures, and exclusive `external_pcm_v1` leases so external voice input methods can consume clean D3200 audio directly.
+- **16 MCP stdio tools.** Serves targeted projections for full-text search, today brief, record list and details, cited Q&A, task and memory review or completion, note creation, segment annotation, transcript editing, speaker rename and merge, archive and Trash recovery, D3200 status and control, and generation polling. **Permanent purge is excluded by design** so agents cannot trigger irreversible deletion.
+- **Local text and audio bridge for external IMEs.** The [local text bridge](docs/local-text-bridge.md) streams finalized `transcript_final` events, physical `control_edge` double-tap edges, and exclusive `external_pcm_v1` audio leases to Responsay and third-party voice input methods.
 
-## Build and run
+## Build and install
 
-Requires macOS 14+, Xcode Command Line Tools (Swift 5.10+), Rust (1.85+), and CMake. Opus compiles statically from pinned sources with no external `libopus` needed.
+Requires macOS 14+ (macOS 14.2+ for dual-lane CoreAudio system audio capture; macOS 26+ for Apple `SpeechAnalyzer`), Xcode Command Line Tools (Swift 5.10+), Rust 1.85+, and CMake. Static `libopus 1.5.2` compiles from pinned source with no system `libopus` dependency.
 
 ```bash
-# Build the C ABI library and native macOS host
+# Build the Rust C ABI static library and native macOS host
 cargo build --package koe-host-api
 swift build --package-path platforms/macos
 
-# Package and Developer ID sign /Applications/Koe.app, then run --verify-self and --smoke-test
+# Package and Developer ID sign /Applications/Koe.app, running --verify-self and --smoke-test
 ./scripts/install-macos.sh
 
-# Local checks: fast gate vs full workspace suite
+# Local verification: fast incremental gate vs full workspace suite
 ./scripts/verify-local.sh --quick
 ./scripts/check
 ```
 
-## Current scope and honest verification status
+## Four-layer architecture and documentation
 
-Koe keeps implemented, CI-tested, and real-hardware-pending items clearly separated:
-
-| Status | Coverage |
-| --- | --- |
-| **Implemented and passing CI / local gates** | 8-crate Rust core, D3200 BLE handshake/slice-resume/custody logic, 4-mode SwiftUI workspaces, offline GGUF and Apple SpeechAnalyzer (macOS 26+) integration, CoreAudio dual-lane timeline and canary probe code, BM25 retrieval and minutes grounding gate, 16 MCP tools, and local Unix bridge. |
-| **Code merged, pending real-device or account verification** | Long D3200 offline pulls with paid cloud ASR ([#588](https://github.com/semantic-craft/koe/issues/588)), collar standby endurance and A2DP headset hot-plugging ([#641](https://github.com/semantic-craft/koe/issues/641)), real macOS system-audio permission dialogs and output switching, routine signed-app Keychain inheritance on upgrade, and end-to-end physical hardware + IME daily acceptance ([#668](https://github.com/semantic-craft/koe/issues/668)). |
-| **Future scope (not wired today)** | iOS and Android hosts, Wi-Fi SoftAP transfer and firmware OTA, VAD silence segmentation, local speaker diarization, screen capture, multi-device sync, and external calendar writeback. |
-
-## Architecture and documentation
+Koe enforces a strict four-layer dependency direction across C ABI `KOE_HOST_API_VERSION = 2` with `catch_unwind` FFI isolation. `scripts/verify-ui-principles.py` caps every `.swift` file under `platforms/` and `crates/koe-host-api/src/lib.rs` at 500 lines.
 
 | Layer | Paths | Responsibility |
 | --- | --- | --- |
-| Domain and protocol | [koe-engine](crates/koe-engine/), [koe-opus](crates/koe-opus/) | I/O-free state machines, citation checks, BM25, D3200 protocol and crypto, static libopus wrapper |
-| Client services | [koe-client-base](crates/koe-client-base/), [providers](crates/koe-client-providers/), [services](crates/koe-client-services/) | Symlink-safe atomic writes and locks, HTTPS/WebSocket and offline ASR threads, audio assets, single-writer store |
-| Runtime and API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Command orchestration, bounded async queues, transactions, C ABI v2 snapshots, and `.koe/koe.sock` bridge |
-| Native host and CLI | [apple-shared](platforms/apple-shared/), [macos](platforms/macos/), [koe-cli](crates/koe-cli/) | SwiftUI workspaces, CoreBluetooth, CoreAudio, Keychain adapter, and CLI/MCP entrypoints |
+| Layer 1 · Engine | [koe-engine](crates/koe-engine/), [koe-opus](crates/koe-opus/) | I/O-free protocol and domain rules, D3200 crypto and slice alignment, ordered capture events, minutes grounding checks, task and memory review, BM25, and static `libopus` |
+| Layer 2 · Client | [koe-client-base](crates/koe-client-base/), [koe-client-providers](crates/koe-client-providers/), [koe-client-services](crates/koe-client-services/) | Symlink-safe atomic writes and file locks, HTTPS and WebSocket providers, local ASR worker threads, single-writer `ProductStore`, and audio custody |
+| Layer 3 · Runtime & Host API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Session orchestration, `RequestKey` transactions, binary PCM FFI fast path, immutable `generation` snapshots, and `.koe/koe.sock` bridge |
+| Layer 4 · Native Hosts & CLI | [apple-shared](platforms/apple-shared/), [macos](platforms/macos/), [koe-cli](crates/koe-cli/) | Scoped SwiftUI workspace views, CoreBluetooth, CoreAudio dual-lane tap and HAL monitor, Keychain adapter, and CLI and MCP entrypoints |
 
-Further reading: [Architecture](docs/ARCHITECTURE.md) · [D3200 Protocol Notes](PROTOCOL.md) · [Mode Workspaces](docs/mode-workspaces.md) · [Local Text Bridge](docs/local-text-bridge.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+Further reading: [Architecture & State Ownership](docs/ARCHITECTURE.md) · [D3200 Protocol Notes](PROTOCOL.md) · [Mode Workspaces](docs/mode-workspaces.md) · [Local Text Bridge](docs/local-text-bridge.md) · [v2.1.0 Release Notes](docs/releases/v2.1.0.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+
+## Open-source acknowledgements
+
+Koe combines ideas from open-source voice, wearable, and native IME projects into an independent Rust and SwiftUI codebase with full upstream attribution:
+
+| Project | Inspiration | Implementation in Koe |
+| --- | --- | --- |
+| **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple host four-layer split | Exposes versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private `koe.sock` bridge shared by GUI, CLI, and MCP |
+| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | Reverse-engineered D3200 BLE protocol notes and Dart client | Ports the protocol to `#![forbid(unsafe_code)]` Rust state machines with exact `166 * N` byte slice resume, double-tap flag parsing, and telemetry polling |
+| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Wearable disconnect WAL custody and review confirmation cards | Requires `CustodyReceipt` disk verification before `0x1A/0x10` device deletion, and wires three-state review to 16 MCP tools |
+| **[screenpipe](https://github.com/screenpipe/screenpipe)** | Timeline context aggregation and global live caption strip | Drives `LiveCaptionBar` directly from Rust `SpeechSession` snapshots across both D3200 and Mac microphone streams |
+| **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day 5-minute memory segments, multi-mode workspaces, citation relabeling, and optimistic locks | Ships four formal workspaces, non-blocking 5-minute segment pipelines, `RequestKey` guards, and `relabel_citations` |
+| **[Shiyin](https://github.com/juinwei7/Shiyin)** | CoreAudio mic + system audio capture and structured templates | Pairs `-100 dBFS` Barker-13 canary detection with system dialog inspection on a Rust-managed dual-lane sparse timeline |
+| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | Structured topic, decision, and action schemas and anti-fabrication rules | Runs deterministic `validate_minutes_grounding` checks in Rust that reject missing citations, invalid segment IDs, or ungrounded glossary edits |
+| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | Embedded static CPU ASR runtime and pinned model manifests | Hosts SenseVoice Small (~253 MB) and Qwen3 ASR 0.6B (~850 MB) in-process with streaming SHA-256 verification and atomic install |
+| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | Symlink path guards and debounced rolling live minutes | Enforces `reject_symlink_path` before disk I/O and schedules 3-utterance or 20s initial plus 45s debounced live minutes alongside IME bridging |
+
+## Verification status in v2.1.0
+
+Koe separates shipped and verified functionality, merged code awaiting physical hardware checks, and future roadmap items:
+
+| Status | Scope |
+| --- | --- |
+| **Shipped & verified (`v2.1.0` build `10`)** | 8-crate Rust core, notarized Developer ID `arm64` bundle, 4 formal SwiftUI workspaces, CoreAudio `CATapDescription` dual-lane capture, offline GGUF plus macOS 26 `SpeechAnalyzer`, scoped `@Observable` slices plus binary PCM FFI, BM25 search plus `validate_minutes_grounding` gate, 16 MCP tools, and verified local `/Applications/Koe.app` upgrade preserving workspace and Keychain items. |
+| **Merged, tracked for physical hardware check (`ready-for-human`)** | Today source strip and one-click bean switch physical check ([#722](https://github.com/semantic-craft/koe/issues/722)), closed-window physical D3200 wakeup and external headset hot-plug check ([#725](https://github.com/semantic-craft/koe/issues/725)), and Responsay physical shortcut check ([Responsay #822](https://github.com/semantic-craft/responsay-macos/issues/822)). |
+| **Next-stage roadmap (not wired in `2.1.0`)** | iOS and Android mobile hosts plus dual-device sync ([#124](https://github.com/semantic-craft/koe/issues/124), [#149](https://github.com/semantic-craft/koe/issues/149) to [#151](https://github.com/semantic-craft/koe/issues/151)), external AI delegation ([#152](https://github.com/semantic-craft/koe/issues/152) to [#155](https://github.com/semantic-craft/koe/issues/155)), Wi-Fi SoftAP fast transfer, firmware OTA, VAD dynamic segmentation, and local speaker diarization. |
 
 ## License
 
-The D3200 protocol notes and ported implementation build on [tacshi/Soundcore](https://github.com/tacshi/Soundcore) under the MIT License, Copyright (c) 2026 Rocky Shi ([full license](assets/licenses/soundcore.txt)). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for all upstream references and license texts.
+The D3200 protocol reverse-engineering notes and Rust port build on [tacshi/Soundcore](https://github.com/tacshi/Soundcore) under the MIT License, Copyright (c) 2026 Rocky Shi ([full license](assets/licenses/soundcore.txt)). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for all upstream references, model licenses, and notices.
 
-This repository remains private and is not publicly released. The MIT field in Cargo metadata does not replace third-party component licenses. Signed macOS bundles ship third-party notices and license texts under `Koe.app/Contents/Resources/Licenses/`.
+This repository remains private and is not publicly released. The MIT field in Cargo metadata does not override third-party component licenses. Signed macOS bundles include all third-party notices and license texts under `Koe.app/Contents/Resources/Licenses/`.

@@ -1,87 +1,83 @@
+<p align="center">
+  <img src="assets/artwork/koe-schoolgirl-b-cheerful.png" width="132" alt="Koe">
+</p>
+
 <h1 align="center">Koe</h1>
 
-<p align="center"><strong>把安克 soundcore Work（D3200）录音豆与日常会议记录，彻底拿回本地掌控。</strong></p>
-<p align="center"><em>纯 Rust 领域与协议内核 + 原生 SwiftUI macOS 宿主，集硬件直连、离线识别、可溯源纪要与 MCP 于一体。</em></p>
+<p align="center">
+  <strong>把安克 soundcore Work（D3200）录音豆与日常 Mac 会议，完整带回本机磁盘。</strong><br>
+  <sub>Bring your Anker soundcore Work (D3200) collar recorder and daily Mac meetings home to local disk.</sub>
+</p>
 
 <p align="center">
-  <img alt="Rust" src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white">
-  <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-5.10%2B-F05138?style=flat-square&logo=swift&logoColor=white">
+  <a href="docs/releases/v2.1.0.md"><img alt="v2.1.0" src="https://img.shields.io/badge/release-v2.1.0-1f6f54?style=flat-square"></a>
+  <img alt="Rust 2021" src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white">
+  <img alt="SwiftUI Native" src="https://img.shields.io/badge/SwiftUI-Native-F05138?style=flat-square&logo=swift&logoColor=white">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <img alt="Upstream license: MIT" src="https://img.shields.io/badge/Upstream_license-MIT-blue?style=flat-square">
+  <a href="assets/licenses/soundcore.txt"><img alt="Upstream license: MIT" src="https://img.shields.io/badge/Upstream_license-MIT-blue?style=flat-square"></a>
 </p>
 
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-安克 soundcore Work（D3200）是一颗做工紧凑、带本地加密和实体手势的录音豆。Koe 让它脱离飞书与云端账号，直接在 macOS 上运行，将硬件取回、音频处理、个人记忆与会议整理收拢进同一套本地优先桌面应用。
+安克 **soundcore Work（D3200）** 是一枚硬币大小、自带硬件加密与实体双击手势的领口录音豆，但原厂流程把录音锁在飞书或厂商云端账号里。**Koe 把 D3200 和你每天的 Mac 会议直接带回本机磁盘。**
 
-**Koe 的工程灵感来自多个优秀的开源项目，并在统一底座上形成了自己的设计取向。** 我们用纯 Rust 内核管理协议、音频资产、离线检索、证据校验与状态持久化，用原生 SwiftUI 呈现「一天一页」的界面。哪怕不配任何云端 API Key，录音、离线转写、播放、修订与本地检索也能照常工作。
+Koe 采用纯 Rust 内核（8 个 crate 中有 6 个开启 `#![forbid(unsafe_code)]`）配薄层原生 SwiftUI macOS 宿主，统一接管蓝牙协议、音频落盘校验、引用门禁与单写者存储。即使**完全离线、不填任何云端 API Key**，BLE 加密同步、本机语音识别（`SenseVoice Small`、`Qwen3 ASR 0.6B` 或 macOS 26 `SpeechAnalyzer`）、双路回放、逐句修订与 `<5 ms` 的 BM25 全库检索都能立刻使用。
 
-## 四种工作区与日常流程
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_connect_device.webp" width="120" alt="BLE GATT 直连"><br>
+      <sub><strong>1. BLE 直连免配对</strong><br>直连 GATT <code>020cf5da-...</code>，不占系统经典蓝牙，耳机保持立体声 A2DP，免飞书与安克登录。</sub>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_wear.webp" width="120" alt="领口佩戴与一键切源"><br>
+      <sub><strong>2. 全天佩戴与一键切源</strong><br>支持领口连续听记或单击闪记，今天页音源条支持一键切换为已连闲置录音豆。</sub>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_mark.webp" width="120" alt="正面双击与敲击门控"><br>
+      <sub><strong>3. 正面双击与敲击降噪</strong><br><code>20 ms</code> 精度记录双击书签或启停听写，自动切除开头 <code>60 ms</code> 与结尾 <code>240 ms</code> 外壳敲击声。</sub>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="assets/product/guide_sync.webp" width="120" alt="落盘校验与删档保护"><br>
+      <sub><strong>4. 校验落盘才删豆内文件</strong><br>本机完成 <code>fsync</code> 并签发 64 位 SHA-256 <code>CustodyReceipt</code> 后，内核才放行 <code>0x1A/0x10</code> 删档指令。</sub>
+    </td>
+  </tr>
+</table>
+</div>
 
-打开 Koe，产品围绕「今天在录什么、过去聊过什么、接下来要做什么」展开，侧栏切换页面不会打断正在进行的采集。
+## 一天一页，四种日常工作区
 
-| 工作区模式 | 适用场景 | 实际解决的问题 |
+打开 Koe，首页四宫格围绕「今天正在录什么、过去原话怎么说、接下来要做什么」组织，会话启停与进入页面彻底解耦，切换侧栏不会打断正在进行的录音。
+
+| 工作区 | 适用场景 | 实际工作流 |
 | --- | --- | --- |
-| **随心闪记**（默认） | 灵感、临时交代、待看书单 | 按下录音豆或快捷键默认进入闪记，原文进收件箱并保留原始时间戳，AI 分析独立展示，绝不覆盖你说过的原话。 |
-| **全天听记** | 连续佩戴一整天 | 自动按 5 分钟封段保存为独立记录，前一段在后台生成纪要和待办时，当前段照常录音不断流；时间线真实保留暂停与未录音空档。 |
-| **实时纪要** | 正在进行的会议或访谈 | 宽屏左右对照原文与纪要，窄屏标签切换；首次满 3 句或等满 20 秒触发首版整理，后续按 45 秒防抖滚动更新且不叠加并发请求；停录封口后才一次性生成待确认行动项，避免中途刷出重复待办。 |
-| **语音输入** | 任何软件的光标处听写 | 把 D3200 当成高便携领口麦，通过本机 Unix Socket 文字桥接外部输入法，由输入法完成润色与上屏，Koe 与输入法不重复识别同一段声音。 |
+| **随心闪记**（默认） | 灵感、临时交代、书单备忘 | 按下录音豆或快捷键默认落入闪记收件箱，保留原始时间戳并支持归入项目；AI 提炼与转写原文并排展示，绝不改写你说过的原话。 |
+| **全天听记** | 领口全天连续佩戴 | 自动按 5 分钟封段保存，前一段后台生成摘要与待办时当前段继续录音不断流；按墙钟合并同批事件，在单调时间线上如实标出暂停与未录音空档，供日终集中复查。 |
+| **实时纪要** | 线上或线下会议、访谈 | 通过 CoreAudio `CATapDescription` 同步录制 **Mac 系统声音与麦克风双路音轨**，戴耳机开会也能录齐双方声音；满 3 句或 20 秒出首版议题，后续按 45 秒防抖滚动刷新且不叠加并发请求，停录封口后单次提取待确认行动项。 |
+| **语音输入** | 任意应用光标处听写 | 通过本机 `koe.sock` 将干净语音流与双击边沿桥接给 Responsay 等外部输入法，内置六步联动自检与跨重连代次的光标测试框，Koe 与输入法不重复识别同一段声音。 |
 
-除了四种采集入口，日常整理与回溯围绕三项硬规则运行：
+四种采集模式共用同一份本地资料库，并受三条硬规则约束：
 
-- **每一句摘要和待办都必须能点回原话。** 纪要条目、待办事项、个人记忆与问答结果统一绑定 `record_id + segment_id` 复合引用。点一下来源直接跳回对应录音片段并支持音频拖动回放；编辑转写文字时，系统自动锁存 `original_text` 方便一键「恢复识别原文」，同时把旧纪要标为过期提醒重算。
-- **没有大模型也能问全库。** 内置基于中文双字切分与英文词项的 BM25 倒排索引，单测验证在 16,000 句、40 万字符语料上检索耗时低于 5 ms。未配置文字模型时，「问 Koe」直接返回带 `[S1]`、`[S2]` 编号的原话摘录；语料中找不到根据的问题在本地直接短路拒答，不浪费 Token 也不硬编答案。
-- **删改克制，支持完整进出。** 支持导入 WAV、UTF-8 TXT、Markdown 与自包含元数据及音频的 `.koepack` 资料包，也可导出标准 Markdown。已归档记录锁定防误删与防编辑；软删除进入 30 天回收站并弹出 8 秒即时撤销条；彻底清除采用两阶段提交，必须先进入回收站，且元数据事务落盘后才删除磁盘上的 `.wav` 与 `.opus` 文件。
+- **每一条摘要与待办都能点回原话。** 纪要、待办、个人记忆与问答结果统一绑定 `record_id + segment_id` 复合引用，点击即可跳回对应句段并拖动回放。人工修订转写时自动锁存 `original_text` 供一键恢复原文，同时将旧纪要标为待重算；Rust 引擎层的 `validate_minutes_grounding` 会直接打回缺引用、越界引用或捏造数字与词表纠错的生成结果。
+- **无大模型也能在 5 ms 内检索 40 万字语料。** 内置中文双字切分与英文词项 BM25 倒排索引，单测在 16,000 句、40 万字符语料上检索耗时低于 `5 ms`。未配置文字模型时，「问 Koe」离线直接返回带 `[S1]`、`[S2]` 编号的原话摘录；语料中缺乏依据的问题在本地直接短路拒答，不消耗 Token 也不编造结论。
+- **可逆的 30 天回收站、归档锁与开放进出。** 支持导入 WAV、UTF-8 TXT、Markdown 与自包含音频及元数据的 `.koepack` 资料包，并支持自定义字段导出标准 Markdown。归档记录锁定防改防删；软删除进入 30 天回收站并提供 8 秒即时撤销条；彻底清除采用两阶段提交，必须在元数据事务落盘后才删除磁盘上的 `.wav` 与 `.opus` 文件。
 
-## 充分发挥 Anker soundcore Work（D3200）硬件能力
+## 把硬件协议与原生性能做到位
 
-在 Koe 里，D3200 不只充当普通麦克风。我们在纯 Rust 内核里完整实现了它的私有 BLE 协议与音频管线，把硬件本身的加密、断点续传和手势能力都带进桌面日常：
+Koe 在纯 Rust 与原生 macOS 适配层处理蓝牙分片、高频采样与系统权限边界，避免跨层胶水拖慢桌面日常运行：
 
-1. **免系统配对、免飞书与免厂商云鉴权。** Mac 通过 CoreBluetooth 扫描 D3200 服务 UUID `020cf5da-0000-1000-8000-00805f9b34fb` 直连控制与通知通道，不走系统经典蓝牙绑定，也不经过 Anker 云端鉴权服务器；发送队列内置 300 ms 节流与分包切片，保证长包下发稳定。
-2. **全套 NIST P-256 ECDH 与 AES-256-CTR 硬件加密解密。** 在 `#![forbid(unsafe_code)]` 的纯 Rust 引擎内完成临时 P-256 密钥协商、RFC 5869 HKDF-SHA256 会话密钥派生、`soundcored3200` 文件密钥前缀验证，以及基于预计算 T-table 的 AES-256-CTR 零分配流式解密。
-3. **双路编码同步输出与 166 字节分片精准续传。** 针对上游协议在断线重连时的偏移错位问题，Koe 按实际 166 字节分片记录实现 `已收分片数 * 166` 精准断点续传。每片固定包含 4 字节序号、1 字节标志、160 字节 20 ms Opus 帧与 1 字节分隔，配合 5 秒无响应看门狗自动重拉。底层静态链接源码编译的 `libopus 1.5.2`，同时解码出 16 kHz 单声道 PCM16 供实时转写使用，以及 48 kHz 音轨供回放预览，并将原始 Opus 帧封装为标准 RFC 7845 Ogg Opus 归档。
-4. **先本地落盘核对 SHA-256，才允许删除硬件录音。** 借鉴穿戴设备托管机制，Koe 对每个拉取的文件签发包含字节数与 64 位 SHA-256 的 `CustodyReceipt`。除非本地 `.opus` 文件已经完成 `fsync` 落盘且校验通过，内核硬拒绝发出 `0x1A/0x10` 删除命令，从根本上杜绝传输中断导致的录音永久丢失。
-5. **正面双击打点与「防敲击咚咚声」物理门控。** 实时解析分片标志位 `flags & 0x01`，以 20 ms 精度把录音豆正面的双击动作记录为时间书签，或触发领口伴侣控制边沿。针对轻敲外壳不可避免产生的低频敲击声，Koe 在开始双击后跳过前 3 个分片即 60 ms，在结束双击时扣留并丢弃最后 12 个分片即 240 ms，再把干净的 `16 kHz` `PCM16` 流通过本地桥递给外部输入法。临时待命产生的豆内缓存文件在空闲时自动回收，用完也可通过 `releaseControl` 彻底交出蓝牙控制权，方便手机随时接管。
+- **纯 Rust D3200 密码学与 `166 * N` 分片精准续传。** `koe-engine` 在零 `unsafe` 环境下完成临时 NIST P-256 ECDH 密钥协商（`0x2E/0x01`）、RFC 5869 HKDF-SHA256 会话派生、`soundcored3200` 文件密钥校验与基于预计算 T-table 的零分配 AES-256-CTR 流式解密。离线拉取严格对齐 166 字节分片（4 字节序号、1 字节标志、160 字节 `20 ms` Opus 帧与 1 字节分隔），断线重连按 `已收分片数 * 166` 精准续传并配 5 秒无响应看门狗。源码静态编译的 `libopus 1.5.2` 同步解出 `16 kHz` 单声道 PCM16 供识别与 `48 kHz` 音轨供回放，同时封装标准 RFC 7845 Ogg Opus 归档（`koe-cli benchmark` 实测解密、解码并封装 `10,000` 包耗时 `75.07 ms`）。
+- **分域 `@Observable` 切片与 `1,314x` 离屏布局门控（`v2.1.0`）。** 二进制采样接口 `koe_host_session_ingest_pcm` 直接传递 `const int16_t *` 指针并按 `250 ms` 批次合并投影，将双路 `48 kHz` 采集 20 拍的全量快照广播从 `323` 次压至 `23` 次，采集 CPU 中位数降低 `81.15%`（`696.66 ms` 降至 `131.30 ms`）。Swift 侧将 `HostSessionStore` 拆分为 21 个 `Equatable` 领域切片，由 `scripts/verify-ui-principles.py` 静态拦截非叶子视图越权读取 4 Hz 状态，用 50 ms 防抖的 CoreAudio HAL 属性监听替代主线程每秒轮询，并在主窗口关闭或最小化时冻结离屏 `NSHostingView.layout()`，使关窗后台播放 40 拍耗时从 `307.60 ms` 降至 `0.23 ms`（提速 `1,314.5x`，离屏重排从 `40` 次降至 `0` 次）。
+- **无感 `-100 dBFS` Barker-13 系统音频权限探针。** macOS 未提供 CoreAudio 系统音频 tap 的公开授权回调，`AudioDeviceStart` 被拒时仅静默返回全零缓冲。Koe 在授权探测期向默认输出端注入人耳不可闻的 `-100 dBFS` Barker-13 序列并配合系统权限弹窗检测，仅在弹窗关闭且仍无非零回环时判定被拒；双路采集中任一路失败都会保留另一路已录音频。
+- **抗崩溃 `.capture` 落盘、`RequestKey` 防重扣费与两阶段 Keychain。** 麦克风录音直接写入 `<id>.capture`，每收到音频块即回写偏移量 0 处的 44 字节 WAV 头并执行 `sync_data()`，意外退出后重启自动校验并硬链恢复为正式 `.wav`。云端请求发送前先持久化 `RequestKey(record_id, attempt, input_revision)`，中断重启后统一标为 `Interrupted` 等待手动重试，绝不后台静默重发扣费。`meeting_audio_policy` 默认锁定 `LocalOnly`；签名版写入 macOS Keychain 前先在磁盘登记两阶段 `pending_credentials` 引用，启动时按精确 UUID 回收提交前崩溃孤儿项，且绝不读取 `.env` 或 `.envrc`。
 
-> **硬件通道现状说明。** [PROTOCOL.md](PROTOCOL.md) 中也记录了逆向所得的 Wi-Fi SoftAP 快传、经典蓝牙 SPP、固件 OTA、时间同步与设备绑定命令，但这些通道目前**尚未接入** Koe，当前全部通过 BLE GATT 完成传输且不负责固件升级。长文件云端拉取、领口待命功耗与蓝牙耳机热插拔共存正在对应真机工单中持续验收。
-
-## 设计理念与开源致谢
-
-在设计 Koe 时，我们围绕四条原则组织整个应用：
-
-- **纯音频与低打扰。** 专注语音采集、转写、回顾与行动，保持日常桌面运行轻量安静。
-- **本机单写者真相源。** 音频资产、逐字稿与审核结果以本地磁盘文件为唯一真相源；修订转写时保留 `original_text`，AI 纪要与问答只做引用叠加，不改写你说过的原话。
-- **把硬件细节带进桌面日常。** 从加密链路、分片续传到物理双击与敲击降噪，让录音豆的每一项硬件能力都有直接的软件配合。
-- **克制、可接线的工具边界。** 通过私有 Unix Socket 与 MCP 对接外部输入法与 AI Agent，让润色上屏、跨库检索和工具协作各司其职。
-
-Koe 的架构与诸多细节都受益于开源社区的多个项目。我们在代码中保留完整署名，并把各家所长结合进同一套 Rust 与 SwiftUI 实现：
-
-| 参考项目 | 启发 Koe 的灵感 | 在 Koe 中的工程落地与延伸 |
-| --- | --- | --- |
-| **[msime](https://github.com/metasequoiaime/msime)** | 纯 Rust 内核 + 全原生 Apple 宿主的四层分离架构 | 通过版本化 C ABI v2 与 `catch_unwind` 隔离 panic，SwiftUI 只渲染带单调 `generation` 的不可变快照，并补出私有 Unix Socket 桥让 App、CLI 与 MCP 共享同一活体状态 |
-| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | 安克 D3200 BLE 协议逆向文档与 Dart 实现 | 完整移植为内存安全的纯 Rust 状态机，按实测 166 字节分片对齐 `166 * N` 断点续传，并解析双击标志与状态遥测 |
-| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | 穿戴设备断线托管 WAL 与待办/记忆确认卡 | 把托管凭证做成硬性删档前置锁，将 `Proposed / Accepted / Dismissed` 三态审核接入本地单写者账本与 16 项 MCP 工具 |
-| **[screenpipe](https://github.com/screenpipe/screenpipe)** | 按时间轴聚合上下文与全局实时字幕条 | 让 `LiveCaptionBar` 直接由 Rust `SpeechSession` 状态快照驱动，麦克风与录音豆采集同源刷新 |
-| **[TaoSheng（涛声）](https://github.com/0xCoach/TaoSheng)** | 全天分段记忆、多模式工作区、问答引用自愈与并发乐观锁 | 落地四模式工作区、5 分钟分段流水线、`RequestKey` 防过期覆盖与 `relabel_citations` 引用重标 |
-| **[Shiyin（拾音）](https://github.com/juinwei7/Shiyin)** | CoreAudio 麦克风与系统音频采集、结构化纪要模板 | 配合 `-100 dBFS` Barker-13 无感探测信号与弹窗检测判定 macOS 系统音频授权，并由 Rust 统一管理双路稀疏时间轴与暂停代次 |
-| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | 议题/决策/行动项 JSON 结构与严格事实约束 | 在 Rust 引擎层加装 `validate_minutes_grounding` 确定性门禁，缺原文引用、引用越界或找不到原始听写词的纠错条目直接打回 |
-| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | 静态嵌入式离线 ASR 与模型校验清单 | 在 Rust 进程内托管 SenseVoice Small（约 253 MB）与 Qwen3 ASR 0.6B（约 850 MB），流式校验 SHA-256 后原子发布，中断时由 RAII 自动清理残片 |
-| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | 文件路径安全校验与实时滚动纪要节奏 | 移植 `reject_symlink_path` 防符号链接越界读写，落地 3 句/20 秒首发、45 秒防抖的增量纪要调度与双栏视图，并通过本地文字桥对接外部输入法 |
-
-## 工程上的可靠性与隐私边界
-
-真正决定一款录音工具能不能长期放心用，往往不是新功能有多少，而是出意外时它怎么收拾残局：
-
-- **录音写盘崩溃找回。** Mac 麦克风录音直接向 `<id>.capture` 增量落盘，每收到音频块就回写偏移量 0 处的 44 字节 WAV 头并调用 `sync_data()`。即使应用意外强退，下次启动自动校验波形并硬链恢复为正式 `.wav`，元数据提交成功前不删除暂存文件。
-- **macOS 系统音频权限的物理级探针。** Apple 没有提供查询 CoreAudio 系统音频 tap 授权的公开回调，调用 `AudioDeviceStart` 被拒时往往只返回数字静音。Koe 在授权检测期间向默认输出端注入一段人耳不可察觉的 `-100 dBFS` Barker-13 探测序列，同时扫描屏幕是否有系统权限弹窗，只有弹窗消失后仍收不到非零探测回环才判定被拒。
-- **绝不静默重复扣费。** 每次云端任务先登记 `RequestKey(record_id, attempt, input_revision)` 再发请求。一旦中途断网或重启，未完成任务统一转入 `Interrupted` 状态，等待用户检查配置后手动重试，不会在后台默默替你重发付费请求。
-- **音频默认不离本机与两阶段凭据提交。** `meeting_audio_policy` 默认锁定 `LocalOnly`，本机识别引擎不可用时绝不擅自切换云端。签名版 API Key 存入 macOS Keychain 时采用先登记 `pending_credentials` 到磁盘、再写 Keychain、最后退休旧引用的两阶段提交；半路崩溃留下的孤儿项会在下次启动按精确引用回收，清除凭据后写入墓碑防止旧版密钥复活。开发构建与签名版凭据彻底隔离，绝不偷读个人 `.env` 或 `.envrc`。
-- **内存安全与严格的模块边界。** Cargo 工作区开启 `unsafe_code = "deny"`，8 个 Rust crate 中有 6 个在根部加上 `#![forbid(unsafe_code)]`，仅 `koe-opus` 与 `koe-host-api` 两个 FFI 边界模块允许封装外部接口。静态构建 `libopus` 并禁用系统库探测；Swift 源码受门禁脚本卡死单文件不超过 500 行，禁止业务规则或状态字段渗透到界面层。
+> **硬件通道说明。** [PROTOCOL.md](PROTOCOL.md) 同时记录了逆向观测到的 Wi-Fi SoftAP 快传、经典蓝牙 SPP、固件 OTA、设备对时与绑定命令。这些通道在 Koe 当前版本**刻意未接入**，设备通信全部通过 BLE GATT 完成，固件升级仍由厂商应用负责。
 
 ## CLI 与 MCP
 
-Koe 启动后会在沙盒容器内开放属主私有的 Unix Socket，其中 `.koe` 目录权限为 `0700`、套接字权限为 `0600`，并通过 `getpeereid` 核对同用户 UID。命令行与外部 AI Agent 在 Koe 运行时实时接入同一套 `KoeRuntime` 会话，关闭后回退文件锁直开工作区，全程保持单写者一致性：
+Koe 运行时在容器目录内开放属主私有的 Unix Socket（`.koe` 目录权限 `0700`，`koe.sock` 权限 `0600`，经 `getpeereid` 校验同用户 UID）。CLI 与外部 AI Agent 在应用打开时直连同一活体 `KoeRuntime`，应用关闭后自动回退文件锁直开工作区，全程保持单写者一致性：
 
 ```bash
 cargo run --package koe-cli -- status
@@ -91,49 +87,67 @@ cargo run --package koe-cli -- mcp-stdio
 cargo run --package koe-cli -- companion-listen
 ```
 
-- **MCP stdio 服务（16 项工具）。** 开放全文检索、今日简报、记录列表与详情、带来源问答、待办/记忆审核与完成、新建笔记、原文分段批注、转写修订与说话人管理、归档与回收站恢复、D3200 设备状态与控制及代次轮询。**刻意不向 Agent 暴露彻底清除接口**，避免不可逆删库。
-- **外部输入法文字与音频桥。** 通过 [本地文字桥协议](docs/local-text-bridge.md) 订阅 `transcript_final` 定稿事件、`control_edge` 物理双击边沿与 `external_pcm_v1` 独占租约流，供第三方语音输入法直接消费 D3200 的干净录音。
+- **16 项 MCP stdio 工具。** 按需投影并提供全文检索、今日简报、记录列表与详情、带来源问答、待办与记忆审核及完成、新建笔记、分段批注、转写修订、说话人改名合并、归档与回收站恢复、D3200 状态控制与代次轮询。**按设计不向 Agent 暴露彻底清除接口**，防止不可逆删库。
+- **本机输入法文字与音频桥。** 通过 [本地文字桥协议](docs/local-text-bridge.md) 输出 `transcript_final` 定稿事件、`control_edge` 物理双击边沿与 `external_pcm_v1` 独占租约音频流，供 Responsay 等外部输入法直接消费干净的 `16 kHz` `PCM16` 语音。
 
-## 构建与运行
+## 构建与安装
 
-环境要求为 macOS 14+、Xcode Command Line Tools（Swift 5.10+）、Rust 工具链（1.85+）与 CMake。Opus 从锁定的依赖源码静态编译，无需在本机预先安装 `libopus`。
+构建需 macOS 14+（系统音频双路采集需 macOS 14.2+，Apple 本机识别需 macOS 26+）、Xcode Command Line Tools（Swift 5.10+）、Rust 1.85+ 与 CMake。`libopus 1.5.2` 从仓库锁定的源码静态编译，无需预先安装外部音频库。
 
 ```bash
-# 编译 C ABI 产物与原生 macOS 宿主
+# 编译 C ABI 静态库与原生 macOS 宿主
 cargo build --package koe-host-api
 swift build --package-path platforms/macos
 
-# 打包并使用 Developer ID 签名安装到 /Applications/Koe.app，自动运行自检与冒烟测试
+# 打包并以 Developer ID 签名安装至 /Applications/Koe.app，自动执行 --verify-self 与 --smoke-test
 ./scripts/install-macos.sh
 
-# 本地开发校验：快速检查与全量测试门禁
+# 本地开发门禁：快速增量校验与全量测试套件
 ./scripts/verify-local.sh --quick
 ./scripts/check
 ```
 
-## 当前边界与诚实清单
+## 四层架构与文档
 
-我们把做完的、测试通过的、以及尚未在真机或未来版本落地的部分分开交代：
+Koe 严格按四层单向依赖组织代码，C ABI 固定为 `KOE_HOST_API_VERSION = 2` 并通过 `catch_unwind` 隔离跨语言异常；门禁脚本强制限制 `platforms/` 下每个 `.swift` 文件及 `crates/koe-host-api/src/lib.rs` 不超过 500 行。
 
-| 状态 | 范围与说明 |
-| --- | --- |
-| **已实现并通过 CI / 本地门禁** | Rust 8-crate 内核、D3200 BLE 连接/握手/分片续传/托管逻辑、四模式 SwiftUI 工作区、离线 GGUF 与 Apple SpeechAnalyzer（macOS 26+）接入、CoreAudio 双路时间轴与探针代码、BM25 检索与纪要引用门禁、16 项 MCP 工具与本地桥接。 |
-| **已实现代码，待真机/实名账号继续验收** | D3200 完整长录音离线拉取叠加付费云转写（[#588](https://github.com/semantic-craft/koe/issues/588)）、领口待命功耗与蓝牙耳机热插拔共存（[#641](https://github.com/semantic-craft/koe/issues/641)）、macOS 系统音频双路真实权限弹窗与输出设备切换听感、常规覆盖升级的 Keychain 静默继承、物理设备与输入法完整日常连跑（[#668](https://github.com/semantic-craft/koe/issues/668)）。 |
-| **后续规划（当前未接入）** | iOS / Android 移动宿主、Wi-Fi SoftAP 快传与固件 OTA、基于静音检测的 VAD 动态切段、本机离线声纹聚类、屏幕画面采集、多设备数据同步与外部日历回写。 |
-
-## 架构与文档
-
-| 层级 | 目录 | 职责 |
+| 层级 | 目录 | 职责边界 |
 | --- | --- | --- |
-| 领域与协议 | [koe-engine](crates/koe-engine/)、[koe-opus](crates/koe-opus/) | 纯无 I/O 状态机、证据校验、BM25、D3200 协议与密码学、静态 libopus 封装 |
-| 客户端服务 | [koe-client-base](crates/koe-client-base/)、[providers](crates/koe-client-providers/)、[services](crates/koe-client-services/) | 防符号链接原子写与文件锁、真实 HTTPS/WebSocket 与离线模型线程、音频资产与单写者存储 |
-| 运行时与接口 | [koe-runtime](crates/koe-runtime/)、[koe-host-api](crates/koe-host-api/) | 命令协调、异步队列、持久化事务、C ABI v2 快照与 `.koe/koe.sock` 本地桥 |
-| 原生宿主与工具 | [apple-shared](platforms/apple-shared/)、[macos](platforms/macos/)、[koe-cli](crates/koe-cli/) | SwiftUI 页面、CoreBluetooth、CoreAudio、Keychain 适配与 CLI/MCP 入口 |
+| 第一层 Engine | [koe-engine](crates/koe-engine/)、[koe-opus](crates/koe-opus/) | 无 I/O 协议与领域状态机：D3200 加解密与分片对齐、采集排序、纪要证据门禁、待办/记忆审核、BM25 与静态 `libopus` 封装 |
+| 第二层 Client | [koe-client-base](crates/koe-client-base/)、[koe-client-providers](crates/koe-client-providers/)、[koe-client-services](crates/koe-client-services/) | 防符号链接原子写与文件锁、真实 HTTPS/WebSocket 流式请求与本机离线模型线程、单写者 `ProductStore` 与音频资产保管 |
+| 第三层 Runtime & Host API | [koe-runtime](crates/koe-runtime/)、[koe-host-api](crates/koe-host-api/) | 会话编排、`RequestKey` 持久化事务、二进制采样快路径、不可变 `generation` 快照与 `.koe/koe.sock` 本地桥 |
+| 第四层 Native Hosts & CLI | [apple-shared](platforms/apple-shared/)、[macos](platforms/macos/)、[koe-cli](crates/koe-cli/) | SwiftUI 分域切片视图、CoreBluetooth、CoreAudio 双路采集与 HAL 监听、Keychain 适配及 CLI/MCP 入口 |
 
-更多设计文档：[架构与状态所有权](docs/ARCHITECTURE.md) · [D3200 协议逆向笔记](PROTOCOL.md) · [四模式工作区定义](docs/mode-workspaces.md) · [本地文字桥协议](docs/local-text-bridge.md) · [路线图](ROADMAP.md) · [贡献指南](CONTRIBUTING.md) · [安全报告](SECURITY.md) · [第三方组件与署名](THIRD_PARTY_NOTICES.md)。
+延伸阅读：[架构与状态所有权](docs/ARCHITECTURE.md) · [D3200 协议逆向笔记](PROTOCOL.md) · [四模式工作区定义](docs/mode-workspaces.md) · [本地文字桥协议](docs/local-text-bridge.md) · [v2.1.0 发行说明](docs/releases/v2.1.0.md) · [路线图](ROADMAP.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [第三方组件与署名](THIRD_PARTY_NOTICES.md)。
+
+## 开源致谢
+
+Koe 在独立实现的 Rust 与 SwiftUI 代码底座上吸收了多个开源项目的架构与工程思路，并在仓库中完整保留上游署名与许可记录：
+
+| 项目 | 启发来源 | Koe 中的落地实现 |
+| --- | --- | --- |
+| **[msime](https://github.com/metasequoiaime/msime)** | 纯 Rust 内核配全原生 Apple 宿主的四层分离 | 以 C ABI v2、不可变 `generation` 快照与属主私有 `koe.sock` 让桌面端、CLI 与 MCP 共用同一运行时 |
+| **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | 安克 D3200 BLE 协议逆向文档与 Dart 实现 | 移植为零 `unsafe` 纯 Rust 状态机，按实测 166 字节记录对齐 `166 * N` 断点续传并解析双击与遥测标志 |
+| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | 穿戴设备断线 WAL 托管与审核确认卡 | 将 `CustodyReceipt` 设为 `0x1A/0x10` 硬件删档硬前置锁，把三态审核接入单写者存储与 16 项 MCP 工具 |
+| **[screenpipe](https://github.com/screenpipe/screenpipe)** | 时间轴上下文聚合与全局实时字幕条 | 由 Rust `SpeechSession` 快照直接驱动 `LiveCaptionBar`，统一录音豆与 Mac 麦克风实时字幕 |
+| **[TaoSheng（涛声）](https://github.com/0xCoach/TaoSheng)** | 全天分段记忆、多模式工作区、引用重标与乐观锁 | 落地四模式工作区、5 分钟无阻塞分段、`RequestKey` 防过期覆盖与 `relabel_citations` 引用重排 |
+| **[Shiyin（拾音）](https://github.com/juinwei7/Shiyin)** | CoreAudio 麦克风与系统音频采集及结构化纪要 | 结合 `-100 dBFS` Barker-13 探针与系统弹窗检测判定授权，由 Rust 统一对齐双路稀疏时间轴与暂停代次 |
+| **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | 议题/决策/行动项结构化约束与反编造规则 | 在引擎层执行确定性 `validate_minutes_grounding` 校验，拦截缺引用、越界分段号与无依据的数字或词表修订 |
+| **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | 静态嵌入式 CPU 离线识别与锁定模型清单 | 进程内运行 SenseVoice Small（约 253 MB）与 Qwen3 ASR 0.6B（约 850 MB），流式校验 SHA-256 后原子落盘 |
+| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | 符号链接越界防护与实时滚动纪要节奏 | 读写前执行 `reject_symlink_path` 校验，落地 3 句/20 秒首发、45 秒防抖纪要调度与本机输入法桥接 |
+
+## v2.1.0 验证现状与边界
+
+我们严格区分「已完成门禁与实包验证」「合入主线待物理硬件核对」与「下一阶段规划」三类状态：
+
+| 状态 | 覆盖范围 |
+| --- | --- |
+| **已交付并完成验证（`v2.1.0` 构建 `10`）** | Rust 8-crate 内核、通过 Apple Notary 公证的 Developer ID `arm64` 安装包、正式四大 SwiftUI 工作区、CoreAudio `CATapDescription` 双路采集、离线 GGUF 与 macOS 26 `SpeechAnalyzer` 本机识别、分域 `@Observable` 切片与二进制 PCM FFI、BM25 检索与纪要证据门禁、16 项 MCP 工具，以及 `/Applications/Koe.app` 本机覆盖升级保留工作区与 Keychain 凭据验证。 |
+| **已合入主线，追踪物理硬件核对（`ready-for-human`）** | 今天页音源状态条与一键切换录音豆实机核对（[#722](https://github.com/semantic-craft/koe/issues/722)）、关窗离屏态实体 D3200 按键唤醒与外接耳机热插拔核对（[#725](https://github.com/semantic-craft/koe/issues/725)），以及 Responsay 侧物理快捷键联调核对（[Responsay #822](https://github.com/semantic-craft/responsay-macos/issues/822)）。 |
+| **下一阶段规划（`2.1.0` 未接入）** | iOS 与 Android 移动宿主及双端同步（[#124](https://github.com/semantic-craft/koe/issues/124)、[#149](https://github.com/semantic-craft/koe/issues/149) 至 [#151](https://github.com/semantic-craft/koe/issues/151)）、外部 AI 委派协作（[#152](https://github.com/semantic-craft/koe/issues/152) 至 [#155](https://github.com/semantic-craft/koe/issues/155)）、Wi-Fi SoftAP 快传、固件 OTA、基于静音的 VAD 动态切段与本机离线声纹聚类。 |
 
 ## 许可证
 
-D3200 协议逆向文档与移植实现继承自 [tacshi/Soundcore](https://github.com/tacshi/Soundcore)（MIT License，Copyright (c) 2026 Rocky Shi），完整许可见 [soundcore.txt](assets/licenses/soundcore.txt)，其余第三方借鉴范围与许可正文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+D3200 协议逆向文档与 Rust 移植实现源自 [tacshi/Soundcore](https://github.com/tacshi/Soundcore)（MIT License，Copyright (c) 2026 Rocky Shi），完整许可正文见 [soundcore.txt](assets/licenses/soundcore.txt)；其余参考项目、模型与依赖许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-仓库目前保持私有，暂不公开发布。Cargo 元数据中的 MIT 字段不替代第三方组件的独立许可；macOS 安装包会在 `Koe.app/Contents/Resources/Licenses/` 内附带完整说明与许可正文。
+本仓库目前保持私有，暂不公开发布。Cargo 元数据中的 MIT 字段不替代第三方组件的独立许可证；签名版安装包会在 `Koe.app/Contents/Resources/Licenses/` 目录随包附带完整署名与许可正文。
