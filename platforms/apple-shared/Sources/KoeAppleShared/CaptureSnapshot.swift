@@ -108,6 +108,14 @@ public enum CaptureMode: String, Codable, Sendable {
     case allDay = "all_day"
     case meeting
 
+    public var section: HostSection {
+        switch self {
+        case .quickNote: .notes
+        case .allDay: .allDay
+        case .meeting: .liveMinutes
+        }
+    }
+
     public var title: String {
         switch self {
         case .quickNote: "随心闪记"
@@ -125,11 +133,7 @@ public enum CaptureMode: String, Codable, Sendable {
     }
 
     public var icon: String {
-        switch self {
-        case .quickNote: "waveform"
-        case .allDay: "sun.max"
-        case .meeting: "person.2"
-        }
+        section.icon
     }
 }
 

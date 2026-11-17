@@ -45,7 +45,7 @@ public struct QuickNoteWorkspaceView: View {
 
                 if quickNote.cards.isEmpty {
                     EmptyState(
-                        icon: "bolt.horizontal",
+                        icon: CaptureMode.quickNote.icon,
                         title: "还没有随心闪记",
                         detail: "使用上方开始一段语音闪记，或直接输入一段文字想法。"
                     )

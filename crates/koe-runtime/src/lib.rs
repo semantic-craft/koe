@@ -45,7 +45,7 @@ use provider_settings::ProviderSettings;
 mod transcript_edit;
 mod trash;
 
-use command::{DispatchMessage, HostIntent, Location, Page};
+use command::{DispatchMessage, Location, Page};
 pub use bridge_path::resolve_bridge_socket_path;
 #[cfg(test)]
 pub(crate) use bridge_path::resolve_bridge_socket_path_with_env;
@@ -557,7 +557,7 @@ impl KoeRuntime {
     /// Feeds real platform notifications into the existing protocol engine.
     pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
         let day_changed = self.advance_clock(now);
-        let lifecycle = self.lifecycle_json();
+        let lifecycle = self.lifecycle_state();
         let revision = self.workspace().revision();
         let error = self.error.clone();
         let mut changed = self.device.ingest(bytes, now);
@@ -572,7 +572,7 @@ impl KoeRuntime {
             || all_day_finished
             || revision != self.workspace().revision()
             || error != self.error
-            || lifecycle != self.lifecycle_json()
+            || lifecycle != self.lifecycle_state()
         {
             self.generation = self.generation.saturating_add(1);
         }
@@ -580,7 +580,7 @@ impl KoeRuntime {
     /// Advances protocol deadlines and consumes completed provider work.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now: u64) {
         let day_changed = self.advance_clock(now);
-        let lifecycle = self.lifecycle_json();
+        let lifecycle = self.lifecycle_state();
         let revision = self.workspace().revision();
         let error = self.error.clone();
         self.drain_error = None;
@@ -615,7 +615,7 @@ impl KoeRuntime {
             || trash_expired
             || revision != self.workspace().revision()
             || error != self.error
-            || lifecycle != self.lifecycle_json()
+            || lifecycle != self.lifecycle_state()
         {
             self.generation = self.generation.saturating_add(1);
         }

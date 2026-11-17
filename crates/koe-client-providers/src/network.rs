@@ -1,12 +1,11 @@
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use koe_engine::product::{
     DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_HTTP_BASE_URL, DEFAULT_DASHSCOPE_WS_URL,
     DEFAULT_TEXT_MODEL,
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot};
 
 mod asr;
 mod chat;
@@ -122,120 +121,6 @@ pub struct ProviderEvent {
     pub record_id: String,
     /// Provider output or a credential-safe diagnostic.
     pub result: Result<ProviderOutput, String>,
-}
-
-/// One bounded background worker. Submission and polling never perform network I/O.
-///
-/// A second task is refused until the first result is polled. Dropping the worker
-/// cancels its pending network future and lets the background thread shut down.
-pub struct ProviderWorker {
-    requests: mpsc::Sender<ProviderRequest>,
-    events: mpsc::Receiver<ProviderEvent>,
-    cancel: watch::Sender<bool>,
-    busy: AtomicBool,
-    audio_request: AtomicBool,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl ProviderWorker {
-    /// Starts an isolated async runtime on one background thread.
-    pub fn new() -> Result<Self, String> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| "无法创建云端工作线程".to_string())?;
-        let (requests, mut input) = mpsc::channel::<ProviderRequest>(1);
-        let (output, events) = mpsc::channel(1);
-        let (cancel, mut cancellation) = watch::channel(false);
-        let thread = std::thread::Builder::new().name("koe-provider".into()).spawn(move || {
-            runtime.block_on(async {
-                loop {
-                    let request = tokio::select! {
-                        biased;
-                        _ = cancellation.changed() => break,
-                        request = input.recv() => match request { Some(r) => r, None => break },
-                    };
-                    let result = tokio::select! {
-                        biased;
-                        _ = cancellation.changed() => break,
-                        result = tokio::time::timeout(request.timeout, execute(&request)) => {
-                            result.unwrap_or_else(|_| Err("云端请求超时，结果未知；未自动重试".into()))
-                        }
-                    };
-                    let event = ProviderEvent {
-                        operation_id: request.operation_id, record_id: request.record_id, result,
-                    };
-                    if output.send(event).await.is_err() { break; }
-                }
-            });
-            runtime.shutdown_timeout(Duration::from_millis(100));
-        }).map_err(|_| "无法启动云端工作线程".to_string())?;
-        Ok(Self {
-            requests,
-            events,
-            cancel,
-            busy: AtomicBool::new(false),
-            audio_request: AtomicBool::new(false),
-            thread: Some(thread),
-        })
-    }
-
-    /// Cancels only an accepted audio request and waits until its transport has stopped.
-    /// Text requests remain active; later explicit requests use a fresh worker.
-    pub fn cancel_audio(&mut self) -> Result<(), String> {
-        if !self.audio_request.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        self.stop();
-        *self = Self::new()?;
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        let _ = self.cancel.send(true);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-
-    /// Accepts one task or returns a validation/busy error without sending a request.
-    pub fn submit(&self, request: ProviderRequest) -> Result<(), String> {
-        validate(&request)?;
-        if self
-            .busy
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err("已有云端任务正在处理，请稍后重试".into());
-        }
-        self.audio_request.store(
-            matches!(request.task, ProviderTask::TranscribePcm16 { .. }),
-            Ordering::Release,
-        );
-        if self.requests.try_send(request).is_err() {
-            self.busy.store(false, Ordering::Release);
-            self.audio_request.store(false, Ordering::Release);
-            return Err("云端工作线程不可用".into());
-        }
-        Ok(())
-    }
-
-    /// Drains completed results without blocking.
-    pub fn poll(&mut self) -> Vec<ProviderEvent> {
-        let mut results = Vec::new();
-        while let Ok(result) = self.events.try_recv() {
-            results.push(result);
-            self.busy.store(false, Ordering::Release);
-            self.audio_request.store(false, Ordering::Release);
-        }
-        results
-    }
-}
-
-impl Drop for ProviderWorker {
-    fn drop(&mut self) {
-        self.stop();
-    }
 }
 
 /// Isolated execution lane inside [`ProviderPool`].

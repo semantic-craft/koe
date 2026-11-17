@@ -43,7 +43,7 @@ public struct LiveMinutesView: View {
                 if !lm.isActive && lm.selectedRecordId == nil && lm.pastMeetings.isEmpty {
                     KoeCard {
                         EmptyState(
-                            icon: "waveform.path.ecg",
+                            icon: CaptureMode.meeting.icon,
                             title: "暂无进行中或往期会议",
                             detail: "开启实时纪要后，这里会并排呈现实时转写与有原文依据的结构化纪要。"
                         )
@@ -77,7 +77,7 @@ public struct LiveMinutesView: View {
             Spacer(minLength: 12)
             HStack(spacing: 8) {
                 if !lm.isActive {
-                    KoeActionButton("开始实时纪要", systemImage: "waveform.path.ecg", isPrimary: true) {
+                    KoeActionButton("开始实时纪要", systemImage: CaptureMode.meeting.icon, isPrimary: true) {
                         store.startCapture(.meeting, stayOnPage: true)
                     }
                     .disabled(!lm.canStart)

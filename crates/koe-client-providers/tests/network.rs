@@ -2,13 +2,13 @@ use std::time::{Duration, Instant};
 
 use koe_client_providers::{
     ProviderConfig, ProviderLane, ProviderOutput, ProviderPool, ProviderRequest, ProviderTask,
-    ProviderWorker, DASHSCOPE_ASR_MODEL,
+    DASHSCOPE_ASR_MODEL,
 };
 
-fn wait_result(worker: &mut ProviderWorker) -> koe_client_providers::ProviderEvent {
+fn wait_result(pool: &mut ProviderPool) -> koe_client_providers::ProviderEvent {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(event) = worker.poll().pop() {
+        if let Some(event) = pool.poll().pop() {
             return event;
         }
         assert!(Instant::now() < deadline, "provider result deadline");
@@ -77,9 +77,10 @@ fn asr_waits_for_ack_and_finish_and_keeps_latest_final_sentence() {
             let _ = ws.close(None).await;
         });
     });
-    let mut worker = ProviderWorker::new().unwrap();
-    worker.submit(asr_request(endpoint)).unwrap();
-    let event = wait_result(&mut worker);
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(ProviderLane::Audio, asr_request(endpoint))
+        .unwrap();
+    let event = wait_result(&mut pool);
     assert_eq!(event.operation_id, 17);
     assert_eq!(event.record_id, "record-asr");
     assert_eq!(
@@ -123,7 +124,7 @@ fn timeout_is_terminal_and_drop_closes_pending_socket() {
             listener.set_nonblocking(true).unwrap();
             assert!(listener.accept().is_err(), "request retried automatically");
         });
-        let mut worker = ProviderWorker::new().unwrap();
+        let mut pool = ProviderPool::new().unwrap();
         let request = ProviderRequest {
             operation_id: 3,
             record_id: "timeout".into(),
@@ -138,20 +139,35 @@ fn timeout_is_terminal_and_drop_closes_pending_socket() {
             },
             timeout: Duration::from_millis(250),
         };
-        worker.submit(request).unwrap();
+        pool.submit(ProviderLane::Ask, request).unwrap();
         wait_connected.recv_timeout(Duration::from_secs(3)).unwrap();
         assert!(
-            worker
-                .submit(asr_request(endpoint.replace("http:", "ws:")))
-                .is_err(),
-            "unbounded concurrent request accepted"
+            pool.submit(
+                ProviderLane::Ask,
+                ProviderRequest {
+                    operation_id: 4,
+                    record_id: "timeout-2".into(),
+                    config: ProviderConfig::new(
+                        endpoint.clone(),
+                        "test-model".into(),
+                        "unit-test-key".into(),
+                    ),
+                    task: ProviderTask::Chat {
+                        system: "system".into(),
+                        user: "user-2".into(),
+                    },
+                    timeout: Duration::from_millis(250),
+                },
+            )
+            .is_err(),
+            "unbounded concurrent request accepted on same lane"
         );
         if drop_early {
-            drop(worker);
+            drop(pool);
         } else {
-            let event = wait_result(&mut worker);
+            let event = wait_result(&mut pool);
             assert!(event.result.unwrap_err().contains("超时"));
-            assert!(worker.poll().is_empty());
+            assert!(pool.poll().is_empty());
         }
         wait_closed.recv_timeout(Duration::from_secs(3)).unwrap();
         server.join().unwrap();
@@ -178,9 +194,10 @@ fn http_errors_do_not_echo_response_or_credential() {
     });
     let config = ProviderConfig::new(endpoint, "test-model".into(), "unit-test-key".into());
     assert!(!format!("{config:?}").contains("unit-test-key"));
-    let mut worker = ProviderWorker::new().unwrap();
-    worker
-        .submit(ProviderRequest {
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Summary,
+        ProviderRequest {
             operation_id: 1,
             record_id: "errors".into(),
             config,
@@ -189,9 +206,10 @@ fn http_errors_do_not_echo_response_or_credential() {
                 user: "user".into(),
             },
             timeout: Duration::from_secs(3),
-        })
-        .unwrap();
-    let error = wait_result(&mut worker).result.unwrap_err();
+        },
+    )
+    .unwrap();
+    let error = wait_result(&mut pool).result.unwrap_err();
     assert!(error.contains("401"));
     assert!(!error.contains("unit-test-key"));
     assert!(!error.contains("private"));
@@ -211,9 +229,10 @@ fn oversized_http_response_is_rejected_before_body_download() {
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4194305\r\nConnection: close\r\n\r\n")
             .unwrap();
     });
-    let mut worker = ProviderWorker::new().unwrap();
-    worker
-        .submit(ProviderRequest {
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Summary,
+        ProviderRequest {
             operation_id: 1,
             record_id: "oversize".into(),
             config: ProviderConfig::new(endpoint, "test-model".into(), "unit-test-key".into()),
@@ -222,9 +241,10 @@ fn oversized_http_response_is_rejected_before_body_download() {
                 user: "user".into(),
             },
             timeout: Duration::from_secs(3),
-        })
-        .unwrap();
-    assert!(wait_result(&mut worker)
+        },
+    )
+    .unwrap();
+    assert!(wait_result(&mut pool)
         .result
         .unwrap_err()
         .contains("4 MiB"));
@@ -269,9 +289,10 @@ fn asr_rejects_task_failure_and_foreign_task_result() {
                     .unwrap();
                 });
         });
-        let mut worker = ProviderWorker::new().unwrap();
-        worker.submit(asr_request(endpoint)).unwrap();
-        let error = wait_result(&mut worker).result.unwrap_err();
+        let mut pool = ProviderPool::new().unwrap();
+        pool.submit(ProviderLane::Audio, asr_request(endpoint))
+            .unwrap();
+        let error = wait_result(&mut pool).result.unwrap_err();
         assert!(error.contains(if foreign {
             "其他任务"
         } else {
@@ -322,9 +343,10 @@ fn chat_worker_sends_request_and_delivers_tagged_response() {
         let body = r#"{"choices":[{"message":{"content":"Only the recorded evidence."}}]}"#;
         write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
     });
-    let mut worker = ProviderWorker::new().unwrap();
-    worker
-        .submit(ProviderRequest {
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Summary,
+        ProviderRequest {
             operation_id: 42,
             record_id: "record-one".into(),
             config: ProviderConfig::new(endpoint, "qwen-plus".into(), "unit-test-key".into()),
@@ -333,14 +355,15 @@ fn chat_worker_sends_request_and_delivers_tagged_response() {
                 user: "explain the decision".into(),
             },
             timeout: Duration::from_secs(3),
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let event = loop {
-        if let Some(event) = worker.poll().pop() {
+        if let Some(event) = pool.poll().pop() {
             break event;
         }
-        assert!(Instant::now() < deadline, "worker did not complete");
+        assert!(Instant::now() < deadline, "pool did not complete");
         std::thread::sleep(Duration::from_millis(5));
     };
     assert_eq!(event.operation_id, 42);
@@ -412,9 +435,10 @@ fn loopback_chat_without_key_omits_authorization_and_returns_real_response() {
             r#"{"choices":[{"finish_reason":"stop","message":{"content":"Local model answer"}}]}"#;
         write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
     });
-    let mut worker = ProviderWorker::new().unwrap();
-    worker
-        .submit(ProviderRequest {
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Ask,
+        ProviderRequest {
             operation_id: 73,
             record_id: "local-chat-record".into(),
             config: ProviderConfig::new(endpoint, "local-model".into(), String::new()),
@@ -423,9 +447,10 @@ fn loopback_chat_without_key_omits_authorization_and_returns_real_response() {
                 user: "Use this recorded evidence".into(),
             },
             timeout: Duration::from_secs(3),
-        })
-        .unwrap();
-    let event = wait_result(&mut worker);
+        },
+    )
+    .unwrap();
+    let event = wait_result(&mut pool);
     assert_eq!(event.operation_id, 73);
     assert_eq!(
         event.result.unwrap(),
@@ -438,22 +463,25 @@ fn loopback_chat_without_key_omits_authorization_and_returns_real_response() {
 
 #[test]
 fn keyless_chat_is_rejected_for_cloud_and_lan_endpoints() {
-    let worker = ProviderWorker::new().unwrap();
+    let mut pool = ProviderPool::new().unwrap();
     for endpoint in [
         "https://api.example.com/v1/chat/completions",
         "http://192.168.1.5/v1/chat/completions",
         "https://192.168.1.5/v1/chat/completions",
     ] {
-        let result = worker.submit(ProviderRequest {
-            operation_id: 74,
-            record_id: "local-chat-record".into(),
-            config: ProviderConfig::new(endpoint.into(), "local-model".into(), String::new()),
-            task: ProviderTask::Chat {
-                system: "Keep the facts".into(),
-                user: "Use this recorded evidence".into(),
+        let result = pool.submit(
+            ProviderLane::Ask,
+            ProviderRequest {
+                operation_id: 74,
+                record_id: "local-chat-record".into(),
+                config: ProviderConfig::new(endpoint.into(), "local-model".into(), String::new()),
+                task: ProviderTask::Chat {
+                    system: "Keep the facts".into(),
+                    user: "Use this recorded evidence".into(),
+                },
+                timeout: Duration::from_secs(3),
             },
-            timeout: Duration::from_secs(3),
-        });
+        );
         assert!(result.is_err(), "accepted keyless endpoint {endpoint}");
     }
 }
