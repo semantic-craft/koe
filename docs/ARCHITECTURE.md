@@ -24,7 +24,7 @@ flowchart TD
 
 | 层 | 模块 | 拥有的责任 |
 | --- | --- | --- |
-| 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context.rs`、`session.rs`、`hash.rs`、`prng.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、协议、加密与纯哈希/伪随机工具；零外部依赖，不做文件或网络 I/O |
+| 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context/`、`minutes/`、`session/`、`hash.rs`、`prng.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、纪要验证、协议、加密与纯哈希/伪随机工具；零外部依赖，不做文件或网络 I/O |
 | 音频编解码边界 | `crates/koe-opus` | 对静态 libopus 的窄安全封装；保持 `OpusStreamDecoder` 接口 |
 | 客户端基础与格式 | `koe-client-base` | 原子文件工具与排他文件锁 |
 | 存储与传输服务 | `koe-client-services`、`koe-client-providers` | 持久化编解码、文件导入、音频资产、真实 HTTPS/WebSocket、后台网络与本机模型工作线程 |
