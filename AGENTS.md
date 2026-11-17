@@ -20,6 +20,7 @@ Koe 是对标 [`metasequoiaime/msime`](https://github.com/metasequoiaime/msime)�
 - 快速增量验证：`./scripts/verify-local.sh --quick`（编译、Clippy、脚本契约与 UI 原则）；默认执行全量测试。
 - 全量门禁：`check`（运行 `./scripts/check`：Python 脚本契约测试、`verify-ui-principles.py`、全量 `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `swift test --package-path platforms/macos`）。CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每个 PR 和 `main` 推送上运行此入口。
 - 构建并安装签名版 macOS 应用：`./scripts/install-macos.sh`（静态链接 `libkoe_host_api.a` 构建通用/原生二进制，打包并 Developer ID 签名为 `/Applications/Koe.app`，自动执行 `--verify-self` 与 `--smoke-test`）。
+- 打包并公证发布版 macOS 应用：`./scripts/release-macos.sh`（使用 `--options runtime --timestamp` 与 `platforms/macos/Release.entitlements`，经 `macos-notary` 与 `xw-notary` 提交公证并生成 zip 与 `SHA256SUMS.txt`）。
 - 实现、评审或验收前先读 [CONTRIBUTING.md](CONTRIBUTING.md) 的十条规则。
 - 写 BLE、录音、音频或记忆/待办类代码前，先用 `scripts/ref search` 检索上游、omi 和锁定版本依赖的同类实现，引用 `路径:行号` 再写；细则见 [docs/agents/reference-code.md](docs/agents/reference-code.md)。
 
