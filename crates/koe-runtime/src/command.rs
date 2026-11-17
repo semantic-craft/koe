@@ -163,10 +163,6 @@ pub(crate) enum HostIntent {
     },
     EmptyTrash,
     DismissUndoTrash,
-    ExportRecord {
-        record_id: String,
-        path: String,
-    },
     ExportWorkspaceMarkdown {
         #[serde(default)]
         record_id: Option<String>,

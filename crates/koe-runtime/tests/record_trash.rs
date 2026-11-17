@@ -1382,10 +1382,10 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
         NOW + 1,
     );
     assert_eq!(
-        ended["liveMinutes"]["scope"],
-        json!({"kind": "record", "id": meeting_id})
+        ended["workspaces"]["liveMinutes"]["selectedRecordId"],
+        meeting_id
     );
-    assert_eq!(ended["liveMinutes"]["phase"], "ended");
+    assert_eq!(ended["workspaces"]["liveMinutes"]["phase"], "ended");
 
     let trashed = dispatch_ok(
         &mut runtime,
@@ -1393,10 +1393,11 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
         NOW + 2,
     );
     assert!(
-        trashed["liveMinutes"].is_null(),
-        "trashing ended meeting record must clear liveMinutes scope, got: {}",
-        trashed["liveMinutes"]
+        trashed["workspaces"]["liveMinutes"]["selectedRecordId"].is_null(),
+        "trashing ended meeting record must clear liveMinutes selectedRecordId, got: {}",
+        trashed["workspaces"]["liveMinutes"]["selectedRecordId"]
     );
+    assert_eq!(trashed["workspaces"]["liveMinutes"]["phase"], "idle");
 
     let ad_started = dispatch_ok(
         &mut runtime,
@@ -1406,10 +1407,6 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
     let ad_mic = &ad_started["microphone"];
     let ad_id = ad_mic["recordId"].as_str().unwrap().to_owned();
     let ad_session = ad_mic["sessionId"].as_str().unwrap().to_owned();
-    let run_id = ad_started["liveMinutes"]["scope"]["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
     dispatch_ok(
         &mut runtime,
         json!({"type": "microphone_started", "recordId": ad_id, "sessionId": ad_session, "lane": "microphone", "sampleRate": 16000}),
@@ -1435,21 +1432,24 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
         json!({"type": "microphone_stopped", "recordId": ad_id, "sessionId": ad_session, "lane": "microphone", "sequence": 1, "epoch": 0}),
         NOW + 4,
     );
+    assert_eq!(ad_ended["workspaces"]["allDay"]["isActive"], false);
     assert_eq!(
-        ad_ended["liveMinutes"]["scope"],
-        json!({"kind": "all_day", "id": run_id})
+        ad_ended["workspaces"]["allDay"]["spans"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
-    assert_eq!(ad_ended["liveMinutes"]["phase"], "ended");
 
     let ad_trashed = dispatch_ok(
         &mut runtime,
         json!({"type": "trash_record", "recordId": ad_id}),
         NOW + 5,
     );
-    assert!(
-        ad_trashed["liveMinutes"].is_null(),
-        "trashing last live record of an idle all-day run must clear liveMinutes scope, got: {}",
-        ad_trashed["liveMinutes"]
+    assert_eq!(
+        ad_trashed["workspaces"]["allDay"]["spans"],
+        json!([]),
+        "trashing last live record of an idle all-day run must clear allDay spans"
     );
 }
 
@@ -1467,8 +1467,8 @@ fn cancelled_microphone_meeting_capture_detaches_live_minutes_scope_and_selectio
     let meeting_id = mic["recordId"].as_str().unwrap().to_owned();
     let meeting_session = mic["sessionId"].as_str().unwrap().to_owned();
     assert_eq!(
-        started["liveMinutes"]["scope"],
-        json!({"kind": "record", "id": meeting_id})
+        started["workspaces"]["liveMinutes"]["activeRecordId"],
+        json!(meeting_id)
     );
     assert_eq!(
         started["workspaces"]["liveMinutes"]["selectedRecordId"],
@@ -1492,11 +1492,7 @@ fn cancelled_microphone_meeting_capture_detaches_live_minutes_scope_and_selectio
         }),
         NOW + 1,
     );
-    assert!(
-        cancelled["liveMinutes"].is_null(),
-        "cancelling microphone meeting capture must detach liveMinutes scope, got: {}",
-        cancelled["liveMinutes"]
-    );
+    assert_eq!(cancelled["workspaces"]["liveMinutes"]["isActive"], false);
     assert!(
         cancelled["workspaces"]["liveMinutes"]["selectedRecordId"].is_null(),
         "cancelling microphone meeting capture must clear selectedRecordId, got: {}",

@@ -12,9 +12,9 @@ pub use offline_speech::{
 
 mod network;
 pub use network::{
-    LiveEvent, LiveTranscription, ProviderConfig, ProviderEvent, ProviderOutput, ProviderRequest,
-    ProviderTask, ProviderWorker, TranscriptSegment, DASHSCOPE_ASR_ENDPOINT, DASHSCOPE_ASR_MODEL,
-    DASHSCOPE_CHAT_ENDPOINT, DASHSCOPE_CHAT_MODEL,
+    LiveEvent, LiveTranscription, ProviderConfig, ProviderEvent, ProviderLane, ProviderOutput,
+    ProviderPool, ProviderRequest, ProviderTask, ProviderWorker, TranscriptSegment,
+    DASHSCOPE_ASR_ENDPOINT, DASHSCOPE_ASR_MODEL, DASHSCOPE_CHAT_ENDPOINT, DASHSCOPE_CHAT_MODEL,
 };
 
 /// RFC 6455 WebSocket frame opcode used by DashScope.

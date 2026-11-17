@@ -20,7 +20,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case purgeRecord(recordId: String)
     case emptyTrash
     case dismissUndoTrash
-    case exportRecord(recordId: String, path: String)
     case exportWorkspaceMarkdown(
         recordId: String? = nil,
         date: String? = nil,
@@ -103,7 +102,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .purgeRecord: "purge_record"
         case .emptyTrash: "empty_trash"
         case .dismissUndoTrash: "dismiss_undo_trash"
-        case .exportRecord: "export_record"
         case .exportWorkspaceMarkdown: "export_workspace_markdown"
         case .reviewItem: "review_item"
         case .completeTask: "complete_task"
@@ -185,9 +183,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case let .setRecordArchived(recordId, archived):
             try c.encode(recordId, forKey: .recordId)
             try c.encode(archived, forKey: .archived)
-        case let .exportRecord(recordId, path):
-            try c.encode(recordId, forKey: .recordId)
-            try c.encode(path, forKey: .path)
         case let .exportWorkspaceMarkdown(recordId, date, path, includeAnalysis, includeSources):
             try c.encodeIfPresent(recordId, forKey: .recordId)
             try c.encodeIfPresent(date, forKey: .date)

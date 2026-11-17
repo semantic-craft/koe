@@ -45,7 +45,7 @@ mod trash;
 
 use command::{AdapterEvent, DispatchMessage, HostIntent, Location, Page};
 use device::DeviceRuntime;
-use koe_client_providers::ProviderWorker;
+use koe_client_providers::{ProviderLane, ProviderPool};
 use koe_client_services::{product_store::ProductStore, recording_assets};
 use koe_engine::{domain::SegmentId, product::*};
 pub use local_asr::LocalAsrEffect;
@@ -170,6 +170,16 @@ enum PendingWork {
     Ask(u64),
 }
 
+impl PendingWork {
+    const fn lane(&self) -> ProviderLane {
+        match self {
+            Self::Transcription(_) => ProviderLane::Audio,
+            Self::Summary(_) | Self::LiveSummary { .. } => ProviderLane::Summary,
+            Self::Ask(_) => ProviderLane::Ask,
+        }
+    }
+}
+
 /// Serialized application session. Network I/O runs on an owned background worker.
 pub struct KoeRuntime {
     store: ProductStore,
@@ -177,7 +187,7 @@ pub struct KoeRuntime {
     generation: u64,
     selection: selection::WorkspaceSelection,
     device: DeviceRuntime,
-    provider: ProviderWorker,
+    provider: ProviderPool,
     settings: ProviderSettings,
     credentials: Box<dyn credentials::CredentialStore>,
     pending: BTreeMap<u64, PendingWork>,
@@ -223,7 +233,7 @@ impl KoeRuntime {
             generation: 1,
             selection: Default::default(),
             device: DeviceRuntime::default(),
-            provider: ProviderWorker::new()?,
+            provider: ProviderPool::new()?,
             settings: ProviderSettings::default(),
             credentials,
             pending: BTreeMap::new(),
@@ -689,9 +699,6 @@ impl KoeRuntime {
             HostIntent::PurgeRecord { record_id } => self.handle_purge_record(&record_id)?,
             HostIntent::EmptyTrash => self.handle_empty_trash()?,
             HostIntent::DismissUndoTrash => self.handle_dismiss_undo_trash(),
-            HostIntent::ExportRecord { record_id, path } => {
-                self.export_record(&record_id, Path::new(&path))?
-            }
             HostIntent::ExportWorkspaceMarkdown {
                 record_id,
                 date,
@@ -864,23 +871,10 @@ impl KoeRuntime {
                 self.device.outbound.push(frame);
             }
             HostIntent::DeviceStart => {
-                if self.microphone.is_some() {
-                    return Err("请先结束当前麦克风录音并完成保存".into());
-                }
-                if !self.device.is_connected() {
-                    return Err("请先连接录音豆".into());
-                }
-                let quitting = self.is_quitting();
-                self.device.reset_failed_transfer_if_idle(quitting);
-                self.ensure_device_idle()?;
-                let outcome = self
-                    .device
-                    .session
-                    .start_realtime_recording(None, now.saturating_mul(1000));
-                self.device.accept(outcome);
+                self.start_device_recording(now)?;
             }
             HostIntent::DeviceStop => {
-                self.device.stop_recording();
+                self.stop_device_recording();
             }
         }
         Ok(())
@@ -1070,7 +1064,7 @@ impl KoeRuntime {
         before > 0 && projection::local_date(before) != projection::local_date(now)
     }
 
-    fn ensure_device_idle(&self) -> Result<(), String> {
+    pub(crate) fn ensure_device_idle(&self) -> Result<(), String> {
         use koe_engine::session::TransferPhaseTag;
         if self.device.awaiting_stop
             || matches!(

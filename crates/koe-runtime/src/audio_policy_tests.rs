@@ -544,8 +544,17 @@ fn local_only_keeps_text_summary_and_ask_available() {
 
 #[test]
 fn refused_audio_submission_does_not_cancel_the_active_text_request() {
-    let (dir, mut runtime, listener) = setup();
-    let audio = imported(&mut runtime, &dir.0);
+    let (dir, mut runtime, _listener) = setup();
+    let audio1 = imported(&mut runtime, &dir.0);
+    let audio2_path = dir.0.join("meeting-2.wav");
+    let mut wav2 = koe_engine::wav::OpusWave::wav_header_with_rate(640, 16000).to_vec();
+    wav2.extend(vec![1; 640]);
+    fs::write(&audio2_path, wav2).unwrap();
+    let audio2 = dispatch(&mut runtime, json!({"type":"import_file","path":audio2_path}))
+        ["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let note = dispatch(
         &mut runtime,
         json!({"type":"create_note","title":"Planning","text":"Mina sends prototype tomorrow."}),
@@ -553,26 +562,39 @@ fn refused_audio_submission_does_not_cancel_the_active_text_request() {
         .as_str()
         .unwrap()
         .to_owned();
-    let (endpoint, ready, release, server) =
+    let (asr_endpoint, asr_ready, asr_release, asr_server) = waiting_asr();
+    let (chat_endpoint, chat_ready, chat_release, chat_server) =
         held_chat("Mina sends prototype tomorrow. [S1]".into());
     dispatch(
         &mut runtime,
-        json!({"type":"configure_provider","model":"fixture","chatEndpoint":endpoint}),
+        json!({
+            "type":"configure_provider",
+            "apiKey":"policy-fixture",
+            "model":"fixture",
+            "asrEndpoint":asr_endpoint,
+            "chatEndpoint":chat_endpoint
+        }),
     );
     dispatch(
         &mut runtime,
         json!({"type":"ask","question":"Mina","scope":"record","recordId":note}),
     );
-    ready.recv_timeout(Duration::from_secs(5)).unwrap();
-    let refused = dispatch(&mut runtime, json!({"type":"transcribe","recordId":audio}));
-    assert!(refused["error"].is_string());
+    chat_ready.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    // Ask lane is busy, so Audio lane still accepts audio1; a second audio submission is refused.
+    let accepted = dispatch(&mut runtime, json!({"type":"transcribe","recordId":audio1}));
+    assert!(accepted["error"].is_null(), "{accepted}");
+    asr_ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    let refused = dispatch(&mut runtime, json!({"type":"transcribe","recordId":audio2}));
+    assert!(refused["error"].is_string(), "{refused}");
+
     policy(&mut runtime, "local_only");
-    release.send(()).unwrap();
-    server.join().unwrap();
+    asr_release.send(()).unwrap();
+    let _ = asr_server.join();
+    chat_release.send(()).unwrap();
+    chat_server.join().unwrap();
     wait_result(&mut runtime, |r| r.pending.is_empty());
     assert_eq!(runtime.snapshot(NOW)["ask"]["phase"], "ready");
-    drop(runtime);
-    assert_no_connection(&listener);
 }
 
 #[cfg(unix)]

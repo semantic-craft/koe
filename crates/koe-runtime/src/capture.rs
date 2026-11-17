@@ -1,12 +1,12 @@
 use super::*;
 use crate::speech::CaptureOrigin;
+use koe_client_providers::ProviderLane;
 use koe_engine::session::CaptureEvent;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Default)]
 pub(super) struct Captures {
     pub(super) active: BTreeMap<u32, String>,
-    pub(super) records_by_file_id: BTreeMap<u32, String>,
     pub(super) sessions: BTreeMap<String, crate::speech::SpeechSession>,
     pub targets: VecDeque<(u32, String)>,
 }
@@ -101,7 +101,6 @@ impl KoeRuntime {
                                 })
                         });
                         if !salvageable_from_catalog {
-                            self.captures.records_by_file_id.remove(&file_id);
                             if let Some(id) = id {
                                 if !self.captures.sessions.contains_key(&id)
                                     && !has_recording_asset(&self.root, &id).unwrap_or(true)
@@ -154,42 +153,45 @@ impl KoeRuntime {
             }
             Ok(())
         })?;
-        if group.is_none() {
-            if bean_mode == Some(command::CaptureMode::Meeting) {
-                self.selection.live_minutes_scope =
-                    Some(crate::live_minutes::LiveMinutesScope::Record(id.clone()));
-                self.selection.selected_live_minutes_record = Some(id.clone());
-            } else if bean_mode == Some(command::CaptureMode::QuickNote) {
-                self.selection.selected_quick_note_record = Some(id.clone());
-            }
+        if group.is_none() && bean_mode == Some(command::CaptureMode::QuickNote) {
+            self.selection.selected_quick_note_record = Some(id.clone());
+        } else if group.is_none() && bean_mode == Some(command::CaptureMode::Meeting) {
+            self.selection.selected_live_minutes_record = Some(id.clone());
         }
         self.captures.active.insert(file_id, id.clone());
-        self.captures.records_by_file_id.insert(file_id, id.clone());
         Ok(id)
     }
     pub(super) fn drive_analysis_queue(&mut self) {
-        if self.is_quitting()
-            || (!self.text_provider_configured() && self.auto_transcribe.is_empty())
-        {
+        if self.is_quitting() {
             return;
         }
         let _ = self.reclaim_stale_summaries();
-        if !self.pending.is_empty() || !self.completed.is_empty() {
-            return;
+        if self.text_provider_configured() && !self.has_pending_in_lane(ProviderLane::Summary) {
+            if let Some(id) = self.auto_summarize.first().cloned() {
+                self.drive_next_auto_item(&id, true);
+            }
         }
-        let summary = self.text_provider_configured() && !self.auto_summarize.is_empty();
-        let Some(id) = (if summary {
-            self.auto_summarize.first()
-        } else {
-            self.auto_transcribe.first()
-        })
-        .cloned() else {
-            return;
-        };
-        if !summary && !self.speech_ready(&self.record_speech_engine(&id)) {
-            return;
+        if !self.auto_transcribe.is_empty() {
+            let next_id = self
+                .auto_transcribe
+                .iter()
+                .find(|id| {
+                    let engine = self.record_speech_engine(id);
+                    if engine == SpeechEngine::Cloud {
+                        !self.has_pending_in_lane(ProviderLane::Audio)
+                    } else {
+                        self.speech_ready(&engine)
+                    }
+                })
+                .cloned();
+            if let Some(id) = next_id {
+                self.drive_next_auto_item(&id, false);
+            }
         }
-        let needed = self.workspace().record(&id).is_some_and(|record| {
+    }
+
+    fn drive_next_auto_item(&mut self, id: &str, summary: bool) {
+        let needed = self.workspace().record(id).is_some_and(|record| {
             record.is_live()
                 && if summary {
                     !record.aggregate.spine.is_empty()
@@ -203,9 +205,9 @@ impl KoeRuntime {
         let result = if !needed {
             Ok(())
         } else if summary {
-            self.try_start_summary(&id)
+            self.try_start_summary(id)
         } else {
-            self.try_start_transcription(&id)
+            self.try_start_transcription(id)
         };
         let started = self.pending.values().any(|work| match work {
             PendingWork::Transcription(key)
@@ -215,9 +217,9 @@ impl KoeRuntime {
         });
         if result.is_ok() || result.as_ref().is_err_and(|e| !e.retryable()) || started {
             if summary {
-                self.auto_summarize.remove(&id);
+                self.auto_summarize.remove(id);
             } else {
-                self.auto_transcribe.remove(&id);
+                self.auto_transcribe.remove(id);
             }
         }
         if let Err(error) = result {

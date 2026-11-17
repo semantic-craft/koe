@@ -369,7 +369,6 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public var microphone: MicrophoneSnapshot? = nil
     public var capture: CaptureStudioSnapshot = .empty
     public var lifecycle: LifecycleSnapshot? = nil
-    public var captureModes: [CaptureModeSnapshot] = []
     public var activeCapture: ActiveCaptureSnapshot? = nil
     public var workspaces: ModeWorkspacesSnapshot? = nil
     public let version: UInt32
@@ -393,7 +392,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case liveCaption, speech
-        case captureModes, activeCapture, workspaces
+        case activeCapture, workspaces
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records
         case trashRecords, undoTrash, detail, tasks, memories, ask
@@ -428,7 +427,6 @@ extension HostSnapshot {
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
         capture = try c.decodeIfPresent(CaptureStudioSnapshot.self, forKey: .capture) ?? .empty
         lifecycle = try c.decodeIfPresent(LifecycleSnapshot.self, forKey: .lifecycle)
-        captureModes = try c.decodeIfPresent([CaptureModeSnapshot].self, forKey: .captureModes) ?? []
         activeCapture = try c.decodeIfPresent(ActiveCaptureSnapshot.self, forKey: .activeCapture)
         workspaces = try c.decodeIfPresent(ModeWorkspacesSnapshot.self, forKey: .workspaces)
         version = try c.decode(UInt32.self, forKey: .version)

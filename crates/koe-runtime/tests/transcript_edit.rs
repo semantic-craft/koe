@@ -1094,7 +1094,7 @@ fn markdown_export_includes_speaker_prefixes_and_stale_minutes_banner() {
     let fresh_md = dir.0.join("fresh.md");
     dispatch_ok(
         &mut runtime,
-        json!({"type": "export_record", "recordId": id, "path": fresh_md}),
+        json!({"type": "export_workspace_markdown", "recordId": id, "path": fresh_md}),
         NOW,
     );
     let fresh_text = fs::read_to_string(&fresh_md).unwrap();
@@ -1116,19 +1116,20 @@ fn markdown_export_includes_speaker_prefixes_and_stale_minutes_banner() {
     let stale_md = dir.0.join("stale.md");
     dispatch_ok(
         &mut runtime,
-        json!({"type": "export_record", "recordId": id, "path": stale_md}),
+        json!({"type": "export_workspace_markdown", "recordId": id, "path": stale_md}),
         NOW + 1,
     );
     let stale_text = fs::read_to_string(&stale_md).unwrap();
+    assert!(stale_text.starts_with("# 导出纪要\n"));
     assert!(stale_text.contains(
-        "# 导出纪要\n\n> 注：原文已变更，以下纪要待重新整理。\n\n张工确认推进 80% 灰度方案。\n\n"
+        "## AI 整理\n\n> 注：原文已变更，以下纪要待重新整理。\n\n张工确认推进 80% 灰度方案。\n\n"
     ));
     assert!(stale_text.contains("[S1] 张工：推进 85% 灰度方案。\n\n"));
     assert!(stale_text.contains("[S2] 补充压测报告。\n\n"));
 }
 
 #[test]
-fn stale_summary_reclaim_unblocks_trash_and_busy_ask_preserves_record_state() {
+fn stale_summary_reclaim_unblocks_trash_and_busy_summary_lane_preserves_record_state_while_ask_runs_independently() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let chat_url = format!("http://{}/chat/completions", listener.local_addr().unwrap());
@@ -1137,6 +1138,8 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_ask_preserves_record_state() {
     let (release_req1, hold_req1) = mpsc::channel::<()>();
     let (req2_seen, wait_req2) = mpsc::channel();
     let (release_req2, hold_req2) = mpsc::channel::<String>();
+    let (req3_seen, wait_req3) = mpsc::channel();
+    let (release_req3, hold_req3) = mpsc::channel::<String>();
 
     let server = thread::spawn(move || {
         let s1 = accept_http_stream(&listener);
@@ -1146,6 +1149,12 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_ask_preserves_record_state() {
 
         let s2 = accept_http_stream(&listener);
         req2_seen.send(()).unwrap();
+
+        let s3 = accept_http_stream(&listener);
+        req3_seen.send(()).unwrap();
+        let body3 = hold_req3.recv_timeout(Duration::from_secs(10)).unwrap();
+        write_chat_response(s3, &body3);
+
         let body2 = hold_req2.recv_timeout(Duration::from_secs(10)).unwrap();
         write_chat_response(s2, &body2);
     });
@@ -1163,6 +1172,14 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_ask_preserves_record_state() {
     let rec2 = dispatch_ok(
         &mut runtime,
         json!({"type": "create_note", "title": "网关预案", "text": "负责主备切换演练。"}),
+        NOW,
+    )["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rec3 = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "容量规划", "text": "核对峰值并发预算。"}),
         NOW,
     )["selectedRecordId"]
         .as_str()
@@ -1231,6 +1248,15 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_ask_preserves_record_state() {
     );
     wait_req2.recv_timeout(Duration::from_secs(5)).unwrap();
 
+    // Ask lane is busy, but Summary lane must accept rec3 independently.
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "summarize", "recordId": rec3}),
+        NOW + 2,
+    );
+    wait_req3.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    // Summary lane is now busy with rec3, so rec2 summarize must reject cleanly without corrupting rec2 state.
     let busy = dispatch_raw(
         &mut runtime,
         json!({"type": "summarize", "recordId": rec2}),
@@ -1249,11 +1275,19 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_ask_preserves_record_state() {
     );
     assert_eq!(selected_rec2["detail"]["status"], "已有文字");
 
+    release_req3
+        .send(r#"{"schemaVersion":2,"title":"容量规划","overview":"核对峰值并发预算。","topics":[],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#.into())
+        .unwrap();
     release_req2
         .send("林架构师负责主备切换演练 [S1]。".into())
         .unwrap();
     let answered = poll_until(&mut runtime, NOW + 3, |rt| {
-        rt.snapshot(NOW + 3)["ask"]["phase"] == "ready"
+        let snap = rt.snapshot(NOW + 3);
+        snap["ask"]["phase"] == "ready"
+            && matches!(
+                rt.workspace().record(&rec3).unwrap().analysis,
+                AnalysisState::Ready { .. }
+            )
     });
     server.join().unwrap();
     assert!(answered["error"].is_null());

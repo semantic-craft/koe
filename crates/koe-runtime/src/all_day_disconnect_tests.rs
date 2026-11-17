@@ -289,9 +289,10 @@ fn aborted_empty_bean_capture_purges_shell_and_device_release_finishes_all_day()
     assert!(released["error"].is_null(), "{released}");
     let quit = command(&mut runtime, json!({"type":"request_quit"}));
     assert!(
-        snap["allDay"]["state"] == "idle" && quit["lifecycle"]["quitPhase"] == "ready",
-        "device_disconnect during active bean all_day must finish run and allow clean quit; got allDay.state={}, quitPhase={}",
-        snap["allDay"]["state"],
+        snap["workspaces"]["allDay"]["isActive"] == false
+            && quit["lifecycle"]["quitPhase"] == "ready",
+        "device_disconnect during active bean all_day must finish run and allow clean quit; got allDay.isActive={}, quitPhase={}",
+        snap["workspaces"]["allDay"]["isActive"],
         quit["lifecycle"]["quitPhase"]
     );
     assert!(
@@ -369,7 +370,7 @@ fn all_day_bean_disconnect_finishes_run_and_reconnect_pulls_full_hardware_file()
 
         let snap = runtime.snapshot(NOW + 2);
         assert_eq!(
-            snap["allDay"]["state"], "idle",
+            snap["workspaces"]["allDay"]["isActive"], false,
             "BLE disconnect must finish bean all-day run once salvaged segments drain"
         );
         let seg1 = runtime
@@ -508,7 +509,10 @@ fn all_day_bean_disconnect_finishes_run_and_reconnect_pulls_full_hardware_file()
         settle_local_speech(&mut runtime, NOW + 1);
         runtime.poll_timers(0, NOW + 1);
 
-        assert_eq!(runtime.snapshot(NOW + 1)["allDay"]["state"], "idle");
+        assert_eq!(
+            runtime.snapshot(NOW + 1)["workspaces"]["allDay"]["isActive"],
+            false
+        );
         assert!(runtime.captures.active.is_empty());
         assert!(runtime.captures.targets.is_empty());
         assert!(!runtime.is_device_file_synced(951));
@@ -538,7 +542,10 @@ fn all_day_bean_disconnect_finishes_run_and_reconnect_pulls_full_hardware_file()
         settle_local_speech(&mut runtime, NOW + 3);
         runtime.poll_timers(0, NOW + 3);
 
-        assert_eq!(runtime.snapshot(NOW + 3)["allDay"]["state"], "idle");
+        assert_eq!(
+            runtime.snapshot(NOW + 3)["workspaces"]["allDay"]["isActive"],
+            false
+        );
         assert!(runtime.captures.active.is_empty());
         assert!(runtime.captures.targets.is_empty());
         assert!(runtime.workspace().record(&shell_953_id).is_none());
@@ -782,7 +789,10 @@ fn all_day_microphone_cross_segment_pause_and_resume_preserves_valid_timelines()
         }),
     );
 
-    assert_eq!(runtime.snapshot(NOW)["allDay"]["state"], "idle");
+    assert_eq!(
+        runtime.snapshot(NOW)["workspaces"]["allDay"]["isActive"],
+        false
+    );
     assert_eq!(runtime.workspace().records().len(), 2);
 
     drop(runtime);

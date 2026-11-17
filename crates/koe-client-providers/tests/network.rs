@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use koe_client_providers::{
-    ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask, ProviderWorker,
-    DASHSCOPE_ASR_MODEL,
+    ProviderConfig, ProviderLane, ProviderOutput, ProviderPool, ProviderRequest, ProviderTask,
+    ProviderWorker, DASHSCOPE_ASR_MODEL,
 };
 
 fn wait_result(worker: &mut ProviderWorker) -> koe_client_providers::ProviderEvent {
@@ -456,4 +456,171 @@ fn keyless_chat_is_rejected_for_cloud_and_lan_endpoints() {
         });
         assert!(result.is_err(), "accepted keyless endpoint {endpoint}");
     }
+}
+
+#[test]
+fn provider_pool_isolates_lanes_and_cancels_stale_summary_without_blocking() {
+    use std::io::{Read, Write};
+    use std::sync::mpsc;
+
+    let ask_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let ask_endpoint = format!("http://{}/chat/completions", ask_listener.local_addr().unwrap());
+    let summary_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let summary_endpoint = format!(
+        "http://{}/chat/completions",
+        summary_listener.local_addr().unwrap()
+    );
+
+    let (ask_seen, wait_ask) = mpsc::channel();
+    let (release_ask, hold_ask) = mpsc::channel();
+    let ask_server = std::thread::spawn(move || {
+        let (mut stream, _) = ask_listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        assert!(stream.read(&mut buf).unwrap() > 0);
+        ask_seen.send(()).unwrap();
+        hold_ask.recv_timeout(Duration::from_secs(5)).unwrap();
+        let body = r#"{"choices":[{"finish_reason":"stop","message":{"content":"ask-ok"}}]}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let (sum1_seen, wait_sum1) = mpsc::channel();
+    let (sum1_closed, wait_sum1_closed) = mpsc::channel();
+    let summary_server = std::thread::spawn(move || {
+        let (mut s1, _) = summary_listener.accept().unwrap();
+        s1.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut buf = [0u8; 4096];
+        assert!(s1.read(&mut buf).unwrap() > 0);
+        sum1_seen.send(()).unwrap();
+        loop {
+            match s1.read(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break,
+                Err(e) => panic!("stale summary socket not closed: {e}"),
+            }
+        }
+        sum1_closed.send(()).unwrap();
+
+        let (mut s2, _) = summary_listener.accept().unwrap();
+        assert!(s2.read(&mut buf).unwrap() > 0);
+        let body = r#"{"choices":[{"finish_reason":"stop","message":{"content":"summary-ok"}}]}"#;
+        write!(
+            s2,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Ask,
+        ProviderRequest {
+            operation_id: 1,
+            record_id: "ask".into(),
+            config: ProviderConfig::new(ask_endpoint, "model".into(), "key".into()),
+            task: ProviderTask::Chat {
+                system: "sys".into(),
+                user: "question".into(),
+            },
+            timeout: Duration::from_secs(5),
+        },
+    )
+    .unwrap();
+    wait_ask.recv_timeout(Duration::from_secs(3)).unwrap();
+
+    // Ask lane is busy, so a second Ask must fail, while Summary lane remains free.
+    assert!(pool
+        .submit(
+            ProviderLane::Ask,
+            ProviderRequest {
+                operation_id: 2,
+                record_id: "ask".into(),
+                config: ProviderConfig::new(summary_endpoint.clone(), "model".into(), "key".into()),
+                task: ProviderTask::Chat {
+                    system: "sys".into(),
+                    user: "q2".into(),
+                },
+                timeout: Duration::from_secs(5),
+            }
+        )
+        .is_err());
+
+    pool.submit(
+        ProviderLane::Summary,
+        ProviderRequest {
+            operation_id: 3,
+            record_id: "rec-1".into(),
+            config: ProviderConfig::new(summary_endpoint.clone(), "model".into(), "key".into()),
+            task: ProviderTask::Chat {
+                system: "sys".into(),
+                user: "stale-summary".into(),
+            },
+            timeout: Duration::from_secs(5),
+        },
+    )
+    .unwrap();
+    wait_sum1.recv_timeout(Duration::from_secs(3)).unwrap();
+
+    // Cancel stale Summary without blocking, and verify Ask is untouched while Summary slot reopens.
+    let cancel_started = Instant::now();
+    pool.cancel(ProviderLane::Summary, 3);
+    assert!(cancel_started.elapsed() < Duration::from_millis(50));
+    wait_sum1_closed
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap();
+
+    pool.submit(
+        ProviderLane::Summary,
+        ProviderRequest {
+            operation_id: 4,
+            record_id: "rec-2".into(),
+            config: ProviderConfig::new(summary_endpoint, "model".into(), "key".into()),
+            task: ProviderTask::Chat {
+                system: "sys".into(),
+                user: "fresh-summary".into(),
+            },
+            timeout: Duration::from_secs(5),
+        },
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::new();
+    while !events.iter().any(|e: &koe_client_providers::ProviderEvent| e.operation_id == 4) {
+        events.extend(pool.poll());
+        assert!(Instant::now() < deadline, "fresh summary must complete while Ask is still pending");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!events.iter().any(|e| e.operation_id == 3));
+    assert_eq!(
+        events.iter().find(|e| e.operation_id == 4).unwrap().result,
+        Ok(ProviderOutput::Chat {
+            text: "summary-ok".into()
+        })
+    );
+    assert!(pool.is_lane_busy(ProviderLane::Ask));
+
+    release_ask.send(()).unwrap();
+    while !events.iter().any(|e| e.operation_id == 1) {
+        events.extend(pool.poll());
+        assert!(Instant::now() < deadline, "in-flight Ask must complete");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        events.iter().find(|e| e.operation_id == 1).unwrap().result,
+        Ok(ProviderOutput::Chat {
+            text: "ask-ok".into()
+        })
+    );
+
+    ask_server.join().unwrap();
+    summary_server.join().unwrap();
 }

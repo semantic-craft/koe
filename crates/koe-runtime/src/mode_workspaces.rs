@@ -87,30 +87,6 @@ impl KoeRuntime {
         Ok(())
     }
 
-    pub(super) fn export_record(&mut self, id: &str, path: &Path) -> Result<(), String> {
-        let record = self.workspace().record(id).ok_or("记录不存在")?;
-        record.ensure_live().map_err(|e| e.to_string())?;
-        let mut output = format!("# {}\n\n", record.title);
-        if let Some(minutes) = &record.aggregate.minutes {
-            if record.is_minutes_stale() {
-                output.push_str("> 注：原文已变更，以下纪要待重新整理。\n\n");
-            }
-            output.push_str(&format!("{}\n\n", minutes.overview));
-            for topic in &minutes.topics {
-                output.push_str(&format!("## {}\n\n{}\n\n", topic.title, topic.summary));
-            }
-        }
-        output.push_str("## 原文\n\n");
-        for segment in record.aggregate.spine.segments() {
-            if let Some(sp) = segment.speaker.as_deref().filter(|s| !s.is_empty()) {
-                output.push_str(&format!("[{}] {}：{}\n\n", segment.id, sp, segment.text));
-            } else {
-                output.push_str(&format!("[{}] {}\n\n", segment.id, segment.text));
-            }
-        }
-        self.write_exported_markdown(path, &output, "已导出 Markdown")
-    }
-
     pub(super) fn export_workspace_markdown(
         &mut self,
         record_id: Option<&str>,

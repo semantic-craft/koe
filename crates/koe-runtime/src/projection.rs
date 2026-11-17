@@ -10,11 +10,11 @@ use serde_json::json;
 impl KoeRuntime {
     pub(super) fn sorted_records(&self) -> Vec<&ProductRecord> {
         let mut records: Vec<_> = self.workspace().records().values().collect();
-        records.sort_by_key(|r| {
-            std::cmp::Reverse((
-                r.aggregate.created_at_epoch_sec,
-                r.aggregate.recording_id.clone(),
-            ))
+        records.sort_by(|a, b| {
+            b.aggregate
+                .created_at_epoch_sec
+                .cmp(&a.aggregate.created_at_epoch_sec)
+                .then_with(|| b.aggregate.recording_id.cmp(&a.aggregate.recording_id))
         });
         records
     }
@@ -251,15 +251,15 @@ impl KoeRuntime {
             microphone.as_ref(),
             &capture_selection,
         );
-        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"lifecycle": self.lifecycle_json(),
-            "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
+        json!({"speech":self.speech_json(),"lifecycle": self.lifecycle_json(),
+            "activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
             "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.selection.location.page,
             "canGoBack":!self.selection.back.is_empty(),"selectedRecordId":self.selection.location.record,"focusSegmentId":self.selection.location.segment,
             "records":rows,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "workspaces":workspaces,
             "ask":ask_json,
             "device":device_json,
-            "liveCaption":self.live_caption_json(),"liveMinutes":self.live_minutes_view(),
+            "liveCaption":self.live_caption_json(),
             "provider":self.provider_json(),
             "playback":self.playback_json(),
             "error":self.error,"notice":self.notice})

@@ -8,11 +8,6 @@ impl KoeRuntime {
             return Some("录音仍在进行或等待保存，完成后才能");
         }
         let in_captures = self.captures.active.values().any(|rid| rid == id)
-            || self
-                .captures
-                .records_by_file_id
-                .values()
-                .any(|rid| rid == id)
             || self.captures.sessions.contains_key(id)
             || self.captures.targets.iter().any(|(_, rid)| rid == id);
         if in_captures {
@@ -37,7 +32,7 @@ impl KoeRuntime {
         if let Some(fid) = bean_file_id {
             let transfer_busy = self.device.session.is_file_in_flight(fid);
             let capture_busy = self.captures.active.contains_key(&fid)
-                || self.captures.records_by_file_id.contains_key(&fid);
+                || self.captures.targets.iter().any(|(f, _)| *f == fid);
             let finalized_busy = self.device.finalized.iter().any(|r| r.entry.id == fid);
             if transfer_busy || capture_busy || finalized_busy {
                 return Some("这条录音正在同步或保存中，请等待完成后再");

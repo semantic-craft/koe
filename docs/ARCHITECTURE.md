@@ -12,7 +12,7 @@ flowchart TD
     API --> Runtime
     Runtime --> Store[ProductStore]
     Runtime --> Speech[SpeechSession]
-    Speech --> Network[ProviderWorker / LiveTranscription]
+    Speech --> Network[ProviderPool / LiveTranscription]
     Speech --> Offline[OfflineSpeechWorker]
     Runtime --> Device[DeviceRuntime / TransportSession]
     Store --> Domain[ProductWorkspace / RecordingAggregate]

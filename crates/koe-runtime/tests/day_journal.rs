@@ -38,26 +38,33 @@ fn meeting_keeps_live_minutes_across_ask_and_record_navigation() {
     let (mut runtime, sandbox) = runtime();
     let empty = send(&mut runtime, json!({"type":"navigate","section":"live_minutes"}));
     assert_eq!(empty["section"], "live_minutes");
-    assert!(empty["liveMinutes"].is_null());
+    assert_eq!(empty["workspaces"]["liveMinutes"]["isActive"], false);
+    assert!(empty["workspaces"]["liveMinutes"]["selectedRecordId"].is_null());
     let imported = sandbox.0.join("历史材料.txt");
     std::fs::write(&imported, "历史材料不属于本次录音").unwrap();
     let note = send(&mut runtime, json!({"type":"import_file","path":imported}));
-    assert!(note["liveMinutes"].is_null());
+    assert_eq!(note["workspaces"]["liveMinutes"]["isActive"], false);
     let unrelated = note["selectedRecordId"].clone();
 
     let started = send(&mut runtime, json!({"type":"start_capture_mode","mode":"meeting"}));
     assert_eq!(started["section"], "live_minutes");
-    let scope = &started["liveMinutes"]["scope"];
-    assert_eq!(scope, &json!({"kind":"record","id":started["microphone"]["recordId"]}));
+    let active_id = started["workspaces"]["liveMinutes"]["activeRecordId"].clone();
+    assert_eq!(active_id, started["microphone"]["recordId"]);
     for destination in ["ask", "live_minutes"] {
         let snapshot = send(&mut runtime, json!({"type":"navigate","section":destination}));
         assert_eq!(snapshot["section"], destination);
-        assert_eq!(&snapshot["liveMinutes"]["scope"], scope);
+        assert_eq!(
+            snapshot["workspaces"]["liveMinutes"]["activeRecordId"],
+            active_id
+        );
     }
     let detail = send(&mut runtime, json!({"type":"select_record","recordId":unrelated}));
     assert_eq!(detail["selectedRecordId"], unrelated);
-    assert_eq!(&detail["liveMinutes"]["scope"], scope);
-    assert_eq!(detail["liveMinutes"]["parts"], json!([]));
+    assert_eq!(
+        detail["workspaces"]["liveMinutes"]["activeRecordId"],
+        active_id
+    );
+    assert_eq!(detail["workspaces"]["liveMinutes"]["segments"], json!([]));
 }
 
 #[test]

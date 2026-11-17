@@ -9,14 +9,6 @@ use serde_json::json;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ModeEntry<'a> {
-    mode: CaptureMode,
-    source_label: &'a str,
-    available: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct ActiveCapture<'a> {
     mode: CaptureMode,
     phase: &'a str,
@@ -28,14 +20,48 @@ struct ActiveCapture<'a> {
 }
 
 impl KoeRuntime {
+    pub(super) fn start_device_recording(&mut self, now: u64) -> Result<(), String> {
+        if self.is_quitting() || self.store.requires_reopen() {
+            return Err("当前状态暂不可开始录音豆录音".into());
+        }
+        if self.microphone.is_some() {
+            return Err("请先结束当前麦克风录音并完成保存".into());
+        }
+        if self.all_day.run.is_some() || self.bean_capture_mode.is_some() {
+            return Err("当前无法开始记录，请检查录音音源或结束当前记录".into());
+        }
+        if !self.device.is_connected() {
+            return Err("请先连接录音豆".into());
+        }
+        let quitting = self.is_quitting();
+        self.device.reset_failed_transfer_if_idle(quitting);
+        self.ensure_device_idle()?;
+        let outcome = self
+            .device
+            .session
+            .start_realtime_recording(None, now.saturating_mul(1000));
+        self.device.accept(outcome);
+        Ok(())
+    }
+
+    pub(super) fn stop_device_recording(&mut self) {
+        self.device.stop_recording();
+    }
+
     pub(super) fn bean_capture_pending(&self) -> bool {
         self.is_bean_meeting_recording()
             || self.device.session.pending_realtime_subscribe
             || !self.captures.active.is_empty()
             || self.device.finalized.iter().any(|recording| {
-                self.captures
-                    .records_by_file_id
-                    .contains_key(&recording.entry.id)
+                recording.is_realtime
+                    || self
+                        .captures
+                        .targets
+                        .iter()
+                        .any(|(fid, _)| *fid == recording.entry.id)
+                    || self
+                        .unsaved_bean_capture_record_id(recording.entry.id)
+                        .is_some()
             })
     }
 
@@ -57,7 +83,7 @@ impl KoeRuntime {
                 now,
             )?;
         } else if bean {
-            self.dispatch_message(DispatchMessage::Intent(HostIntent::DeviceStart), now)?;
+            self.start_device_recording(now)?;
         } else {
             self.start_microphone(
                 selection.input_id,
@@ -72,14 +98,10 @@ impl KoeRuntime {
             self.bean_capture_mode = Some(mode);
         }
         if mode == CaptureMode::Meeting {
-            let scope = if let Some(mic) = &self.microphone {
-                let rec_id = mic.current_record_id().to_owned();
-                self.selection.selected_live_minutes_record = Some(rec_id.clone());
-                crate::live_minutes::LiveMinutesScope::Record(rec_id)
-            } else {
-                crate::live_minutes::LiveMinutesScope::BeanStarting
-            };
-            self.selection.live_minutes_scope = Some(scope);
+            if let Some(mic) = &self.microphone {
+                self.selection.selected_live_minutes_record =
+                    Some(mic.current_record_id().to_owned());
+            }
             if !stay_on_page {
                 self.go(Location {
                     page: Page::LiveMinutes,
@@ -131,19 +153,6 @@ impl KoeRuntime {
 
     pub(super) fn can_start_capture_mode(&self, selection: &CaptureSelection) -> bool {
         selection.can_start && self.all_day.run.is_none() && self.bean_capture_mode.is_none()
-    }
-
-    pub(super) fn capture_modes_json(&self, selection: &CaptureSelection) -> Value {
-        json!([
-            CaptureMode::QuickNote,
-            CaptureMode::AllDay,
-            CaptureMode::Meeting,
-        ]
-        .map(|mode| ModeEntry {
-            mode,
-            source_label: &selection.label,
-            available: self.can_start_capture_mode(selection),
-        }))
     }
 
     pub(super) fn active_capture_json(

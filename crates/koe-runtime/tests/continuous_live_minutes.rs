@@ -197,7 +197,7 @@ fn continuous_minutes_publish_unchanged_prefix_and_catch_up_after_stop_tail() {
     let appending = final_line(&mut runtime, operation, 1, "继续确认细节");
     assert_eq!(appending["microphone"]["phase"], "recording");
     assert_eq!(
-        appending["liveMinutes"]["parts"][0]["segments"]
+        appending["workspaces"]["liveMinutes"]["segments"]
             .as_array()
             .unwrap()
             .len(),
@@ -205,12 +205,12 @@ fn continuous_minutes_publish_unchanged_prefix_and_catch_up_after_stop_tail() {
     );
     release.send(()).unwrap();
     let partial = wait_until(&mut runtime, |s| {
-        s["liveMinutes"]["parts"][0]["summary"][0]["text"] == "开始讨论方案"
+        s["workspaces"]["liveMinutes"]["liveSections"][0]["text"] == "开始讨论方案"
     });
     assert_eq!(partial["microphone"]["phase"], "recording");
-    assert_eq!(partial["liveMinutes"]["parts"][0]["minutesStale"], true);
+    assert_eq!(partial["workspaces"]["liveMinutes"]["minutesStale"], true);
     assert_eq!(
-        partial["liveMinutes"]["parts"][0]["summary"][1]["sources"][0]["quote"],
+        partial["workspaces"]["liveMinutes"]["liveSections"][1]["sources"][0]["quote"],
         "开始讨论方案"
     );
     assert!(
@@ -226,17 +226,21 @@ fn continuous_minutes_publish_unchanged_prefix_and_catch_up_after_stop_tail() {
     let rolling = requests.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(rolling["messages"].to_string().contains("继续确认细节"));
     let refreshing = runtime.snapshot(100);
+    let record_id = mic["recordId"].as_str().unwrap();
+    assert!(matches!(
+        runtime.workspace().record(record_id).unwrap().live_summary,
+        koe_engine::product::AnalysisState::Pending {
+            stage: koe_engine::product::AnalysisStage::Summarizing,
+            ..
+        }
+    ));
     assert_eq!(
-        refreshing["liveMinutes"]["parts"][0]["analysis"],
-        "summarizing"
-    );
-    assert_eq!(
-        refreshing["liveMinutes"]["parts"][0]["summary"][0]["text"],
+        refreshing["workspaces"]["liveMinutes"]["liveSections"][0]["text"],
         "开始讨论方案"
     );
     release.send(()).unwrap();
     wait_until(&mut runtime, |s| {
-        s["liveMinutes"]["parts"][0]["summary"][0]["text"] == "继续确认细节"
+        s["workspaces"]["liveMinutes"]["liveSections"][0]["text"] == "继续确认细节"
     });
     advance_with_drafts(&mut runtime, operation, 45_000);
     assert!(
@@ -254,28 +258,26 @@ fn continuous_minutes_publish_unchanged_prefix_and_catch_up_after_stop_tail() {
         json!({"type":"local_asr_finished","operationId":operation}),
     );
     runtime.poll_timers(0, 100);
-    let final_request = requests
-        .recv_timeout(Duration::from_secs(2))
-        .expect("stop tail must trigger final catch-up");
+    let final_request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(final_request["messages"]
         .to_string()
         .contains("停止时补上末句"));
     let pending = runtime.snapshot(100);
     assert_eq!(
-        pending["liveMinutes"]["parts"][0]["analysis"],
-        "summarizing"
+        pending["workspaces"]["liveMinutes"]["coverage"]["consolidationStage"],
+        "in_progress"
     );
     assert_eq!(
-        pending["liveMinutes"]["parts"][0]["summary"][0]["text"],
+        pending["workspaces"]["liveMinutes"]["liveSections"][0]["text"],
         "继续确认细节"
     );
     release.send(()).unwrap();
     let done = wait_until(&mut runtime, |s| {
-        s["liveMinutes"]["parts"][0]["analysis"] == "ready"
+        s["workspaces"]["liveMinutes"]["coverage"]["consolidationStage"] == "ready"
     });
-    assert_eq!(done["liveMinutes"]["parts"][0]["minutesStale"], false);
+    assert_eq!(done["workspaces"]["liveMinutes"]["minutesStale"], false);
     assert_eq!(
-        done["liveMinutes"]["parts"][0]["summary"][1]["sources"][0]["quote"],
+        done["workspaces"]["liveMinutes"]["finalSections"][1]["sources"][0]["quote"],
         "停止时补上末句"
     );
     server.join().unwrap();
@@ -341,9 +343,10 @@ fn failed_live_minutes_do_not_repeat_the_revision_and_final_pass_owns_its_outcom
             .recv_timeout(Duration::from_secs(2))
             .expect("three finalized segments start the first pass");
         release.send(()).unwrap();
-        wait_until(&mut runtime, |s| {
-            s["liveMinutes"]["parts"][0]["analysis"] == "failed"
+        let failed_live = wait_until(&mut runtime, |s| {
+            s["workspaces"]["liveMinutes"]["error"].is_string()
         });
+        assert!(failed_live["workspaces"]["liveMinutes"]["error"].is_string());
         send(&mut runtime, json!({"type":"clear_error"}));
         advance_with_drafts(&mut runtime, operation, 45_000);
         assert!(
@@ -366,17 +369,20 @@ fn failed_live_minutes_do_not_repeat_the_revision_and_final_pass_owns_its_outcom
             .to_string()
             .contains("停止后的完整末句"));
         assert_eq!(
-            runtime.snapshot(100)["liveMinutes"]["parts"][0]["analysis"],
-            "summarizing"
+            runtime.snapshot(100)["workspaces"]["liveMinutes"]["coverage"]["consolidationStage"],
+            "in_progress"
         );
         release.send(()).unwrap();
         if final_fails {
             let failed = wait_until(&mut runtime, |s| {
-                s["liveMinutes"]["parts"][0]["error"]
+                s["workspaces"]["liveMinutes"]["error"]
                     .as_str()
                     .is_some_and(|e| e.contains("HTTP 503"))
             });
-            assert_eq!(failed["liveMinutes"]["parts"][0]["analysis"], "failed");
+            assert_eq!(
+                failed["workspaces"]["liveMinutes"]["coverage"]["consolidationStage"],
+                "failed"
+            );
             let id = mic["recordId"].as_str().unwrap().to_string();
             drop(runtime);
             let reopened = KoeRuntime::open(&sandbox.0).unwrap();
@@ -390,10 +396,10 @@ fn failed_live_minutes_do_not_repeat_the_revision_and_final_pass_owns_its_outcom
             );
         } else {
             let done = wait_until(&mut runtime, |s| {
-                s["liveMinutes"]["parts"][0]["analysis"] == "ready"
+                s["workspaces"]["liveMinutes"]["coverage"]["consolidationStage"] == "ready"
             });
             assert_eq!(
-                done["liveMinutes"]["parts"][0]["summary"][1]["sources"][0]["segmentId"],
+                done["workspaces"]["liveMinutes"]["finalSections"][1]["sources"][0]["segmentId"],
                 "S4"
             );
         }
@@ -418,7 +424,10 @@ fn quick_note_keeps_transcript_without_continuous_minutes_and_summarizes_after_s
         assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(runtime.snapshot(100)["liveMinutes"].is_null());
+    assert_eq!(
+        runtime.snapshot(100)["workspaces"]["liveMinutes"]["isActive"],
+        false
+    );
     send(&mut runtime, json!({"type":"stop_microphone"}));
     send(&mut runtime, json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":1}));
     send(&mut runtime, json!({"type":"local_asr_finished","operationId":operation}));

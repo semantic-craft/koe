@@ -21,15 +21,20 @@ final class NativeFileActions {
     }
     func exportRecord(_ recordId: String) {
         guard let store else { return }
-        let panel = NSSavePanel()
-        panel.title = "导出记录"
-        let title = store.snapshot.records.first(where: { $0.id == recordId })?.title ?? "Koe 记录"
-        panel.nameFieldStringValue = title.replacingOccurrences(of: "/", with: "-") + ".md"
-        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        store.send(.exportRecord(recordId: recordId, path: url.path))
+        let title = store.snapshot.records.first(where: { $0.id == recordId })?.title
+        let raw = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = (raw.isEmpty ? "Koe 记录" : raw)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        exportWorkspace(
+            WorkspaceExportRequest(
+                recordId: recordId,
+                date: nil,
+                suggestedFilename: "\(sanitized).md",
+                includeAnalysis: true,
+                includeSources: true
+            )
+        )
     }
 
     func exportWorkspace(_ request: WorkspaceExportRequest) {

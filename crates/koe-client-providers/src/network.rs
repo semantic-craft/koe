@@ -6,7 +6,7 @@ use koe_engine::product::{
     DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_HTTP_BASE_URL, DEFAULT_DASHSCOPE_WS_URL,
     DEFAULT_TEXT_MODEL,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 mod asr;
 mod chat;
@@ -235,6 +235,196 @@ impl ProviderWorker {
 impl Drop for ProviderWorker {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Isolated execution lane inside [`ProviderPool`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderLane {
+    /// Batch cloud audio transcription (`TranscribePcm16`).
+    Audio = 0,
+    /// Post-session or live meeting summary (`Summary` / `LiveSummary`).
+    Summary = 1,
+    /// Cross-record Q&A (`Ask`).
+    Ask = 2,
+}
+
+enum PoolControl {
+    Submit {
+        lane: ProviderLane,
+        request: ProviderRequest,
+    },
+    Cancel {
+        lane: ProviderLane,
+        operation_id: u64,
+    },
+    CancelAudioAndWait(oneshot::Sender<()>),
+    Shutdown,
+}
+
+/// Multi-lane bounded background provider pool running on one Tokio runtime thread.
+///
+/// Audio transcription, summary generation, and Q&A run in separate single-slot lanes so a slow
+/// question or summary never blocks another lane, and stale summaries cancel without joining threads.
+pub struct ProviderPool {
+    controls: mpsc::UnboundedSender<PoolControl>,
+    events: mpsc::UnboundedReceiver<(ProviderLane, ProviderEvent)>,
+    active_ops: [Option<u64>; 3],
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ProviderPool {
+    /// Starts an isolated multi-lane async runtime on one background thread.
+    pub fn new() -> Result<Self, String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| "无法创建云端工作线程".to_string())?;
+        let (controls, mut rx) = mpsc::unbounded_channel::<PoolControl>();
+        let (events_tx, events) = mpsc::unbounded_channel::<(ProviderLane, ProviderEvent)>();
+        let thread = std::thread::Builder::new()
+            .name("koe-provider-pool".into())
+            .spawn(move || {
+                runtime.block_on(async {
+                    let mut slots: [Option<(u64, tokio::task::JoinHandle<()>)>; 3] =
+                        [None, None, None];
+                    while let Some(control) = rx.recv().await {
+                        match control {
+                            PoolControl::Submit { lane, request } => {
+                                let idx = lane as usize;
+                                if let Some((_, existing)) = slots[idx].take() {
+                                    existing.abort();
+                                }
+                                let op_id = request.operation_id;
+                                let tx = events_tx.clone();
+                                let handle = tokio::spawn(async move {
+                                    let result =
+                                        tokio::time::timeout(request.timeout, execute(&request))
+                                            .await
+                                            .unwrap_or_else(|_| {
+                                                Err("云端请求超时，结果未知；未自动重试".into())
+                                            });
+                                    let _ = tx.send((
+                                        lane,
+                                        ProviderEvent {
+                                            operation_id: op_id,
+                                            record_id: request.record_id,
+                                            result,
+                                        },
+                                    ));
+                                });
+                                slots[idx] = Some((op_id, handle));
+                            }
+                            PoolControl::Cancel { lane, operation_id } => {
+                                let idx = lane as usize;
+                                if slots[idx]
+                                    .as_ref()
+                                    .is_some_and(|(id, _)| *id == operation_id)
+                                {
+                                    if let Some((_, handle)) = slots[idx].take() {
+                                        handle.abort();
+                                    }
+                                }
+                            }
+                            PoolControl::CancelAudioAndWait(ack) => {
+                                let idx = ProviderLane::Audio as usize;
+                                if let Some((_, handle)) = slots[idx].take() {
+                                    handle.abort();
+                                    let _ = handle.await;
+                                }
+                                let _ = ack.send(());
+                            }
+                            PoolControl::Shutdown => break,
+                        }
+                    }
+                    for slot in &mut slots {
+                        if let Some((_, handle)) = slot.take() {
+                            handle.abort();
+                            let _ = handle.await;
+                        }
+                    }
+                });
+                runtime.shutdown_timeout(Duration::from_millis(100));
+            })
+            .map_err(|_| "无法启动云端工作线程".to_string())?;
+        Ok(Self {
+            controls,
+            events,
+            active_ops: [None; 3],
+            thread: Some(thread),
+        })
+    }
+
+    /// Returns whether `lane` currently owns an unpolled operation.
+    #[must_use]
+    pub fn is_lane_busy(&self, lane: ProviderLane) -> bool {
+        self.active_ops[lane as usize].is_some()
+    }
+
+    /// Submits one task onto `lane`, rejecting invalid requests or a busy lane without blocking.
+    pub fn submit(&mut self, lane: ProviderLane, request: ProviderRequest) -> Result<(), String> {
+        validate(&request)?;
+        let idx = lane as usize;
+        if self.active_ops[idx].is_some() {
+            return Err("已有云端任务正在处理，请稍后重试".into());
+        }
+        let op_id = request.operation_id;
+        self.controls
+            .send(PoolControl::Submit { lane, request })
+            .map_err(|_| "云端工作线程不可用".to_string())?;
+        self.active_ops[idx] = Some(op_id);
+        Ok(())
+    }
+
+    /// Cancels an in-flight operation on `lane` without blocking the caller thread.
+    pub fn cancel(&mut self, lane: ProviderLane, operation_id: u64) {
+        let idx = lane as usize;
+        if self.active_ops[idx] == Some(operation_id) {
+            self.active_ops[idx] = None;
+            let _ = self.controls.send(PoolControl::Cancel {
+                lane,
+                operation_id,
+            });
+        }
+    }
+
+    /// Cancels any active audio transcription and waits until its transport task stops.
+    ///
+    /// Summary and Q&A lanes continue unaffected.
+    pub fn cancel_audio(&mut self) -> Result<(), String> {
+        let idx = ProviderLane::Audio as usize;
+        if self.active_ops[idx].is_none() {
+            return Ok(());
+        }
+        self.active_ops[idx] = None;
+        let (tx, rx) = oneshot::channel();
+        self.controls
+            .send(PoolControl::CancelAudioAndWait(tx))
+            .map_err(|_| "云端工作线程不可用".to_string())?;
+        rx.blocking_recv()
+            .map_err(|_| "云端工作线程不可用".to_string())
+    }
+
+    /// Drains completed non-cancelled events without blocking.
+    pub fn poll(&mut self) -> Vec<ProviderEvent> {
+        let mut results = Vec::new();
+        while let Ok((lane, event)) = self.events.try_recv() {
+            let idx = lane as usize;
+            if self.active_ops[idx] == Some(event.operation_id) {
+                self.active_ops[idx] = None;
+                results.push(event);
+            }
+        }
+        results
+    }
+}
+
+impl Drop for ProviderPool {
+    fn drop(&mut self) {
+        let _ = self.controls.send(PoolControl::Shutdown);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 

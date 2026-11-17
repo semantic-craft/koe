@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     capture_studio::CaptureSelection,
     command::CaptureMode,
-    live_minutes::{LiveMinutesScope, TranscriptLine},
+    live_minutes::TranscriptLine,
     microphone::{MicrophoneStatus, Phase},
     projection::{origin, status},
 };
@@ -29,10 +29,7 @@ impl KoeRuntime {
         } else if meeting_bean_active {
             live_record_id
                 .map(str::to_owned)
-                .or_else(|| match &self.selection.live_minutes_scope {
-                    Some(LiveMinutesScope::Record(id)) => Some(id.clone()),
-                    _ => None,
-                })
+                .or_else(|| self.captures.active.values().next().cloned())
         } else {
             None
         };

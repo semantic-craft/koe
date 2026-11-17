@@ -933,3 +933,29 @@ fn mcp_get_today_brief_counts_archived_live_records_today_while_excluding_from_r
     assert_eq!(brief["counts"]["liveRecords"], 1);
     assert_eq!(brief["recentRecords"], json!([]));
 }
+
+#[test]
+fn mcp_device_start_respects_all_day_and_bean_mode_guards() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _session_key = connect_simulated_bean(&mut runtime, "c-mcp-guard", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    let started = serde_json::from_str::<Value>(
+        &runtime.dispatch_json(&json!({"type": "start_all_day", "source": "bean"}).to_string(), NOW),
+    )
+    .unwrap();
+    assert!(started["error"].is_null(), "{started}");
+    let _ = runtime.drain_outbound_ble_frames();
+
+    match runtime
+        .call_mcp_tool_step("device_control", &json!({"action": "start_recording"}), NOW + 1)
+        .unwrap()
+    {
+        McpToolCallState::Completed(Err(err)) => {
+            assert!(err.contains("结束当前记录") || err.contains("无法开始"), "{err}");
+        }
+        other => panic!("MCP start_recording during active all-day must reject, got {other:?}"),
+    }
+    assert!(runtime.drain_outbound_ble_frames().is_empty());
+}
