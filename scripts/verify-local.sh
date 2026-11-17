@@ -26,12 +26,17 @@ note() { printf '\n=== %s ===\n' "$1"; }
 note "contracts & tooling tests"
 python3 scripts/test_cleanup_app_registrations.py
 python3 scripts/test_install_macos.py
+python3 scripts/test_release_macos.py
 python3 scripts/test_ci.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
 perf_check="${KOE_SWIFTUI_PERF_CHECK:-$HOME/Projects/agent-home/tools/swiftui-perf-check/scripts/check_swiftui_perf.py}"
 if [[ -f "$perf_check" ]]; then
   python3 "$perf_check" "$root"
+fi
+notary_check="${KOE_NOTARY_CHECK:-$HOME/Projects/agent-home/tools/notary-check/check_notary_policy.py}"
+if [[ -f "$notary_check" ]]; then
+  python3 "$notary_check" "$root"
 fi
 python3 progress/progress.py check
 
