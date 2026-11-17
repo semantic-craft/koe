@@ -74,11 +74,6 @@ impl KoeRuntime {
 
     pub(super) fn has_pending_in_lane(&self, lane: ProviderLane) -> bool {
         self.pending.values().any(|work| work.lane() == lane)
-            || self.completed.iter().any(|event| {
-                self.pending
-                    .get(&event.operation_id)
-                    .is_some_and(|work| work.lane() == lane)
-            })
     }
 
     fn is_stale_summary(&self, work: &PendingWork) -> bool {

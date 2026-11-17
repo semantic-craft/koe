@@ -146,12 +146,7 @@ private struct ModePickerCardView: View, Equatable {
     }
 
     private var iconName: String {
-        switch card.id {
-        case "notes": "bolt.horizontal"
-        case "all_day": "clock"
-        case "live_minutes": "waveform.path.ecg"
-        default: "waveform"
-        }
+        HostSection(rawValue: card.id)?.icon ?? "waveform"
     }
 
     var body: some View {

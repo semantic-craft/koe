@@ -70,7 +70,7 @@ public struct AllDayWorkspaceView: View {
             Spacer(minLength: 12)
             HStack(spacing: 8) {
                 if !allDay.isActive {
-                    KoeActionButton("开启全天听记", systemImage: "clock", isPrimary: true) {
+                    KoeActionButton("开启全天听记", systemImage: CaptureMode.allDay.icon, isPrimary: true) {
                         store.startCapture(.allDay, stayOnPage: true)
                     }
                     .disabled(!allDay.canStart)
@@ -158,7 +158,7 @@ public struct AllDayWorkspaceView: View {
             if allDay.spans.isEmpty {
                 KoeCard {
                     EmptyState(
-                        icon: "clock",
+                        icon: CaptureMode.allDay.icon,
                         title: "当日还没有全天听记内容",
                         detail: "开启全天听记后，这里会按语义事件聚合展示当天对话，并诚实标出暂停与未录音区间。"
                     )

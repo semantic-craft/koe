@@ -9,6 +9,13 @@ pub(super) enum QuitState {
     Draining,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct LifecycleState {
+    keep_awake: bool,
+    quit_phase: &'static str,
+    message: Option<String>,
+}
+
 impl KoeRuntime {
     pub(super) fn is_quitting(&self) -> bool {
         self.quit == QuitState::Draining
@@ -30,7 +37,7 @@ impl KoeRuntime {
         }
     }
 
-    pub(super) fn lifecycle_json(&self) -> Value {
+    pub(super) fn lifecycle_state(&self) -> LifecycleState {
         let session = &self.device.session;
         let owned_work = self.microphone.is_some()
             || session.active_file_id.is_some()
@@ -71,10 +78,25 @@ impl KoeRuntime {
         } else {
             "ready"
         };
+        LifecycleState {
+            keep_awake: owned_work || queued_work || self.store.requires_reopen(),
+            quit_phase: phase,
+            message: if self.is_quitting() {
+                failure.or_else(|| {
+                    (phase == "draining").then(|| "正在结束录音并保存结果，完成后将自动退出。".into())
+                })
+            } else {
+                None
+            },
+        }
+    }
+
+    pub(super) fn lifecycle_json(&self) -> Value {
+        let state = self.lifecycle_state();
         json!({
-            "keepAwake": owned_work || queued_work || self.store.requires_reopen(),
-            "quitPhase": phase,
-            "message": if self.is_quitting() { failure.or_else(|| (phase == "draining").then(|| "正在结束录音并保存结果，完成后将自动退出。".into())) } else { None }
+            "keepAwake": state.keep_awake,
+            "quitPhase": state.quit_phase,
+            "message": state.message
         })
     }
 

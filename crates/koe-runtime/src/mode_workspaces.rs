@@ -9,7 +9,7 @@ use crate::{
 use chrono::NaiveDate;
 use koe_client_base::write_atomic;
 use koe_engine::session::{ConnectionPhaseTag, TransferPhaseTag};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) const QUICK_NOTE_MCP_READ_NOTE: &str =
     "外部 Agent 可通过只读 MCP 检索已保存闪记原文与已采纳行动，不会自动改写记录。";
@@ -476,6 +476,31 @@ impl KoeRuntime {
             });
 
         let configured = self.text_provider_configured();
+        let quick_ids: BTreeSet<&str> = quick_records
+            .iter()
+            .map(|r| r.aggregate.recording_id.as_str())
+            .collect();
+        let mut items_by_record: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+        for item in self.workspace().items().values() {
+            let mut matched_records = BTreeSet::new();
+            for source in &item.sources {
+                let rid = source.record_id.as_str();
+                if quick_ids.contains(rid) {
+                    matched_records.insert(rid);
+                }
+            }
+            if matched_records.is_empty() {
+                continue;
+            }
+            if let Some(item_val) = self.sourced_item_json(item) {
+                for rid in matched_records {
+                    items_by_record
+                        .entry(rid)
+                        .or_default()
+                        .push(item_val.clone());
+                }
+            }
+        }
         let cards: Vec<Value> = quick_records
             .iter()
             .map(|record| {
@@ -520,13 +545,7 @@ impl KoeRuntime {
                             .collect()
                     })
                     .unwrap_or_default();
-                let next_steps: Vec<Value> = self
-                    .workspace()
-                    .items()
-                    .values()
-                    .filter(|item| item.sources.iter().any(|s| s.record_id == rec_id))
-                    .filter_map(|item| self.sourced_item_json(item))
-                    .collect();
+                let next_steps = items_by_record.remove(rec_id).unwrap_or_default();
                 let can_summarize = !record.aggregate.spine.is_empty()
                     && configured
                     && !matches!(record.analysis, AnalysisState::Pending { .. });

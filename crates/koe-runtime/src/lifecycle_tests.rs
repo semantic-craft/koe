@@ -610,3 +610,27 @@ fn failed_bean_save_keeps_the_active_mode_until_audio_is_durable() {
     assert!(runtime.snapshot(NOW + 3)["activeCapture"].is_null());
     assert!(recording_assets::audio_path(&dir.0, &id).unwrap().exists());
 }
+
+#[test]
+fn idle_poll_timers_does_not_bump_generation_while_lifecycle_transitions_do() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let base_gen = runtime.generation();
+    let initial_state = runtime.lifecycle_state();
+    assert_eq!(
+        json!({
+            "keepAwake": false,
+            "quitPhase": "running",
+            "message": Value::Null
+        }),
+        runtime.lifecycle_json()
+    );
+
+    runtime.poll_timers(250, NOW);
+    assert_eq!(runtime.generation(), base_gen);
+    assert_eq!(runtime.lifecycle_state(), initial_state);
+
+    runtime.request_quit();
+    assert_ne!(runtime.lifecycle_state(), initial_state);
+    assert_eq!(runtime.lifecycle_json()["quitPhase"], "ready");
+}

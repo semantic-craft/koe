@@ -66,6 +66,9 @@ struct HostCommandTests {
         #expect(HostSection.title(for: "notes") == CaptureMode.quickNote.title)
         #expect(HostSection.title(for: "all_day") == CaptureMode.allDay.title)
         #expect(HostSection.title(for: "live_minutes") == CaptureMode.meeting.title)
+        #expect(HostSection.notes.icon == CaptureMode.quickNote.icon)
+        #expect(HostSection.allDay.icon == CaptureMode.allDay.icon)
+        #expect(HostSection.liveMinutes.icon == CaptureMode.meeting.icon)
         #expect(HostSection.title(for: "detail", detailTitle: "周会") == "周会")
     }
 
