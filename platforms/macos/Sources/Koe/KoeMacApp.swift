@@ -210,20 +210,11 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         menu.addItem(status)
         menu.addItem(.separator())
         let activeSection = store?.navigation.section
-        for (id, title) in [
-            ("today", "模式选择"),
-            ("notes", "随心闪记"),
-            ("all_day", "全天听记"),
-            ("live_minutes", "实时纪要"),
-            ("ask", "问 AI"),
-            ("records", "所有记录"),
-            ("tasks", "行动"),
-            ("settings", "设置")
-        ] {
-            let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
+        for section in HostSection.menuSections {
+            let item = NSMenuItem(title: section.title, action: #selector(navigate(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = id
-            item.state = activeSection == id ? .on : .off
+            item.representedObject = section.rawValue
+            item.state = activeSection == section.rawValue ? .on : .off
             menu.addItem(item)
         }
         menu.addItem(.separator())

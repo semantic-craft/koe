@@ -33,9 +33,9 @@ struct CaptureIdentity: Equatable, Sendable {
 }
 
 protocol MicrophoneSource: AnyObject {
-    func requestPermission(_ completion: @escaping (Bool) -> Void)
-    func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
-               failed: @escaping (String) -> Void) throws -> UInt32
+    func requestPermission(_ completion: @escaping @Sendable (Bool) -> Void)
+    func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
+               failed: @escaping @Sendable (String) -> Void) throws -> UInt32
     func stop()
 }
 

@@ -27,7 +27,7 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         includeSources: Bool = true
     ) -> WorkspaceExportRequest {
         let baseTitle = card.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = (baseTitle.isEmpty ? "随心闪记" : baseTitle)
+        let sanitized = (baseTitle.isEmpty ? CaptureMode.quickNote.title : baseTitle)
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
         return WorkspaceExportRequest(
@@ -48,7 +48,7 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         return WorkspaceExportRequest(
             recordId: nil,
             date: date,
-            suggestedFilename: "全天听记-\(safeDate).md",
+            suggestedFilename: "\(CaptureMode.allDay.title)-\(safeDate).md",
             includeAnalysis: includeAnalysis,
             includeSources: includeSources
         )
@@ -61,7 +61,7 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         includeSources: Bool = true
     ) -> WorkspaceExportRequest {
         let raw = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = (raw.isEmpty ? "实时纪要" : raw)
+        let sanitized = (raw.isEmpty ? CaptureMode.meeting.title : raw)
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
         return WorkspaceExportRequest(
@@ -103,10 +103,10 @@ public enum RecordFilterCategory: String, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .all: "全部"
-        case .quickNote: "随心闪记"
+        case .quickNote: CaptureMode.quickNote.title
         case .inbox: "收件箱"
-        case .allDay: "全天听记"
-        case .meeting: "实时纪要"
+        case .allDay: CaptureMode.allDay.title
+        case .meeting: CaptureMode.meeting.title
         case .archived: "已归档"
         }
     }
@@ -119,11 +119,7 @@ extension RecordSnapshot {
     }
 
     public var modeLabel: String {
-        switch effectiveMode {
-        case "all_day": "全天听记"
-        case "meeting": "实时纪要"
-        default: "随心闪记"
-        }
+        (CaptureMode(rawValue: effectiveMode) ?? .quickNote).title
     }
 
     public var isQuickNoteInbox: Bool {
@@ -153,11 +149,7 @@ extension RecordSnapshot {
 
 extension RecordDetailSnapshot {
     public var modeLabel: String {
-        switch mode ?? "quick_note" {
-        case "all_day": "全天听记"
-        case "meeting": "实时纪要"
-        default: "随心闪记"
-        }
+        (CaptureMode(rawValue: mode ?? "quick_note") ?? .quickNote).title
     }
 }
 
@@ -233,9 +225,9 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
 
     public static let defaultCards: [ModePickerCardSnapshot] = [
         ModePickerCardSnapshot(
-            id: "notes",
-            mode: "quick_note",
-            title: "随心闪记",
+            id: HostSection.notes.rawValue,
+            mode: CaptureMode.quickNote.rawValue,
+            title: CaptureMode.quickNote.title,
             subtitle: "想到就记，原文优先，收件箱与项目自由归类",
             isSessionActive: false,
             canToggleSession: true,
@@ -243,9 +235,9 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
             metricText: "共 0 条闪记，收件箱 0 条"
         ),
         ModePickerCardSnapshot(
-            id: "all_day",
-            mode: "all_day",
-            title: "全天听记",
+            id: HostSection.allDay.rawValue,
+            mode: CaptureMode.allDay.rawValue,
+            title: CaptureMode.allDay.title,
             subtitle: "按事件回看全天对话，自动标记暂停与未录音空档",
             isSessionActive: false,
             canToggleSession: true,
@@ -253,9 +245,9 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
             metricText: "今日 0 个事件，已录 0 分钟"
         ),
         ModePickerCardSnapshot(
-            id: "live_minutes",
-            mode: "meeting",
-            title: "实时纪要",
+            id: HostSection.liveMinutes.rawValue,
+            mode: CaptureMode.meeting.rawValue,
+            title: CaptureMode.meeting.title,
             subtitle: "边听边整理议题与待办，会后核对完整纪要",
             isSessionActive: false,
             canToggleSession: true,

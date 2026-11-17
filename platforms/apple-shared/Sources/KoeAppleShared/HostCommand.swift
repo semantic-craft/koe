@@ -49,6 +49,11 @@ public enum HostCommand: Encodable, Equatable, Sendable {
 
     case startCaptureMode(mode: CaptureMode, stayOnPage: Bool = false)
     case captureAction(action: CaptureAction, clockNs: UInt64? = nil)
+    case startMicrophone(inputId: String, includeSystem: Bool = false, clockNs: UInt64? = nil)
+    case pauseMicrophone
+    case stopMicrophone
+    case cancelMicrophone
+    case retryMicrophoneSave
     case selectCaptureSource(source: String)
     case setCaptureSystemAudio(enabled: Bool)
 
@@ -78,7 +83,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case project, date, archived, includeAnalysis, includeSources
         case itemId, decision, completed, due, speaker, fromSpeaker, toSpeaker
         case question, scope, positionMs, isPlaying, lane
-        case enabled, mode, action, clockNs, source, fileId
+        case enabled, mode, action, clockNs, inputId, includeSystem, source, fileId
         case engine, modelId, policy, apiKey, model, asrEndpoint, chatEndpoint, authorize
     }
 
@@ -121,6 +126,11 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .seek: "seek"
         case .startCaptureMode: "start_capture_mode"
         case .captureAction: "capture_action"
+        case .startMicrophone: "start_microphone"
+        case .pauseMicrophone: "pause_microphone"
+        case .stopMicrophone: "stop_microphone"
+        case .cancelMicrophone: "cancel_microphone"
+        case .retryMicrophoneSave: "retry_microphone_save"
         case .selectCaptureSource: "select_capture_source"
         case .setCaptureSystemAudio: "set_capture_system_audio"
         case .deviceOpenGuide: "device_open_guide"
@@ -145,6 +155,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         try c.encode(commandType, forKey: .type)
         switch self {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
+             .pauseMicrophone, .stopMicrophone, .cancelMicrophone, .retryMicrophoneSave,
              .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh, .deviceRelease,
              .cancelSpeechModel, .clearProviderCredential:
             break
@@ -229,6 +240,10 @@ public enum HostCommand: Encodable, Equatable, Sendable {
             try c.encode(stayOnPage, forKey: .stayOnPage)
         case let .captureAction(action, clockNs):
             try c.encode(action, forKey: .action)
+            try c.encodeIfPresent(clockNs, forKey: .clockNs)
+        case let .startMicrophone(inputId, includeSystem, clockNs):
+            try c.encode(inputId, forKey: .inputId)
+            try c.encode(includeSystem, forKey: .includeSystem)
             try c.encodeIfPresent(clockNs, forKey: .clockNs)
         case let .selectCaptureSource(source):
             try c.encode(source, forKey: .source)

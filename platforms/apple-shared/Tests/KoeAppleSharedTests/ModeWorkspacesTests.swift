@@ -72,7 +72,7 @@ struct ModeWorkspacesTests {
         defer { store.shutdown() }
 
         for destination in ["notes", "all_day", "live_minutes", "today"] {
-            store.send("navigate", ["section": destination])
+            store.send(.navigate(section: destination))
             #expect(store.snapshot.section == destination)
             #expect(store.snapshot.activeCapture == nil)
         }
@@ -86,13 +86,7 @@ struct ModeWorkspacesTests {
         let mic = try #require(store.snapshot.microphone)
         store.toggleModeSession(activeMeetingCard)
         #expect(store.snapshot.activeCapture?.phase == "stopping")
-        store.send("microphone_stopped", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sequence": mic.nextSequence,
-            "epoch": mic.epoch
-        ])
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: mic.nextSequence, epoch: mic.epoch))
         #expect(store.snapshot.activeCapture == nil)
         #expect(store.snapshot.workspaces?.liveMinutes.isActive == false)
     }
@@ -105,13 +99,13 @@ struct ModeWorkspacesTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        store.send("create_note", ["title": "API 方案", "text": "讨论 C ABI 快照结构"])
+        store.send(.createNote(title: "API 方案", text: "讨论 C ABI 快照结构"))
         let firstId = try #require(store.snapshot.detail?.id)
-        store.send("create_note", ["title": "读书清单", "text": "周末阅读系统设计章节"])
+        store.send(.createNote(title: "读书清单", text: "周末阅读系统设计章节"))
         #expect(store.snapshot.workspaces?.quickNote.inboxCount == 2)
         #expect(store.snapshot.records.filter { $0.matches(filter: .inbox, query: "") }.count == 2)
 
-        store.send("set_record_project", ["recordId": firstId, "project": "Koe 架构"])
+        store.send(.setRecordProject(recordId: firstId, project: "Koe 架构"))
         let quickNote = try #require(store.snapshot.workspaces?.quickNote)
         #expect(quickNote.inboxCount == 1)
         #expect(quickNote.projects == [QuickNoteProjectCountSnapshot(name: "Koe 架构", count: 1)])
@@ -193,13 +187,13 @@ struct ModeWorkspacesTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        store.send("create_note", ["title": "产品/路线图", "text": "第一阶段聚焦四模式工作区。"])
+        store.send(.createNote(title: "产品/路线图", text: "第一阶段聚焦四模式工作区。"))
         let roadmapId = try #require(store.snapshot.detail?.id)
-        store.send("create_note", ["title": "买咖啡豆", "text": "下班顺路买浅烘咖啡豆。"])
+        store.send(.createNote(title: "买咖啡豆", text: "下班顺路买浅烘咖啡豆。"))
         let inboxId = try #require(store.snapshot.detail?.id)
 
-        store.send("set_record_project", ["recordId": roadmapId, "project": "2026 规划"])
-        store.send("select_quick_note_record", ["recordId": inboxId])
+        store.send(.setRecordProject(recordId: roadmapId, project: "2026 规划"))
+        store.send(.selectQuickNoteRecord(recordId: inboxId))
 
         let quickNote = try #require(store.snapshot.workspaces?.quickNote)
         #expect(quickNote.filteredCards(for: .all).count == 2)
@@ -333,7 +327,7 @@ struct ModeWorkspacesTests {
         let reclaimedPicker = try #require(store.snapshot.workspaces?.picker)
         #expect(reclaimedPicker.beanControlOwner == "mac")
 
-        store.send("device_event", ["event": "scanning", "connectionId": "scan-tone"])
+        store.send(.deviceEvent(event: "scanning", connectionId: "scan-tone"))
         let scanningPicker = try #require(store.snapshot.workspaces?.picker)
         #expect(scanningPicker.beanBadgeTone == "warning")
 

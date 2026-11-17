@@ -36,32 +36,32 @@ struct KoeAppleSharedTests {
         let store = HostSessionStore(workspacePath: directory.path)
         #expect(store.handle != 0)
         #expect(store.snapshot.records.isEmpty)
-        store.send("create_note", ["title": "Architecture", "text": "The engine owns recording state."])
+        store.send(.createNote(title: "Architecture", text: "The engine owns recording state."))
         let first = try #require(store.snapshot.detail)
         let segment = try #require(first.segments.first)
-        store.send("create_task", ["recordId": first.id, "segmentId": segment.id])
+        store.send(.createTask(recordId: first.id, segmentId: segment.id))
         let task = try #require(store.snapshot.tasks.first)
-        store.send("review_item", ["itemId": task.id, "decision": "accept"])
-        store.send("complete_task", ["itemId": task.id, "completed": true])
-        store.send("create_note", ["title": "Notebook", "text": "The notebook is on the shelf."])
+        store.send(.reviewItem(itemId: task.id, decision: "accept"))
+        store.send(.completeTask(itemId: task.id, completed: true))
+        store.send(.createNote(title: "Notebook", text: "The notebook is on the shelf."))
         let second = try #require(store.snapshot.detail)
         #expect(second.id != first.id)
-        store.send("select_record", ["recordId": first.id])
+        store.send(.selectRecord(recordId: first.id))
         #expect(store.snapshot.detail?.segments == first.segments)
-        store.send("ask", ["question": "recording state", "scope": "record", "recordId": first.id])
+        store.send(.ask(question: "recording state", scope: "record", recordId: first.id))
         let answer = try #require(store.snapshot.ask.messages.last)
         #expect(answer.mode == "retrieval")
         #expect(!answer.sources.isEmpty)
         #expect(answer.sources.allSatisfy { $0.recordId == first.id })
         let source = try #require(answer.sources.first)
-        store.send("open_source", ["recordId": source.recordId, "segmentId": source.segmentId])
+        store.send(.openSource(recordId: source.recordId, segmentId: source.segmentId))
         #expect(store.snapshot.focusSegmentId == segment.id)
         store.shutdown()
         let restored = HostSessionStore(workspacePath: directory.path)
         defer { restored.shutdown() }
         #expect(restored.snapshot.records.count == 2)
         #expect(restored.snapshot.tasks.first(where: { $0.id == task.id })?.completed == true)
-        restored.send("select_record", ["recordId": second.id])
+        restored.send(.selectRecord(recordId: second.id))
         #expect(restored.snapshot.detail?.segments == second.segments)
         #expect(restored.snapshot.error == nil)
         #expect(restored.nativeError == nil)
@@ -157,10 +157,10 @@ struct KoeAppleSharedTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
-        store.send("device_open_guide")
+        store.send(.deviceOpenGuide)
         #expect(store.snapshot.device.guide?.mode == "connect_guide")
         #expect(store.snapshot.device.guide?.highlightTarget == "case_button")
-        store.send("device_close_guide")
+        store.send(.deviceCloseGuide)
         #expect(store.snapshot.device.guide == nil)
 
         for asset in ["guide_connect_case", "guide_connect_device", "guide_record", "guide_mark", "guide_wear", "guide_sync"] {
@@ -205,10 +205,10 @@ struct KoeAppleSharedTests {
         #expect(store.snapshot.workspaces?.picker.cards.allSatisfy { $0.canToggleSession } == true)
 
         store.reportNativeError("麦克风权限未开启")
-        store.send("sync_audio_inputs", ["inputs": [
-            ["id": "macbook-mic", "name": "MacBook Pro 麦克风", "transport": "built_in", "isDefault": true],
-            ["id": "airpods-pro", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": false]
-        ]])
+        store.send(.syncAudioInputs(inputs: [
+            HostAudioInputDescriptor(id: "macbook-mic", name: "MacBook Pro 麦克风", transport: "built_in", isDefault: true),
+            HostAudioInputDescriptor(id: "airpods-pro", name: "AirPods Pro", transport: "bluetooth", isDefault: false)
+        ]))
         #expect(store.nativeError == "麦克风权限未开启")
         store.clearError()
         #expect(store.nativeError == nil)
@@ -216,24 +216,24 @@ struct KoeAppleSharedTests {
         #expect(store.snapshot.capture.selectedBadge == "Mac 蓝牙")
         #expect(store.snapshot.workspaces?.picker.sourceLabel == "AirPods Pro")
 
-        store.send("select_capture_source", ["source": "bean"])
+        store.send(.selectCaptureSource(source: "bean"))
         #expect(store.snapshot.capture.selectedSource == "bean")
         #expect(store.snapshot.capture.canStart == false)
         #expect(store.snapshot.workspaces?.picker.cards.allSatisfy { !$0.canToggleSession } == true)
 
-        store.send("navigate", ["section": "capture"])
+        store.send(.navigate(section: "capture"))
         #expect(store.snapshot.section == "capture")
-        store.send("select_capture_source", ["source": "input:airpods-pro"])
-        store.send("start_microphone", ["inputId": store.snapshot.capture.selectedInputId, "clockNs": 1_000_000_000])
+        store.send(.selectCaptureSource(source: "input:airpods-pro"))
+        store.send(.startMicrophone(inputId: store.snapshot.capture.selectedInputId, clockNs: 1_000_000_000))
         let mic = try #require(store.snapshot.microphone)
         #expect(mic.inputLabel == "AirPods Pro")
         #expect(mic.inputBadge == "Mac 蓝牙")
         #expect(mic.phaseSummaryLabel == "等待权限")
         #expect(store.snapshot.activeCapture?.phase == "starting")
-        store.send("navigate", ["section": "notes"])
+        store.send(.navigate(section: "notes"))
         #expect(store.snapshot.section == "notes")
         #expect(store.snapshot.microphone?.sessionId == mic.sessionId)
-        store.send("microphone_started", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sampleRate": 16000])
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16000))
         let ingest = store.ingestMicrophonePCM(
             recordId: mic.recordId,
             sessionId: mic.sessionId,
@@ -247,11 +247,11 @@ struct KoeAppleSharedTests {
         store.refreshSnapshot()
         #expect((store.snapshot.microphone?.level ?? 0) > 0.4)
         #expect(store.snapshot.activeCapture?.actions.contains(.pause) == true)
-        store.send("cancel_microphone")
+        store.send(.cancelMicrophone)
         #expect(store.snapshot.microphone?.level == 0.0)
         #expect(store.snapshot.microphone?.phaseSummaryLabel == "正在取消")
         #expect(store.snapshot.activeCapture?.phase == "cancelling")
-        store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sequence": 1, "epoch": 0])
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: 0))
         #expect(store.snapshot.microphone == nil)
     }
 
@@ -262,15 +262,15 @@ struct KoeAppleSharedTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown(); try? FileManager.default.removeItem(at: directory) }
         #expect(!store.snapshot.capture.includeSystemAudio && store.snapshot.capture.canIncludeSystemAudio)
-        store.send("set_capture_system_audio", ["enabled": true])
+        store.send(.setCaptureSystemAudio(enabled: true))
         store.startCapture(.meeting, stayOnPage: true)
         let mic = try #require(store.snapshot.microphone)
         #expect(mic.lanes.keys.sorted() == ["microphone", "system"])
-        store.send("set_capture_system_audio", ["enabled": false])
+        store.send(.setCaptureSystemAudio(enabled: false))
         #expect(store.snapshot.error != nil && store.snapshot.capture.includeSystemAudio)
         store.performCaptureAction(.cancel)
-        ["microphone", "system"].forEach { store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": $0, "sequence": 0]) }
-        store.send("select_capture_source", ["source": "bean"])
+        ["microphone", "system"].forEach { store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: $0, sequence: 0)) }
+        store.send(.selectCaptureSource(source: "bean"))
         #expect(store.snapshot.microphone == nil && !store.snapshot.capture.canIncludeSystemAudio)
     }
 

@@ -182,7 +182,7 @@ struct KoeMacHostTests {
         defer { store.shutdown() }
 
         let savedUUID = "11111111-2222-3333-4444-555555555555"
-        store.send("set_ble_auto_connect", ["enabled": false])
+        store.send(.setBleAutoConnect(enabled: false))
         UserDefaults.standard.set(savedUUID, forKey: key)
 
         let bridge = BluetoothBridge(store: store)
@@ -205,11 +205,11 @@ struct KoeMacHostTests {
         #expect(!delegate.bluetoothBridge.isScanRequested)
         #expect(UserDefaults.standard.string(forKey: key) == nil)
 
-        store.send("set_ble_auto_connect", ["enabled": true])
+        store.send(.setBleAutoConnect(enabled: true))
         UserDefaults.standard.set(savedUUID, forKey: key)
         #expect(UserDefaults.standard.string(forKey: key) == savedUUID)
 
-        store.send("device_release")
+        store.send(.deviceRelease)
         #expect(store.snapshot.device.autoConnect == false)
         #expect(UserDefaults.standard.string(forKey: key) == nil)
     }
@@ -234,7 +234,7 @@ struct KoeMacHostTests {
 
         let savedUUID = "22222222-3333-4444-5555-666666666666"
         UserDefaults.standard.set(savedUUID, forKey: key)
-        store.send("set_ble_auto_connect", ["enabled": true])
+        store.send(.setBleAutoConnect(enabled: true))
 
         let bridge = BluetoothBridge(store: store)
         bridge.reportedReady = true
@@ -267,7 +267,7 @@ struct KoeMacHostTests {
         bridge.syncWithRuntimeDevice(store.snapshot.device)
         #expect(bridge.lastObservedAutoConnect == false)
 
-        store.send("set_ble_auto_connect", ["enabled": true])
+        store.send(.setBleAutoConnect(enabled: true))
         #expect(store.snapshot.device.autoConnect == true)
         bridge.syncWithRuntimeDevice(store.snapshot.device)
         #expect(bridge.lastObservedAutoConnect == true)
@@ -310,7 +310,7 @@ struct KoeMacHostTests {
         #expect(bridge.isScanRequested)
         #expect(store.snapshot.device.phase == "scanning")
 
-        store.send("set_ble_auto_connect", ["enabled": false])
+        store.send(.setBleAutoConnect(enabled: false))
         #expect(store.snapshot.device.autoConnect == false)
         bridge.syncWithRuntimeDevice(store.snapshot.device)
 
@@ -415,9 +415,9 @@ struct KoeMacHostTests {
         var startRecordBytes: [UInt8] = [0x09, 0xFF, 0x00, 0x00, 0x01, 0x18, 0x81, 0x0E, 0x00, 0x93, 0x03, 0x00, 0x00]
         startRecordBytes.append(UInt8(startRecordBytes.reduce(0) { $0 + Int($1) } & 0xFF))
 
-        store.send("device_event", ["event": "scanning", "connectionId": "c-teardown"])
-        store.send("device_event", ["event": "connecting", "connectionId": "c-teardown", "deviceName": "soundcore Work"])
-        store.send("device_event", ["event": "ready", "connectionId": "c-teardown"])
+        store.send(.deviceEvent(event: "scanning", connectionId: "c-teardown"))
+        store.send(.deviceEvent(event: "connecting", connectionId: "c-teardown", deviceName: "soundcore Work"))
+        store.send(.deviceEvent(event: "ready", connectionId: "c-teardown"))
         store.ingestBleChunk(Data(startRecordBytes), nowEpochSec: 1_800_000_000)
 
         #expect(store.snapshot.device.recording == true)
@@ -444,13 +444,13 @@ struct KoeMacHostTests {
 
         let bridge = BluetoothBridge(store: store)
         bridge.activateHost(allowsCoreBluetooth: false)
-        store.send("device_event", ["event": "scanning", "connectionId": "c1"])
-        store.send("device_event", ["event": "connecting", "connectionId": "c1", "deviceName": "soundcore Work"])
-        store.send("device_event", ["event": "ready", "connectionId": "c1"])
+        store.send(.deviceEvent(event: "scanning", connectionId: "c1"))
+        store.send(.deviceEvent(event: "connecting", connectionId: "c1", deviceName: "soundcore Work"))
+        store.send(.deviceEvent(event: "ready", connectionId: "c1"))
         #expect(store.snapshot.device.phase == "handshaking")
 
         bridge.reportedReady = true
-        store.send("set_ble_auto_connect", ["enabled": false])
+        store.send(.setBleAutoConnect(enabled: false))
         bridge.syncWithRuntimeDevice(store.snapshot.device)
 
         #expect(!bridge.isScanRequested)

@@ -1,4 +1,5 @@
-import CoreBluetooth
+// CBCentralManager is initialized with `queue: .main`, so all delegate callbacks arrive on the main thread.
+@preconcurrency import CoreBluetooth
 import Foundation
 import KoeAppleShared
 
@@ -228,7 +229,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         return data
     }
 
-    private nonisolated func onMainActorIsolated(_ body: @MainActor @escaping () -> Void) {
+    private nonisolated func onMainActorIsolated(_ body: @MainActor @Sendable @escaping () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated(body)
         } else {

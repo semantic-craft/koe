@@ -58,20 +58,20 @@ private final class SteppingAVPlayer: AVPlayer {
     private var simulatedPlaying = false
 
     override func currentTime() -> CMTime {
-        simulatedTime
+        MainActor.assumeIsolated { simulatedTime }
     }
 
     override var rate: Float {
-        get { simulatedPlaying ? 1.0 : 0.0 }
-        set { simulatedPlaying = newValue > 0 }
+        get { MainActor.assumeIsolated { simulatedPlaying ? 1.0 : 0.0 } }
+        set { MainActor.assumeIsolated { simulatedPlaying = newValue > 0 } }
     }
 
     override func play() {
-        simulatedPlaying = true
+        MainActor.assumeIsolated { simulatedPlaying = true }
     }
 
     override func pause() {
-        simulatedPlaying = false
+        MainActor.assumeIsolated { simulatedPlaying = false }
     }
 }
 
@@ -120,14 +120,9 @@ struct OffscreenAndTimerTests {
     @MainActor
     private func createPlayableSixSecondRecord(in store: HostSessionStore) throws -> String {
         let nowSec: UInt64 = 1_800_100_000
-        store.send("start_microphone", ["inputId": "fixture", "clockNs": 1_000_000_000], nowEpochSec: nowSec)
+        store.send(.startMicrophone(inputId: "fixture", clockNs: 1_000_000_000), nowEpochSec: nowSec)
         let mic = try #require(store.snapshot.microphone)
-        store.send("microphone_started", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sampleRate": 16_000
-        ], nowEpochSec: nowSec)
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16_000), nowEpochSec: nowSec)
         let halfSecondSamples = [Int16](repeating: 900, count: 8_000)
         for seq: UInt64 in 0..<12 {
             let receipt = store.ingestMicrophonePCM(
@@ -143,14 +138,8 @@ struct OffscreenAndTimerTests {
             #expect(receipt.status == .accepted)
         }
         store.refreshSnapshot(nowEpochSec: nowSec)
-        store.send("stop_microphone", nowEpochSec: nowSec + 1)
-        store.send("microphone_stopped", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sequence": 12,
-            "epoch": 0
-        ], nowEpochSec: nowSec + 1)
+        store.send(.stopMicrophone, nowEpochSec: nowSec + 1)
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 12, epoch: 0), nowEpochSec: nowSec + 1)
         return mic.recordId
     }
 
@@ -201,8 +190,8 @@ struct OffscreenAndTimerTests {
         }
 
         let recordId = try createPlayableSixSecondRecord(in: store)
-        store.send("select_record", ["recordId": recordId])
-        store.send("playback", ["isPlaying": true])
+        store.send(.selectRecord(recordId: recordId))
+        store.send(.playback(isPlaying: true))
 
         KoeWindowPresenter.presentWindow(window, activateApp: false)
         #expect(window.isVisible)
@@ -299,7 +288,7 @@ struct OffscreenAndTimerTests {
             try? FileManager.default.removeItem(at: root)
         }
 
-        store.send("start_microphone", ["inputId": "fixture", "includeSystem": true])
+        store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
         micSource.permission?(true)
         sysSource.authorization?(.authorized)
         let started = await waitUntil(tick: { capture.apply() }) {
@@ -320,7 +309,7 @@ struct OffscreenAndTimerTests {
         #expect(snapshotCallbacks == 1)
         #expect(store.activeCapture != nil)
 
-        store.send("stop_microphone")
+        store.send(.stopMicrophone)
         capture.apply()
         #expect(store.snapshot.microphone == nil)
 
@@ -331,7 +320,7 @@ struct OffscreenAndTimerTests {
         #expect(try readPCMInt16(recordId) == (1...8).flatMap { Array(repeating: Int16($0), count: 160) })
         #expect(try readPCMInt16("\(recordId)-system") == (1...8).flatMap { Array(repeating: Int16(100 + $0), count: 480) })
 
-        store.send("start_microphone", ["inputId": "fixture", "includeSystem": true])
+        store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
         micSource.permission?(true)
         sysSource.authorization?(.authorized)
         let secondStarted = await waitUntil(tick: { capture.apply() }) {
@@ -354,7 +343,7 @@ struct OffscreenAndTimerTests {
         #expect(store.snapshot.microphone?.lanes["system"]?.stopped == false)
         #expect(store.snapshot.microphone?.lanes["system"]?.nextSequence == 2)
 
-        store.send("stop_microphone")
+        store.send(.stopMicrophone)
         capture.apply()
         #expect(store.snapshot.microphone == nil)
         #expect(try readPCMInt16(secondRecordId) == [11, 12].flatMap { Array(repeating: Int16($0), count: 160) })

@@ -10,15 +10,17 @@ final class NativePlaybackIntegrationTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = HostSessionStore(workspacePath: root.path)
         defer { store.shutdown(); try? FileManager.default.removeItem(at: root) }
-        store.send("start_microphone", ["inputId": "fixture", "includeSystem": true, "clockNs": 1_000_000_000])
+        store.send(.startMicrophone(inputId: "fixture", includeSystem: true, clockNs: 1_000_000_000))
         let ticket = try XCTUnwrap(store.snapshot.microphone)
-        func event(_ type: String, _ lane: String, _ fields: [String: Any] = [:]) {
-            var payload = fields
-            payload["recordId"] = ticket.recordId; payload["sessionId"] = ticket.sessionId; payload["lane"] = lane
-            store.send(type, payload)
+        for lane in ["microphone", "system"] {
+            store.send(.microphoneStarted(
+                recordId: ticket.recordId,
+                sessionId: ticket.sessionId,
+                lane: lane,
+                sampleRate: 16000
+            ))
             XCTAssertNil(store.snapshot.error)
         }
-        for lane in ["microphone", "system"] { event("microphone_started", lane, ["sampleRate": 16000]) }
         for (lane, seq, ns) in [("microphone", UInt64(0), UInt64(1_000_000_000)), ("microphone", 1, 1_100_000_000), ("system", 0, 1_050_000_000)] {
             let receipt = store.ingestMicrophonePCM(
                 recordId: ticket.recordId,
@@ -31,9 +33,11 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             )
             XCTAssertEqual(receipt.status, .accepted)
         }
-        store.send("stop_microphone")
-        event("microphone_stopped", "microphone", ["sequence": 2, "epoch": 0])
-        event("microphone_stopped", "system", ["sequence": 1, "epoch": 0])
+        store.send(.stopMicrophone)
+        store.send(.microphoneStopped(recordId: ticket.recordId, sessionId: ticket.sessionId, lane: "microphone", sequence: 2, epoch: 0))
+        XCTAssertNil(store.snapshot.error)
+        store.send(.microphoneStopped(recordId: ticket.recordId, sessionId: ticket.sessionId, lane: "system", sequence: 1, epoch: 0))
+        XCTAssertNil(store.snapshot.error)
         try await body(store)
     }
 
@@ -52,7 +56,7 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             defer { playback.stop(); pending.cancelRemaining() }
             playback.tick()
             try await self.until("microphone load pending", { pending.waiters.count == 1 })
-            store.send("select_playback_lane", ["lane": "system"])
+            store.send(.selectPlaybackLane(lane: "system"))
             playback.tick()
             try await self.until("system load pending", { pending.waiters.count == 2 })
             let selected = AVPlayerItem(url: URL(fileURLWithPath: try XCTUnwrap(store.snapshot.playback.asset?.audioPath)))
@@ -71,15 +75,15 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             let playback = NativePlayback(player: player)
             playback.store = store
             defer { playback.stop() }
-            store.send("seek", ["positionMs": 90])
+            store.send(.seek(positionMs: 90))
             try await self.until("seek in microphone gap", { player.currentTime().isNumeric && abs(player.currentTime().seconds - 0.09) < 0.0001 }, tick: playback.tick)
             let previous = player.currentItem
-            store.send("select_playback_lane", ["lane": "system"])
+            store.send(.selectPlaybackLane(lane: "system"))
             try await self.until("system lane common position", {
                 player.currentItem !== previous && player.currentTime().isNumeric && abs(player.currentTime().seconds - 0.09) < 0.0001
             }, tick: playback.tick)
-            store.send("seek", ["positionMs": 55]); playback.tick()
-            store.send("seek", ["positionMs": 100]); playback.tick()
+            store.send(.seek(positionMs: 55)); playback.tick()
+            store.send(.seek(positionMs: 100)); playback.tick()
             try await self.until("latest seek wins", { player.currentTime().isNumeric && abs(player.currentTime().seconds - 0.1) < 0.0001 }, tick: playback.tick)
             playback.tick()
             XCTAssertEqual(store.snapshot.playback.positionMs, 100)
@@ -103,7 +107,7 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             try await self.until("load failure reported", { store.nativeError != nil })
             for _ in 0..<10 { playback.tick() }
             XCTAssertEqual(attempts, 1)
-            store.send("seek", ["positionMs": 100])
+            store.send(.seek(positionMs: 100))
             try await self.until("explicit request reloads audio", { player.currentItem != nil }, tick: playback.tick)
             XCTAssertEqual(attempts, 2)
             XCTAssertNil(store.nativeError)
@@ -119,9 +123,9 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             defer { playback.stop(); pending.cancelRemaining() }
             playback.tick()
             try await self.until("old load pending", { pending.waiters.count == 1 })
-            store.send("select_playback_lane", ["lane": "system"])
-            store.send("seek", ["positionMs": 90])
-            store.send("playback", ["isPlaying": true])
+            store.send(.selectPlaybackLane(lane: "system"))
+            store.send(.seek(positionMs: 90))
+            store.send(.playback(isPlaying: true))
             let desired = store.snapshot.playback
             pending.reject(0)
             try await self.until("old load failed", { pending.completed == 1 })
@@ -143,14 +147,14 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             }
 
             let recordId = try XCTUnwrap(store.snapshot.selectedRecordId)
-            store.send("playback", ["isPlaying": true])
+            store.send(.playback(isPlaying: true))
             try await self.until(
                 "player item ready and playing",
                 { player.currentItem?.status == .readyToPlay && player.rate > 0 },
                 tick: playback.tick
             )
 
-            store.send("trash_record", ["recordId": recordId])
+            store.send(.trashRecord(recordId: recordId))
             XCTAssertNil(store.snapshot.playback.recordId)
             XCTAssertFalse(store.snapshot.playback.isPlaying)
             XCTAssertNil(player.currentItem)
@@ -195,7 +199,7 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             for _ in 0..<10 { playback.tick() }
             XCTAssertEqual(activePlayer.pauseCount, pausesWhileSelectedIdle)
 
-            store.send("playback", ["isPlaying": true])
+            store.send(.playback(isPlaying: true))
             try await self.until(
                 "player item ready and playing",
                 { activePlayer.currentItem?.status == .readyToPlay && activePlayer.rate > 0 },
@@ -203,7 +207,7 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             )
 
             let replacesBeforeTrash = activePlayer.replaceCurrentItemCount
-            store.send("trash_record", ["recordId": recordId])
+            store.send(.trashRecord(recordId: recordId))
             XCTAssertNil(store.snapshot.playback.recordId)
             XCTAssertNil(activePlayer.currentItem)
             XCTAssertEqual(activePlayer.replaceCurrentItemCount, replacesBeforeTrash + 1)
@@ -223,12 +227,12 @@ private final class CountingAVPlayer: AVPlayer {
     var replaceCurrentItemCount = 0
 
     override func pause() {
-        pauseCount += 1
+        MainActor.assumeIsolated { pauseCount += 1 }
         super.pause()
     }
 
     override func replaceCurrentItem(with item: AVPlayerItem?) {
-        replaceCurrentItemCount += 1
+        MainActor.assumeIsolated { replaceCurrentItemCount += 1 }
         super.replaceCurrentItem(with: item)
     }
 }

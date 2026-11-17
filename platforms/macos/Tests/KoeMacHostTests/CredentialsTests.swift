@@ -37,7 +37,7 @@ struct CredentialsTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let vault = FixtureCredentials()
         let first = HostSessionStore(workspacePath: root.path, credentials: vault)
-        first.send("configure_provider", ["apiKey": "fixture-only-secret", "model": "fixture-model"])
+        first.send(.configureProvider(apiKey: "fixture-only-secret", model: "fixture-model"))
         #expect(first.snapshot.provider.configured)
         #expect(first.snapshot.provider.model == "fixture-model")
         #expect(first.nativeError == nil)
@@ -50,14 +50,14 @@ struct CredentialsTests {
         let snapshot = try JSONEncoder().encode(reopened.snapshot)
         #expect(!String(decoding: snapshot, as: UTF8.self).contains("fixture-only-secret"))
         vault.failRead = true
-        reopened.send("retry_provider_credentials")
+        reopened.send(.retryProviderCredentials())
         #expect(reopened.snapshot.provider.credentialState == "unavailable")
         #expect(!reopened.snapshot.provider.configured)
         vault.failRead = false
-        reopened.send("retry_provider_credentials", ["authorize": true])
+        reopened.send(.retryProviderCredentials(authorize: true))
         #expect(reopened.snapshot.provider.configured)
         #expect(vault.operations.contains(4))
-        reopened.send("clear_provider_credential")
+        reopened.send(.clearProviderCredential)
         #expect(!reopened.snapshot.provider.configured)
         reopened.shutdown()
         let cleared = HostSessionStore(workspacePath: root.path, credentials: vault)
@@ -73,14 +73,14 @@ struct CredentialsTests {
         let root = base.appendingPathComponent("crashed"), other = base.appendingPathComponent("other")
         let vault = FixtureCredentials()
         let neighbour = HostSessionStore(workspacePath: other.path, credentials: vault)
-        neighbour.send("configure_provider", ["apiKey": "other-fixture-secret", "model": "other-model"])
+        neighbour.send(.configureProvider(apiKey: "other-fixture-secret", model: "other-model"))
         #expect(neighbour.snapshot.provider.configured)
         neighbour.shutdown()
         let file = root.appendingPathComponent("product-workspace.json")
         var crashed: Data?
         vault.afterCreate = { crashed = try? Data(contentsOf: file) }
         let first = HostSessionStore(workspacePath: root.path, credentials: vault)
-        first.send("configure_provider", ["apiKey": "orphan-fixture-secret", "model": "fixture-model"])
+        first.send(.configureProvider(apiKey: "orphan-fixture-secret", model: "fixture-model"))
         #expect(first.snapshot.provider.configured)
         first.shutdown()
         vault.afterCreate = nil
@@ -106,7 +106,7 @@ struct CredentialsTests {
         #expect(native.isolated)
         let first = HostSessionStore(workspacePath: root.path, credentials: native)
         #expect(!first.snapshot.provider.configured)
-        first.send("configure_provider", ["apiKey": "isolated-fixture", "model": "isolated-model"])
+        first.send(.configureProvider(apiKey: "isolated-fixture", model: "isolated-model"))
         #expect(first.snapshot.provider.configured)
         #expect(first.snapshot.provider.isolated)
         first.shutdown()
@@ -115,7 +115,7 @@ struct CredentialsTests {
         defer { second.shutdown() }
         #expect(!second.snapshot.provider.configured)
         #expect(second.snapshot.provider.model == "isolated-model")
-        second.send("clear_provider_credential")
+        second.send(.clearProviderCredential)
         #expect(second.snapshot.provider.credentialState == "cleared")
     }
 
@@ -145,12 +145,12 @@ struct CredentialsTests {
         #expect(!workspace.contains("environment-fixture-secret"))
         let snapshot = try JSONEncoder().encode(reopened.snapshot)
         #expect(!String(decoding: snapshot, as: UTF8.self).contains("environment-fixture-secret"))
-        reopened.send("configure_provider", ["apiKey": "environment-fixture-secret", "model": "environment-model"])
+        reopened.send(.configureProvider(apiKey: "environment-fixture-secret", model: "environment-model"))
         #expect(reopened.snapshot.provider.model == "environment-model")
-        reopened.send("configure_provider", ["apiKey": "manual-fixture-secret", "model": "manual-model"])
+        reopened.send(.configureProvider(apiKey: "manual-fixture-secret", model: "manual-model"))
         #expect(reopened.snapshot.provider.configured)
         #expect(reopened.snapshot.provider.model == "manual-model")
-        reopened.send("retry_provider_credentials")
+        reopened.send(.retryProviderCredentials())
         #expect(reopened.snapshot.provider.configured)
         reopened.shutdown()
 
@@ -159,7 +159,7 @@ struct CredentialsTests {
         #expect(!manual.snapshot.provider.configured)
         #expect(manual.snapshot.provider.model == "manual-model")
         #expect(manual.snapshot.provider.credentialState == "missing_saved")
-        manual.send("clear_provider_credential")
+        manual.send(.clearProviderCredential)
         #expect(manual.snapshot.provider.credentialState == "cleared")
         manual.shutdown()
 
