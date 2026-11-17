@@ -141,5 +141,3 @@ pub(super) fn evidence_json(evidence: &Evidence) -> Value {
         "startMs": evidence.start_ms
     })
 }
-
-

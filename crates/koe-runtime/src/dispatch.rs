@@ -407,4 +407,3 @@ pub(crate) fn search_scope(scope: &str, id: Option<String>) -> Result<SearchScop
         _ => Err("无效的问答范围".into()),
     }
 }
-

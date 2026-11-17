@@ -241,4 +241,3 @@ pub(in crate::session) enum FileDecryption {
     AwaitingKey,
     Ready { key: [u8; 32], nonce: [u8; 16] },
 }
-
