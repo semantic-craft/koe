@@ -4,7 +4,7 @@
 //! # Examples
 //!
 //! ```
-//! use koe_client_base::prng::{fnv1a64_hex, to_hex_upper, SplitMix64};
+//! use koe_engine::prng::{fnv1a64_hex, to_hex_upper, SplitMix64};
 //!
 //! let mut rng = SplitMix64::new(0);
 //! let first = rng.next_byte();
@@ -25,7 +25,7 @@ impl SplitMix64 {
     /// # Examples
     ///
     /// ```
-    /// use koe_client_base::prng::SplitMix64;
+    /// use koe_engine::prng::SplitMix64;
     ///
     /// let mut rng = SplitMix64::new(42);
     /// assert_ne!(rng.next_u64(), 0);
@@ -54,7 +54,7 @@ impl SplitMix64 {
     /// # Examples
     ///
     /// ```
-    /// use koe_client_base::prng::SplitMix64;
+    /// use koe_engine::prng::SplitMix64;
     ///
     /// let mut rng = SplitMix64::new(7);
     /// let bytes = rng.next_bytes(16);
@@ -74,7 +74,7 @@ impl SplitMix64 {
 /// # Examples
 ///
 /// ```
-/// use koe_client_base::prng::fnv1a64;
+/// use koe_engine::prng::fnv1a64;
 ///
 /// assert_eq!(fnv1a64(&[]), 0xCBF2_9CE4_8422_2325);
 /// ```
@@ -107,7 +107,7 @@ const HEX_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 /// # Examples
 ///
 /// ```
-/// use koe_client_base::prng::to_hex_upper;
+/// use koe_engine::prng::to_hex_upper;
 ///
 /// assert_eq!(to_hex_upper(&[0x09, 0xFF, 0x00, 0x1A]), "09FF001A");
 /// ```

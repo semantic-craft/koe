@@ -55,7 +55,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     public func startScanningIfPoweredOn() {
         if reportedReady, peripheral?.state == .connected {
-            store?.send("device_refresh")
+            store?.send(.deviceRefresh)
             flushOutboundFrames()
             return
         }
@@ -109,7 +109,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             writeProjectedTeardownStopFramesIfReady(for: device)
         }
         teardownLocalBleLink()
-        store?.send("device_disconnect")
+        store?.send(.deviceDisconnect)
     }
 
     private func beginDiscoveryAndReconnect(_ central: CBCentralManager) {
@@ -147,11 +147,11 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     private func emit(_ event: String, deviceName: String? = nil) {
-        var fields: [String: Any] = ["event": event, "connectionId": connectionID]
-        if let name = deviceName ?? discoveredName {
-            fields["deviceName"] = name
-        }
-        store?.send("device_event", fields)
+        store?.send(.deviceEvent(
+            event: event,
+            connectionId: connectionID,
+            deviceName: deviceName ?? discoveredName
+        ))
     }
 
     private func checkReady() {
@@ -166,11 +166,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         let mode: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
         let limit = max(peripheral.maximumWriteValueLength(for: mode), 1)
         var frames: [Data] = []
-        for hex in store?.drainOutboundBleFramesHex() ?? [] {
-            guard let data = Self.decodeHex(hex) else {
-                store?.reportNativeError("设备指令格式无效，请重新连接。")
-                continue
-            }
+        for data in store?.drainOutboundBleFrames() ?? [] {
             var offset = 0
             while offset < data.count {
                 let end = min(offset + limit, data.count)

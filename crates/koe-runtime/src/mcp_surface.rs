@@ -534,8 +534,8 @@ impl KoeRuntime {
                     return Err(McpToolError::invalid_params("无效的 decision 参数"));
                 }
                 let result = self
-                    .run_mcp_command(
-                        Command::ReviewItem {
+                    .run_mcp_intent(
+                        HostIntent::ReviewItem {
                             item_id: item_id.clone(),
                             decision: decision.clone(),
                         },
@@ -556,8 +556,8 @@ impl KoeRuntime {
                 let item_id = required_str(obj, "item_id")?.to_string();
                 let completed = required_bool(obj, "completed")?;
                 let result = self
-                    .run_mcp_command(
-                        Command::CompleteTask {
+                    .run_mcp_intent(
+                        HostIntent::CompleteTask {
                             item_id: item_id.clone(),
                             completed,
                         },
@@ -579,8 +579,8 @@ impl KoeRuntime {
                 let text = required_str(obj, "text")?.to_string();
                 let due = optional_nullable_string(obj, "due")?;
                 let result = self
-                    .run_mcp_command(
-                        Command::EditItem {
+                    .run_mcp_intent(
+                        HostIntent::EditItem {
                             item_id: item_id.clone(),
                             text,
                             due,
@@ -634,8 +634,8 @@ impl KoeRuntime {
                         let segment_id = required_str(obj, "segment_id")?.to_string();
                         let text = required_str(obj, "text")?.to_string();
                         let result = self
-                            .run_mcp_command(
-                                Command::EditSegmentText {
+                            .run_mcp_intent(
+                                HostIntent::EditSegmentText {
                                     record_id: record_id.clone(),
                                     segment_id: segment_id.clone(),
                                     text,
@@ -657,8 +657,8 @@ impl KoeRuntime {
                         let segment_id = required_str(obj, "segment_id")?.to_string();
                         let speaker = optional_nullable_string(obj, "speaker")?;
                         let result = self
-                            .run_mcp_command(
-                                Command::SetSegmentSpeaker {
+                            .run_mcp_intent(
+                                HostIntent::SetSegmentSpeaker {
                                     record_id: record_id.clone(),
                                     segment_id: segment_id.clone(),
                                     speaker,
@@ -691,28 +691,28 @@ impl KoeRuntime {
                 let record_id = required_str(obj, "record_id")?.to_string();
                 let action = required_str(obj, "action")?;
                 let command = match action {
-                    "rename" => Command::RenameRecord {
+                    "rename" => HostIntent::RenameRecord {
                         record_id: record_id.clone(),
                         title: required_str(obj, "title")?.to_string(),
                     },
-                    "archive" => Command::SetRecordArchived {
+                    "archive" => HostIntent::SetRecordArchived {
                         record_id: record_id.clone(),
                         archived: true,
                     },
-                    "unarchive" => Command::SetRecordArchived {
+                    "unarchive" => HostIntent::SetRecordArchived {
                         record_id: record_id.clone(),
                         archived: false,
                     },
-                    "trash" => Command::TrashRecord {
+                    "trash" => HostIntent::TrashRecord {
                         record_id: record_id.clone(),
                     },
-                    "restore" => Command::RestoreRecord {
+                    "restore" => HostIntent::RestoreRecord {
                         record_id: record_id.clone(),
                     },
-                    "transcribe" => Command::Transcribe {
+                    "transcribe" => HostIntent::Transcribe {
                         record_id: record_id.clone(),
                     },
-                    "summarize" => Command::Summarize {
+                    "summarize" => HostIntent::Summarize {
                         record_id: record_id.clone(),
                     },
                     "purge" | "empty_trash" => {
@@ -722,7 +722,7 @@ impl KoeRuntime {
                     }
                     _ => return Err(McpToolError::invalid_params("无效的 manage_record action")),
                 };
-                let result = self.run_mcp_command(command, now).map(|()| {
+                let result = self.run_mcp_intent(command, now).map(|()| {
                     json!({
                         "ok": true,
                         "recordId": record_id,
@@ -739,9 +739,9 @@ impl KoeRuntime {
             "device_control" => {
                 ensure_allowed_keys(obj, &["action", "file_id", "enabled"])?;
                 let action = required_str(obj, "action")?;
-                let command = match action {
-                    "start_recording" => Command::DeviceStart,
-                    "stop_recording" => Command::DeviceStop,
+                let message = match action {
+                    "start_recording" => DispatchMessage::Intent(HostIntent::DeviceStart),
+                    "stop_recording" => DispatchMessage::Intent(HostIntent::DeviceStop),
                     "download_file" => {
                         let raw = optional_u64(obj, "file_id")?
                             .ok_or_else(|| McpToolError::invalid_params("缺少 file_id"))?;
@@ -749,17 +749,17 @@ impl KoeRuntime {
                             .ok()
                             .filter(|&id| id > 0)
                             .ok_or_else(|| McpToolError::invalid_params("无效的 file_id"))?;
-                        Command::DeviceDownload { file_id }
+                        DispatchMessage::Intent(HostIntent::DeviceDownload { file_id })
                     }
-                    "disconnect" => Command::DeviceDisconnect,
-                    "release_ble" => Command::DeviceRelease,
-                    "set_auto_connect" => Command::SetBleAutoConnect {
+                    "disconnect" => DispatchMessage::Adapter(AdapterEvent::DeviceDisconnect),
+                    "release_ble" => DispatchMessage::Intent(HostIntent::DeviceRelease),
+                    "set_auto_connect" => DispatchMessage::Intent(HostIntent::SetBleAutoConnect {
                         enabled: required_bool(obj, "enabled")?,
-                    },
-                    "refresh" => Command::DeviceRefresh,
+                    }),
+                    "refresh" => DispatchMessage::Intent(HostIntent::DeviceRefresh),
                     _ => return Err(McpToolError::invalid_params("无效的 device_control action")),
                 };
-                let result = self.run_mcp_command(command, now).map(|()| {
+                let result = self.run_mcp_message(message, now).map(|()| {
                     json!({
                         "ok": true,
                         "action": action,
@@ -859,10 +859,14 @@ impl KoeRuntime {
         Ok(())
     }
 
-    fn run_mcp_command(&mut self, command: Command, now: u64) -> Result<(), String> {
+    fn run_mcp_intent(&mut self, intent: HostIntent, now: u64) -> Result<(), String> {
+        self.run_mcp_message(DispatchMessage::Intent(intent), now)
+    }
+
+    fn run_mcp_message(&mut self, message: DispatchMessage, now: u64) -> Result<(), String> {
         self.error = None;
         self.notice = None;
-        let result = self.dispatch(command, now);
+        let result = self.dispatch_message(message, now);
         if let Err(error) = &result {
             self.error = Some(error.clone());
         }

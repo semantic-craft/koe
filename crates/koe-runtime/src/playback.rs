@@ -117,19 +117,6 @@ impl KoeRuntime {
         Some(position_ms.min(record.aggregate.duration_ms))
     }
 
-    pub(super) fn playback_progress(
-        &mut self,
-        record_id: &str,
-        request_id: u64,
-        position_ms: u64,
-        playing: bool,
-    ) {
-        if let Some(clamped) = self.clamped_playback_position(record_id, request_id, position_ms) {
-            self.selection.playback.position_ms = clamped;
-            self.selection.playback.playing = playing;
-        }
-    }
-
     pub(super) fn playback_json(&self) -> Value {
         let playback = &self.selection.playback;
         let record = playback

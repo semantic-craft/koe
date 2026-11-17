@@ -27,14 +27,17 @@ struct LiveMinutesWorkspaceTests {
                 "lane": "microphone",
                 "sampleRate": 16000
             ], nowEpochSec: nowEpochSec)
-            store.send("microphone_chunk", [
-                "recordId": mic.recordId,
-                "sessionId": mic.sessionId,
-                "lane": "microphone",
-                "sequence": 0,
-                "samples": [Int16](repeating: 180, count: 320),
-                "timing": ["epoch": 0, "capturedStartNs": 1_000_000_000]
-            ], nowEpochSec: nowEpochSec)
+            let ingest = store.ingestMicrophonePCM(
+                recordId: mic.recordId,
+                sessionId: mic.sessionId,
+                lane: "microphone",
+                sequence: 0,
+                epoch: 0,
+                capturedStartNs: 1_000_000_000,
+                samples: [Int16](repeating: 180, count: 320),
+                nowEpochSec: nowEpochSec
+            )
+            #expect(ingest.status == .accepted)
             store.performCaptureAction(.end)
             store.send("microphone_stopped", [
                 "recordId": mic.recordId,

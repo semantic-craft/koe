@@ -662,21 +662,16 @@ fn all_day_microphone_cross_segment_pause_and_resume_preserves_valid_timelines()
                        sequence: &mut u64| {
         for _ in 0..count {
             let captured_start_ns = clock_ns + (*epoch_samples * 1_000_000_000) / 16_000;
-            command(
-                runtime,
-                json!({
-                    "type": "microphone_chunk",
-                    "recordId": record_id,
-                    "sessionId": session_id,
-                    "lane": "microphone",
-                    "sequence": *sequence,
-                    "samples": chunk_samples,
-                    "timing": {
-                        "epoch": epoch,
-                        "capturedStartNs": captured_start_ns
-                    }
-                }),
+            let receipt = runtime.ingest_microphone_pcm(
+                &record_id,
+                &session_id,
+                "microphone",
+                *sequence,
+                &chunk_samples,
+                Some((epoch, captured_start_ns)),
+                NOW,
             );
+            assert_eq!(receipt.status, crate::PcmIngestStatus::Accepted);
             *epoch_samples += chunk_samples.len() as u64;
             *sequence += 1;
         }

@@ -35,12 +35,12 @@ final class NativeActivity {
 final class NativeQuitCoordinator {
     private enum ReplyState { case idle, requesting, waiting }
     private var replyState = ReplyState.idle
-    private let send: (String) -> Void
+    private let send: (HostAdapterEvent) -> Void
     private let reply: (Bool) -> Void
     private let activity: NativeActivity
     private var latest: LifecycleSnapshot?
 
-    init(activity: NativeActivity? = nil, send: @escaping (String) -> Void, reply: @escaping (Bool) -> Void) {
+    init(activity: NativeActivity? = nil, send: @escaping (HostAdapterEvent) -> Void, reply: @escaping (Bool) -> Void) {
         self.activity = activity ?? NativeActivity()
         self.send = send
         self.reply = reply
@@ -61,7 +61,7 @@ final class NativeQuitCoordinator {
         guard replyState == .idle else { return .terminateLater }
         replyState = .requesting
         latest = nil
-        send("request_quit")
+        send(.requestQuit)
         if latest?.quitPhase == "ready" {
             replyState = .idle
             return .terminateNow
@@ -77,7 +77,7 @@ final class NativeQuitCoordinator {
     func cancel() {
         guard replyState == .waiting else { return }
         replyState = .idle
-        send("cancel_quit")
+        send(.cancelQuit)
         reply(false)
     }
 

@@ -32,7 +32,7 @@ struct LifecycleTests {
     @Test("AppKit receives one delayed reply only after durable ready")
     func delayedReply() {
         var replies: [Bool] = []
-        var commands: [String] = []
+        var commands: [HostAdapterEvent] = []
         var coordinator: NativeQuitCoordinator!
         defer { coordinator = nil }
         coordinator = NativeQuitCoordinator(activity: NativeActivity(begin: { NSObject() }, end: { _ in }), send: {
@@ -41,7 +41,7 @@ struct LifecycleTests {
         }, reply: { replies.append($0) })
         #expect(coordinator.request() == .terminateLater)
         #expect(coordinator.request() == .terminateLater)
-        #expect(commands == ["request_quit"])
+        #expect(commands == [.requestQuit])
         coordinator.apply(LifecycleSnapshot(keepAwake: true, quitPhase: "blocked", message: "保存失败"))
         #expect(replies.isEmpty)
         coordinator.apply(LifecycleSnapshot(keepAwake: false, quitPhase: "ready"))
@@ -52,17 +52,17 @@ struct LifecycleTests {
     @Test("Cancel replies false and late ready cannot terminate the app")
     func cancelledReply() {
         var replies: [Bool] = []
-        var commands: [String] = []
+        var commands: [HostAdapterEvent] = []
         var coordinator: NativeQuitCoordinator!
         defer { coordinator = nil }
         coordinator = NativeQuitCoordinator(activity: NativeActivity(begin: { NSObject() }, end: { _ in }), send: {
             commands.append($0)
-            coordinator.apply(LifecycleSnapshot(keepAwake: true, quitPhase: $0 == "cancel_quit" ? "running" : "draining"))
+            coordinator.apply(LifecycleSnapshot(keepAwake: true, quitPhase: $0 == .cancelQuit ? "running" : "draining"))
         }, reply: { replies.append($0) })
         #expect(coordinator.request() == .terminateLater)
         coordinator.cancel()
         coordinator.apply(LifecycleSnapshot(keepAwake: false, quitPhase: "ready"))
-        #expect(commands == ["request_quit", "cancel_quit"])
+        #expect(commands == [.requestQuit, .cancelQuit])
         #expect(replies == [false])
         coordinator.shutdown()
     }

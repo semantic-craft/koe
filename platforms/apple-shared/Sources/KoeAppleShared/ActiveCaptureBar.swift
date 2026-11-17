@@ -29,15 +29,15 @@ extension CaptureMode {
 extension HostSessionStore {
     public func startCapture(_ mode: CaptureMode, stayOnPage: Bool = false) {
         send(.startCaptureMode(mode: mode, stayOnPage: stayOnPage))
-        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+        bridgeActions.flushBleOutbound()
     }
 
     public func performCaptureAction(_ action: CaptureAction) {
         if action == .resume {
-            NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
+            bridgeActions.resumeMicrophone()
         } else {
             send(.captureAction(action: action))
-            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+            bridgeActions.flushBleOutbound()
         }
     }
 }

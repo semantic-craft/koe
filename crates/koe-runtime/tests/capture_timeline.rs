@@ -57,12 +57,17 @@ fn chunk(
     ns: u64,
     count: usize,
 ) -> Value {
-    event(
-        r,
-        t,
+    let samples = vec![7i16; count];
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
         lane,
-        json!({"type":"microphone_chunk","sequence":seq,"timing":{"epoch":epoch,"capturedStartNs":ns},"samples":vec![7;count]}),
-    )
+        seq,
+        &samples,
+        Some((epoch, ns)),
+        100,
+    );
+    r.snapshot(100)
 }
 fn stop(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64) -> Value {
     let epoch = r.snapshot(100)["microphone"]["epoch"].clone();

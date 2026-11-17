@@ -50,12 +50,17 @@ fn start(r: &mut KoeRuntime, t: &Value, lane: &str) {
     assert!(s["error"].is_null(), "{}", s["error"]);
 }
 fn chunk(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64, n: i16) -> Value {
-    event(
-        r,
-        t,
+    let samples = vec![n; 160];
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
         lane,
-        json!({"type":"microphone_chunk","sequence":seq,"samples":vec![n;160]}),
-    )
+        seq,
+        &samples,
+        None,
+        100,
+    );
+    r.snapshot(100)
 }
 fn stop(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64) -> Value {
     event(
@@ -229,13 +234,17 @@ fn timed(r: &mut KoeRuntime, t: &Value, lane: &str, mut v: Value, epoch: u64) ->
 
 fn timed_chunk(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64, epoch: u64, ns: u64, n: i16) {
     let count = if lane == "system" { 480 } else { 160 };
-    let s = event(
-        r,
-        t,
+    let samples = vec![n; count];
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
         lane,
-        json!({"type":"microphone_chunk","sequence":seq,"samples":vec![n;count],
-            "timing":{"epoch":epoch,"capturedStartNs":ns}}),
+        seq,
+        &samples,
+        Some((epoch, ns)),
+        100,
     );
+    let s = r.snapshot(100);
     assert!(s["error"].is_null(), "{lane} chunk {seq}: {}", s["error"]);
 }
 

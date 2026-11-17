@@ -27,10 +27,17 @@ fn send(r: &mut KoeRuntime, v: Value) -> Value {
     serde_json::from_str(&r.dispatch_json(&v.to_string(), 100)).unwrap()
 }
 fn audio(r: &mut KoeRuntime, t: &Value, sequence: u64, n: usize) -> Value {
-    send(
-        r,
-        json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![100i16;n]}),
-    )
+    let samples = vec![100i16; n];
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
+        "microphone",
+        sequence,
+        &samples,
+        None,
+        100,
+    );
+    r.snapshot(100)
 }
 #[test]
 fn live_minutes_keeps_final_and_draining_draft_until_the_next_recording() {
@@ -95,14 +102,14 @@ fn microphone_creates_durable_record_on_first_audio_and_uses_selected_speech_eng
     );
     audio(&mut r, t, 0, 320);
     assert_eq!(r.workspace().records().len(), 1);
-    let effects: Value = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+    let effects = r.drain_local_asr_effects();
     let op = effects
-        .as_array()
-        .unwrap()
         .iter()
-        .find(|e| e["kind"] == "start")
-        .unwrap()["operationId"]
-        .clone();
+        .find_map(|e| match e {
+            koe_runtime::LocalAsrEffect::Start { operation_id, .. } => Some(*operation_id),
+            _ => None,
+        })
+        .unwrap();
     let s = send(
         &mut r,
         json!({"type":"local_asr_result","operationId":op,"text":"第一句","startMs":0,"endMs":20,"isFinal":true}),
@@ -174,19 +181,19 @@ fn microphone_started(r: &mut KoeRuntime, t: &Value) {
     assert!(s["error"].is_null(), "{s}");
 }
 fn accept_windows(r: &mut KoeRuntime, finish_text: &str) -> Vec<u64> {
-    let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+    let effects = r.drain_local_asr_effects();
     let mut starts = vec![];
     for e in effects {
-        let op = e["operationId"].as_u64().unwrap();
-        if e["kind"] == "start" {
-            starts.push(op);
-        }
-        if e["kind"] == "finish" {
-            send(
-                r,
-                json!({"type":"local_asr_result","operationId":op,"text":finish_text,"startMs":0,"endMs":1,"isFinal":true}),
-            );
-            send(r, json!({"type":"local_asr_finished","operationId":op}));
+        match e {
+            koe_runtime::LocalAsrEffect::Start { operation_id, .. } => starts.push(operation_id),
+            koe_runtime::LocalAsrEffect::Finish { operation_id } => {
+                send(
+                    r,
+                    json!({"type":"local_asr_result","operationId":operation_id,"text":finish_text,"startMs":0,"endMs":1,"isFinal":true}),
+                );
+                send(r, json!({"type":"local_asr_finished","operationId":operation_id}));
+            }
+            _ => {}
         }
     }
     starts
@@ -282,9 +289,16 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         }
     ));
     let next_day = 100 + 86_400;
-    let s: Value = serde_json::from_str(&r.dispatch_json(
-        &json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![100i16;320]}).to_string(), next_day,
-    )).unwrap();
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
+        "microphone",
+        sequence,
+        &vec![100i16; 320],
+        None,
+        next_day,
+    );
+    let s: Value = r.snapshot(next_day);
     assert!(s["error"].is_null(), "{s}");
     sequence += 1;
     assert_eq!(s["microphone"]["recordId"], t["recordId"]);
@@ -393,15 +407,22 @@ fn interrupted_microphone_audio_is_recovered_and_only_local_unfinished_work_resu
     );
     r.poll_timers(0, 100);
     r.poll_timers(0, 100);
-    let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
-    let op = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
-    assert_eq!(
-        effects.iter().find(|e| e["kind"] == "audio").unwrap()["pcm16"]
-            .as_array()
-            .unwrap()
-            .len(),
-        320
-    );
+    let effects = r.drain_local_asr_effects();
+    let op = effects
+        .iter()
+        .find_map(|e| match e {
+            koe_runtime::LocalAsrEffect::Start { operation_id, .. } => Some(*operation_id),
+            _ => None,
+        })
+        .unwrap();
+    let sample_count = effects
+        .iter()
+        .find_map(|e| match e {
+            koe_runtime::LocalAsrEffect::Audio { pcm16_le, .. } => Some(pcm16_le.len() / 2),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(sample_count, 320);
     send(
         &mut r,
         json!({"type":"local_asr_result","operationId":op,"text":"恢复尾句","startMs":0,"endMs":20,"isFinal":true}),
@@ -435,20 +456,21 @@ fn apple_waits_for_the_previous_window_tail_before_starting_the_next() {
     while n < 240_000 {
         let count = 8192.min(240_000 - n);
         audio(&mut r, &t, sequence, count);
-        let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+        let effects = r.drain_local_asr_effects();
         for e in effects {
-            if e["kind"] == "start" {
-                operation = e["operationId"].as_u64();
+            if let koe_runtime::LocalAsrEffect::Start { operation_id, .. } = e {
+                operation = Some(operation_id);
             }
         }
         n += count;
         sequence += 1;
     }
     audio(&mut r, &t, sequence, 320);
-    let waiting: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
-    assert!(!waiting
-        .iter()
-        .any(|e| e["kind"] == "start" || e["kind"] == "cancel"));
+    let waiting = r.drain_local_asr_effects();
+    assert!(!waiting.iter().any(|e| matches!(
+        e,
+        koe_runtime::LocalAsrEffect::Start { .. } | koe_runtime::LocalAsrEffect::Cancel { .. }
+    )));
     let operation = operation.unwrap();
     send(
         &mut r,
@@ -458,13 +480,20 @@ fn apple_waits_for_the_previous_window_tail_before_starting_the_next() {
         &mut r,
         json!({"type":"local_asr_finished","operationId":operation}),
     );
-    let next: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
-    assert_eq!(next.iter().filter(|e| e["kind"] == "start").count(), 1);
+    let next = r.drain_local_asr_effects();
     assert_eq!(
-        next.iter().find(|e| e["kind"] == "audio").unwrap()["pcm16"]
-            .as_array()
-            .unwrap()
-            .len(),
+        next.iter()
+            .filter(|e| matches!(e, koe_runtime::LocalAsrEffect::Start { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        next.iter()
+            .find_map(|e| match e {
+                koe_runtime::LocalAsrEffect::Audio { pcm16_le, .. } => Some(pcm16_le.len() / 2),
+                _ => None,
+            })
+            .unwrap(),
         320
     );
     assert!(r
@@ -493,8 +522,14 @@ fn background_file_transcription_does_not_leak_into_live_minutes() {
         &mut r,
         json!({"type":"transcribe","recordId":s["selectedRecordId"]}),
     );
-    let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
-    let op = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
+    let effects = r.drain_local_asr_effects();
+    let op = effects
+        .iter()
+        .find_map(|e| match e {
+            koe_runtime::LocalAsrEffect::Start { operation_id, .. } => Some(*operation_id),
+            _ => None,
+        })
+        .unwrap();
     let active = send(&mut r, json!({"type":"start_capture_mode","mode":"meeting"}));
     let ticket = &active["microphone"];
     microphone_started(&mut r, ticket);
@@ -547,10 +582,17 @@ fn timed_all_day_pause_after_rotation_keeps_one_clock_coordinate() {
     let mut n = 0usize;
     while n < 4_800_320 {
         let count = 8192.min(4_800_320 - n);
-        let s = send(
-            &mut r,
-            json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![10;count],"timing":{"epoch":0,"capturedStartNs":clock+n as u64*62500+10_000_000}}),
+        let samples = vec![10i16; count];
+        r.ingest_microphone_pcm(
+            t["recordId"].as_str().unwrap(),
+            t["sessionId"].as_str().unwrap(),
+            "microphone",
+            sequence,
+            &samples,
+            Some((0, clock + n as u64 * 62500 + 10_000_000)),
+            100,
         );
+        let s = r.snapshot(100);
         assert!(s["error"].is_null(), "{s}");
         accept_windows(&mut r, "已识别");
         n += count;
@@ -567,10 +609,16 @@ fn timed_all_day_pause_after_rotation_keeps_one_clock_coordinate() {
         json!({"type":"resume_microphone","clockNs":resumed_at}),
     );
     assert!(s["error"].is_null(), "{s}");
-    let s = send(
-        &mut r,
-        json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![20;320],"timing":{"epoch":1,"capturedStartNs":resumed_at}}),
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
+        "microphone",
+        sequence,
+        &vec![20i16; 320],
+        Some((1, resumed_at)),
+        100,
     );
+    let s = r.snapshot(100);
     assert!(s["error"].is_null(), "{s}");
     assert_eq!(s["microphone"]["nextSequence"], sequence + 1);
 }
@@ -591,7 +639,15 @@ fn apple_file_backpressure_waits_for_native_completion_instead_of_filling_its_qu
         r.poll_timers(0, 100);
     }
     assert!(r.snapshot(100)["error"].is_null(), "{}", r.snapshot(100));
-    let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
-    assert_eq!(effects.iter().filter(|e| e["kind"] == "start").count(), 1);
-    assert!(!effects.iter().any(|e| e["kind"] == "cancel"));
+    let effects = r.drain_local_asr_effects();
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|e| matches!(e, koe_runtime::LocalAsrEffect::Start { .. }))
+            .count(),
+        1
+    );
+    assert!(!effects
+        .iter()
+        .any(|e| matches!(e, koe_runtime::LocalAsrEffect::Cancel { .. })));
 }

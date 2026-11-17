@@ -57,7 +57,7 @@ impl KoeRuntime {
                 now,
             )?;
         } else if bean {
-            self.dispatch(Command::DeviceStart, now)?;
+            self.dispatch_message(DispatchMessage::Intent(HostIntent::DeviceStart), now)?;
         } else {
             self.start_microphone(
                 selection.input_id,
@@ -112,12 +112,18 @@ impl KoeRuntime {
                 } else if self.microphone.is_some() {
                     self.stop_microphone(false)
                 } else if self.is_bean_meeting_recording() {
-                    self.dispatch(Command::DeviceStop, self.last_now_sec)
+                    self.dispatch_message(
+                        DispatchMessage::Intent(HostIntent::DeviceStop),
+                        self.last_now_sec,
+                    )
                 } else {
                     Ok(())
                 }
             }
-            CaptureAction::RetryStop => self.dispatch(Command::DeviceStop, self.last_now_sec),
+            CaptureAction::RetryStop => self.dispatch_message(
+                DispatchMessage::Intent(HostIntent::DeviceStop),
+                self.last_now_sec,
+            ),
             CaptureAction::RetrySave => self.save_microphone(),
             CaptureAction::Cancel => self.stop_microphone(true),
         }

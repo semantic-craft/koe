@@ -63,27 +63,35 @@ fn append_retry_preserves_forced_stop_reason() {
     unsafe {
         assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limited), 0);
     }
-    let failed = event(
-        &mut r,
-        &t,
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
         "microphone",
-        json!({"type":"microphone_chunk","sequence":0,"samples":vec![7;160]}),
+        0,
+        &vec![7; 160],
+        None,
+        100,
     );
     unsafe {
         assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &previous), 0);
     }
+    let failed = r.snapshot(100);
     assert!(
         failed["error"].is_string(),
         "must reproduce a real append failure"
     );
     assert_eq!(failed["microphone"]["phase"], "stopping");
     for lane in ["microphone", "system"] {
-        let s = event(
-            &mut r,
-            &t,
+        r.ingest_microphone_pcm(
+            t["recordId"].as_str().unwrap(),
+            t["sessionId"].as_str().unwrap(),
             lane,
-            json!({"type":"microphone_chunk","sequence":0,"samples":vec![7;160]}),
+            0,
+            &vec![7; 160],
+            None,
+            100,
         );
+        let s = r.snapshot(100);
         assert!(s["error"].is_null(), "retry failed: {}", s["error"]);
     }
     for lane in ["microphone", "system"] {

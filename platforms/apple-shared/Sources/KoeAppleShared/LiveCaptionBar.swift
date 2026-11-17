@@ -1,10 +1,5 @@
 import SwiftUI
 
-public struct LocalAsrSnapshot: Codable, Equatable, Sendable {
-    public let state: String
-    public let message: String
-}
-
 public struct LiveCaptionSnapshot: Codable, Equatable, Sendable {
     public let recordId: String
     public let text: String

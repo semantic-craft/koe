@@ -131,7 +131,7 @@ public struct CaptureView: View {
             if !device.connected {
                 KoeActionButton("连接", systemImage: "antenna.radiowaves.left.and.right") {
                     store.send(.deviceOpenGuide)
-                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                    store.bridgeActions.requestBleScan()
                 }.disabled(device.busy || isRecordingLocked)
             }
             if device.connected || device.autoConnect {
@@ -202,7 +202,7 @@ public struct CaptureView: View {
                         Spacer()
                         KoeActionButton("取回") {
                             store.send(.deviceDownload(fileId: file.id))
-                            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                            store.bridgeActions.flushBleOutbound()
                         }.disabled(device.busy)
                     }
                 }

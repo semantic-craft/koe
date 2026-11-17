@@ -24,14 +24,14 @@ flowchart TD
 
 | 层 | 模块 | 拥有的责任 |
 | --- | --- | --- |
-| 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context.rs`、`session.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、协议和加密；不做文件或网络 I/O |
+| 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context.rs`、`session.rs`、`hash.rs`、`prng.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、协议、加密与纯哈希/伪随机工具；零外部依赖，不做文件或网络 I/O |
 | 音频编解码边界 | `crates/koe-opus` | 对静态 libopus 的窄安全封装；保持 `OpusStreamDecoder` 接口 |
-| 客户端基础与格式 | `koe-client-base` | 原子文件工具与锁 |
+| 客户端基础与格式 | `koe-client-base` | 原子文件工具与排他文件锁 |
 | 存储与传输服务 | `koe-client-services`、`koe-client-providers` | 持久化编解码、文件导入、音频资产、真实 HTTPS/WebSocket、后台网络与本机模型工作线程 |
-| 应用编排 | `crates/koe-runtime` | 连接命令、领域事务、设备事件、异步结果和页面投影；选择要处理的记录 |
-| 宿主接口与入口 | `koe-host-api`、`koe-cli`、`platforms/` | 版本化 C ABI、命令行与 MCP、SwiftUI、系统窗口和硬件 I/O |
+| 应用编排 | `crates/koe-runtime` | 将 `HostIntent` 与 `AdapterEvent` 分离接入，连接领域事务、设备事件、异步结果和页面投影；选择要处理的记录 |
+| 宿主接口与入口 | `koe-host-api`、`koe-cli`、`platforms/` | 仅依赖 `koe-runtime` 的版本化 C ABI、命令行与 MCP、SwiftUI、`HostBridgeActions`、系统窗口和硬件 I/O |
 
-`koe-client-providers` 与 `koe-client-services` 不互相调用。二者由 runtime 协调，共用 engine 的领域类型和底层工具。
+`koe-client-providers` 与 `koe-client-services` 不互相调用，二者由 `koe-runtime` 协调并共用 `koe-engine` 的领域类型与纯底层工具（含 SHA-256、FNV1a、PRNG）。`koe-host-api` 不直接依赖 `koe-engine`、`koe-client-base`、`koe-client-services` 或 `koe-client-providers`。
 
 ## 唯一的产品状态
 
@@ -133,11 +133,16 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 ## 原生接口
 
-`koe-host-api` 的接口版本和快照版本均为 **2**。Swift 通过 `koe_host_session_dispatch_json` 发送意图，通过 `koe_host_session_snapshot_json` 获取带 `generation` 的不可变快照。宿主拒绝旧代次或不兼容版本，并显示命令或解码错误。
+`koe-host-api` 的接口版本和快照版本均为 **2**（导出 15 个 `extern "C"` 函数与 `KoePcmReceipt`、`KoePlaybackReceipt`、`KoeOwnedBytes` 三个 `#[repr(C)]` 结构）：
 
-`koe_host_session_create_with_credentials` 是兼容版本 2 的新增创建入口，注入同步、不可重入的凭据回调；原创建入口继续使用隔离内存适配器。回调上下文必须存活到 session 销毁，所有临时字符串只在调用期间借用。
+- **会话与生命周期**：`koe_host_api_version`、`koe_host_session_create`、`koe_host_session_create_with_credentials`（注入同步不可重入凭据回调；上下文须存活到会话销毁，临时字符串仅在调用期间借用）、`koe_host_session_destroy`、`koe_host_session_poll_timers`。
+- **强类型意图与快照**：SwiftUI 经强类型 `HostCommand`，原生适配器经强类型 `HostAdapterEvent` 调用 `koe_host_session_dispatch_json`（对应 Rust `DispatchMessage` 下的 `HostIntent` 与 `AdapterEvent`）；通过 `koe_host_session_generation` 与 `koe_host_session_snapshot_json` 获取带 `generation` 的不可变快照；经 `koe_host_string_free` 释放返回字符串。旧的 JSON `Command::{MicrophoneChunk, PlaybackProgress}` 通道已移除。
+- **高频二进制热路径与出站排空**：
+  - 音频与回放：`koe_host_session_ingest_pcm`（返回 `KoePcmReceipt`）、`koe_host_session_report_playback_progress`（返回 `KoePlaybackReceipt`）。
+  - BLE：`koe_host_session_ingest_ble` 接收原生通知字节；`koe_host_session_drain_ble_tx` 返回 `KoeOwnedBytes` 帧包，由 Swift 经 `koe_host_bytes_free` 释放。
+  - 本机识别：`koe_host_session_drain_local_asr` 返回 `KoeOwnedBytes` 二进制效果批（替代原 hex/JSON 出站编码），同样经 `koe_host_bytes_free` 释放。
 
-`HostSessionStore` 只持有一份快照。Swift 可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，不能自行提取待办、拼接转写时间、修补引用或改变处理阶段。AppKit 管理窗口和菜单，`NativeFileActions` 管理系统文件选择，`NativePlayback` 执行音频播放并回报实际进度。
+`HostSessionStore` 只持有一份快照并通过显式注入的 `HostBridgeActions`（替代全局字符串通知总线）触发 BLE 扫描/断开/出站刷新与麦克风恢复，同时经 `KoeWindowPresenter` 独立管理窗口观察与离屏切片门控。Swift 可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，不能自行提取待办、拼接转写时间、修补引用或改变处理阶段。AppKit 管理窗口和菜单，`NativeFileActions` 管理系统文件选择，`NativePlayback` 执行音频播放并回报实际进度。
 
 CLI 与 MCP 在宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）提供本地 JSON-RPC（`koe/status`、`koe/doctor`、`koe/mcp_tools_list`、`koe/mcp_tool_call`）转发至同一 `KoeRuntime` 实例，宿主未运行时回退直开 `KoeRuntime`。MCP stdio 暴露 16 项检索、审核、修订与设备工具且不开放不可逆彻底清除。离线 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
 

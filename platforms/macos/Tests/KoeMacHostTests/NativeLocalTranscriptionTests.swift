@@ -1,4 +1,5 @@
 import AVFoundation
+import KoeAppleShared
 import XCTest
 @testable import Koe
 
@@ -63,7 +64,38 @@ private final class ControlledSpeechRecognizer: LocalSpeechRecognizer {
 @MainActor
 final class NativeLocalTranscriptionTests: XCTestCase {
     private func data(_ effects: [[String: Any]]) -> Data {
-        try! JSONSerialization.data(withJSONObject: effects)
+        var out = Data()
+        for effect in effects {
+            let kind = effect["kind"] as? String ?? ""
+            let opId = UInt64((effect["operationId"] as? NSNumber)?.uint64Value ?? 0)
+            var opLe = opId.littleEndian
+            let opBytes = Data(bytes: &opLe, count: 8)
+            let tag: UInt8
+            var payload = Data()
+            switch kind {
+            case "start":
+                tag = 1
+                payload = Data((effect["locale"] as? String ?? "zh-CN").utf8)
+            case "audio":
+                tag = 2
+                for sample in (effect["pcm16"] as? [Int]) ?? [] {
+                    var s = Int16(sample).littleEndian
+                    payload.append(Data(bytes: &s, count: 2))
+                }
+            case "finish":
+                tag = 3
+            case "cancel":
+                tag = 4
+            default:
+                fatalError("unknown effect kind \(kind)")
+            }
+            var lenLe = UInt32(payload.count).littleEndian
+            out.append(tag)
+            out.append(opBytes)
+            out.append(Data(bytes: &lenLe, count: 4))
+            out.append(payload)
+        }
+        return out
     }
 
     func testStartWaitsForReadinessAndKeepsQueuedAudio() async throws {
@@ -74,8 +106,8 @@ final class NativeLocalTranscriptionTests: XCTestCase {
             ["kind": "audio", "operationId": 5, "pcm16": [4, 5]]
         ])
         var states: [String] = []
-        let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { effects }, send: { type, fields in
-            if type == "local_asr_readiness", let state = fields["state"] as? String { states.append(state) }
+        let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { effects }, send: { event in
+            if case let .localAsrReadiness(state, _) = event { states.append(state) }
         })
         adapter.prepare()
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
@@ -101,9 +133,9 @@ final class NativeLocalTranscriptionTests: XCTestCase {
             ["kind": "start", "operationId": 8, "locale": "zh-CN"],
             ["kind": "finish", "operationId": 8]
         ])
-        var commands: [(String, [String: Any])] = []
+        var commands: [HostAdapterEvent] = []
         let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { batch },
-                                              send: { commands.append(($0, $1)) }, now: { instant }, operationTimeout: .seconds(1))
+                                              send: { commands.append($0) }, now: { instant }, operationTimeout: .seconds(1))
         adapter.apply()
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while recognizer.sessions.first?.finishWaiter == nil, ContinuousClock.now < deadline { await Task.yield() }
@@ -113,7 +145,7 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         adapter.apply()
         await adapter.waitUntilIdle()
         XCTAssertTrue(first.cancelled)
-        XCTAssertEqual(commands.map(\.0), ["local_asr_failed"])
+        XCTAssertEqual(commands.map(\.eventType), ["local_asr_failed"])
         recognizer.configure = nil
         batch = data([
             ["kind": "cancel", "operationId": 8],
@@ -122,8 +154,8 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         ])
         adapter.apply()
         await adapter.waitUntilIdle()
-        XCTAssertEqual(commands.map(\.0), ["local_asr_failed", "local_asr_result", "local_asr_finished"])
-        XCTAssertEqual(commands.last?.1["operationId"] as? UInt64, 9)
+        XCTAssertEqual(commands.map(\.eventType), ["local_asr_failed", "local_asr_result", "local_asr_finished"])
+        XCTAssertEqual(commands.last, .localAsrFinished(operationId: 9))
     }
 
     func testFinishWaitsForTailResultBeforeCompletionAndPreservesPCMOrder() async throws {
@@ -135,10 +167,10 @@ final class NativeLocalTranscriptionTests: XCTestCase {
             ["kind": "audio", "operationId": 7, "pcm16": [3]],
             ["kind": "finish", "operationId": 7]
         ])
-        var commands: [(String, [String: Any])] = []
+        var commands: [HostAdapterEvent] = []
         var drains = 0
         let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { drains += 1; return effects },
-                                              send: { commands.append(($0, $1)) })
+                                              send: { commands.append($0) })
         adapter.apply()
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while recognizer.sessions.first?.finishStarted != true, ContinuousClock.now < deadline {
@@ -152,17 +184,18 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         XCTAssertEqual(session.samples, [1, -2, 3])
         session.finishWaiter?.resume()
         await adapter.waitUntilIdle()
-        XCTAssertEqual(commands.map(\.0), ["local_asr_result", "local_asr_finished"])
-        XCTAssertEqual(commands.first?.1["text"] as? String, "最后一句")
-        XCTAssertEqual(commands.last?.1["operationId"] as? UInt64, 7)
+        XCTAssertEqual(commands, [
+            .localAsrResult(operationId: 7, text: "最后一句", startMs: 0, endMs: 800, isFinal: true),
+            .localAsrFinished(operationId: 7)
+        ])
     }
 
     func testCancelledOperationCannotPublishIntoNextOperation() async throws {
         let recognizer = ControlledSpeechRecognizer()
         var batch = data([["kind": "start", "operationId": 1, "locale": "zh-CN"]])
-        var commands: [(String, [String: Any])] = []
+        var commands: [HostAdapterEvent] = []
         let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { batch },
-                                              send: { commands.append(($0, $1)) })
+                                              send: { commands.append($0) })
         adapter.apply()
         await adapter.waitUntilIdle()
         let first = try XCTUnwrap(recognizer.sessions.first)
@@ -179,8 +212,7 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         second.result?(.success(LocalSpeechResult(text: "当前", startMs: 0, endMs: 200, isFinal: false)))
         XCTAssertTrue(first.cancelled)
         XCTAssertEqual(second.samples, [])
-        XCTAssertEqual(commands.count, 1)
-        XCTAssertEqual(commands.first?.1["operationId"] as? UInt64, 2)
+        XCTAssertEqual(commands, [.localAsrResult(operationId: 2, text: "当前", startMs: 0, endMs: 200, isFinal: false)])
         adapter.shutdown()
         await adapter.waitUntilIdle()
         second.result?(.success(LocalSpeechResult(text: "退出后", startMs: 0, endMs: 300, isFinal: true)))
@@ -196,22 +228,22 @@ final class NativeLocalTranscriptionTests: XCTestCase {
             ["kind": "audio", "operationId": 3, "pcm16": [1]],
             ["kind": "finish", "operationId": 3]
         ])
-        var commands: [(String, [String: Any])] = []
+        var commands: [HostAdapterEvent] = []
         let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { effects },
-                                              send: { commands.append(($0, $1)) })
+                                              send: { commands.append($0) })
         adapter.apply()
         await adapter.waitUntilIdle()
-        XCTAssertEqual(commands.map(\.0), ["local_asr_failed"])
-        XCTAssertEqual(commands.first?.1["operationId"] as? UInt64, 3)
+        XCTAssertEqual(commands.map(\.eventType), ["local_asr_failed"])
+        XCTAssertEqual(commands.first, .localAsrFailed(operationId: 3, message: "音频队列已满"))
         XCTAssertTrue(recognizer.sessions.first?.cancelled == true)
     }
 
     func testReaderFailureDuringRecordingCancelsWithoutWaitingForMoreInput() async throws {
         let recognizer = ControlledSpeechRecognizer()
         var batch = data([["kind": "start", "operationId": 11, "locale": "zh-CN"]])
-        var commands: [(String, [String: Any])] = []
+        var commands: [HostAdapterEvent] = []
         let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { batch },
-                                              send: { commands.append(($0, $1)) })
+                                              send: { commands.append($0) })
         adapter.apply()
         await adapter.waitUntilIdle()
         let failed = try XCTUnwrap(recognizer.sessions.first)
@@ -219,8 +251,12 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         await failed.reader?.value
         let deadline = ContinuousClock.now.advanced(by: .seconds(1))
         while !failed.cancelled, ContinuousClock.now < deadline { await Task.yield() }
-        XCTAssertEqual(commands.map(\.0), ["local_asr_failed"])
-        XCTAssertEqual(commands.first?.1["operationId"] as? UInt64, 11)
+        XCTAssertEqual(commands.map(\.eventType), ["local_asr_failed"])
+        if case let .localAsrFailed(opId, _) = commands.first {
+            XCTAssertEqual(opId, 11)
+        } else {
+            XCTFail("expected localAsrFailed")
+        }
         XCTAssertTrue(failed.cancelled)
         await adapter.waitUntilIdle()
         failed.result?(.failure(LocalSpeechError("重复错误")))
@@ -235,8 +271,8 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         failed.result?(.failure(LocalSpeechError("过期错误")))
         let current = try XCTUnwrap(recognizer.sessions.last)
         current.result?(.success(LocalSpeechResult(text: "当前", startMs: 0, endMs: 100, isFinal: false)))
-        XCTAssertEqual(commands.map(\.0), ["local_asr_failed", "local_asr_result"])
-        XCTAssertEqual(commands.last?.1["operationId"] as? UInt64, 12)
+        XCTAssertEqual(commands.map(\.eventType), ["local_asr_failed", "local_asr_result"])
+        XCTAssertEqual(commands.last, .localAsrResult(operationId: 12, text: "当前", startMs: 0, endMs: 100, isFinal: false))
         XCTAssertEqual(failed.samples, [])
         XCTAssertFalse(current.cancelled)
         adapter.shutdown()
@@ -250,9 +286,9 @@ final class NativeLocalTranscriptionTests: XCTestCase {
             ["kind": "start", "operationId": 13, "locale": "zh-CN"],
             ["kind": "finish", "operationId": 13]
         ])
-        var commands: [(String, [String: Any])] = []
+        var commands: [HostAdapterEvent] = []
         let adapter = NativeLocalTranscription(recognizer: recognizer, drain: { effects },
-                                              send: { commands.append(($0, $1)) })
+                                              send: { commands.append($0) })
         adapter.apply()
         let deadline = ContinuousClock.now.advanced(by: .seconds(1))
         while recognizer.sessions.first?.finishWaiter == nil, ContinuousClock.now < deadline { await Task.yield() }
@@ -265,8 +301,12 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         XCTAssertTrue(session.cancelled)
         adapter.shutdown()
         await adapter.waitUntilIdle()
-        XCTAssertEqual(commands.map(\.0), ["local_asr_failed"])
-        XCTAssertEqual(commands.first?.1["operationId"] as? UInt64, 13)
+        XCTAssertEqual(commands.map(\.eventType), ["local_asr_failed"])
+        if case let .localAsrFailed(opId, _) = commands.first {
+            XCTAssertEqual(opId, 13)
+        } else {
+            XCTFail("expected localAsrFailed")
+        }
     }
 
     func testAnalyzerInputOverflowFailsInsteadOfSilentlyDroppingSpeech() throws {
@@ -294,5 +334,62 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         try converter.flush(collect)
         XCTAssertEqual(output.count, 48_000)
         XCTAssertEqual(output[24_000], 0.25, accuracy: 0.001)
+    }
+
+    func testDecodeBinaryHandlesDataSliceAndRealRustOwnedBytesRoundtrip() throws {
+        let framed = Data([0xAA, 0xBB, 0xCC, 0xDD]) + data([
+            ["kind": "start", "operationId": 41, "locale": "zh-CN"],
+            ["kind": "audio", "operationId": 41, "pcm16": [12, -34]],
+            ["kind": "finish", "operationId": 41],
+            ["kind": "cancel", "operationId": 42]
+        ])
+        let sliced = framed.dropFirst(4)
+        XCTAssertEqual(sliced.startIndex, 4)
+        let decodedSlice = try LocalSpeechEffect.decodeBinary(sliced)
+        XCTAssertEqual(decodedSlice, [
+            .start(41, "zh-CN"),
+            .audio(41, [12, -34]),
+            .finish(41),
+            .cancel(42)
+        ])
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        store.send(.deviceEvent(event: "scanning", connectionId: "c-drain", deviceName: "D3200"))
+        store.send(.deviceEvent(event: "connecting", connectionId: "c-drain", deviceName: "D3200"))
+        store.send(.deviceEvent(event: "ready", connectionId: "c-drain", deviceName: "D3200"))
+        let bleFrames = store.drainOutboundBleFrames()
+        XCTAssertFalse(bleFrames.isEmpty)
+        XCTAssertTrue(store.drainOutboundBleFrames().isEmpty)
+        XCTAssertNil(store.nativeError)
+
+        store.send(.localAsrReadiness(state: "ready", message: "就绪"))
+        store.send(.configureSpeech(engine: "apple_speech", modelId: nil))
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
+        let mic = try XCTUnwrap(store.snapshot.microphone)
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16_000))
+        let receipt = store.ingestMicrophonePCM(
+            recordId: mic.recordId,
+            sessionId: mic.sessionId,
+            lane: "microphone",
+            sequence: 0,
+            epoch: mic.epoch,
+            capturedStartNs: nil,
+            samples: [100, -200, 300, -400]
+        )
+        XCTAssertEqual(receipt.status, .accepted)
+        store.send(.captureAction(action: .end))
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: mic.epoch))
+
+        let rawEffects = store.drainLocalASREffectsData()
+        XCTAssertFalse(rawEffects.isEmpty)
+        let decodedRust = try LocalSpeechEffect.decodeBinary(rawEffects)
+        XCTAssertTrue(decodedRust.contains { if case .start(_, "zh-CN") = $0 { return true }; return false })
+        XCTAssertTrue(decodedRust.contains { if case let .audio(_, samples) = $0 { return samples == [100, -200, 300, -400] }; return false })
+        XCTAssertTrue(decodedRust.contains { if case .finish = $0 { return true }; return false })
+        XCTAssertTrue(store.drainLocalASREffectsData().isEmpty)
     }
 }

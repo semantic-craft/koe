@@ -176,7 +176,7 @@ public struct ConnectGuideSheet: View {
                     systemImage: "antenna.radiowaves.left.and.right",
                     isPrimary: true
                 ) {
-                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                    store.bridgeActions.requestBleScan()
                 }
             }
         }

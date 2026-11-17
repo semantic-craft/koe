@@ -29,6 +29,7 @@ public final class HostSessionStore {
     @ObservationIgnored internal private(set) var lastProjectedNowSec: UInt64 = 0
     @ObservationIgnored public private(set) var handle: UInt64 = 0
     @ObservationIgnored public var onSnapshotChanged: ((HostSnapshot) -> Void)?
+    @ObservationIgnored public var bridgeActions = HostBridgeActions()
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
     @ObservationIgnored private let credentials: HostCredentials?
 
@@ -119,6 +120,16 @@ public final class HostSessionStore {
         }
     }
 
+    public func send(_ event: HostAdapterEvent, nowEpochSec: UInt64 = 0) {
+        guard handle != 0 else { return }
+        do {
+            let data = try JSONEncoder().encode(event)
+            dispatchEncodedJSON(data, commandType: event.eventType, nowEpochSec: nowEpochSec)
+        } catch {
+            nativeError = "无法发送这次操作，请重试。"
+        }
+    }
+
     public func send(_ type: String, _ fields: [String: Any] = [:], nowEpochSec: UInt64 = 0) {
         var payload = fields
         payload["type"] = type
@@ -136,7 +147,9 @@ public final class HostSessionStore {
     }
 
     private func dispatchEncodedJSON(_ data: Data, commandType: String?, nowEpochSec: UInt64) {
-        if commandType != "playback_progress" && commandType != "sync_audio_inputs", nativeError != nil {
+        let preservesNativeError = commandType == "sync_audio_inputs"
+            || commandType?.hasPrefix("local_asr_") == true
+        if !preservesNativeError, nativeError != nil {
             nativeError = nil
         }
         guard let command = String(data: data, encoding: .utf8) else { return }
@@ -270,21 +283,42 @@ public final class HostSessionStore {
         if generation > snapshot.generation { refreshSnapshot(nowEpochSec: nowEpochSec) }
     }
 
-    public func drainOutboundBleFramesHex() -> [String] {
-        guard handle != 0, let pointer = koe_host_session_drain_ble_tx_json(handle) else { return [] }
-        defer { koe_host_string_free(pointer) }
-        guard let data = String(cString: pointer).data(using: .utf8),
-              let frames = try? JSONDecoder().decode([String].self, from: data) else {
+    public func drainOutboundBleFrames() -> [Data] {
+        guard handle != 0 else { return [] }
+        let owned = koe_host_session_drain_ble_tx(handle)
+        defer { koe_host_bytes_free(owned) }
+        guard let ptr = owned.ptr, owned.len > 0 else { return [] }
+        let raw = Data(bytes: ptr, count: owned.len)
+        var frames: [Data] = []
+        var offset = 0
+        while offset + 4 <= raw.count {
+            let length = Int(
+                UInt32(raw[offset])
+                    | (UInt32(raw[offset + 1]) << 8)
+                    | (UInt32(raw[offset + 2]) << 16)
+                    | (UInt32(raw[offset + 3]) << 24)
+            )
+            offset += 4
+            guard offset + length <= raw.count else {
+                nativeError = "无法读取设备发送队列。"
+                return []
+            }
+            frames.append(raw.subdata(in: offset..<(offset + length)))
+            offset += length
+        }
+        if offset != raw.count {
             nativeError = "无法读取设备发送队列。"
             return []
         }
         return frames
     }
 
-    public func drainLocalASREffectsJSON() -> Data? {
-        guard handle != 0, let pointer = koe_host_session_drain_local_asr_json(handle) else { return nil }
-        defer { koe_host_string_free(pointer) }
-        return Data(String(cString: pointer).utf8)
+    public func drainLocalASREffectsData() -> Data {
+        guard handle != 0 else { return Data() }
+        let owned = koe_host_session_drain_local_asr(handle)
+        defer { koe_host_bytes_free(owned) }
+        guard let ptr = owned.ptr, owned.len > 0 else { return Data() }
+        return Data(bytes: ptr, count: owned.len)
     }
 
     func applySnapshotJSON(_ json: String, projectedNowSec: UInt64 = 0) {

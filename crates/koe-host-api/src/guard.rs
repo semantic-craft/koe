@@ -1,8 +1,9 @@
 use crate::{
-    KoePcmReceipt, KoePlaybackReceipt, koe_host_session_create, koe_host_session_destroy,
-    koe_host_session_dispatch_json, koe_host_session_ingest_ble, koe_host_session_ingest_pcm,
-    koe_host_session_poll_timers, koe_host_session_report_playback_progress,
-    koe_host_session_snapshot_json, local_bridge,
+    KoeOwnedBytes, KoePcmReceipt, KoePlaybackReceipt, koe_host_bytes_free,
+    koe_host_session_create, koe_host_session_destroy, koe_host_session_dispatch_json,
+    koe_host_session_drain_ble_tx, koe_host_session_drain_local_asr,
+    koe_host_session_ingest_ble, koe_host_session_ingest_pcm, koe_host_session_poll_timers,
+    koe_host_session_report_playback_progress, koe_host_session_snapshot_json, local_bridge,
 };
 use koe_runtime::KoeRuntime;
 use std::{
@@ -99,6 +100,17 @@ unsafe fn take_owned_string(pointer: *mut c_char) -> Option<String> {
     }
     let owned = unsafe { CString::from_raw(pointer) };
     owned.into_string().ok()
+}
+
+unsafe fn take_owned_bytes(bytes: KoeOwnedBytes) -> Vec<u8> {
+    if bytes.ptr.is_null() || bytes.len == 0 {
+        unsafe { koe_host_bytes_free(bytes) };
+        return Vec::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(bytes.ptr, bytes.len) };
+    let out = slice.to_vec();
+    unsafe { koe_host_bytes_free(bytes) };
+    out
 }
 
 /// Safe RAII wrapper around an active host session handle and its local Unix socket bridge.
@@ -220,16 +232,28 @@ impl HostSessionGuard {
         koe_host_session_poll_timers(self.0, elapsed_ms, now)
     }
 
-    /// Drains queued outbound BLE frames for the session.
+    /// Drains queued outbound BLE frames through the binary C ABI.
     #[must_use]
     pub fn drain_ble_tx(&self) -> Vec<Vec<u8>> {
-        crate::guarded(|| {
-            lock_sessions()
-                .entries
-                .get_mut(&self.0)
-                .map(|entry| entry.runtime.drain_outbound_ble_frames())
-                .unwrap_or_default()
-        })
+        let raw = unsafe { take_owned_bytes(koe_host_session_drain_ble_tx(self.0)) };
+        let mut frames = Vec::new();
+        let mut cursor = 0;
+        while cursor + 4 <= raw.len() {
+            let len = u32::from_le_bytes(raw[cursor..cursor + 4].try_into().unwrap()) as usize;
+            cursor += 4;
+            if cursor + len > raw.len() {
+                break;
+            }
+            frames.push(raw[cursor..cursor + len].to_vec());
+            cursor += len;
+        }
+        frames
+    }
+
+    /// Drains queued outbound local speech effects as raw binary records through the C ABI.
+    #[must_use]
+    pub fn drain_local_asr_binary(&self) -> Vec<u8> {
+        unsafe { take_owned_bytes(koe_host_session_drain_local_asr(self.0)) }
     }
 }
 

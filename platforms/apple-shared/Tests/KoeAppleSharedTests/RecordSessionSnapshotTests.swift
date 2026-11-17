@@ -146,14 +146,17 @@ struct RecordSessionSnapshotTests {
             store.send("start_microphone", ["inputId": "built-in", "includeSystem": false, "clockNs": 1_000_000_000], nowEpochSec: nowEpochSec)
             let mic = try #require(store.snapshot.microphone)
             store.send("microphone_started", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sampleRate": 16000], nowEpochSec: nowEpochSec)
-            store.send("microphone_chunk", [
-                "recordId": mic.recordId,
-                "sessionId": mic.sessionId,
-                "lane": "microphone",
-                "sequence": 0,
-                "samples": [Int16](repeating: 180, count: 320),
-                "timing": ["epoch": 0, "capturedStartNs": 1_000_000_000]
-            ], nowEpochSec: nowEpochSec)
+            let ingest = store.ingestMicrophonePCM(
+                recordId: mic.recordId,
+                sessionId: mic.sessionId,
+                lane: "microphone",
+                sequence: 0,
+                epoch: 0,
+                capturedStartNs: 1_000_000_000,
+                samples: [Int16](repeating: 180, count: 320),
+                nowEpochSec: nowEpochSec
+            )
+            #expect(ingest.status == .accepted)
             store.send("stop_microphone", nowEpochSec: nowEpochSec)
             store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sequence": 1, "epoch": 0], nowEpochSec: nowEpochSec)
             store.send("rename_record", ["recordId": mic.recordId, "title": title], nowEpochSec: nowEpochSec)

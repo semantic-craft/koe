@@ -1,4 +1,4 @@
-use koe_client_base::prng::{fnv1a64_hex, to_hex_upper, SplitMix64};
+use koe_engine::prng::{fnv1a64_hex, to_hex_upper, SplitMix64};
 use koe_engine::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 use koe_engine::frame::ProtocolFrame;
 use koe_engine::ogg_opus::OggOpus;

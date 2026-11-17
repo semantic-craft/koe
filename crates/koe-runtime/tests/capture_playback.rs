@@ -47,19 +47,25 @@ fn recording(r: &mut KoeRuntime, system_only: bool) -> String {
     }
     if !system_only {
         for (seq, ns) in [(0, 1_000_000_000u64), (1, 1_100_000_000)] {
-            event(
-                r,
-                &t,
+            r.ingest_microphone_pcm(
+                t["recordId"].as_str().unwrap(),
+                t["sessionId"].as_str().unwrap(),
                 "microphone",
-                json!({"type":"microphone_chunk","sequence":seq,"timing":{"epoch":0,"capturedStartNs":ns},"samples":vec![700;160]}),
+                seq,
+                &vec![700; 160],
+                Some((0, ns)),
+                100,
             );
         }
     }
-    event(
-        r,
-        &t,
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
         "system",
-        json!({"type":"microphone_chunk","sequence":0,"timing":{"epoch":0,"capturedStartNs":1_050_000_000u64},"samples":vec![900;480]}),
+        0,
+        &vec![900; 480],
+        Some((0, 1_050_000_000u64)),
+        100,
     );
     send(r, json!({"type":"stop_microphone"}));
     event(
@@ -135,16 +141,14 @@ fn system_only_record_is_playable_and_late_progress_cannot_undo_seek_or_lane_cha
     let old_request = s["playback"]["requestId"].clone();
     let sought = send(&mut r, json!({"type":"seek","positionMs":55}));
     assert_ne!(sought["playback"]["requestId"], old_request);
-    let stale = send(
-        &mut r,
-        json!({"type":"playback_progress","recordId":id,"requestId":old_request,"positionMs":5,"isPlaying":false}),
-    );
+    let old_req = old_request.as_u64().unwrap();
+    r.report_playback_progress(&id, old_req, 5, false, 100, 100);
+    let stale = r.snapshot(100);
     assert_eq!(stale["playback"]["positionMs"], 55);
     assert_eq!(stale["playback"]["isPlaying"], true);
-    let accepted = send(
-        &mut r,
-        json!({"type":"playback_progress","recordId":id,"requestId":sought["playback"]["requestId"],"positionMs":59,"isPlaying":false}),
-    );
+    let sought_req = sought["playback"]["requestId"].as_u64().unwrap();
+    r.report_playback_progress(&id, sought_req, 59, false, 100, 100);
+    let accepted = r.snapshot(100);
     assert_eq!(accepted["playback"]["positionMs"], 59);
     let next = recording(&mut r, false);
     let next_s = send(&mut r, json!({"type":"playback","isPlaying":true}));
@@ -152,14 +156,12 @@ fn system_only_record_is_playable_and_late_progress_cannot_undo_seek_or_lane_cha
         &mut r,
         json!({"type":"select_playback_lane","lane":"system"}),
     );
-    let late = send(
-        &mut r,
-        json!({"type":"playback_progress","recordId":next,"requestId":next_s["playback"]["requestId"],"positionMs":5,"isPlaying":false}),
-    );
+    let next_req = next_s["playback"]["requestId"].as_u64().unwrap();
+    r.report_playback_progress(&next, next_req, 5, false, 100, 100);
+    let late = r.snapshot(100);
     assert_eq!(late["playback"], switched["playback"]);
-    let wrong_record = send(
-        &mut r,
-        json!({"type":"playback_progress","recordId":id,"requestId":switched["playback"]["requestId"],"positionMs":5,"isPlaying":false}),
-    );
+    let switched_req = switched["playback"]["requestId"].as_u64().unwrap();
+    r.report_playback_progress(&id, switched_req, 5, false, 100, 100);
+    let wrong_record = r.snapshot(100);
     assert_eq!(wrong_record["playback"], switched["playback"]);
 }

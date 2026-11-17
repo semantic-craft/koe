@@ -417,6 +417,6 @@ extension HostSessionStore {
         } else if let mode = CaptureMode(rawValue: card.mode) {
             send(.startCaptureMode(mode: mode, stayOnPage: true))
         }
-        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+        bridgeActions.flushBleOutbound()
     }
 }

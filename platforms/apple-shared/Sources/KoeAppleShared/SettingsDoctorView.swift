@@ -58,7 +58,7 @@ public struct SettingsDoctorView: View {
                             HStack(spacing: 10) {
                                 KoeActionButton("刷新状态", systemImage: "arrow.clockwise") {
                                     store.send(.deviceRefresh)
-                                    NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                                    store.bridgeActions.flushBleOutbound()
                                 }.disabled(device.busy)
                                 KoeActionButton("使用引导", systemImage: "questionmark.circle") {
                                     store.send(.deviceOpenGuide)
@@ -73,10 +73,10 @@ public struct SettingsDoctorView: View {
                             HStack(spacing: 10) {
                                 KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right", isPrimary: true) {
                                     store.send(.deviceOpenGuide)
-                                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                                    store.bridgeActions.requestBleScan()
                                 }.disabled(device.busy)
                                 KoeActionButton("重新扫描", systemImage: "arrow.clockwise") {
-                                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                                    store.bridgeActions.requestBleScan()
                                 }.disabled(device.busy)
                                 if device.autoConnect {
                                     KoeActionButton("切回手机", systemImage: "iphone") {

@@ -51,13 +51,13 @@ pub(crate) enum CaptureAction {
     Cancel,
 }
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Copy)]
 pub(crate) struct CaptureTiming {
     pub epoch: u64,
     pub captured_start_ns: u64,
 }
 
+/// User and UI intents dispatched from the SwiftUI host or CLI/MCP callers.
 #[derive(Deserialize)]
 #[serde(
     tag = "type",
@@ -65,7 +65,7 @@ pub(crate) struct CaptureTiming {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub(crate) enum Command {
+pub(crate) enum HostIntent {
     StartCaptureMode {
         mode: CaptureMode,
         #[serde(default)]
@@ -91,33 +91,12 @@ pub(crate) enum Command {
         input_id: Option<String>,
     },
     StopAllDay,
-    LocalAsrReadiness {
-        state: crate::local_asr::Readiness,
-        message: String,
-    },
-    LocalAsrResult {
-        operation_id: u64,
-        text: String,
-        start_ms: u64,
-        end_ms: u64,
-        is_final: bool,
-    },
-    LocalAsrFinished {
-        operation_id: u64,
-    },
-    LocalAsrFailed {
-        operation_id: u64,
-        message: String,
-    },
     StartMicrophone {
         input_id: String,
         #[serde(default)]
         include_system: bool,
         #[serde(default)]
         clock_ns: Option<u64>,
-    },
-    SyncAudioInputs {
-        inputs: Vec<crate::capture_studio::AudioInputDescriptor>,
     },
     SelectCaptureSource {
         source: String,
@@ -126,58 +105,9 @@ pub(crate) enum Command {
         enabled: bool,
     },
     PauseMicrophone,
-    MicrophonePrepared {
-        record_id: String,
-        session_id: String,
-        epoch: u64,
-        clock_ns: u64,
-    },
-    ResumeMicrophone {
-        clock_ns: u64,
-    },
-    MicrophonePaused {
-        record_id: String,
-        session_id: String,
-        lane: String,
-        sequence: u64,
-        epoch: u64,
-    },
     StopMicrophone,
     CancelMicrophone,
     RetryMicrophoneSave,
-    MicrophoneStarted {
-        record_id: String,
-        session_id: String,
-        lane: String,
-        sample_rate: u32,
-    },
-    MicrophoneChunk {
-        record_id: String,
-        session_id: String,
-        lane: String,
-        sequence: u64,
-        samples: Vec<i16>,
-        #[serde(default)]
-        timing: Option<CaptureTiming>,
-    },
-    MicrophoneStopped {
-        record_id: String,
-        session_id: String,
-        lane: String,
-        sequence: u64,
-        #[serde(default)]
-        epoch: Option<u64>,
-    },
-    MicrophoneFailed {
-        record_id: String,
-        session_id: String,
-        lane: String,
-        message: String,
-        #[serde(default)]
-        epoch: Option<u64>,
-    },
-    RequestQuit,
-    CancelQuit,
     Navigate {
         section: Page,
     },
@@ -331,23 +261,10 @@ pub(crate) enum Command {
     SelectPlaybackLane {
         lane: String,
     },
-    PlaybackProgress {
-        record_id: String,
-        request_id: u64,
-        position_ms: u64,
-        is_playing: bool,
-    },
-    DeviceEvent {
-        event: String,
-        connection_id: String,
-        #[serde(default)]
-        device_name: Option<String>,
-    },
     DeviceOpenGuide,
     DeviceOnboardingNext,
     DeviceCloseGuide,
     DeviceRefresh,
-    DeviceDisconnect,
     DeviceRelease,
     SetBleAutoConnect {
         enabled: bool,
@@ -357,6 +274,137 @@ pub(crate) enum Command {
     },
     DeviceStart,
     DeviceStop,
+}
+
+impl HostIntent {
+    pub(crate) const fn allowed_while_quitting(&self) -> bool {
+        matches!(
+            self,
+            Self::ClearError
+                | Self::DismissUndoTrash
+                | Self::Navigate { .. }
+                | Self::Back
+                | Self::SelectRecord { .. }
+                | Self::SelectQuickNoteRecord { .. }
+                | Self::SelectAllDayDate { .. }
+                | Self::SelectLiveMinutesRecord { .. }
+                | Self::OpenSource { .. }
+                | Self::RetryMicrophoneSave
+        )
+    }
+}
+
+/// Platform hardware and lifecycle adapter callbacks into the runtime.
+#[derive(Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum AdapterEvent {
+    SyncAudioInputs {
+        inputs: Vec<crate::capture_studio::AudioInputDescriptor>,
+    },
+    MicrophonePrepared {
+        record_id: String,
+        session_id: String,
+        epoch: u64,
+        clock_ns: u64,
+    },
+    ResumeMicrophone {
+        clock_ns: u64,
+    },
+    MicrophoneStarted {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sample_rate: u32,
+    },
+    MicrophonePaused {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sequence: u64,
+        epoch: u64,
+    },
+    MicrophoneStopped {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sequence: u64,
+        #[serde(default)]
+        epoch: Option<u64>,
+    },
+    MicrophoneFailed {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        message: String,
+        #[serde(default)]
+        epoch: Option<u64>,
+    },
+    LocalAsrReadiness {
+        state: crate::local_asr::Readiness,
+        message: String,
+    },
+    LocalAsrResult {
+        operation_id: u64,
+        text: String,
+        start_ms: u64,
+        end_ms: u64,
+        is_final: bool,
+    },
+    LocalAsrFinished {
+        operation_id: u64,
+    },
+    LocalAsrFailed {
+        operation_id: u64,
+        message: String,
+    },
+    DeviceEvent {
+        event: String,
+        connection_id: String,
+        #[serde(default)]
+        device_name: Option<String>,
+    },
+    DeviceDisconnect,
+    RequestQuit,
+    CancelQuit,
+}
+
+impl AdapterEvent {
+    pub(crate) const fn allowed_while_quitting(&self) -> bool {
+        !matches!(self, Self::ResumeMicrophone { .. } | Self::DeviceDisconnect)
+    }
+
+    pub(crate) const fn clears_transient_feedback(&self) -> bool {
+        !matches!(
+            self,
+            Self::SyncAudioInputs { .. }
+                | Self::LocalAsrReadiness { .. }
+                | Self::LocalAsrResult { .. }
+                | Self::LocalAsrFinished { .. }
+                | Self::LocalAsrFailed { .. }
+        )
+    }
+}
+
+pub(crate) enum DispatchMessage {
+    Intent(HostIntent),
+    Adapter(AdapterEvent),
+}
+
+impl DispatchMessage {
+    pub(crate) fn parse(json: &str) -> Result<Self, String> {
+        if let Ok(intent) = serde_json::from_str::<HostIntent>(json) {
+            return Ok(Self::Intent(intent));
+        }
+        if let Ok(event) = serde_json::from_str::<AdapterEvent>(json) {
+            return Ok(Self::Adapter(event));
+        }
+        Err("无法识别此操作，请更新 Koe 后重试".to_string())
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]

@@ -23,18 +23,17 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-pub use koe_client_base::hash;
-pub use koe_client_base::prng;
-
 pub mod commands;
 pub mod context;
 pub mod crypto;
 pub mod domain;
 pub mod frame;
+pub mod hash;
 pub mod koepack;
 pub mod minutes;
 pub mod models;
 pub mod ogg_opus;
+pub mod prng;
 pub mod product;
 pub mod session;
 pub mod slice_marks;

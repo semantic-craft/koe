@@ -277,17 +277,11 @@ struct ModeWorkspacesTests {
         let middleDot = String(UnicodeScalar(0x00B7)!)
         #expect(spans.allSatisfy { !$0.statusSummaryLabel.contains(middleDot) })
 
-        var resumePosted = false
-        let token = NotificationCenter.default.addObserver(
-            forName: Notification.Name("KoeResumeMicrophone"),
-            object: nil,
-            queue: nil
-        ) { _ in
-            resumePosted = true
-        }
-        defer { NotificationCenter.default.removeObserver(token) }
+        var resumeInvoked = false
+        store.bridgeActions.resumeMicrophone = { resumeInvoked = true }
+        defer { store.bridgeActions = HostBridgeActions() }
         store.performCaptureAction(.resume)
-        #expect(resumePosted)
+        #expect(resumeInvoked)
 
         let dayRequest = WorkspaceExportRequest.forAllDay(
             date: "2026-11-15",
