@@ -14,7 +14,7 @@ mod capture_studio;
 mod capture_tests;
 mod command;
 #[cfg(test)]
-mod companion_mcp_tests;
+mod mcp_device_tests;
 pub mod credentials;
 mod device;
 mod device_custody;
@@ -30,7 +30,7 @@ pub mod mcp_surface;
 mod microphone;
 mod mode_workspaces;
 mod mode_workspaces_all_day;
-mod mode_workspaces_live_voice;
+mod mode_workspaces_live_minutes;
 #[cfg(test)]
 mod navigation_tests;
 mod playback;
@@ -901,11 +901,10 @@ impl KoeRuntime {
                 let quitting = self.is_quitting();
                 self.device.reset_failed_transfer_if_idle(quitting);
                 self.ensure_device_idle()?;
-                let outcome = self.device.session.start_realtime_recording_with_options(
-                    None,
-                    now.saturating_mul(1000),
-                    false,
-                );
+                let outcome = self
+                    .device
+                    .session
+                    .start_realtime_recording(None, now.saturating_mul(1000));
                 self.device.accept(outcome);
             }
             Command::DeviceStop => {

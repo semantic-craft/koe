@@ -1,6 +1,6 @@
 import SwiftUI
 
-public struct CompanionSettingsCard: View {
+public struct DeviceConnectionSettingsCard: View {
     let store: HostSessionStore
 
     public init(store: HostSessionStore) {

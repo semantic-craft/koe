@@ -22,9 +22,9 @@ struct WorkspaceDto {
     #[serde(default, skip_serializing)]
     companion_mode: Option<serde::de::IgnoredAny>,
     #[serde(default, skip_serializing)]
-    standby_scratch_file_ids: Option<serde::de::IgnoredAny>,
+    standby_scratch_file_ids: Vec<u32>,
     #[serde(default, skip_serializing)]
-    reclaimed_standby_file_ids: Option<serde::de::IgnoredAny>,
+    reclaimed_standby_file_ids: Vec<u32>,
     #[serde(default)]
     migrations: Vec<MigrationDto>,
     #[serde(default)]
@@ -370,8 +370,8 @@ pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError>
         provider: Some(state.provider_configuration.into()),
         ble_auto_connect: state.ble_auto_connect,
         companion_mode: None,
-        standby_scratch_file_ids: None,
-        reclaimed_standby_file_ids: None,
+        standby_scratch_file_ids: Vec::new(),
+        reclaimed_standby_file_ids: Vec::new(),
         migrations: state
             .migrations
             .iter()
@@ -442,10 +442,14 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
     if dto.version != 1 {
         return Err(invalid("unsupported workspace version"));
     }
-    let _ = (
-        dto.companion_mode,
-        dto.standby_scratch_file_ids,
-        dto.reclaimed_standby_file_ids,
+    let _ = dto.companion_mode;
+    let mut purged_bean_file_ids: std::collections::BTreeSet<u32> =
+        dto.purged_bean_file_ids.into_iter().collect();
+    purged_bean_file_ids.extend(
+        dto.standby_scratch_file_ids
+            .into_iter()
+            .chain(dto.reclaimed_standby_file_ids)
+            .filter(|&id| id > 0),
     );
     let state = WorkspaceState {
         provider_configuration: dto.provider.map(Into::into).unwrap_or_default(),
@@ -469,7 +473,7 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
                     .collect(),
             })
             .collect(),
-        purged_bean_file_ids: dto.purged_bean_file_ids.into_iter().collect(),
+        purged_bean_file_ids,
         revision: dto.revision,
         next_operation: dto.next_operation,
         records: dto

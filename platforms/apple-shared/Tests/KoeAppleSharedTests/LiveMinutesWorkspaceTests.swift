@@ -3,7 +3,7 @@ import Testing
 @testable import KoeAppleShared
 
 @Suite("LiveMinutes mode workspace")
-struct ModeWorkspacesLiveVoiceTests {
+struct LiveMinutesWorkspaceTests {
     @Test("LiveMinutes workspace resolves coverage, retrospective meeting switching, legacy fallback, and meeting Markdown export")
     @MainActor
     func liveMinutesRetrospectiveCoverageAndExport() throws {

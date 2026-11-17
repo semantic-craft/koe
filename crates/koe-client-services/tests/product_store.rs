@@ -682,7 +682,7 @@ fn ble_auto_connect_and_edited_segments_round_trip_and_accept_legacy_json() {
     );
     obj.insert(
         "standby_scratch_file_ids".into(),
-        serde_json::json!([9101, 9102]),
+        serde_json::json!([0, 9101, 9102]),
     );
     obj.insert(
         "reclaimed_standby_file_ids".into(),
@@ -692,6 +692,10 @@ fn ble_auto_connect_and_edited_segments_round_trip_and_accept_legacy_json() {
 
     let mut legacy = ProductStore::open(&dir.0).unwrap();
     assert!(legacy.workspace().ble_auto_connect());
+    assert!(legacy.workspace().is_bean_file_purged(9101));
+    assert!(legacy.workspace().is_bean_file_purged(9102));
+    assert!(legacy.workspace().is_bean_file_purged(9103));
+    assert!(!legacy.workspace().purged_bean_file_ids().contains(&0));
     legacy
         .transact(|w| {
             w.set_ble_auto_connect(false);
@@ -705,6 +709,13 @@ fn ble_auto_connect_and_edited_segments_round_trip_and_accept_legacy_json() {
     assert!(resaved.get("companion_mode").is_none());
     assert!(resaved.get("standby_scratch_file_ids").is_none());
     assert!(resaved.get("reclaimed_standby_file_ids").is_none());
+    let resaved_purged: Vec<u64> = resaved["purged_bean_file_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect();
+    assert_eq!(resaved_purged, vec![9101, 9102, 9103]);
 }
 
 #[test]

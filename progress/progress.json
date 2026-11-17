@@ -1238,7 +1238,7 @@
             {
               "kind": "file",
               "note": "原生设置页蓝牙自动连接开关与释放蓝牙控制权卡片。",
-              "ref": "platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift"
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/DeviceConnectionSettingsCard.swift"
             }
           ],
           "id": "collar-companion-mcp-bridge",

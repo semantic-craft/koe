@@ -163,9 +163,9 @@ struct KoeMacHostTests {
         #expect(window.isVisible)
     }
 
-    @Test("Companion auto-connect guard, BLE release, and manual scan recovery keep UserDefaults and runtime in sync")
+    @Test("BLE auto-connect guard, BLE release, and manual scan recovery keep UserDefaults and runtime in sync")
     @MainActor
-    func companionBleReleaseAndManualScanRecovery() {
+    func bleAutoConnectReleaseAndManualScanRecovery() {
         let key = BluetoothBridge.savedPeripheralKey
         let previousSaved = UserDefaults.standard.string(forKey: key)
         defer {
@@ -214,7 +214,7 @@ struct KoeMacHostTests {
         #expect(UserDefaults.standard.string(forKey: key) == nil)
     }
 
-    @Test("Runtime disconnect with autoConnect enabled resets bridge link state and projected recording teardown emits pause frame")
+    @Test("Runtime disconnect with autoConnect enabled resets bridge link state without clearing saved peripheral")
     @MainActor
     func syncDisconnectWithAutoConnectAndRecordingTeardownPauseFrame() throws {
         let key = BluetoothBridge.savedPeripheralKey
@@ -233,7 +233,6 @@ struct KoeMacHostTests {
         defer { store.shutdown() }
 
         let savedUUID = "22222222-3333-4444-5555-666666666666"
-        let expectedPauseFrame = Data([0x08, 0xEE, 0x00, 0x00, 0x00, 0x18, 0x82, 0x0B, 0x00, 0x02, 0x9D])
         UserDefaults.standard.set(savedUUID, forKey: key)
         store.send("set_ble_auto_connect", ["enabled": true])
 
@@ -244,30 +243,9 @@ struct KoeMacHostTests {
 
         #expect(!bridge.reportedReady)
         #expect(!bridge.isScanRequested)
+        #expect(bridge.lastTeardownStopFrames.isEmpty)
         #expect(UserDefaults.standard.string(forKey: key) == savedUUID)
 
-        let recordingTeardownJSON = """
-        {
-          "phase": "disconnected",
-          "state": "未连接",
-          "connected": false,
-          "busy": false,
-          "recording": true,
-          "autoConnect": true,
-          "files": [],
-          "progress": 0.0,
-          "teardownStopFramesHex": ["08EE00000018820B00029D"]
-        }
-        """
-        let recordingTeardownDevice = try JSONDecoder().decode(DeviceSnapshot.self, from: Data(recordingTeardownJSON.utf8))
-        bridge.reportedReady = true
-        bridge.isScanRequested = true
-        bridge.syncWithRuntimeDevice(recordingTeardownDevice)
-        #expect(!bridge.reportedReady)
-        #expect(!bridge.isScanRequested)
-        #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
-
-        bridge.lastTeardownStopFrames = []
         bridge.reportedReady = true
         store.send(.deviceRelease)
         bridge.syncWithRuntimeDevice(store.snapshot.device)
@@ -434,28 +412,23 @@ struct KoeMacHostTests {
         defer { store.shutdown() }
 
         let expectedPauseFrame = Data([0x08, 0xEE, 0x00, 0x00, 0x00, 0x18, 0x82, 0x0B, 0x00, 0x02, 0x9D])
-        let recordingTeardownJSON = """
-        {
-          "phase": "connected",
-          "state": "录音中",
-          "connected": true,
-          "busy": false,
-          "recording": true,
-          "autoConnect": true,
-          "files": [],
-          "progress": 0.0,
-          "teardownStopFramesHex": ["08EE00000018820B00029D"]
-        }
-        """
-        let recordingDevice = try JSONDecoder().decode(DeviceSnapshot.self, from: Data(recordingTeardownJSON.utf8))
+        var startRecordBytes: [UInt8] = [0x09, 0xFF, 0x00, 0x00, 0x01, 0x18, 0x81, 0x0E, 0x00, 0x93, 0x03, 0x00, 0x00]
+        startRecordBytes.append(UInt8(startRecordBytes.reduce(0) { $0 + Int($1) } & 0xFF))
+
+        store.send("device_event", ["event": "scanning", "connectionId": "c-teardown"])
+        store.send("device_event", ["event": "connecting", "connectionId": "c-teardown", "deviceName": "soundcore Work"])
+        store.send("device_event", ["event": "ready", "connectionId": "c-teardown"])
+        store.ingestBleChunk(Data(startRecordBytes), nowEpochSec: 1_800_000_000)
+
+        #expect(store.snapshot.device.recording == true)
+        #expect(store.snapshot.device.teardownStopFramesHex == ["08EE00000018820B00029D"])
 
         let bridge = BluetoothBridge(store: store)
         bridge.reportedReady = true
         bridge.isScanRequested = true
-        bridge.writeProjectedTeardownStopFramesIfReady(for: recordingDevice)
-        #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
 
         bridge.disconnect()
+        #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
         #expect(!bridge.reportedReady)
         #expect(!bridge.isScanRequested)
         #expect(store.snapshot.device.phase == "disconnected")

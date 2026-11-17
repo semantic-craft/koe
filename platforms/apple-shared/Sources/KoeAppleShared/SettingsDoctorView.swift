@@ -87,7 +87,7 @@ public struct SettingsDoctorView: View {
                         }
                     }
                 }
-                CompanionSettingsCard(store: store)
+                DeviceConnectionSettingsCard(store: store)
                 SpeechSettingsCard(store: store)
                 TextServiceSettingsCard(store: store)
                 KoeActionButton("管理记忆", systemImage: "square.stack.3d.up") {

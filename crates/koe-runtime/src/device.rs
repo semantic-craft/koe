@@ -353,7 +353,6 @@ impl DeviceRuntime {
             self.finalized.push(recording);
         }
         self.captures.extend(self.session.take_capture_events());
-        self.session.take_live_pcm16();
     }
 }
 

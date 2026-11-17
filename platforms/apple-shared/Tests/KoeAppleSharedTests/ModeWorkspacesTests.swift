@@ -332,7 +332,7 @@ struct ModeWorkspacesTests {
         _ = TodayView(store: store).body
         _ = CaptureView(store: store).body
         _ = SettingsDoctorView(store: store).body
-        _ = CompanionSettingsCard(store: store).body
+        _ = DeviceConnectionSettingsCard(store: store).body
 
         store.send(.deviceOpenGuide)
         #expect(store.snapshot.device.autoConnect == true)

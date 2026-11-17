@@ -100,7 +100,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 四层实现、三模型对抗审查 6 项加固、独立分支复验（flash PASS+NOTES）与 CI 通过后 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-host-api/src/local_bridge.rs">file crates/koe-host-api/src/local_bridge.rs: 属主私有 0600 koe.sock JSON-RPC 服务，处理 koe/status、koe/doctor 与 MCP 工具调用。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/src/mcp.rs">file crates/koe-cli/src/mcp.rs: 在线优先回退离线的 16 工具 MCP stdio 服务与宿主重启自动重连。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift">file platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift: 原生设置页蓝牙自动连接开关与释放蓝牙控制权卡片。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/DeviceConnectionSettingsCard.swift">file platforms/apple-shared/Sources/KoeAppleShared/DeviceConnectionSettingsCard.swift: 原生设置页蓝牙自动连接开关与释放蓝牙控制权卡片。</a></li>
 </ul><p>Next: koe.sock 仅服务本地 CLI 与 16 项 MCP stdio 工具；实体 D3200 真机验收见 #588、#662 与 #731。</p></article>
 <article id="capture-source-studio"><h3>独立「录音」音源工作台与实时字幕状态说明</h3><span class="badge">done</span><p>PR #646（#644）新增左侧边栏独立「录音」页（CaptureView），移除今天页顶部的 MicrophoneCard 输入条与阻塞式 NSAlert + NSPopUpButton 下拉弹窗，在 KoeRuntime 统一管理 D3200 蓝牙录音豆、Mac 蓝牙耳机与 CoreAudio 输入设备；Auto 模式按已连闲置非领口待命录音豆、Mac 蓝牙输入、系统默认输入动态选源，支持手动选卡与一键恢复自动优先；仅在正式录音期间由入站采样块计算归一化 RMS 电平以免平时打开音频输入把蓝牙耳机从立体声 A2DP 降级为单声道 HFP；录音豆实时录制遇到只留本机或未配云端密钥时直接说明无实时字幕原因并提供设置跳转。实体硬件联调归入 #645。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/644">issue 644: 独立「录音」音源工作台与实时字幕状态说明需求范围。</a></li>

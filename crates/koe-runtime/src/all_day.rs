@@ -33,11 +33,10 @@ impl KoeRuntime {
                     return Err("请先连接录音豆".into());
                 }
                 self.ensure_device_idle()?;
-                let outcome = self.device.session.start_realtime_recording_with_options(
-                    None,
-                    now.saturating_mul(1000),
-                    false,
-                );
+                let outcome = self
+                    .device
+                    .session
+                    .start_realtime_recording(None, now.saturating_mul(1000));
                 self.device.accept(outcome);
             }
             _ => return Err("请选择 Mac 麦克风或录音豆".into()),

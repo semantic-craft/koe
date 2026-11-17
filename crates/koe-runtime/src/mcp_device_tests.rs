@@ -21,7 +21,7 @@ impl Sandbox {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let path = std::env::temp_dir().join(format!(
-            "koe-companion-mcp-{}-{}",
+            "koe-mcp-device-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
