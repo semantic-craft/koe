@@ -143,9 +143,9 @@ struct RecordSessionSnapshotTests {
         let t0: UInt64 = 1_800_000_000
 
         func captureMicRecord(nowEpochSec: UInt64, title: String) throws -> (id: String, audioPath: String) {
-            store.send("start_microphone", ["inputId": "built-in", "includeSystem": false, "clockNs": 1_000_000_000], nowEpochSec: nowEpochSec)
+            store.send(.startMicrophone(inputId: "built-in", includeSystem: false, clockNs: 1_000_000_000), nowEpochSec: nowEpochSec)
             let mic = try #require(store.snapshot.microphone)
-            store.send("microphone_started", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sampleRate": 16000], nowEpochSec: nowEpochSec)
+            store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16000), nowEpochSec: nowEpochSec)
             let ingest = store.ingestMicrophonePCM(
                 recordId: mic.recordId,
                 sessionId: mic.sessionId,
@@ -157,9 +157,9 @@ struct RecordSessionSnapshotTests {
                 nowEpochSec: nowEpochSec
             )
             #expect(ingest.status == .accepted)
-            store.send("stop_microphone", nowEpochSec: nowEpochSec)
-            store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sequence": 1, "epoch": 0], nowEpochSec: nowEpochSec)
-            store.send("rename_record", ["recordId": mic.recordId, "title": title], nowEpochSec: nowEpochSec)
+            store.send(.stopMicrophone, nowEpochSec: nowEpochSec)
+            store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: 0), nowEpochSec: nowEpochSec)
+            store.send(.renameRecord(recordId: mic.recordId, title: title), nowEpochSec: nowEpochSec)
             let detail = try #require(store.snapshot.detail)
             let audioPath = try #require(detail.audioPath)
             #expect(FileManager.default.fileExists(atPath: audioPath))
@@ -169,44 +169,44 @@ struct RecordSessionSnapshotTests {
         let rec1 = try captureMicRecord(nowEpochSec: t0, title: "季度预算会议")
         let rec2 = try captureMicRecord(nowEpochSec: t0 + 10, title: "测试试音片段")
 
-        store.send("set_record_archived", ["recordId": rec1.id, "archived": true], nowEpochSec: t0 + 20)
+        store.send(.setRecordArchived(recordId: rec1.id, archived: true), nowEpochSec: t0 + 20)
         #expect(store.snapshot.records.first(where: { $0.id == rec1.id })?.archived == true)
 
-        store.send("trash_record", ["recordId": rec1.id], nowEpochSec: t0 + 25)
+        store.send(.trashRecord(recordId: rec1.id), nowEpochSec: t0 + 25)
         #expect(store.snapshot.error != nil)
         #expect(store.snapshot.trashRecords.isEmpty)
         #expect(store.snapshot.records.contains(where: { $0.id == rec1.id }))
         store.clearError()
 
-        store.send("set_record_archived", ["recordId": rec1.id, "archived": false], nowEpochSec: t0 + 30)
+        store.send(.setRecordArchived(recordId: rec1.id, archived: false), nowEpochSec: t0 + 30)
         #expect(store.snapshot.records.first(where: { $0.id == rec1.id })?.archived == false)
 
-        store.send("trash_record", ["recordId": rec1.id], nowEpochSec: t0 + 40)
+        store.send(.trashRecord(recordId: rec1.id), nowEpochSec: t0 + 40)
         #expect(!store.snapshot.records.contains(where: { $0.id == rec1.id }))
         #expect(store.snapshot.trashRecords.map(\.id) == [rec1.id])
         #expect(store.snapshot.trashRecords.first?.remainingDays == 30)
         #expect(store.snapshot.undoTrash == UndoTrashSnapshot(recordId: rec1.id, title: "季度预算会议"))
         #expect(FileManager.default.fileExists(atPath: rec1.audioPath))
 
-        store.send("dismiss_undo_trash", nowEpochSec: t0 + 41)
+        store.send(.dismissUndoTrash, nowEpochSec: t0 + 41)
         #expect(store.snapshot.undoTrash == nil)
         #expect(store.snapshot.trashRecords.map(\.id) == [rec1.id])
 
-        store.send("restore_record", ["recordId": rec1.id], nowEpochSec: t0 + 45)
+        store.send(.restoreRecord(recordId: rec1.id), nowEpochSec: t0 + 45)
         #expect(store.snapshot.records.contains(where: { $0.id == rec1.id }))
         #expect(store.snapshot.trashRecords.isEmpty)
         #expect(FileManager.default.fileExists(atPath: rec1.audioPath))
 
-        store.send("trash_record", ["recordId": rec1.id], nowEpochSec: t0 + 50)
+        store.send(.trashRecord(recordId: rec1.id), nowEpochSec: t0 + 50)
         #expect(store.snapshot.undoTrash?.recordId == rec1.id)
-        store.send("purge_record", ["recordId": rec1.id], nowEpochSec: t0 + 55)
+        store.send(.purgeRecord(recordId: rec1.id), nowEpochSec: t0 + 55)
         #expect(!store.snapshot.records.contains(where: { $0.id == rec1.id }))
         #expect(store.snapshot.trashRecords.isEmpty)
         #expect(store.snapshot.undoTrash == nil)
         #expect(!FileManager.default.fileExists(atPath: rec1.audioPath))
 
         let trashEpoch = t0 + 100
-        store.send("trash_record", ["recordId": rec2.id], nowEpochSec: trashEpoch)
+        store.send(.trashRecord(recordId: rec2.id), nowEpochSec: trashEpoch)
         #expect(store.snapshot.trashRecords.map(\.id) == [rec2.id])
         #expect(store.snapshot.undoTrash?.recordId == rec2.id)
 

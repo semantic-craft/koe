@@ -44,6 +44,29 @@ struct HostCommandTests {
         #expect(capture["type"] as? String == "start_capture_mode")
         #expect(capture["mode"] as? String == "quick_note")
         #expect(capture["stayOnPage"] as? Bool == true)
+
+        let micStart = try encodeObject(.startMicrophone(inputId: "built-in", includeSystem: true, clockNs: 99))
+        #expect(micStart["type"] as? String == "start_microphone")
+        #expect(micStart["inputId"] as? String == "built-in")
+        #expect(micStart["includeSystem"] as? Bool == true)
+        #expect(micStart["clockNs"] as? UInt64 == 99)
+
+        let micBare = try encodeObject(.startMicrophone(inputId: "built-in"))
+        #expect(micBare["includeSystem"] as? Bool == false)
+        #expect(micBare["clockNs"] == nil)
+
+        #expect(try encodeObject(.pauseMicrophone)["type"] as? String == "pause_microphone")
+        #expect(try encodeObject(.stopMicrophone)["type"] as? String == "stop_microphone")
+        #expect(try encodeObject(.cancelMicrophone)["type"] as? String == "cancel_microphone")
+        #expect(try encodeObject(.retryMicrophoneSave)["type"] as? String == "retry_microphone_save")
+
+        #expect(HostSection.menuSections.map(\.rawValue) == [
+            "today", "notes", "all_day", "live_minutes", "ask", "records", "tasks", "settings"
+        ])
+        #expect(HostSection.title(for: "notes") == CaptureMode.quickNote.title)
+        #expect(HostSection.title(for: "all_day") == CaptureMode.allDay.title)
+        #expect(HostSection.title(for: "live_minutes") == CaptureMode.meeting.title)
+        #expect(HostSection.title(for: "detail", detailTitle: "周会") == "周会")
     }
 
     @Test("HostSessionStore.send(HostCommand) roundtrips optional and capture commands through KoeRuntime")
@@ -90,13 +113,7 @@ struct HostCommandTests {
         #expect(store.snapshot.activeCapture?.mode == .quickNote)
         store.send(.captureAction(action: .cancel))
         if let mic = store.snapshot.microphone {
-            store.send("microphone_stopped", [
-                "recordId": mic.recordId,
-                "sessionId": mic.sessionId,
-                "lane": "microphone",
-                "sequence": mic.nextSequence,
-                "epoch": mic.epoch
-            ])
+            store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: mic.nextSequence, epoch: mic.epoch))
         }
         #expect(store.nativeError == nil)
         #expect(store.snapshot.error == nil)

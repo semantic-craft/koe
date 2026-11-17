@@ -133,22 +133,6 @@ public final class HostSessionStore {
         }
     }
 
-    public func send(_ type: String, _ fields: [String: Any] = [:], nowEpochSec: UInt64 = 0) {
-        var payload = fields
-        payload["type"] = type
-        dispatchCommand(payload, nowEpochSec: nowEpochSec)
-    }
-
-    public func dispatchCommand(_ payload: [String: Any], nowEpochSec: UInt64 = 0) {
-        guard handle != 0 else { return }
-        do {
-            let data = try JSONSerialization.data(withJSONObject: payload)
-            dispatchEncodedJSON(data, commandType: payload["type"] as? String, nowEpochSec: nowEpochSec)
-        } catch {
-            nativeError = "无法发送这次操作，请重试。"
-        }
-    }
-
     private func dispatchEncodedJSON(_ data: Data, commandType: String?, nowEpochSec: UInt64) {
         let preservesNativeError = commandType == "sync_audio_inputs"
             || commandType?.hasPrefix("local_asr_") == true

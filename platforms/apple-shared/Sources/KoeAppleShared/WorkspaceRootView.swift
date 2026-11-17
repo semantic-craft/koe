@@ -95,20 +95,7 @@ public struct KoeWorkspaceRootView: View {
     }
 
     private func sectionTitle(_ nav: NavigationChromeSlice) -> String {
-        switch nav.section {
-        case "capture": "设置 / 录音管理"
-        case "notes": "随心闪记"
-        case "all_day": "全天听记"
-        case "records": "所有记录"
-        case "detail": nav.detailTitle ?? "记录"
-        case "tasks": "行动"
-        case "memory": "记忆"
-        case "live_minutes": "实时纪要"
-        case "ask": "问 AI"
-        case "trash": "回收站"
-        case "settings": "设置"
-        default: "模式选择"
-        }
+        HostSection.title(for: nav.section, detailTitle: nav.detailTitle)
     }
 
     @ViewBuilder private func page(_ section: String) -> some View {

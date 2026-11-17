@@ -1,31 +1,5 @@
 import SwiftUI
 
-extension CaptureMode {
-    var title: String {
-        switch self {
-        case .quickNote: "随心闪记"
-        case .allDay: "全天听记"
-        case .meeting: "实时纪要"
-        }
-    }
-
-    var purpose: String {
-        switch self {
-        case .quickNote: "快速留下一段想法"
-        case .allDay: "持续记录，随时回看"
-        case .meeting: "记录讨论并整理纪要"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .quickNote: "waveform"
-        case .allDay: "sun.max"
-        case .meeting: "person.2"
-        }
-    }
-}
-
 extension HostSessionStore {
     public func startCapture(_ mode: CaptureMode, stayOnPage: Bool = false) {
         send(.startCaptureMode(mode: mode, stayOnPage: stayOnPage))

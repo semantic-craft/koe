@@ -20,12 +20,12 @@ public struct SidebarView: View {
             .padding(.top, 14)
             .padding(.bottom, 18)
 
-            navigationRow("today", title: "模式选择", icon: "square.grid.2x2", section: sidebar.section)
-            modeRow("notes", title: "随心闪记", icon: "bolt.horizontal", sidebar: sidebar)
-            modeRow("all_day", title: "全天听记", icon: "clock", sidebar: sidebar)
-            modeRow("live_minutes", title: "实时纪要", icon: "waveform.path.ecg", sidebar: sidebar)
+            navigationRow(HostSection.today, section: sidebar.section)
+            modeRow(HostSection.notes, sidebar: sidebar)
+            modeRow(HostSection.allDay, sidebar: sidebar)
+            modeRow(HostSection.liveMinutes, sidebar: sidebar)
 
-            navigationRow("ask", title: "问 AI", icon: "bubble.left.and.text.bubble.right", section: sidebar.section)
+            navigationRow(HostSection.ask, section: sidebar.section)
                 .padding(.top, 4)
 
             Text("资料")
@@ -36,22 +36,18 @@ public struct SidebarView: View {
                 .padding(.bottom, 2)
 
             navigationRow(
-                "records",
-                title: "所有记录",
-                icon: "tray.full",
+                HostSection.records,
                 section: sidebar.section,
                 count: sidebar.recordCount == 0 ? nil : sidebar.recordCount
             )
             navigationRow(
-                "tasks",
-                title: "行动",
-                icon: "checklist",
+                HostSection.tasks,
                 section: sidebar.section,
                 count: sidebar.proposedActionCount > 0 ? sidebar.proposedActionCount : nil
             )
 
             Spacer(minLength: 16)
-            navigationRow("settings", title: "设置", icon: "gearshape", section: sidebar.section)
+            navigationRow(HostSection.settings, section: sidebar.section)
         }
         .padding(12)
         .frame(width: 196)
@@ -69,19 +65,17 @@ public struct SidebarView: View {
     }
 
     private func navigationRow(
-        _ id: String,
-        title: String,
-        icon: String,
+        _ dest: HostSection,
         section: String,
         count: Int? = nil
     ) -> some View {
-        let selected = isSelected(id, section: section)
+        let selected = isSelected(dest.rawValue, section: section)
         return Button {
-            store.send(.navigate(section: id))
+            store.send(.navigate(section: dest.rawValue))
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: icon).frame(width: 18)
-                Text(title)
+                Image(systemName: dest.icon).frame(width: 18)
+                Text(dest.title)
                 Spacer(minLength: 4)
                 if let count {
                     Text("\(count)")
@@ -100,15 +94,15 @@ public struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
-    private func modeRow(_ id: String, title: String, icon: String, sidebar: SidebarSlice) -> some View {
-        let selected = isSelected(id, section: sidebar.section)
-        let active = sidebar.activeModeIds.contains(id)
+    private func modeRow(_ dest: HostSection, sidebar: SidebarSlice) -> some View {
+        let selected = isSelected(dest.rawValue, section: sidebar.section)
+        let active = sidebar.activeModeIds.contains(dest.rawValue)
         return Button {
-            store.send(.navigate(section: id))
+            store.send(.navigate(section: dest.rawValue))
         } label: {
             HStack(spacing: 9) {
-                Image(systemName: icon).frame(width: 16)
-                Text(title)
+                Image(systemName: dest.icon).frame(width: 16)
+                Text(dest.title)
                 Spacer(minLength: 4)
                 if active {
                     Circle()

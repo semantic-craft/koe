@@ -39,20 +39,10 @@ struct ScopedObservationTests {
         in store: HostSessionStore,
         nowEpochSec: UInt64 = 1_800_000_000
     ) throws -> String {
-        store.send("start_capture_mode", ["mode": "meeting", "stayOnPage": true], nowEpochSec: nowEpochSec)
+        store.send(.startCaptureMode(mode: .meeting, stayOnPage: true), nowEpochSec: nowEpochSec)
         let mic = try #require(store.snapshot.microphone)
-        store.send("microphone_prepared", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "epoch": 0,
-            "clockNs": 1_000_000_000
-        ], nowEpochSec: nowEpochSec)
-        store.send("microphone_started", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sampleRate": 16_000
-        ], nowEpochSec: nowEpochSec)
+        store.send(.microphonePrepared(recordId: mic.recordId, sessionId: mic.sessionId, epoch: 0, clockNs: 1_000_000_000), nowEpochSec: nowEpochSec)
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16_000), nowEpochSec: nowEpochSec)
 
         let chunkSamples = [Int16](repeating: 1_200, count: 8_000)
         let r0 = store.ingestMicrophonePCM(
@@ -80,13 +70,7 @@ struct ScopedObservationTests {
         store.refreshSnapshotIfNeeded(minGeneration: r1.generation, nowEpochSec: nowEpochSec)
 
         store.performCaptureAction(.end)
-        store.send("microphone_stopped", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sequence": 2,
-            "epoch": 0
-        ], nowEpochSec: nowEpochSec + 1)
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 2, epoch: 0), nowEpochSec: nowEpochSec + 1)
         return mic.recordId
     }
 
@@ -100,8 +84,8 @@ struct ScopedObservationTests {
 
         let nowSec: UInt64 = 1_800_000_100
         let recordId = try createPlayableMeetingRecord(in: store, nowEpochSec: nowSec)
-        store.send("select_record", ["recordId": recordId], nowEpochSec: nowSec + 2)
-        store.send("playback", ["isPlaying": true], nowEpochSec: nowSec + 2)
+        store.send(.selectRecord(recordId: recordId), nowEpochSec: nowSec + 2)
+        store.send(.playback(isPlaying: true), nowEpochSec: nowSec + 2)
 
         let requestId = store.snapshot.playback.requestId
         #expect(store.snapshot.playback.isPlaying)
@@ -192,8 +176,8 @@ struct ScopedObservationTests {
 
         let nowSec: UInt64 = 1_800_000_300
         let recordId = try createPlayableMeetingRecord(in: store, nowEpochSec: nowSec)
-        store.send("select_record", ["recordId": recordId], nowEpochSec: nowSec + 2)
-        store.send("playback", ["isPlaying": true], nowEpochSec: nowSec + 2)
+        store.send(.selectRecord(recordId: recordId), nowEpochSec: nowSec + 2)
+        store.send(.playback(isPlaying: true), nowEpochSec: nowSec + 2)
         let requestId = store.snapshot.playback.requestId
         store.reportPlaybackProgress(
             recordId: recordId,
@@ -233,20 +217,10 @@ struct ScopedObservationTests {
         defer { store.shutdown() }
 
         let nowSec: UInt64 = 1_800_000_500
-        store.send("start_capture_mode", ["mode": "meeting", "stayOnPage": true], nowEpochSec: nowSec)
+        store.send(.startCaptureMode(mode: .meeting, stayOnPage: true), nowEpochSec: nowSec)
         let mic = try #require(store.snapshot.microphone)
-        store.send("microphone_prepared", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "epoch": 0,
-            "clockNs": 2_000_000_000
-        ], nowEpochSec: nowSec)
-        store.send("microphone_started", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sampleRate": 16_000
-        ], nowEpochSec: nowSec)
+        store.send(.microphonePrepared(recordId: mic.recordId, sessionId: mic.sessionId, epoch: 0, clockNs: 2_000_000_000), nowEpochSec: nowSec)
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16_000), nowEpochSec: nowSec)
 
         let bootstrap = store.ingestMicrophonePCM(
             recordId: mic.recordId,
@@ -328,14 +302,8 @@ struct ScopedObservationTests {
         #expect(actionsFires.count == 0)
 
         store.performCaptureAction(.end)
-        store.send("microphone_stopped", [
-            "recordId": mic.recordId,
-            "sessionId": mic.sessionId,
-            "lane": "microphone",
-            "sequence": 4,
-            "epoch": 0
-        ], nowEpochSec: nowSec + 1)
-        store.send("select_record", ["recordId": mic.recordId], nowEpochSec: nowSec + 1)
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 4, epoch: 0), nowEpochSec: nowSec + 1)
+        store.send(.selectRecord(recordId: mic.recordId), nowEpochSec: nowSec + 1)
         let detail = try #require(store.recordDetail.detail)
         #expect(detail.durationMs == 1_000)
         let audioPath = try #require(detail.audioPath)
@@ -352,8 +320,8 @@ struct ScopedObservationTests {
 
         let nowSec: UInt64 = 1_800_001_000
         let playableRecordId = try createPlayableMeetingRecord(in: store, nowEpochSec: nowSec)
-        store.send("select_record", ["recordId": playableRecordId], nowEpochSec: nowSec + 2)
-        store.send("playback", ["isPlaying": true], nowEpochSec: nowSec + 2)
+        store.send(.selectRecord(recordId: playableRecordId), nowEpochSec: nowSec + 2)
+        store.send(.playback(isPlaying: true), nowEpochSec: nowSec + 2)
         let playbackReqId = store.snapshot.playback.requestId
 
         var callbackGenerations: [UInt64] = []
@@ -399,15 +367,11 @@ struct ScopedObservationTests {
         #expect(store.snapshot.playback.positionMs == 600)
         #expect(store.playback.positionMs == 0)
 
-        store.send("create_note", [
-            "title": "Offscreen Note",
-            "text": "Created while window closed.",
-            "stayOnPage": true
-        ], nowEpochSec: nowSec + 3)
+        store.send(.createNote(title: "Offscreen Note", text: "Created while window closed.", stayOnPage: true), nowEpochSec: nowSec + 3)
         let noteCard = try #require(store.snapshot.workspaces?.quickNote.cards.first { $0.title == "Offscreen Note" })
         let noteSeg = try #require(noteCard.segments.first)
-        store.send("create_task", ["recordId": noteCard.id, "segmentId": noteSeg.id], nowEpochSec: nowSec + 3)
-        store.send("navigate", ["section": "tasks"], nowEpochSec: nowSec + 3)
+        store.send(.createTask(recordId: noteCard.id, segmentId: noteSeg.id), nowEpochSec: nowSec + 3)
+        store.send(.navigate(section: "tasks"), nowEpochSec: nowSec + 3)
         store.refreshSnapshot(nowEpochSec: nowSec + 3)
         store.reportPlaybackProgress(
             recordId: playableRecordId,

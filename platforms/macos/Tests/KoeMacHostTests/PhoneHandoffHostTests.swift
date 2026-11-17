@@ -52,7 +52,7 @@ struct PhoneHandoffHostTests {
         #expect(macMenu.items[restoredScanIndex + 1].title == "切回手机（释放控制权）")
         #expect(!macMenu.items.contains(where: { $0.title == "连回 Mac 录音豆" }))
 
-        store.send("device_event", ["event": "scanning", "connectionId": "c-handoff"])
+        store.send(.deviceEvent(event: "scanning", connectionId: "c-handoff"))
         store.ingestBleChunk(rxFrame(group: 0x18, command: 0x81, payload: [0x93, 0x03, 0, 0]), nowEpochSec: 1_800_000_000)
         delegate.menuNeedsUpdate(macMenu)
         #expect(store.today.picker?.canReleaseToPhone == false)

@@ -15,10 +15,7 @@ struct TranscriptEditTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = HostSessionStore(workspacePath: directory.path)
 
-        store.send("create_note", [
-            "title": "Product architecture sync",
-            "text": "Ship quantum telemetry pipeline on Friday.\nKeep audio assets immutable."
-        ], nowEpochSec: 1_800_000_000)
+        store.send(.createNote(title: "Product architecture sync", text: "Ship quantum telemetry pipeline on Friday.\nKeep audio assets immutable."), nowEpochSec: 1_800_000_000)
 
         let initialDetail = try #require(store.snapshot.detail)
         #expect(initialDetail.canEditTranscript == true)
@@ -29,17 +26,13 @@ struct TranscriptEditTests {
         #expect(seg0.isEdited == false)
         #expect(seg0.originalText == nil)
 
-        store.send("create_task", ["recordId": initialDetail.id, "segmentId": seg0.id])
-        store.send("add_highlight", ["recordId": initialDetail.id, "segmentId": seg0.id])
+        store.send(.createTask(recordId: initialDetail.id, segmentId: seg0.id))
+        store.send(.addHighlight(recordId: initialDetail.id, segmentId: seg0.id))
         let taskBefore = try #require(store.snapshot.tasks.first)
         #expect(taskBefore.sources.first?.segmentId == seg0.id)
         #expect(taskBefore.sources.first?.quote == "Ship quantum telemetry pipeline on Friday.")
 
-        store.send("edit_segment_text", [
-            "recordId": initialDetail.id,
-            "segmentId": seg0.id,
-            "text": "Ship deterministic local indexing on Thursday."
-        ], nowEpochSec: 1_800_000_010)
+        store.send(.editSegmentText(recordId: initialDetail.id, segmentId: seg0.id, text: "Ship deterministic local indexing on Thursday."), nowEpochSec: 1_800_000_010)
         #expect(store.snapshot.error == nil)
 
         let editedDetail = try #require(store.snapshot.detail)
@@ -55,18 +48,14 @@ struct TranscriptEditTests {
         #expect(editedDetail.highlights.first?.segmentId == seg0.id)
         #expect(editedDetail.highlights.first?.quote == "Ship deterministic local indexing on Thursday.")
 
-        store.send("ask", ["question": "deterministic local indexing", "scope": "record", "recordId": initialDetail.id], nowEpochSec: 1_800_000_015)
+        store.send(.ask(question: "deterministic local indexing", scope: "record", recordId: initialDetail.id), nowEpochSec: 1_800_000_015)
         let answer = try #require(store.snapshot.ask.messages.last)
         #expect(answer.mode == "retrieval")
         #expect(answer.sources.first?.segmentId == seg0.id)
         #expect(answer.sources.first?.quote == "Ship deterministic local indexing on Thursday.")
 
-        store.send("select_record", ["recordId": initialDetail.id], nowEpochSec: 1_800_000_016)
-        store.send("edit_segment_text", [
-            "recordId": initialDetail.id,
-            "segmentId": seg0.id,
-            "text": "Ship quantum telemetry pipeline on Friday."
-        ], nowEpochSec: 1_800_000_020)
+        store.send(.selectRecord(recordId: initialDetail.id), nowEpochSec: 1_800_000_016)
+        store.send(.editSegmentText(recordId: initialDetail.id, segmentId: seg0.id, text: "Ship quantum telemetry pipeline on Friday."), nowEpochSec: 1_800_000_020)
         #expect(store.snapshot.error == nil)
 
         let revertedDetail = try #require(store.snapshot.detail)
@@ -85,17 +74,14 @@ struct TranscriptEditTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        store.send("create_note", [
-            "title": "Design review",
-            "text": "Opening agenda item.\nBudget follow-up.\nClosing summary."
-        ], nowEpochSec: 1_800_000_100)
+        store.send(.createNote(title: "Design review", text: "Opening agenda item.\nBudget follow-up.\nClosing summary."), nowEpochSec: 1_800_000_100)
         let detail0 = try #require(store.snapshot.detail)
         #expect(detail0.segments.count == 3)
         let (seg0, seg1, seg2) = (detail0.segments[0], detail0.segments[1], detail0.segments[2])
 
-        store.send("set_segment_speaker", ["recordId": detail0.id, "segmentId": seg0.id, "speaker": "发言人 1："], nowEpochSec: 1_800_000_105)
-        store.send("set_segment_speaker", ["recordId": detail0.id, "segmentId": seg1.id, "speaker": "Alice:"], nowEpochSec: 1_800_000_106)
-        store.send("set_segment_speaker", ["recordId": detail0.id, "segmentId": seg2.id, "speaker": "发言人 1"], nowEpochSec: 1_800_000_107)
+        store.send(.setSegmentSpeaker(recordId: detail0.id, segmentId: seg0.id, speaker: "发言人 1："), nowEpochSec: 1_800_000_105)
+        store.send(.setSegmentSpeaker(recordId: detail0.id, segmentId: seg1.id, speaker: "Alice:"), nowEpochSec: 1_800_000_106)
+        store.send(.setSegmentSpeaker(recordId: detail0.id, segmentId: seg2.id, speaker: "发言人 1"), nowEpochSec: 1_800_000_107)
         #expect(store.snapshot.error == nil)
 
         let detailNamed = try #require(store.snapshot.detail)
@@ -107,20 +93,20 @@ struct TranscriptEditTests {
             SpeakerSummarySnapshot(name: "Alice", segmentCount: 1, firstSegmentId: seg1.id),
         ])
 
-        store.send("rename_speaker", ["recordId": detail0.id, "fromSpeaker": "发言人 1", "toSpeaker": "Alice"], nowEpochSec: 1_800_000_110)
+        store.send(.renameSpeaker(recordId: detail0.id, fromSpeaker: "发言人 1", toSpeaker: "Alice"), nowEpochSec: 1_800_000_110)
         #expect(store.snapshot.error == nil)
 
         let detailMerged = try #require(store.snapshot.detail)
         #expect(detailMerged.segments.allSatisfy { $0.speaker == "Alice" })
         #expect(detailMerged.speakers == [SpeakerSummarySnapshot(name: "Alice", segmentCount: 3, firstSegmentId: seg0.id)])
 
-        store.send("ask", ["question": "Alice", "scope": "record", "recordId": detail0.id], nowEpochSec: 1_800_000_112)
+        store.send(.ask(question: "Alice", scope: "record", recordId: detail0.id), nowEpochSec: 1_800_000_112)
         let askReply = try #require(store.snapshot.ask.messages.last)
         #expect(askReply.text.contains("Alice："))
         #expect(!askReply.sources.isEmpty)
-        store.send("select_record", ["recordId": detail0.id], nowEpochSec: 1_800_000_113)
+        store.send(.selectRecord(recordId: detail0.id), nowEpochSec: 1_800_000_113)
 
-        store.send("set_segment_speaker", ["recordId": detail0.id, "segmentId": seg0.id, "speaker": ""], nowEpochSec: 1_800_000_115)
+        store.send(.setSegmentSpeaker(recordId: detail0.id, segmentId: seg0.id, speaker: ""), nowEpochSec: 1_800_000_115)
         #expect(store.snapshot.error == nil)
 
         let detailCleared = try #require(store.snapshot.detail)
@@ -136,31 +122,31 @@ struct TranscriptEditTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        store.send("create_note", ["title": "Board resolution", "text": "Approve Q4 roadmap.\nFreeze schema v2."], nowEpochSec: 1_800_000_200)
+        store.send(.createNote(title: "Board resolution", text: "Approve Q4 roadmap.\nFreeze schema v2."), nowEpochSec: 1_800_000_200)
         let detail0 = try #require(store.snapshot.detail)
         let seg0 = try #require(detail0.segments.first)
-        store.send("set_segment_speaker", ["recordId": detail0.id, "segmentId": seg0.id, "speaker": "Chair"], nowEpochSec: 1_800_000_201)
+        store.send(.setSegmentSpeaker(recordId: detail0.id, segmentId: seg0.id, speaker: "Chair"), nowEpochSec: 1_800_000_201)
         #expect(store.snapshot.detail?.canEditTranscript == true)
 
-        store.send("set_record_archived", ["recordId": detail0.id, "archived": true], nowEpochSec: 1_800_000_205)
+        store.send(.setRecordArchived(recordId: detail0.id, archived: true), nowEpochSec: 1_800_000_205)
         let archivedDetail = try #require(store.snapshot.detail)
         #expect(archivedDetail.archived == true)
         #expect(archivedDetail.canEditTranscript == false)
 
-        store.send("edit_segment_text", ["recordId": detail0.id, "segmentId": seg0.id, "text": "Tampered text"], nowEpochSec: 1_800_000_206)
+        store.send(.editSegmentText(recordId: detail0.id, segmentId: seg0.id, text: "Tampered text"), nowEpochSec: 1_800_000_206)
         #expect(store.snapshot.error?.contains("归档") == true)
         #expect(store.snapshot.detail?.segments.first?.text == "Approve Q4 roadmap.")
         store.clearError()
 
-        store.send("rename_speaker", ["recordId": detail0.id, "fromSpeaker": "Chair", "toSpeaker": "Guest"], nowEpochSec: 1_800_000_207)
+        store.send(.renameSpeaker(recordId: detail0.id, fromSpeaker: "Chair", toSpeaker: "Guest"), nowEpochSec: 1_800_000_207)
         #expect(store.snapshot.error?.contains("归档") == true)
         #expect(store.snapshot.detail?.segments.first?.speaker == "Chair")
         store.clearError()
 
-        store.send("set_record_archived", ["recordId": detail0.id, "archived": false], nowEpochSec: 1_800_000_210)
+        store.send(.setRecordArchived(recordId: detail0.id, archived: false), nowEpochSec: 1_800_000_210)
         #expect(store.snapshot.detail?.canEditTranscript == true)
 
-        store.send("edit_segment_text", ["recordId": detail0.id, "segmentId": seg0.id, "text": "Approve Q4 roadmap unanimously."], nowEpochSec: 1_800_000_212)
+        store.send(.editSegmentText(recordId: detail0.id, segmentId: seg0.id, text: "Approve Q4 roadmap unanimously."), nowEpochSec: 1_800_000_212)
         #expect(store.snapshot.error == nil)
         #expect(store.snapshot.detail?.segments.first?.text == "Approve Q4 roadmap unanimously.")
     }
@@ -211,7 +197,7 @@ struct TranscriptEditTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
-        store.send("create_note", ["title": "UI Render Check", "text": "First paragraph.\nSecond paragraph."])
+        store.send(.createNote(title: "UI Render Check", text: "First paragraph.\nSecond paragraph."))
 
         #if canImport(AppKit)
         let detailHost = NSHostingView(rootView: RecordDetailView(store: store))

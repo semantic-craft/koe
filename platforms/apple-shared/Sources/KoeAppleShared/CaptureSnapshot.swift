@@ -107,6 +107,30 @@ public enum CaptureMode: String, Codable, Sendable {
     case quickNote = "quick_note"
     case allDay = "all_day"
     case meeting
+
+    public var title: String {
+        switch self {
+        case .quickNote: "随心闪记"
+        case .allDay: "全天听记"
+        case .meeting: "实时纪要"
+        }
+    }
+
+    public var purpose: String {
+        switch self {
+        case .quickNote: "快速留下一段想法"
+        case .allDay: "持续记录，随时回看"
+        case .meeting: "记录讨论并整理纪要"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .quickNote: "waveform"
+        case .allDay: "sun.max"
+        case .meeting: "person.2"
+        }
+    }
 }
 
 public enum CaptureAction: String, Codable, Sendable {

@@ -14,7 +14,7 @@ struct LightModalAppearanceTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = HostSessionStore(workspacePath: dir.path)
         defer { store.shutdown() }
-        store.send("device_open_guide")
+        store.send(.deviceOpenGuide)
 
         let view = ConnectGuideSheet(store: store)
         let rendered = try renderOffscreen(view, fallbackSize: CGSize(width: 520, height: 520), snapshotName: "connect-guide.png")

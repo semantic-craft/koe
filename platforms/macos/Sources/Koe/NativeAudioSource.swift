@@ -20,14 +20,14 @@ public final class NativeAudioSource: MicrophoneSource {
     private var engine: AVAudioEngine?
     private var fence: AudioCallbackFence?
     private var observer: NSObjectProtocol?
-    func requestPermission(_ completion: @escaping (Bool) -> Void) {
+    func requestPermission(_ completion: @escaping @Sendable (Bool) -> Void) {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: completion(true)
         case .notDetermined: AVCaptureDevice.requestAccess(for: .audio, completionHandler: completion)
         default: completion(false)
         }
     }
-    func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void, failed: @escaping (String) -> Void) throws -> UInt32 {
+    func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void, failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
         let engine = AVAudioEngine()
         let node = engine.inputNode
         if !inputID.isEmpty {

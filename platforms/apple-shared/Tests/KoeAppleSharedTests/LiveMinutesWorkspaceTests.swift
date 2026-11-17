@@ -13,20 +13,10 @@ struct LiveMinutesWorkspaceTests {
         defer { store.shutdown() }
 
         func captureMeetingRecord(nowEpochSec: UInt64) throws -> String {
-            store.send("start_capture_mode", ["mode": "meeting", "stayOnPage": true], nowEpochSec: nowEpochSec)
+            store.send(.startCaptureMode(mode: .meeting, stayOnPage: true), nowEpochSec: nowEpochSec)
             let mic = try #require(store.snapshot.microphone)
-            store.send("microphone_prepared", [
-                "recordId": mic.recordId,
-                "sessionId": mic.sessionId,
-                "epoch": 0,
-                "clockNs": 1_000_000_000
-            ], nowEpochSec: nowEpochSec)
-            store.send("microphone_started", [
-                "recordId": mic.recordId,
-                "sessionId": mic.sessionId,
-                "lane": "microphone",
-                "sampleRate": 16000
-            ], nowEpochSec: nowEpochSec)
+            store.send(.microphonePrepared(recordId: mic.recordId, sessionId: mic.sessionId, epoch: 0, clockNs: 1_000_000_000), nowEpochSec: nowEpochSec)
+            store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16000), nowEpochSec: nowEpochSec)
             let ingest = store.ingestMicrophonePCM(
                 recordId: mic.recordId,
                 sessionId: mic.sessionId,
@@ -39,13 +29,7 @@ struct LiveMinutesWorkspaceTests {
             )
             #expect(ingest.status == .accepted)
             store.performCaptureAction(.end)
-            store.send("microphone_stopped", [
-                "recordId": mic.recordId,
-                "sessionId": mic.sessionId,
-                "lane": "microphone",
-                "sequence": 1,
-                "epoch": 0
-            ], nowEpochSec: nowEpochSec)
+            store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: 0), nowEpochSec: nowEpochSec)
             return mic.recordId
         }
 
@@ -56,7 +40,7 @@ struct LiveMinutesWorkspaceTests {
         #expect(initialLive.pastMeetings.count == 2)
         #expect(firstMeetingId != secondMeetingId)
 
-        store.send("select_live_minutes_record", ["recordId": firstMeetingId])
+        store.send(.selectLiveMinutesRecord(recordId: firstMeetingId))
         let switchedLive = try #require(store.snapshot.workspaces?.liveMinutes)
         #expect(switchedLive.selectedRecordId == firstMeetingId)
         #expect(switchedLive.coverage != nil)
@@ -84,12 +68,8 @@ struct LiveMinutesWorkspaceTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        store.send("navigate", ["section": "notes"])
-        store.send("create_note", [
-            "title": "闪记页直存",
-            "text": "单条指令留在本页",
-            "stayOnPage": true
-        ])
+        store.send(.navigate(section: "notes"))
+        store.send(.createNote(title: "闪记页直存", text: "单条指令留在本页", stayOnPage: true))
         #expect(store.snapshot.section == "notes")
         #expect(store.snapshot.notice == "记录已保存")
 
