@@ -790,7 +790,7 @@ fn release_ble_ignores_late_queued_ble_slices_and_allows_immediate_quit() {
 fn teardown_stop_frames_projected_for_recording() {
     let sandbox = Sandbox::new();
     let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
-    let expected_pause_hex = koe_client_base::prng::to_hex_upper(&DeviceCommands::pause_record());
+    let expected_pause_hex = koe_engine::prng::to_hex_upper(&DeviceCommands::pause_record());
     assert_eq!(expected_pause_hex, "08EE00000018820B00029D");
 
     assert_eq!(

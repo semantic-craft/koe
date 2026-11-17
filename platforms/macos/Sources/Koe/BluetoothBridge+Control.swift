@@ -34,7 +34,7 @@ extension BluetoothBridge {
                reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
                 teardownLocalBleLink()
                 if device.phase != "disconnected" {
-                    store?.send("device_disconnect")
+                    store?.send(.deviceDisconnect)
                 }
             } else if !device.connected,
                       device.phase == "disconnected",

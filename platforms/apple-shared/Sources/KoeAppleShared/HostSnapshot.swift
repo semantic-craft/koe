@@ -288,14 +288,6 @@ extension ProviderSnapshot {
     }
 }
 
-public struct MigrationReportSnapshot: Codable, Equatable, Sendable, Identifiable {
-    public var id: String { fingerprint }
-    public let fingerprint: String
-    public let archivePath: String
-    public let recordCount: Int
-    public let pending: [String]
-}
-
 public struct LifecycleSnapshot: Codable, Equatable, Sendable {
     public let keepAwake: Bool
     public let quitPhase: String
@@ -373,7 +365,6 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
     public var speech: SpeechSnapshot = .empty
-    public var localAsr: LocalAsrSnapshot? = nil
     public var liveCaption: LiveCaptionSnapshot? = nil
     public var microphone: MicrophoneSnapshot? = nil
     public var capture: CaptureStudioSnapshot = .empty
@@ -398,16 +389,15 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let provider: ProviderSnapshot
     public let playback: PlaybackSnapshot
     public let error: String?
-    public var migrationReports: [MigrationReportSnapshot]? = nil
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
-        case localAsr, liveCaption, speech
+        case liveCaption, speech
         case captureModes, activeCapture, workspaces
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records
         case trashRecords, undoTrash, detail, tasks, memories, ask
-        case device, provider, playback, error, migrationReports, notice
+        case device, provider, playback, error, notice
     }
 
     public var activeLiveRecord: RecordSnapshot? {
@@ -434,7 +424,6 @@ extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         speech = try c.decodeIfPresent(SpeechSnapshot.self, forKey: .speech) ?? .empty
-        localAsr = try c.decodeIfPresent(LocalAsrSnapshot.self, forKey: .localAsr)
         liveCaption = try c.decodeIfPresent(LiveCaptionSnapshot.self, forKey: .liveCaption)
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
         capture = try c.decodeIfPresent(CaptureStudioSnapshot.self, forKey: .capture) ?? .empty
@@ -459,7 +448,6 @@ extension HostSnapshot {
         provider = try c.decode(ProviderSnapshot.self, forKey: .provider)
         playback = try c.decode(PlaybackSnapshot.self, forKey: .playback)
         error = try c.decodeIfPresent(String.self, forKey: .error)
-        migrationReports = try c.decodeIfPresent([MigrationReportSnapshot].self, forKey: .migrationReports)
         notice = try c.decodeIfPresent(String.self, forKey: .notice)
     }
 }

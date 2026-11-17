@@ -1,5 +1,5 @@
 use super::*;
-use koe_client_base::hash::sha256_hex;
+use koe_engine::hash::sha256_hex;
 use koe_engine::wav::{parse_pcm_wave, OpusWave};
 use ogg::reading::PacketReader;
 use serde::Deserialize;

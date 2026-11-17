@@ -27,24 +27,70 @@ struct LocalSpeechError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-enum LocalSpeechEffect: Decodable {
+enum LocalSpeechEffect: Equatable {
     case start(UInt64, String)
     case audio(UInt64, [Int16])
     case finish(UInt64)
     case cancel(UInt64)
 
-    private enum CodingKeys: String, CodingKey { case kind, operationId, locale, pcm16 }
-    private enum Kind: String, Decodable { case start, audio, finish, cancel }
-
-    init(from decoder: Decoder) throws {
-        let fields = try decoder.container(keyedBy: CodingKeys.self)
-        let operation = try fields.decode(UInt64.self, forKey: .operationId)
-        switch try fields.decode(Kind.self, forKey: .kind) {
-        case .start: self = .start(operation, try fields.decode(String.self, forKey: .locale))
-        case .audio: self = .audio(operation, try fields.decode([Int16].self, forKey: .pcm16))
-        case .finish: self = .finish(operation)
-        case .cancel: self = .cancel(operation)
+    static func decodeBinary(_ data: Data) throws -> [LocalSpeechEffect] {
+        guard !data.isEmpty else { return [] }
+        var effects: [LocalSpeechEffect] = []
+        var offset = 0
+        while offset < data.count {
+            guard offset + 13 <= data.count else {
+                throw LocalSpeechError("离线转写任务帧不完整。")
+            }
+            let kind = data[offset]
+            var opId: UInt64 = 0
+            for i in 0..<8 {
+                opId |= UInt64(data[offset + 1 + i]) << (i * 8)
+            }
+            var payloadLen = 0
+            for i in 0..<4 {
+                payloadLen |= Int(data[offset + 9 + i]) << (i * 8)
+            }
+            offset += 13
+            guard payloadLen >= 0, offset + payloadLen <= data.count else {
+                throw LocalSpeechError("离线转写任务长度无效。")
+            }
+            let payload = data.subdata(in: offset..<(offset + payloadLen))
+            offset += payloadLen
+            switch kind {
+            case 1:
+                guard let locale = String(data: payload, encoding: .utf8) else {
+                    throw LocalSpeechError("离线转写语言标识无效。")
+                }
+                effects.append(.start(opId, locale))
+            case 2:
+                guard payloadLen.isMultiple(of: 2) else {
+                    throw LocalSpeechError("离线转写音频长度无效。")
+                }
+                var samples: [Int16] = []
+                samples.reserveCapacity(payloadLen / 2)
+                var i = 0
+                while i + 1 < payloadLen {
+                    let lo = UInt16(payload[payload.startIndex + i])
+                    let hi = UInt16(payload[payload.startIndex + i + 1]) << 8
+                    samples.append(Int16(bitPattern: lo | hi))
+                    i += 2
+                }
+                effects.append(.audio(opId, samples))
+            case 3:
+                guard payloadLen == 0 else {
+                    throw LocalSpeechError("离线转写结束帧长度无效。")
+                }
+                effects.append(.finish(opId))
+            case 4:
+                guard payloadLen == 0 else {
+                    throw LocalSpeechError("离线转写取消帧长度无效。")
+                }
+                effects.append(.cancel(opId))
+            default:
+                throw LocalSpeechError("未知的离线转写任务类型。")
+            }
         }
+        return effects
     }
 }
 
@@ -58,7 +104,7 @@ final class NativeLocalTranscription {
     }
     private let recognizer: any LocalSpeechRecognizer
     private let drain: (() throws -> Data)?
-    private let sendCommand: ((String, [String: Any]) -> Void)?
+    private let sendEvent: ((HostAdapterEvent) -> Void)?
     private var worker: Task<Void, Never>?
     private var readiness: Task<Void, Never>?
     private var cancellation: Task<Void, Never>?
@@ -72,13 +118,13 @@ final class NativeLocalTranscription {
     init(
         recognizer: (any LocalSpeechRecognizer)? = nil,
         drain: (() throws -> Data)? = nil,
-        send: ((String, [String: Any]) -> Void)? = nil,
+        send: ((HostAdapterEvent) -> Void)? = nil,
         now: @escaping () -> ContinuousClock.Instant = { .now },
         operationTimeout: Duration = .seconds(30)
     ) {
         self.recognizer = recognizer ?? makeLocalSpeechRecognizer()
         self.drain = drain
-        self.sendCommand = send
+        self.sendEvent = send
         self.now = now
         self.operationTimeout = operationTimeout
     }
@@ -86,17 +132,17 @@ final class NativeLocalTranscription {
     func prepare() {
         guard readiness == nil else { return }
         let currentEpoch = epoch
-        send("local_asr_readiness", ["state": "preparing", "message": "正在准备中文离线转写。"])
+        send(.localAsrReadiness(state: "preparing", message: "正在准备中文离线转写。"))
         readiness = Task { [weak self] in
             guard let self else { return }
             do {
                 try await recognizer.prepare()
                 try Task.checkCancellation()
                 guard epoch == currentEpoch else { return }
-                send("local_asr_readiness", ["state": "ready", "message": "中文离线转写已就绪。"])
+                send(.localAsrReadiness(state: "ready", message: "中文离线转写已就绪。"))
             } catch {
                 guard epoch == currentEpoch else { return }
-                send("local_asr_readiness", ["state": "unavailable", "message": error.localizedDescription])
+                send(.localAsrReadiness(state: "unavailable", message: error.localizedDescription))
             }
         }
     }
@@ -105,15 +151,15 @@ final class NativeLocalTranscription {
         guard worker == nil else {
             if let deadline, now() >= deadline {
                 if let operation {
-                    send("local_asr_failed", ["operationId": operation, "message": "离线转写等待系统响应超时；原始录音仍会保存。"])
+                    send(.localAsrFailed(operationId: operation, message: "离线转写等待系统响应超时；原始录音仍会保存。"))
                 }
                 interrupt()
             }
             return
         }
         do {
-            let data = try drain?() ?? store?.drainLocalASREffectsJSON() ?? Data("[]".utf8)
-            let effects = try JSONDecoder().decode([LocalSpeechEffect].self, from: data)
+            let data = try drain?() ?? store?.drainLocalASREffectsData() ?? Data()
+            let effects = try LocalSpeechEffect.decodeBinary(data)
             guard !effects.isEmpty else { return }
             let currentEpoch = epoch
             worker = Task { [weak self] in
@@ -169,7 +215,7 @@ final class NativeLocalTranscription {
                     deadline = nil
                     try Task.checkCancellation()
                     if epoch == currentEpoch, operation == id {
-                        send("local_asr_finished", ["operationId": id])
+                        send(.localAsrFinished(operationId: id))
                         operation = nil
                         self.session = nil
                     }
@@ -184,7 +230,7 @@ final class NativeLocalTranscription {
                 let failed = operation
                 operation = nil
                 if !Task.isCancelled, epoch == currentEpoch, let failed {
-                    send("local_asr_failed", ["operationId": failed, "message": error.localizedDescription])
+                    send(.localAsrFailed(operationId: failed, message: error.localizedDescription))
                 }
                 await cancelSession()
             }
@@ -199,13 +245,16 @@ final class NativeLocalTranscription {
         guard epoch == currentEpoch, operation == id else { return }
         switch event {
         case let .success(result):
-            send("local_asr_result", [
-                "operationId": id, "text": result.text, "startMs": result.startMs,
-                "endMs": result.endMs, "isFinal": result.isFinal
-            ])
+            send(.localAsrResult(
+                operationId: id,
+                text: result.text,
+                startMs: result.startMs,
+                endMs: result.endMs,
+                isFinal: result.isFinal
+            ))
         case let .failure(error):
             interrupt()
-            send("local_asr_failed", ["operationId": id, "message": error.localizedDescription])
+            send(.localAsrFailed(operationId: id, message: error.localizedDescription))
         }
     }
 
@@ -231,8 +280,8 @@ final class NativeLocalTranscription {
         session = nil
     }
 
-    private func send(_ type: String, _ fields: [String: Any]) {
-        if let sendCommand { sendCommand(type, fields) }
-        else { store?.send(type, fields) }
+    private func send(_ event: HostAdapterEvent) {
+        if let sendEvent { sendEvent(event) }
+        else { store?.send(event) }
     }
 }

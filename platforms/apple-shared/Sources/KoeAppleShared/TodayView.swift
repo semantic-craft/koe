@@ -95,9 +95,9 @@ struct TodayView: View {
             OwnershipSegmentButton(title: "Mac 使用", active: isMacOwner) {
                 if !isMacOwner {
                     store.send(.deviceOpenGuide)
-                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                    store.bridgeActions.requestBleScan()
                 } else if !today.deviceConnected, store.device.phase == "disconnected" {
-                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                    store.bridgeActions.requestBleScan()
                 }
             }
             OwnershipSegmentButton(title: "手机接管", active: !isMacOwner) {
@@ -141,7 +141,7 @@ private struct ModePickerCardView: View, Equatable {
     let card: ModePickerCardSnapshot
     let store: HostSessionStore
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.card == rhs.card && lhs.store === rhs.store
     }
 

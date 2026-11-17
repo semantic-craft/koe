@@ -67,6 +67,29 @@ pub struct KoePlaybackReceipt {
     pub reserved: [u8; 5],
 }
 
+/// Owned byte buffer returned by binary drain FFI functions; release with [`koe_host_bytes_free`].
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KoeOwnedBytes {
+    /// Heap pointer owned by Rust (`null` when empty or handle is invalid).
+    pub ptr: *mut u8,
+    /// Byte length at `ptr` (`0` when empty or handle is invalid).
+    pub len: usize,
+    /// Allocation capacity (`0` when empty or handle is invalid).
+    pub cap: usize,
+}
+
+fn owned_bytes(mut bytes: Vec<u8>) -> KoeOwnedBytes {
+    if bytes.is_empty() {
+        return KoeOwnedBytes::default();
+    }
+    let ptr = bytes.as_mut_ptr();
+    let len = bytes.len();
+    let cap = bytes.capacity();
+    std::mem::forget(bytes);
+    KoeOwnedBytes { ptr, len, cap }
+}
+
 /// Returns the native contract version.
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_api_version() -> u32 {
@@ -324,34 +347,54 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
     })
 }
 
-/// Transfers queued BLE frames as JSON hex strings to the platform adapter.
+/// Transfers queued BLE frames as length-prefixed binary records (`[u32 le len][bytes]`).
+/// Release non-empty buffers with [`koe_host_bytes_free`].
 #[unsafe(no_mangle)]
-pub extern "C" fn koe_host_session_drain_ble_tx_json(handle: u64) -> *mut c_char {
+pub extern "C" fn koe_host_session_drain_ble_tx(handle: u64) -> KoeOwnedBytes {
     guarded(|| {
         let mut table = lock_sessions();
         let Some(entry) = table.entries.get_mut(&handle) else {
-            return std::ptr::null_mut();
+            return KoeOwnedBytes::default();
         };
-        let hex_frames: Vec<String> = entry
-            .runtime
-            .drain_outbound_ble_frames()
-            .iter()
-            .map(|frame| frame.iter().map(|b| format!("{b:02X}")).collect())
-            .collect();
-        serde_json::to_string(&hex_frames).map_or(std::ptr::null_mut(), string)
+        let frames = entry.runtime.drain_outbound_ble_frames();
+        if frames.is_empty() {
+            return KoeOwnedBytes::default();
+        }
+        let total: usize = frames.iter().map(|f| 4 + f.len()).sum();
+        let mut out = Vec::with_capacity(total);
+        for frame in frames {
+            let Ok(len) = u32::try_from(frame.len()) else {
+                continue;
+            };
+            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(&frame);
+        }
+        owned_bytes(out)
     })
 }
 
-/// Transfers local speech effects as owned JSON without invoking native callbacks.
+/// Transfers queued local speech effects as framed binary records (`[u8 kind][u64 le id][u32 le len][payload]`).
+/// Release non-empty buffers with [`koe_host_bytes_free`].
 #[unsafe(no_mangle)]
-pub extern "C" fn koe_host_session_drain_local_asr_json(handle: u64) -> *mut c_char {
+pub extern "C" fn koe_host_session_drain_local_asr(handle: u64) -> KoeOwnedBytes {
     guarded(|| {
         let mut table = lock_sessions();
         let Some(entry) = table.entries.get_mut(&handle) else {
-            return std::ptr::null_mut();
+            return KoeOwnedBytes::default();
         };
-        string(entry.runtime.drain_local_asr_json())
+        owned_bytes(entry.runtime.drain_local_asr_binary())
     })
+}
+
+/// Releases a binary buffer returned by this library. Empty/null buffers are accepted.
+/// # Safety
+/// Non-null `bytes` must be an unreleased buffer returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn koe_host_bytes_free(bytes: KoeOwnedBytes) {
+    if !bytes.ptr.is_null() && bytes.cap > 0 {
+        // SAFETY: Ownership is transferred back by the caller.
+        drop(unsafe { Vec::from_raw_parts(bytes.ptr, bytes.len, bytes.cap) });
+    }
 }
 
 /// Advances runtime deadlines and publishes completed background results.

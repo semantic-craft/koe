@@ -73,10 +73,10 @@ fn back_and_background_playback_keep_navigation_and_errors_consistent() {
     assert_eq!(back["playback"]["isPlaying"], false);
     let failed = command(&mut runtime, json!({"type":"summarize","recordId":ids[0]}));
     assert!(failed["error"].is_string());
-    let tick = command(
-        &mut runtime,
-        json!({"type":"playback_progress","recordId":ids[0],"requestId":back["playback"]["requestId"],"positionMs":40,"isPlaying":true}),
-    );
+    let req_id = back["playback"]["requestId"].as_u64().unwrap();
+    let receipt = runtime.report_playback_progress(&ids[0], req_id, 40, true, 100, 100);
+    assert!(receipt.applied);
+    let tick = runtime.snapshot(100);
     assert_eq!(tick["error"], failed["error"]);
 }
 
@@ -95,7 +95,10 @@ fn opening_source_in_current_record_invalidates_old_playback_progress() {
     assert!(opened["error"].is_null(), "{}", opened["error"]);
     assert_eq!(opened["playback"]["positionMs"], 50);
     assert_ne!(opened["playback"]["requestId"], before["playback"]["requestId"]);
-    let late = command(&mut runtime, json!({"type":"playback_progress","recordId":"timed","requestId":before["playback"]["requestId"],"positionMs":90,"isPlaying":false}));
+    let old_req = before["playback"]["requestId"].as_u64().unwrap();
+    let receipt = runtime.report_playback_progress("timed", old_req, 90, false, 100, 100);
+    assert!(!receipt.applied);
+    let late = runtime.snapshot(100);
     assert_eq!(late["playback"]["positionMs"], 50);
 }
 

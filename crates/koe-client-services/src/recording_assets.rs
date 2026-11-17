@@ -1,8 +1,8 @@
 //! Validated import and immutable audio assets. Product decisions stay in the engine.
 
-use koe_client_base::{hash::sha256_hex, write_atomic};
+use koe_client_base::write_atomic;
 use koe_engine::{
-    domain::MeetingMinutes, domain::UtteranceSpine, koepack::decode_koepack,
+    domain::MeetingMinutes, domain::UtteranceSpine, hash::sha256_hex, koepack::decode_koepack,
     minutes::parse_meeting_minutes_json, wav::parse_pcm_wave,
 };
 use std::{

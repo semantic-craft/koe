@@ -93,13 +93,22 @@ fn begin_mode(runtime: &mut KoeRuntime, endpoint: &str, mode: &str) -> (Value, u
         runtime,
         json!({"type":"microphone_started","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sampleRate":16000}),
     );
-    send(
-        runtime,
-        json!({"type":"microphone_chunk","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":0,"samples":vec![100i16;3200]}),
+    runtime.ingest_microphone_pcm(
+        mic["recordId"].as_str().unwrap(),
+        mic["sessionId"].as_str().unwrap(),
+        "microphone",
+        0,
+        &vec![100i16; 3200],
+        None,
+        100,
     );
-    let effects: Vec<Value> = serde_json::from_str(&runtime.drain_local_asr_json()).unwrap();
-    let operation = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"]
-        .as_u64()
+    let effects = runtime.drain_local_asr_effects();
+    let operation = effects
+        .iter()
+        .find_map(|e| match e {
+            koe_runtime::LocalAsrEffect::Start { operation_id, .. } => Some(*operation_id),
+            _ => None,
+        })
         .unwrap();
     (mic, operation)
 }

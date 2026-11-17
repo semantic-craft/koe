@@ -391,19 +391,17 @@ fn mutual_exclusion_source_lock_and_microphone_rms_level_reset() {
         NOW + 3,
     );
 
-    let after_speech = dispatch_ok(
-        &mut runtime,
-        json!({
-            "type": "microphone_chunk",
-            "recordId": rec_id,
-            "sessionId": sess_id,
-            "lane": "microphone",
-            "sequence": 0,
-            "samples": vec![4096i16; 320],
-            "timing": {"epoch": 0, "capturedStartNs": 1_000_000_000u64},
-        }),
+    runtime.ingest_microphone_pcm(
+        &rec_id,
+        &sess_id,
+        "microphone",
+        0,
+        &vec![4096i16; 320],
+        Some((0, 1_000_000_000u64)),
         NOW + 3,
     );
+    let after_speech = runtime.snapshot(NOW + 3);
+    assert!(after_speech["error"].is_null(), "{after_speech}");
     let level = after_speech["microphone"]["level"].as_f64().unwrap();
     assert!(
         (0.49..=0.51).contains(&level),
@@ -432,19 +430,17 @@ fn mutual_exclusion_source_lock_and_microphone_rms_level_reset() {
         json!({"type": "resume_microphone", "clockNs": 2_000_000_000u64}),
         NOW + 5,
     );
-    let resumed_chunk = dispatch_ok(
-        &mut runtime,
-        json!({
-            "type": "microphone_chunk",
-            "recordId": rec_id,
-            "sessionId": sess_id,
-            "lane": "microphone",
-            "sequence": 1,
-            "samples": vec![8192i16; 320],
-            "timing": {"epoch": 1, "capturedStartNs": 2_000_000_000u64},
-        }),
+    runtime.ingest_microphone_pcm(
+        &rec_id,
+        &sess_id,
+        "microphone",
+        1,
+        &vec![8192i16; 320],
+        Some((1, 2_000_000_000u64)),
         NOW + 5,
     );
+    let resumed_chunk = runtime.snapshot(NOW + 5);
+    assert!(resumed_chunk["error"].is_null(), "{resumed_chunk}");
     assert!((resumed_chunk["microphone"]["level"].as_f64().unwrap() - 1.0).abs() < 1e-6);
 
     let stopping = dispatch_ok(&mut runtime, json!({"type": "stop_microphone"}), NOW + 6);

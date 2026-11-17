@@ -50,11 +50,17 @@ fn session_lifecycle_has_no_seed_data_and_rejects_duplicate_writer() {
         assert!(text.contains("\"records\":[]"));
         assert!(text.contains("\"version\":2"));
         koe_host_string_free(snapshot);
-        let effects = koe_host_session_drain_local_asr_json(handle);
-        assert_eq!(CStr::from_ptr(effects).to_str().unwrap(), "[]");
-        koe_host_string_free(effects);
+        let effects = koe_host_session_drain_local_asr(handle);
+        assert_eq!(effects.len, 0);
+        assert!(effects.ptr.is_null());
+        koe_host_bytes_free(effects);
+        let ble = koe_host_session_drain_ble_tx(handle);
+        assert_eq!(ble.len, 0);
+        assert!(ble.ptr.is_null());
+        koe_host_bytes_free(ble);
         assert!(koe_host_session_destroy(handle));
-        assert!(koe_host_session_drain_local_asr_json(handle).is_null());
+        assert_eq!(koe_host_session_drain_local_asr(handle).len, 0);
+        assert_eq!(koe_host_session_drain_ble_tx(handle).len, 0);
         assert_eq!(koe_host_session_generation(handle), 0);
         assert!(!koe_host_session_destroy(handle));
     }
@@ -62,6 +68,8 @@ fn session_lifecycle_has_no_seed_data_and_rejects_duplicate_writer() {
 
 #[test]
 fn receipt_abi_layouts_and_invalid_pointer_boundaries_reject_without_accepting() {
+    assert_eq!(std::mem::size_of::<KoeOwnedBytes>(), 24);
+    assert_eq!(std::mem::align_of::<KoeOwnedBytes>(), 8);
     assert_eq!(std::mem::size_of::<KoePcmReceipt>(), 24);
     assert_eq!(std::mem::align_of::<KoePcmReceipt>(), 8);
     assert_eq!(std::mem::size_of::<KoePlaybackReceipt>(), 40);
@@ -202,49 +210,33 @@ fn receipt_abi_layouts_and_invalid_pointer_boundaries_reject_without_accepting()
 }
 
 #[test]
-fn ingest_pcm_matches_microphone_chunk_json_across_chunk0_dual_lanes_rejection_and_stale_session() {
-    let ws_fast = TempWorkspace::new("pcm-fast");
-    let ws_json = TempWorkspace::new("pcm-json");
-    let fast = HostSessionGuard::open(&ws_fast.0).unwrap();
-    let baseline = HostSessionGuard::open(&ws_json.0).unwrap();
+fn ingest_pcm_handles_chunk0_dual_lanes_rejection_and_stale_session() {
+    let ws = TempWorkspace::new("pcm-fast");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
     let now = 1_800_000_000u64;
     let base_clock_ns = 1_000_000_000u64;
 
-    let start_cmd =
-        json!({"type": "start_microphone", "inputId": "", "includeSystem": true, "clockNs": base_clock_ns});
-    let s_fast = send_json(&fast, start_cmd.clone(), now);
-    let s_json = send_json(&baseline, start_cmd, now);
-
-    let fast_rec = s_fast["microphone"]["recordId"]
+    let started = send_json(
+        &session,
+        json!({"type": "start_microphone", "inputId": "", "includeSystem": true, "clockNs": base_clock_ns}),
+        now,
+    );
+    let rec = started["microphone"]["recordId"]
         .as_str()
         .unwrap()
         .to_string();
-    let fast_ses = s_fast["microphone"]["sessionId"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let json_rec = s_json["microphone"]["recordId"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let json_ses = s_json["microphone"]["sessionId"]
+    let ses = started["microphone"]["sessionId"]
         .as_str()
         .unwrap()
         .to_string();
 
     for (lane, rate) in [("microphone", 16_000u32), ("system", 48_000u32)] {
-        let f_snap = send_json(
-            &fast,
-            json!({"type": "microphone_started", "recordId": fast_rec, "sessionId": fast_ses, "lane": lane, "sampleRate": rate}),
+        let snap = send_json(
+            &session,
+            json!({"type": "microphone_started", "recordId": rec, "sessionId": ses, "lane": lane, "sampleRate": rate}),
             now,
         );
-        let j_snap = send_json(
-            &baseline,
-            json!({"type": "microphone_started", "recordId": json_rec, "sessionId": json_ses, "lane": lane, "sampleRate": rate}),
-            now,
-        );
-        assert!(f_snap["error"].is_null());
-        assert!(j_snap["error"].is_null());
+        assert!(snap["error"].is_null());
     }
 
     let mic_chunk_0: Vec<i16> = (0..320).map(|i| (i * 37 - 2000) as i16).collect();
@@ -252,33 +244,19 @@ fn ingest_pcm_matches_microphone_chunk_json_across_chunk0_dual_lanes_rejection_a
     let sys_chunk_0: Vec<i16> = (0..960).map(|i| ((i % 97) * 113 - 4000) as i16).collect();
     let sys_chunk_1: Vec<i16> = (0..960).map(|i| ((i % 53) * 211 - 5000) as i16).collect();
 
-    let r0 = fast.ingest_pcm(
-        &fast_rec,
-        &fast_ses,
+    let r0 = session.ingest_pcm(
+        &rec,
+        &ses,
         "microphone",
         0,
         Some((0, base_clock_ns)),
         &mic_chunk_0,
         now + 1,
     );
-    let j0 = send_json(
-        &baseline,
-        json!({
-            "type": "microphone_chunk",
-            "recordId": json_rec,
-            "sessionId": json_ses,
-            "lane": "microphone",
-            "sequence": 0,
-            "samples": mic_chunk_0,
-            "timing": {"epoch": 0, "capturedStartNs": base_clock_ns}
-        }),
-        now + 1,
-    );
     assert_eq!(r0.status, PcmIngestStatus::Accepted as u32);
     assert_eq!(r0.next_sequence, 1);
-    assert_eq!(r0.generation, j0["generation"].as_u64().unwrap());
     assert_eq!(
-        parse_snapshot(&fast, now + 1)["records"]
+        parse_snapshot(&session, now + 1)["records"]
             .as_array()
             .unwrap()
             .len(),
@@ -291,139 +269,66 @@ fn ingest_pcm_matches_microphone_chunk_json_across_chunk0_dual_lanes_rejection_a
         ("system", 1, base_clock_ns + 25_000_000, &sys_chunk_1),
     ];
     for &(lane, seq, ts_ns, samples) in steps {
-        let receipt = fast.ingest_pcm(
-            &fast_rec,
-            &fast_ses,
+        let receipt = session.ingest_pcm(
+            &rec,
+            &ses,
             lane,
             seq,
             Some((0, ts_ns)),
             samples,
             now + 2,
         );
-        let j_snap = send_json(
-            &baseline,
-            json!({
-                "type": "microphone_chunk",
-                "recordId": json_rec,
-                "sessionId": json_ses,
-                "lane": lane,
-                "sequence": seq,
-                "samples": samples,
-                "timing": {"epoch": 0, "capturedStartNs": ts_ns}
-            }),
-            now + 2,
-        );
         assert_eq!(receipt.status, PcmIngestStatus::Accepted as u32);
         assert_eq!(receipt.next_sequence, seq + 1);
-        assert_eq!(receipt.generation, j_snap["generation"].as_u64().unwrap());
     }
 
-    let rejected = fast.ingest_pcm(
-        &fast_rec,
-        &fast_ses,
+    let rejected = session.ingest_pcm(
+        &rec,
+        &ses,
         "microphone",
         9,
         Some((0, base_clock_ns + 40_000_000)),
         &mic_chunk_0,
         now + 3,
     );
-    let j_rejected = send_json(
-        &baseline,
-        json!({
-            "type": "microphone_chunk",
-            "recordId": json_rec,
-            "sessionId": json_ses,
-            "lane": "microphone",
-            "sequence": 9,
-            "samples": mic_chunk_0,
-            "timing": {"epoch": 0, "capturedStartNs": base_clock_ns + 40_000_000}
-        }),
-        now + 3,
-    );
     assert_eq!(rejected.status, PcmIngestStatus::Rejected as u32);
     assert_eq!(rejected.next_sequence, 2);
-    assert_eq!(
-        parse_snapshot(&fast, now + 3)["error"],
-        j_rejected["error"],
-        "rejection error message must match Command::MicrophoneChunk"
-    );
+    assert!(parse_snapshot(&session, now + 3)["error"].is_string());
 
-    for (stale_rec, stale_lane) in [("mic-stale", "microphone"), (fast_rec.as_str(), "unknown")] {
-        let stale = fast.ingest_pcm(
+    for (stale_rec, stale_lane) in [("mic-stale", "microphone"), (rec.as_str(), "unknown")] {
+        let stale = session.ingest_pcm(
             stale_rec,
-            &fast_ses,
+            &ses,
             stale_lane,
             0,
             Some((0, base_clock_ns)),
             &mic_chunk_0,
             now + 4,
         );
-        let j_stale_rec = if stale_rec == fast_rec {
-            json_rec.as_str()
-        } else {
-            stale_rec
-        };
-        let j_stale = send_json(
-            &baseline,
-            json!({
-                "type": "microphone_chunk",
-                "recordId": j_stale_rec,
-                "sessionId": json_ses,
-                "lane": stale_lane,
-                "sequence": 0,
-                "samples": mic_chunk_0,
-                "timing": {"epoch": 0, "capturedStartNs": base_clock_ns}
-            }),
-            now + 4,
-        );
         assert_eq!(stale.status, PcmIngestStatus::StaleSession as u32);
         assert_eq!(stale.next_sequence, 0);
-        assert_eq!(stale.generation, j_stale["generation"].as_u64().unwrap());
-        assert!(parse_snapshot(&fast, now + 4)["error"].is_null());
-        assert!(j_stale["error"].is_null());
+        assert!(parse_snapshot(&session, now + 4)["error"].is_null());
     }
 
-    send_json(&fast, json!({"type": "stop_microphone"}), now + 5);
-    send_json(&baseline, json!({"type": "stop_microphone"}), now + 5);
+    send_json(&session, json!({"type": "stop_microphone"}), now + 5);
     for lane in ["microphone", "system"] {
-        let f_stop = send_json(
-            &fast,
-            json!({"type": "microphone_stopped", "recordId": fast_rec, "sessionId": fast_ses, "lane": lane, "sequence": 2, "epoch": 0}),
+        let stop = send_json(
+            &session,
+            json!({"type": "microphone_stopped", "recordId": rec, "sessionId": ses, "lane": lane, "sequence": 2, "epoch": 0}),
             now + 5,
         );
-        let j_stop = send_json(
-            &baseline,
-            json!({"type": "microphone_stopped", "recordId": json_rec, "sessionId": json_ses, "lane": lane, "sequence": 2, "epoch": 0}),
-            now + 5,
-        );
-        assert!(f_stop["error"].is_null(), "fast stop failed: {f_stop}");
-        assert!(j_stop["error"].is_null(), "json stop failed: {j_stop}");
+        assert!(stop["error"].is_null(), "stop failed: {stop}");
     }
 
-    let final_fast_raw = fast.snapshot_json(now + 5).unwrap();
-    let final_json_normalized = baseline
-        .snapshot_json(now + 5)
-        .unwrap()
-        .replace(&json_rec, &fast_rec)
-        .replace(ws_json.0.to_str().unwrap(), ws_fast.0.to_str().unwrap());
-    let final_fast: Value = serde_json::from_str(&final_fast_raw).unwrap();
-    let final_json: Value = serde_json::from_str(&final_json_normalized).unwrap();
-    assert_eq!(final_fast, final_json);
+    let final_snap = parse_snapshot(&session, now + 5);
+    assert_eq!(final_snap["records"].as_array().unwrap().len(), 1);
+    let audio_dir = ws.0.join("audio");
+    assert!(audio_dir.join(format!("{rec}.wav")).is_file());
+    assert!(audio_dir.join(format!("{rec}-system.wav")).is_file());
 
-    let audio_dir_fast = ws_fast.0.join("audio");
-    let audio_dir_json = ws_json.0.join("audio");
-    assert_eq!(
-        std::fs::read(audio_dir_fast.join(format!("{fast_rec}.wav"))).unwrap(),
-        std::fs::read(audio_dir_json.join(format!("{json_rec}.wav"))).unwrap(),
-    );
-    assert_eq!(
-        std::fs::read(audio_dir_fast.join(format!("{fast_rec}-system.wav"))).unwrap(),
-        std::fs::read(audio_dir_json.join(format!("{json_rec}-system.wav"))).unwrap(),
-    );
-
-    let post_stop = fast.ingest_pcm(
-        &fast_rec,
-        &fast_ses,
+    let post_stop = session.ingest_pcm(
+        &rec,
+        &ses,
         "microphone",
         2,
         Some((0, base_clock_ns + 60_000_000)),
@@ -432,6 +337,14 @@ fn ingest_pcm_matches_microphone_chunk_json_across_chunk0_dual_lanes_rejection_a
     );
     assert_eq!(post_stop.status, PcmIngestStatus::StaleSession as u32);
     assert_eq!(post_stop.next_sequence, 0);
+
+    for legacy in [
+        json!({"type": "microphone_chunk", "recordId": rec, "sessionId": ses, "lane": "microphone", "sequence": 0, "samples": [1, 2]}),
+        json!({"type": "playback_progress", "recordId": rec, "requestId": 1, "positionMs": 10, "isPlaying": false}),
+    ] {
+        let rejected_legacy = send_json(&session, legacy, now + 7);
+        assert!(rejected_legacy["error"].is_string());
+    }
 }
 
 #[test]

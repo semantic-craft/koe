@@ -419,7 +419,11 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 f"UX violation: {path_str} must render ask.messages so submitted prompts display sourced answers"
             )
 
-        if path_str.endswith("KoeMacApp.swift") and "NSApp?.windows.first" in text and "isWorkspaceWindow" not in text:
+        if (
+            Path(path_str.replace("\\", "/")).name in ("KoeMacApp.swift", "KoeWindowPresenter.swift")
+            and "NSApp?.windows.first" in text
+            and "isWorkspaceWindow" not in text
+        ):
             violations.append(
                 f"UX violation: {path_str} must filter workspace windows via isWorkspaceWindow instead of falling back to NSApp?.windows.first (which matches NSStatusBarWindow)"
             )
@@ -460,7 +464,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         elif "/platforms/macos/Sources/Koe/" in norm_path:
             swiftui_blocks = "\n".join(extract_swiftui_type_blocks(comment_stripped))
             snapshot_guarded_blocks = swiftui_blocks
-            if Path(norm_path).name == "KoeMacApp.swift":
+            if Path(norm_path).name in ("KoeMacApp.swift", "KoeWindowPresenter.swift"):
                 delegate_blocks = "\n".join(extract_app_delegate_blocks(comment_stripped))
                 snapshot_guarded_blocks = "\n".join(
                     b for b in (swiftui_blocks, delegate_blocks) if b

@@ -77,19 +77,16 @@ fn finish_mic_capture(runtime: &mut KoeRuntime, snap: &Value, now: u64) -> Value
             "sampleRate": 16000
         }),
     );
-    send_at(
-        runtime,
+    let receipt = runtime.ingest_microphone_pcm(
+        rec_id,
+        session_id,
+        "microphone",
+        0,
+        &vec![120_i16; 320],
+        Some((0, 1_000_000_000_u64)),
         now,
-        json!({
-            "type": "microphone_chunk",
-            "recordId": rec_id,
-            "sessionId": session_id,
-            "lane": "microphone",
-            "sequence": 0,
-            "samples": vec![120_i16; 320],
-            "timing": { "epoch": 0, "capturedStartNs": 1_000_000_000_u64 }
-        }),
     );
+    assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     send_at(runtime, now + 1, json!({ "type": "capture_action", "action": "end" }));
     send_at(
         runtime,

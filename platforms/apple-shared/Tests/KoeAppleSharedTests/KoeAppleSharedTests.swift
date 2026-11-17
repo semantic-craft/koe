@@ -234,11 +234,17 @@ struct KoeAppleSharedTests {
         #expect(store.snapshot.section == "notes")
         #expect(store.snapshot.microphone?.sessionId == mic.sessionId)
         store.send("microphone_started", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sampleRate": 16000])
-        store.send("microphone_chunk", [
-            "recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone",
-            "sequence": 0, "samples": [Int16](repeating: 4096, count: 320),
-            "timing": ["epoch": 0, "capturedStartNs": 1_000_000_000]
-        ])
+        let ingest = store.ingestMicrophonePCM(
+            recordId: mic.recordId,
+            sessionId: mic.sessionId,
+            lane: "microphone",
+            sequence: 0,
+            epoch: 0,
+            capturedStartNs: 1_000_000_000,
+            samples: [Int16](repeating: 4096, count: 320)
+        )
+        #expect(ingest.status == .accepted)
+        store.refreshSnapshot()
         #expect((store.snapshot.microphone?.level ?? 0) > 0.4)
         #expect(store.snapshot.activeCapture?.actions.contains(.pause) == true)
         store.send("cancel_microphone")

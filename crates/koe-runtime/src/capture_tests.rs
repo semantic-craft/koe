@@ -705,7 +705,35 @@ fn local_capture_is_not_uploaded_automatically_when_cloud_is_enabled_before_stop
 }
 
 fn local_effects(runtime: &mut KoeRuntime) -> Vec<Value> {
-    serde_json::from_str(&runtime.drain_local_asr_json()).unwrap()
+    runtime
+        .drain_local_asr_effects()
+        .into_iter()
+        .map(|effect| match effect {
+            crate::LocalAsrEffect::Start {
+                operation_id,
+                locale,
+            } => json!({ "kind": "start", "operationId": operation_id, "locale": locale }),
+            crate::LocalAsrEffect::Audio {
+                operation_id,
+                pcm16_le,
+            } => {
+                let pcm16: Vec<i16> = pcm16_le
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .copied()
+                    .map(i16::from_le_bytes)
+                    .collect();
+                json!({ "kind": "audio", "operationId": operation_id, "pcm16": pcm16 })
+            }
+            crate::LocalAsrEffect::Finish { operation_id } => {
+                json!({ "kind": "finish", "operationId": operation_id })
+            }
+            crate::LocalAsrEffect::Cancel { operation_id } => {
+                json!({ "kind": "cancel", "operationId": operation_id })
+            }
+        })
+        .collect()
 }
 
 fn start_local(runtime: &mut KoeRuntime, file_id: u32) -> (String, u64) {

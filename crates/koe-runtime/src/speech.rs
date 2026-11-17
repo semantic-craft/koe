@@ -494,8 +494,7 @@ impl KoeRuntime {
         }
         self.poll_captures();
     }
-    /// Transfers a bounded FIFO batch of Apple recognition effects to its native adapter.
-    pub fn drain_local_asr_json(&mut self) -> String {
+    fn reset_active_local_asr_timers(&mut self) {
         for s in self.captures.sessions.values_mut() {
             for op in s.operations.values_mut() {
                 if matches!(op.phase, LocalPhase::Active) {
@@ -503,7 +502,16 @@ impl KoeRuntime {
                 }
             }
         }
-        self.local_asr.drain()
+    }
+    /// Transfers a bounded FIFO batch of typed Apple recognition effects to its native adapter.
+    pub fn drain_local_asr_effects(&mut self) -> Vec<crate::local_asr::LocalAsrEffect> {
+        self.reset_active_local_asr_timers();
+        self.local_asr.drain_effects()
+    }
+    /// Transfers a bounded FIFO batch of Apple recognition effects as binary C ABI frames.
+    pub fn drain_local_asr_binary(&mut self) -> Vec<u8> {
+        self.reset_active_local_asr_timers();
+        self.local_asr.drain_binary()
     }
     pub(super) fn cancel_capture_speech(&mut self, id: &str) {
         if let Some(mut session) = self.captures.sessions.remove(id) {

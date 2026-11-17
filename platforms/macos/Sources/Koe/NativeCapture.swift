@@ -157,10 +157,22 @@ final class NativeCapture {
         if run.failureSent || ["stopping", "cancelling", "saving"].contains(latest.phase) {
             guard !run.stoppedSent else { return }
             run.stoppedSent = true
-            send("microphone_stopped", run, ["sequence": run.mailbox.finalSequence, "epoch": run.identity.epoch])
+            store?.send(.microphoneStopped(
+                recordId: run.identity.recordId,
+                sessionId: run.identity.sessionId,
+                lane: run.lane,
+                sequence: run.mailbox.finalSequence,
+                epoch: run.identity.epoch
+            ))
         } else if latest.phase == "pausing", !run.pausedSent {
             run.pausedSent = true
-            send("microphone_paused", run, ["sequence": run.mailbox.finalSequence, "epoch": run.identity.epoch])
+            store?.send(.microphonePaused(
+                recordId: run.identity.recordId,
+                sessionId: run.identity.sessionId,
+                lane: run.lane,
+                sequence: run.mailbox.finalSequence,
+                epoch: run.identity.epoch
+            ))
         }
     }
 
@@ -204,10 +216,14 @@ final class NativeCapture {
         do {
             let clock = try nowNanoseconds()
             if request.resuming {
-                store?.send("resume_microphone", ["clockNs": clock])
+                store?.send(.resumeMicrophone(clockNs: clock))
             } else {
-                store?.send("microphone_prepared", ["recordId": request.session.recordId,
-                    "sessionId": request.session.sessionId, "epoch": request.session.epoch, "clockNs": clock])
+                store?.send(.microphonePrepared(
+                    recordId: request.session.recordId,
+                    sessionId: request.session.sessionId,
+                    epoch: request.session.epoch,
+                    clockNs: clock
+                ))
             }
             guard let prepared = store?.snapshot.microphone,
                   prepared.recordId == request.session.recordId, prepared.sessionId == request.session.sessionId,
@@ -250,7 +266,12 @@ final class NativeCapture {
             guard expectedRate == nil || expectedRate == rate else {
                 throw CaptureError("\(label)采样率发生变化，已保留此前收到的音频。")
             }
-            send("microphone_started", run, ["sampleRate": rate])
+            store?.send(.microphoneStarted(
+                recordId: run.identity.recordId,
+                sessionId: run.identity.sessionId,
+                lane: run.lane,
+                sampleRate: rate
+            ))
             guard let lane = store?.snapshot.microphone?.lanes[run.lane], lane.started, lane.error == nil else {
                 mailbox.fail(store?.snapshot.error ?? "无法创建\(label)音频文件。")
                 return
@@ -276,14 +297,12 @@ final class NativeCapture {
         guard let error = run.mailbox.error, !run.failureSent else { return }
         run.failureSent = true
         stop(run)
-        send("microphone_failed", run, ["message": error, "epoch": run.identity.epoch])
-    }
-
-    private func send(_ type: String, _ run: LaneRun, _ fields: [String: Any]) {
-        var payload = fields
-        payload["recordId"] = run.identity.recordId
-        payload["sessionId"] = run.identity.sessionId
-        payload["lane"] = run.lane
-        store?.send(type, payload)
+        store?.send(.microphoneFailed(
+            recordId: run.identity.recordId,
+            sessionId: run.identity.sessionId,
+            lane: run.lane,
+            message: error,
+            epoch: run.identity.epoch
+        ))
     }
 }

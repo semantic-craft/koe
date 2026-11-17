@@ -43,11 +43,12 @@ use provider_settings::ProviderSettings;
 mod transcript_edit;
 mod trash;
 
-use command::{Command, Location, Page};
+use command::{AdapterEvent, DispatchMessage, HostIntent, Location, Page};
 use device::DeviceRuntime;
 use koe_client_providers::ProviderWorker;
 use koe_client_services::{product_store::ProductStore, recording_assets};
 use koe_engine::{domain::SegmentId, product::*};
+pub use local_asr::LocalAsrEffect;
 pub use mcp_surface::{drive_mcp_tool_blocking, McpToolCallState, McpToolError};
 use serde_json::{json, Value};
 use std::{
@@ -276,23 +277,17 @@ impl KoeRuntime {
         let result = if json.len() > 2 * 1024 * 1024 {
             Err("操作内容过大".into())
         } else {
-            serde_json::from_str::<Command>(json)
-                .map_err(|_| "无法识别此操作，请更新 Koe 后重试".to_string())
-                .and_then(|command| {
-                    if !matches!(
-                        command,
-                        Command::PlaybackProgress { .. }
-                            | Command::SyncAudioInputs { .. }
-                            | Command::LocalAsrReadiness { .. }
-                            | Command::LocalAsrResult { .. }
-                            | Command::LocalAsrFinished { .. }
-                            | Command::LocalAsrFailed { .. }
-                    ) {
-                        self.error = None;
-                        self.notice = None;
-                    }
-                    self.dispatch(command, now)
-                })
+            DispatchMessage::parse(json).and_then(|message| {
+                let clears_feedback = match &message {
+                    DispatchMessage::Intent(_) => true,
+                    DispatchMessage::Adapter(event) => event.clears_transient_feedback(),
+                };
+                if clears_feedback {
+                    self.error = None;
+                    self.notice = None;
+                }
+                self.dispatch_message(message, now)
+            })
         };
         if let Err(error) = result {
             self.error = Some(error);
@@ -490,119 +485,131 @@ impl KoeRuntime {
         })
     }
 
-    fn dispatch(&mut self, command: Command, now: u64) -> Result<(), String> {
+    fn dispatch_message(&mut self, message: DispatchMessage, now: u64) -> Result<(), String> {
         if now > 0 {
             self.last_now_sec = now;
         }
-        if self.is_quitting()
-            && !matches!(
-                command,
-                Command::LocalAsrReadiness { .. }
-                    | Command::LocalAsrResult { .. }
-                    | Command::LocalAsrFinished { .. }
-                    | Command::LocalAsrFailed { .. }
-                    | Command::RequestQuit
-                    | Command::CancelQuit
-                    | Command::ClearError
-                    | Command::DismissUndoTrash
-                    | Command::Navigate { .. }
-                    | Command::Back
-                    | Command::SelectRecord { .. }
-                    | Command::SelectQuickNoteRecord { .. }
-                    | Command::SelectAllDayDate { .. }
-                    | Command::SelectLiveMinutesRecord { .. }
-                    | Command::OpenSource { .. }
-                    | Command::DeviceEvent { .. }
-                    | Command::SyncAudioInputs { .. }
-                    | Command::PlaybackProgress { .. }
-                    | Command::MicrophoneStarted { .. }
-                    | Command::MicrophonePrepared { .. }
-                    | Command::MicrophoneChunk { .. }
-                    | Command::MicrophonePaused { .. }
-                    | Command::MicrophoneStopped { .. }
-                    | Command::MicrophoneFailed { .. }
-                    | Command::RetryMicrophoneSave
-            )
-        {
+        let allowed_while_quitting = match &message {
+            DispatchMessage::Intent(intent) => intent.allowed_while_quitting(),
+            DispatchMessage::Adapter(event) => event.allowed_while_quitting(),
+        };
+        if self.is_quitting() && !allowed_while_quitting {
             return Err("正在退出，请先取消退出再开始新操作".into());
         }
         if !self.is_quitting() {
             self.reconcile_expired_trash(now);
         }
-        match command {
-            Command::StartCaptureMode { mode, stay_on_page } => {
-                self.start_capture_mode(mode, stay_on_page, now)?
-            }
-            Command::CaptureAction { action, clock_ns } => self.capture_action(action, clock_ns)?,
-            Command::StartMicrophone {
-                input_id,
-                include_system,
-                clock_ns,
-            } => self.start_microphone(input_id, include_system, clock_ns, now)?,
-            Command::SyncAudioInputs { inputs } => self.sync_audio_inputs(inputs)?,
-            Command::SelectCaptureSource { source } => self.select_capture_source(&source)?,
-            Command::SetCaptureSystemAudio { enabled } => self.set_capture_system_audio(enabled)?,
-            Command::PauseMicrophone => self.pause_microphone()?,
-            Command::MicrophonePrepared {
+        match message {
+            DispatchMessage::Intent(intent) => self.dispatch_intent(intent, now)?,
+            DispatchMessage::Adapter(event) => self.dispatch_adapter_event(event, now)?,
+        }
+        self.reconcile_all_day();
+        self.reconcile_bean_capture_mode();
+        Ok(())
+    }
+
+    fn dispatch_adapter_event(&mut self, event: AdapterEvent, now: u64) -> Result<(), String> {
+        match event {
+            AdapterEvent::SyncAudioInputs { inputs } => self.sync_audio_inputs(inputs)?,
+            AdapterEvent::MicrophonePrepared {
                 record_id,
                 session_id,
                 epoch,
                 clock_ns,
             } => self.microphone_prepared(&record_id, &session_id, epoch, clock_ns)?,
-            Command::ResumeMicrophone { clock_ns } => self.resume_microphone(clock_ns)?,
-            Command::MicrophonePaused {
+            AdapterEvent::ResumeMicrophone { clock_ns } => self.resume_microphone(clock_ns)?,
+            AdapterEvent::MicrophoneStarted {
+                record_id,
+                session_id,
+                lane,
+                sample_rate,
+            } => self.microphone_started(&record_id, &session_id, &lane, sample_rate)?,
+            AdapterEvent::MicrophonePaused {
                 record_id,
                 session_id,
                 lane,
                 sequence,
                 epoch,
             } => self.microphone_paused(&record_id, &session_id, &lane, sequence, epoch)?,
-            Command::StopMicrophone => self.stop_microphone(false)?,
-            Command::CancelMicrophone => self.stop_microphone(true)?,
-            Command::RetryMicrophoneSave => self.save_microphone()?,
-            Command::MicrophoneStarted {
-                record_id,
-                session_id,
-                lane,
-                sample_rate,
-            } => self.microphone_started(&record_id, &session_id, &lane, sample_rate)?,
-            Command::MicrophoneChunk {
-                record_id,
-                session_id,
-                lane,
-                sequence,
-                samples,
-                timing,
-            } => {
-                self.microphone_chunk((&record_id, &session_id, &lane), sequence, &samples, timing)?
-            }
-            Command::MicrophoneStopped {
+            AdapterEvent::MicrophoneStopped {
                 record_id,
                 session_id,
                 lane,
                 sequence,
                 epoch,
             } => self.microphone_stopped(&record_id, &session_id, &lane, sequence, epoch)?,
-            Command::MicrophoneFailed {
+            AdapterEvent::MicrophoneFailed {
                 record_id,
                 session_id,
                 lane,
                 message,
                 epoch,
             } => self.microphone_failed(&record_id, &session_id, &lane, message, epoch),
-            Command::RequestQuit => self.request_quit(),
-            Command::CancelQuit => {
+            AdapterEvent::LocalAsrReadiness { state, message } => {
+                self.local_asr_readiness(state, message)?
+            }
+            AdapterEvent::LocalAsrResult {
+                operation_id,
+                text,
+                start_ms,
+                end_ms,
+                is_final,
+            } => self.local_asr_result(operation_id, text, start_ms, end_ms, is_final)?,
+            AdapterEvent::LocalAsrFinished { operation_id } => self.local_asr_finished(operation_id),
+            AdapterEvent::LocalAsrFailed {
+                operation_id,
+                message,
+            } => self.local_asr_failed(operation_id, message),
+            AdapterEvent::DeviceEvent {
+                event,
+                connection_id,
+                device_name,
+            } => {
+                self.device
+                    .event(&event, &connection_id, device_name.as_deref())?;
+                self.save_captures(now)?;
+            }
+            AdapterEvent::DeviceDisconnect => {
+                self.disconnect_device_session(now)?;
+            }
+            AdapterEvent::RequestQuit => self.request_quit(),
+            AdapterEvent::CancelQuit => {
                 self.quit = lifecycle::QuitState::Running;
                 let quitting = self.is_quitting();
                 self.device.reset_failed_transfer_if_idle(quitting);
             }
-            Command::Navigate { section } => self.go(Location {
+        }
+        Ok(())
+    }
+
+    fn dispatch_intent(&mut self, intent: HostIntent, now: u64) -> Result<(), String> {
+        match intent {
+            HostIntent::StartCaptureMode { mode, stay_on_page } => {
+                self.start_capture_mode(mode, stay_on_page, now)?
+            }
+            HostIntent::CaptureAction { action, clock_ns } => {
+                self.capture_action(action, clock_ns)?
+            }
+            HostIntent::StartMicrophone {
+                input_id,
+                include_system,
+                clock_ns,
+            } => self.start_microphone(input_id, include_system, clock_ns, now)?,
+            HostIntent::SelectCaptureSource { source } => self.select_capture_source(&source)?,
+            HostIntent::SetCaptureSystemAudio { enabled } => {
+                self.set_capture_system_audio(enabled)?
+            }
+            HostIntent::PauseMicrophone => self.pause_microphone()?,
+            HostIntent::StopMicrophone => self.stop_microphone(false)?,
+            HostIntent::CancelMicrophone => self.stop_microphone(true)?,
+            HostIntent::RetryMicrophoneSave => self.save_microphone()?,
+            HostIntent::Navigate { section } => self.go(Location {
                 page: section,
                 ..self.selection.location.clone()
             }),
-            Command::Back => self.selection.pop_back(),
-            Command::SelectRecord { record_id } => self.open_record(&record_id, None)?,
-            Command::OpenSource {
+            HostIntent::Back => self.selection.pop_back(),
+            HostIntent::SelectRecord { record_id } => self.open_record(&record_id, None)?,
+            HostIntent::OpenSource {
                 record_id,
                 segment_id,
             } => {
@@ -613,7 +620,7 @@ impl KoeRuntime {
                 self.open_record(&record_id, Some(segment_id))?;
                 self.seek_playback(source.start_ms)?;
             }
-            Command::CreateNote {
+            HostIntent::CreateNote {
                 title,
                 text,
                 stay_on_page,
@@ -623,7 +630,7 @@ impl KoeRuntime {
                     self.open_record(&id, None)?;
                 }
             }
-            Command::ImportFile { path } => {
+            HostIntent::ImportFile { path } => {
                 let imported =
                     recording_assets::import_recording(&self.root, Path::new(&path), now)?;
                 let id = imported.id.clone();
@@ -660,32 +667,32 @@ impl KoeRuntime {
                 self.open_record(&id, None)?;
                 self.notice = Some("导入完成".into());
             }
-            Command::RenameRecord { record_id, title } => {
+            HostIntent::RenameRecord { record_id, title } => {
                 self.commit(|w| w.rename_record(&record_id, &title))?
             }
-            Command::SetRecordProject { record_id, project } => {
+            HostIntent::SetRecordProject { record_id, project } => {
                 self.set_record_project(&record_id, project.as_deref())?
             }
-            Command::SelectQuickNoteRecord { record_id } => {
+            HostIntent::SelectQuickNoteRecord { record_id } => {
                 self.select_quick_note_record(record_id)?
             }
-            Command::SelectAllDayDate { date } => self.select_all_day_date(&date)?,
-            Command::SelectLiveMinutesRecord { record_id } => {
+            HostIntent::SelectAllDayDate { date } => self.select_all_day_date(&date)?,
+            HostIntent::SelectLiveMinutesRecord { record_id } => {
                 self.select_live_minutes_record(record_id)?
             }
-            Command::SetRecordArchived {
+            HostIntent::SetRecordArchived {
                 record_id,
                 archived,
             } => self.handle_set_record_archived(&record_id, archived)?,
-            Command::TrashRecord { record_id } => self.handle_trash_record(&record_id, now)?,
-            Command::RestoreRecord { record_id } => self.handle_restore_record(&record_id)?,
-            Command::PurgeRecord { record_id } => self.handle_purge_record(&record_id)?,
-            Command::EmptyTrash => self.handle_empty_trash()?,
-            Command::DismissUndoTrash => self.handle_dismiss_undo_trash(),
-            Command::ExportRecord { record_id, path } => {
+            HostIntent::TrashRecord { record_id } => self.handle_trash_record(&record_id, now)?,
+            HostIntent::RestoreRecord { record_id } => self.handle_restore_record(&record_id)?,
+            HostIntent::PurgeRecord { record_id } => self.handle_purge_record(&record_id)?,
+            HostIntent::EmptyTrash => self.handle_empty_trash()?,
+            HostIntent::DismissUndoTrash => self.handle_dismiss_undo_trash(),
+            HostIntent::ExportRecord { record_id, path } => {
                 self.export_record(&record_id, Path::new(&path))?
             }
-            Command::ExportWorkspaceMarkdown {
+            HostIntent::ExportWorkspaceMarkdown {
                 record_id,
                 date,
                 path,
@@ -698,7 +705,7 @@ impl KoeRuntime {
                 include_analysis,
                 include_sources,
             )?,
-            Command::ReviewItem { item_id, decision } => {
+            HostIntent::ReviewItem { item_id, decision } => {
                 let decision = match decision.as_str() {
                     "accept" => ReviewDecision::Accept,
                     "dismiss" => ReviewDecision::Dismiss,
@@ -707,46 +714,46 @@ impl KoeRuntime {
                 };
                 self.commit(|w| w.review_item(&item_id, decision))?;
             }
-            Command::CompleteTask { item_id, completed } => {
+            HostIntent::CompleteTask { item_id, completed } => {
                 self.commit(|w| w.complete_task(&item_id, completed))?
             }
-            Command::EditItem { item_id, text, due } => {
+            HostIntent::EditItem { item_id, text, due } => {
                 self.commit(|w| w.edit_item(&item_id, &text, due))?
             }
-            Command::SaveMemory {
+            HostIntent::SaveMemory {
                 record_id,
                 segment_id,
             } => {
                 let _ = self.accept_segment_item(ItemKind::Memory, &record_id, &segment_id)?;
             }
-            Command::CreateTask {
+            HostIntent::CreateTask {
                 record_id,
                 segment_id,
             } => {
                 let _ = self.accept_segment_item(ItemKind::Task, &record_id, &segment_id)?;
             }
-            Command::AddHighlight {
+            HostIntent::AddHighlight {
                 record_id,
                 segment_id,
             } => self.highlight_segment(&record_id, &segment_id)?,
-            Command::EditSegmentText {
+            HostIntent::EditSegmentText {
                 record_id,
                 segment_id,
                 text,
             } => self.edit_segment_text(&record_id, &segment_id, &text)?,
-            Command::SetSegmentSpeaker {
+            HostIntent::SetSegmentSpeaker {
                 record_id,
                 segment_id,
                 speaker,
             } => self.set_segment_speaker(&record_id, &segment_id, speaker.as_deref())?,
-            Command::RenameSpeaker {
+            HostIntent::RenameSpeaker {
                 record_id,
                 from_speaker,
                 to_speaker,
             } => {
                 let _ = self.rename_speaker(&record_id, &from_speaker, &to_speaker)?;
             }
-            Command::Ask {
+            HostIntent::Ask {
                 question,
                 scope,
                 record_id,
@@ -757,67 +764,35 @@ impl KoeRuntime {
                     ..self.selection.location.clone()
                 });
             }
-            Command::SetAskScope { scope, record_id } => {
+            HostIntent::SetAskScope { scope, record_id } => {
                 let scope = search_scope(&scope, record_id)?;
                 self.commit(|w| w.set_ask_scope(scope))?;
             }
-            Command::ConfigureSpeech { engine, model_id } => {
+            HostIntent::ConfigureSpeech { engine, model_id } => {
                 self.configure_speech(&engine, model_id)?
             }
-            Command::PrepareSpeechModel { model_id } => self.prepare_speech_model(&model_id)?,
-            Command::CancelSpeechModel => self.cancel_speech_model(),
-            Command::StartAllDay { source, input_id } => {
+            HostIntent::PrepareSpeechModel { model_id } => self.prepare_speech_model(&model_id)?,
+            HostIntent::CancelSpeechModel => self.cancel_speech_model(),
+            HostIntent::StartAllDay { source, input_id } => {
                 self.start_all_day(&source, input_id.unwrap_or_default(), now)?
             }
-            Command::StopAllDay => self.stop_all_day()?,
-            Command::Transcribe { record_id } => self.start_transcription(&record_id)?,
-            Command::LocalAsrReadiness { state, message } => {
-                self.local_asr_readiness(state, message)?
-            }
-            Command::LocalAsrResult {
-                operation_id,
-                text,
-                start_ms,
-                end_ms,
-                is_final,
-            } => self.local_asr_result(operation_id, text, start_ms, end_ms, is_final)?,
-            Command::LocalAsrFinished { operation_id } => self.local_asr_finished(operation_id),
-            Command::LocalAsrFailed {
-                operation_id,
-                message,
-            } => self.local_asr_failed(operation_id, message),
-            Command::SetMeetingAudioPolicy { policy } => self.set_meeting_audio_policy(&policy)?,
-            Command::Summarize { record_id } => self.start_summary(&record_id)?,
-            Command::ConfigureProvider {
+            HostIntent::StopAllDay => self.stop_all_day()?,
+            HostIntent::Transcribe { record_id } => self.start_transcription(&record_id)?,
+            HostIntent::SetMeetingAudioPolicy { policy } => self.set_meeting_audio_policy(&policy)?,
+            HostIntent::Summarize { record_id } => self.start_summary(&record_id)?,
+            HostIntent::ConfigureProvider {
                 api_key,
                 model,
                 asr_endpoint,
                 chat_endpoint,
             } => self.configure_provider(api_key, model, asr_endpoint, chat_endpoint)?,
-            Command::ClearProviderCredential => self.clear_credential()?,
-            Command::RetryProviderCredentials { authorize } => self.retry_credentials(authorize)?,
-            Command::ClearError => {}
-            Command::Seek { position_ms } => self.seek_playback(position_ms)?,
-            Command::Playback { is_playing } => self.set_playback(is_playing)?,
-            Command::SelectPlaybackLane { lane } => self.select_playback_lane(lane)?,
-            Command::PlaybackProgress {
-                record_id,
-                request_id,
-                position_ms,
-                is_playing,
-            } => {
-                self.playback_progress(&record_id, request_id, position_ms, is_playing);
-            }
-            Command::DeviceEvent {
-                event,
-                connection_id,
-                device_name,
-            } => {
-                self.device
-                    .event(&event, &connection_id, device_name.as_deref())?;
-                self.save_captures(now)?;
-            }
-            Command::DeviceOpenGuide => {
+            HostIntent::ClearProviderCredential => self.clear_credential()?,
+            HostIntent::RetryProviderCredentials { authorize } => self.retry_credentials(authorize)?,
+            HostIntent::ClearError => {}
+            HostIntent::Seek { position_ms } => self.seek_playback(position_ms)?,
+            HostIntent::Playback { is_playing } => self.set_playback(is_playing)?,
+            HostIntent::SelectPlaybackLane { lane } => self.select_playback_lane(lane)?,
+            HostIntent::DeviceOpenGuide => {
                 if !self.workspace().ble_auto_connect() {
                     self.commit(|w| {
                         w.set_ble_auto_connect(true);
@@ -826,17 +801,14 @@ impl KoeRuntime {
                 }
                 self.device.open_guide();
             }
-            Command::DeviceOnboardingNext => self.device.onboarding_next(),
-            Command::DeviceCloseGuide => self.device.close_guide(),
-            Command::DeviceRefresh => {
+            HostIntent::DeviceOnboardingNext => self.device.onboarding_next(),
+            HostIntent::DeviceCloseGuide => self.device.close_guide(),
+            HostIntent::DeviceRefresh => {
                 let quitting = self.is_quitting();
                 self.device.reset_failed_transfer_if_idle(quitting);
                 self.device.refresh();
             }
-            Command::DeviceDisconnect => {
-                self.disconnect_device_session(now)?;
-            }
-            Command::DeviceRelease => {
+            HostIntent::DeviceRelease => {
                 if let Some(reason) = self.release_to_phone_block_reason() {
                     return Err(reason.into());
                 }
@@ -850,7 +822,7 @@ impl KoeRuntime {
                     self.notice = Some("已释放录音豆蓝牙控制权".into());
                 }
             }
-            Command::SetBleAutoConnect { enabled } => {
+            HostIntent::SetBleAutoConnect { enabled } => {
                 if !enabled {
                     if let Some(reason) = self.release_to_phone_block_reason() {
                         return Err(reason.into());
@@ -864,7 +836,7 @@ impl KoeRuntime {
                     self.reset_bean_preference_if_needed();
                 }
             }
-            Command::DeviceDownload { file_id } => {
+            HostIntent::DeviceDownload { file_id } => {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
@@ -891,7 +863,7 @@ impl KoeRuntime {
                     .begin_offline_pull(file_id, entry.duration_ms);
                 self.device.outbound.push(frame);
             }
-            Command::DeviceStart => {
+            HostIntent::DeviceStart => {
                 if self.microphone.is_some() {
                     return Err("请先结束当前麦克风录音并完成保存".into());
                 }
@@ -907,12 +879,10 @@ impl KoeRuntime {
                     .start_realtime_recording(None, now.saturating_mul(1000));
                 self.device.accept(outcome);
             }
-            Command::DeviceStop => {
+            HostIntent::DeviceStop => {
                 self.device.stop_recording();
             }
         }
-        self.reconcile_all_day();
-        self.reconcile_bean_capture_mode();
         Ok(())
     }
 

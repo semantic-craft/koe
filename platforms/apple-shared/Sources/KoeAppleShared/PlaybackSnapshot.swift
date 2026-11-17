@@ -75,7 +75,6 @@ extension HostSnapshot {
     ) -> HostSnapshot {
         HostSnapshot(
             speech: speech,
-            localAsr: localAsr,
             liveCaption: liveCaption,
             microphone: microphone,
             capture: capture,
@@ -100,7 +99,6 @@ extension HostSnapshot {
             provider: provider,
             playback: playback.updatingProgress(positionMs: positionMs, isPlaying: isPlaying),
             error: error,
-            migrationReports: migrationReports,
             notice: notice
         )
     }

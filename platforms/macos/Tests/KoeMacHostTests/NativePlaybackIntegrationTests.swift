@@ -19,8 +19,17 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             XCTAssertNil(store.snapshot.error)
         }
         for lane in ["microphone", "system"] { event("microphone_started", lane, ["sampleRate": 16000]) }
-        for (lane, seq, ns) in [("microphone", 0, 1_000_000_000), ("microphone", 1, 1_100_000_000), ("system", 0, 1_050_000_000)] {
-            event("microphone_chunk", lane, ["sequence": seq, "samples": [Int16](repeating: 100, count: 160), "timing": ["epoch": 0, "capturedStartNs": ns]])
+        for (lane, seq, ns) in [("microphone", UInt64(0), UInt64(1_000_000_000)), ("microphone", 1, 1_100_000_000), ("system", 0, 1_050_000_000)] {
+            let receipt = store.ingestMicrophonePCM(
+                recordId: ticket.recordId,
+                sessionId: ticket.sessionId,
+                lane: lane,
+                sequence: seq,
+                epoch: 0,
+                capturedStartNs: ns,
+                samples: [Int16](repeating: 100, count: 160)
+            )
+            XCTAssertEqual(receipt.status, .accepted)
         }
         store.send("stop_microphone")
         event("microphone_stopped", "microphone", ["sequence": 2, "epoch": 0])

@@ -9,9 +9,6 @@ license = "MIT"
 [lints]
 workspace = true
 
-[dependencies]
-koe-client-base = { path = "../koe-client-base" }
-
 [lib]
 name = "koe_engine"
 path = "src/lib.rs"

@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use koe_engine::hash::Sha256;
 
 use super::worker::Control;
 
@@ -74,13 +74,7 @@ fn verify(path: &Path, artifact: &Artifact, control: &Control, epoch: u64) -> Re
         }
         hash.update(&buffer[..count]);
     }
-    if hash
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
-        != artifact.sha256
-    {
+    if hash.finalize_hex() != artifact.sha256 {
         return Err("model artifact SHA-256 mismatch".into());
     }
     Ok(())
@@ -148,13 +142,7 @@ pub(super) async fn ensure_artifact(
                 artifact.bytes
             ));
         }
-        if hash
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-            != artifact.sha256
-        {
+        if hash.finalize_hex() != artifact.sha256 {
             return Err("model download SHA-256 mismatch".into());
         }
         file.sync_all()

@@ -259,11 +259,9 @@ impl KoeRuntime {
             "workspaces":workspaces,
             "ask":ask_json,
             "device":device_json,
-            "localAsr":{"state":self.local_asr.state,"message":self.local_asr.message},
             "liveCaption":self.live_caption_json(),"liveMinutes":self.live_minutes_view(),
             "provider":self.provider_json(),
             "playback":self.playback_json(),
-            "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
             "error":self.error,"notice":self.notice})
     }
 

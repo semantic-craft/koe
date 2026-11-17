@@ -237,15 +237,19 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             }
         }
         """
-        res_mac = verifier.check_ui_file(
+        for mac_path in (
             "platforms/macos/Sources/Koe/KoeMacApp.swift",
-            bad_mac_app,
-            strict_scale=True,
-        )
-        self.assertTrue(
-            any("isWorkspaceWindow" in v for v in res_mac["violations"]),
-            res_mac["violations"],
-        )
+            "platforms/macos/Sources/Koe/KoeWindowPresenter.swift",
+        ):
+            res_mac = verifier.check_ui_file(
+                mac_path,
+                bad_mac_app,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("isWorkspaceWindow" in v for v in res_mac["violations"]),
+                (mac_path, res_mac["violations"]),
+            )
 
         bad_player = """
         import SwiftUI
@@ -624,34 +628,52 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             res_comment_brace["violations"],
         )
 
-        for snippet in (
-            """
-            import AppKit
-            extension KoeAppDelegate {
-                func helper() { let _ = store?.snapshot.device }
-            }
-            """,
-            """
-            import AppKit
-            public enum KoeWindowPresenter {
-                static func open(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
-            }
-            """,
-            """
-            import AppKit
-            extension KoeWindowPresenter {
-                static func helper(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
-            }
-            """,
+        for target_path, snippet in (
+            (
+                "platforms/macos/Sources/Koe/KoeMacApp.swift",
+                """
+                import AppKit
+                extension KoeAppDelegate {
+                    func helper() { let _ = store?.snapshot.device }
+                }
+                """,
+            ),
+            (
+                "platforms/macos/Sources/Koe/KoeMacApp.swift",
+                """
+                import AppKit
+                public enum KoeWindowPresenter {
+                    static func open(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
+                }
+                """,
+            ),
+            (
+                "platforms/macos/Sources/Koe/KoeWindowPresenter.swift",
+                """
+                import AppKit
+                public enum KoeWindowPresenter {
+                    static func open(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
+                }
+                """,
+            ),
+            (
+                "platforms/macos/Sources/Koe/KoeWindowPresenter.swift",
+                """
+                import AppKit
+                extension KoeWindowPresenter {
+                    static func helper(store: HostSessionStore?) { let _ = store?.snapshot.lifecycle }
+                }
+                """,
+            ),
         ):
             res_ext = verifier.check_ui_file(
-                "platforms/macos/Sources/Koe/KoeMacApp.swift",
+                target_path,
                 snippet,
                 strict_scale=True,
             )
             self.assertTrue(
                 any("reads store.snapshot directly" in v for v in res_ext["violations"]),
-                res_ext["violations"],
+                (target_path, res_ext["violations"]),
             )
 
     def test_rejects_foreach_offset_identity_churn_outside_comments(self) -> None:

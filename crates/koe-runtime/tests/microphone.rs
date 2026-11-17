@@ -48,11 +48,16 @@ fn started(r: &mut KoeRuntime) -> Value {
     t
 }
 fn chunk(r: &mut KoeRuntime, t: &Value, seq: u64, samples: Vec<i16>) -> Value {
-    event(
-        r,
-        t,
-        json!({"type":"microphone_chunk","sequence":seq,"samples":samples}),
-    )
+    r.ingest_microphone_pcm(
+        t["recordId"].as_str().unwrap(),
+        t["sessionId"].as_str().unwrap(),
+        t["lane"].as_str().unwrap_or("microphone"),
+        seq,
+        &samples,
+        None,
+        100,
+    );
+    r.snapshot(100)
 }
 fn finish(r: &mut KoeRuntime, t: &Value, seq: u64) -> Value {
     send(r, json!({"type":"stop_microphone"}));

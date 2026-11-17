@@ -426,7 +426,7 @@ impl super::KoeRuntime {
             || self.device.awaiting_stop;
         let device_recording = device.device_recording_active;
         let teardown_stop_frames_hex = if device_recording {
-            vec![koe_client_base::prng::to_hex_upper(
+            vec![koe_engine::prng::to_hex_upper(
                 &DeviceCommands::pause_record(),
             )]
         } else {

@@ -697,18 +697,16 @@ fn custody_guards_reject_edits_across_trash_archive_mic_ble_and_cloud_transcript
         }),
         NOW,
     );
-    dispatch_ok(
-        &mut runtime,
-        json!({
-            "type": "microphone_chunk",
-            "recordId": mic_id,
-            "sessionId": mic_session,
-            "lane": "microphone",
-            "sequence": 0,
-            "samples": vec![12; 320]
-        }),
+    let receipt = runtime.ingest_microphone_pcm(
+        &mic_id,
+        &mic_session,
+        "microphone",
+        0,
+        &vec![12; 320],
+        None,
         NOW,
     );
+    assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     let mic_rejected = dispatch_raw(
         &mut runtime,
         json!({"type": "edit_segment_text", "recordId": mic_id, "segmentId": "S1", "text": "录音中禁止修改"}),
