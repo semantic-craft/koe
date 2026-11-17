@@ -559,3 +559,59 @@ fn ingest_pcm_rejects_sample_count_8193_without_advancing_sequence_or_generation
     assert_eq!(koe_host_session_generation(session.handle()), gen_before);
     assert!(parse_snapshot(&session, now)["error"].is_null());
 }
+
+#[test]
+fn binary_drains_transfer_non_empty_ble_frames_and_local_asr_effects() {
+    let ws = TempWorkspace::new("binary-drain");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
+    let now = 1_800_000_000u64;
+
+    for event in ["scanning", "connecting", "ready"] {
+        let snap = send_json(
+            &session,
+            json!({"type": "device_event", "event": event, "connectionId": "c-bin", "deviceName": "D3200"}),
+            now,
+        );
+        assert!(snap["error"].is_null());
+    }
+    let ble_frames = session.drain_ble_tx();
+    assert!(!ble_frames.is_empty());
+    assert!(ble_frames.iter().all(|frame| !frame.is_empty()));
+    assert!(session.drain_ble_tx().is_empty());
+
+    send_json(
+        &session,
+        json!({"type": "local_asr_readiness", "state": "ready", "message": "ok"}),
+        now,
+    );
+    send_json(
+        &session,
+        json!({"type": "configure_speech", "engine": "apple_speech"}),
+        now,
+    );
+    let started = send_json(
+        &session,
+        json!({"type": "start_capture_mode", "mode": "quick_note", "stayOnPage": true}),
+        now,
+    );
+    let rec = started["microphone"]["recordId"].as_str().unwrap().to_string();
+    let ses = started["microphone"]["sessionId"].as_str().unwrap().to_string();
+    send_json(
+        &session,
+        json!({"type": "microphone_started", "recordId": rec, "sessionId": ses, "lane": "microphone", "sampleRate": 16_000}),
+        now,
+    );
+    let receipt = session.ingest_pcm(&rec, &ses, "microphone", 0, None, &[11i16, -22, 33, -44], now);
+    assert_eq!(receipt.status, PcmIngestStatus::Accepted as u32);
+    send_json(&session, json!({"type": "capture_action", "action": "end"}), now);
+    send_json(
+        &session,
+        json!({"type": "microphone_stopped", "recordId": rec, "sessionId": ses, "lane": "microphone", "sequence": 1, "epoch": 0}),
+        now,
+    );
+
+    let raw_asr = session.drain_local_asr_binary();
+    assert!(!raw_asr.is_empty());
+    assert_eq!(raw_asr[0], 1);
+    assert!(session.drain_local_asr_binary().is_empty());
+}

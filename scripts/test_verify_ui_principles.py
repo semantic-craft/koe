@@ -237,6 +237,27 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             }
         }
         """
+        bad_mac_app_fallback = """
+        import AppKit
+        enum KoeWindowPresenter {
+            static func isWorkspaceWindow(_ window: NSWindow) -> Bool { true }
+            static func open() {
+                let w = NSApp?.windows.first(where: { isWorkspaceWindow($0) }) ?? NSApp?.windows.first
+                _ = w
+            }
+        }
+        """
+        safe_mac_app_comment = """
+        import AppKit
+        enum KoeWindowPresenter {
+            static func isWorkspaceWindow(_ window: NSWindow) -> Bool { true }
+            static func open() {
+                // Avoid unfiltered NSApp?.windows.first which matches NSStatusBarWindow
+                let w = NSApp?.windows.first(where: { isWorkspaceWindow($0) && $0.isVisible })
+                _ = w
+            }
+        }
+        """
         for mac_path in (
             "platforms/macos/Sources/Koe/KoeMacApp.swift",
             "platforms/macos/Sources/Koe/KoeWindowPresenter.swift",
@@ -250,6 +271,21 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
                 any("isWorkspaceWindow" in v for v in res_mac["violations"]),
                 (mac_path, res_mac["violations"]),
             )
+            res_fallback = verifier.check_ui_file(
+                mac_path,
+                bad_mac_app_fallback,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("isWorkspaceWindow" in v for v in res_fallback["violations"]),
+                (mac_path, res_fallback["violations"]),
+            )
+            res_safe = verifier.check_ui_file(
+                mac_path,
+                safe_mac_app_comment,
+                strict_scale=True,
+            )
+            self.assertEqual(res_safe["violations"], [], (mac_path, res_safe["violations"]))
 
         bad_player = """
         import SwiftUI

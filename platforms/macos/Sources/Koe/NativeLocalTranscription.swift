@@ -36,9 +36,9 @@ enum LocalSpeechEffect: Equatable {
     static func decodeBinary(_ data: Data) throws -> [LocalSpeechEffect] {
         guard !data.isEmpty else { return [] }
         var effects: [LocalSpeechEffect] = []
-        var offset = 0
-        while offset < data.count {
-            guard offset + 13 <= data.count else {
+        var offset = data.startIndex
+        while offset < data.endIndex {
+            guard data.endIndex - offset >= 13 else {
                 throw LocalSpeechError("离线转写任务帧不完整。")
             }
             let kind = data[offset]
@@ -51,7 +51,7 @@ enum LocalSpeechEffect: Equatable {
                 payloadLen |= Int(data[offset + 9 + i]) << (i * 8)
             }
             offset += 13
-            guard payloadLen >= 0, offset + payloadLen <= data.count else {
+            guard payloadLen >= 0, data.endIndex - offset >= payloadLen else {
                 throw LocalSpeechError("离线转写任务长度无效。")
             }
             let payload = data.subdata(in: offset..<(offset + payloadLen))

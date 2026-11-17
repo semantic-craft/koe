@@ -335,4 +335,61 @@ final class NativeLocalTranscriptionTests: XCTestCase {
         XCTAssertEqual(output.count, 48_000)
         XCTAssertEqual(output[24_000], 0.25, accuracy: 0.001)
     }
+
+    func testDecodeBinaryHandlesDataSliceAndRealRustOwnedBytesRoundtrip() throws {
+        let framed = Data([0xAA, 0xBB, 0xCC, 0xDD]) + data([
+            ["kind": "start", "operationId": 41, "locale": "zh-CN"],
+            ["kind": "audio", "operationId": 41, "pcm16": [12, -34]],
+            ["kind": "finish", "operationId": 41],
+            ["kind": "cancel", "operationId": 42]
+        ])
+        let sliced = framed.dropFirst(4)
+        XCTAssertEqual(sliced.startIndex, 4)
+        let decodedSlice = try LocalSpeechEffect.decodeBinary(sliced)
+        XCTAssertEqual(decodedSlice, [
+            .start(41, "zh-CN"),
+            .audio(41, [12, -34]),
+            .finish(41),
+            .cancel(42)
+        ])
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        store.send(.deviceEvent(event: "scanning", connectionId: "c-drain", deviceName: "D3200"))
+        store.send(.deviceEvent(event: "connecting", connectionId: "c-drain", deviceName: "D3200"))
+        store.send(.deviceEvent(event: "ready", connectionId: "c-drain", deviceName: "D3200"))
+        let bleFrames = store.drainOutboundBleFrames()
+        XCTAssertFalse(bleFrames.isEmpty)
+        XCTAssertTrue(store.drainOutboundBleFrames().isEmpty)
+        XCTAssertNil(store.nativeError)
+
+        store.send(.localAsrReadiness(state: "ready", message: "就绪"))
+        store.send(.configureSpeech(engine: "apple_speech", modelId: nil))
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
+        let mic = try XCTUnwrap(store.snapshot.microphone)
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16_000))
+        let receipt = store.ingestMicrophonePCM(
+            recordId: mic.recordId,
+            sessionId: mic.sessionId,
+            lane: "microphone",
+            sequence: 0,
+            epoch: mic.epoch,
+            capturedStartNs: nil,
+            samples: [100, -200, 300, -400]
+        )
+        XCTAssertEqual(receipt.status, .accepted)
+        store.send(.captureAction(action: .end))
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: mic.epoch))
+
+        let rawEffects = store.drainLocalASREffectsData()
+        XCTAssertFalse(rawEffects.isEmpty)
+        let decodedRust = try LocalSpeechEffect.decodeBinary(rawEffects)
+        XCTAssertTrue(decodedRust.contains { if case .start(_, "zh-CN") = $0 { return true }; return false })
+        XCTAssertTrue(decodedRust.contains { if case let .audio(_, samples) = $0 { return samples == [100, -200, 300, -400] }; return false })
+        XCTAssertTrue(decodedRust.contains { if case .finish = $0 { return true }; return false })
+        XCTAssertTrue(store.drainLocalASREffectsData().isEmpty)
+    }
 }

@@ -164,6 +164,45 @@ def extract_app_delegate_blocks(text: str) -> list[str]:
     )
 
 
+def has_unfiltered_windows_first(comment_stripped: str) -> bool:
+    n = len(comment_stripped)
+    for match in re.finditer(r"\bNSApp\??\.windows\.first\b", comment_stripped):
+        idx = match.end()
+        while idx < n and comment_stripped[idx].isspace():
+            idx += 1
+        if idx >= n or comment_stripped[idx] not in "({":
+            return True
+        open_ch = comment_stripped[idx]
+        close_ch = ")" if open_ch == "(" else "}"
+        depth = 0
+        in_string = False
+        escaped = False
+        start = idx
+        end = None
+        while idx < n:
+            ch = comment_stripped[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    end = idx + 1
+                    break
+            idx += 1
+        if end is None or "isWorkspaceWindow" not in comment_stripped[start:end]:
+            return True
+    return False
+
+
 def find_foreach_offset_churn(comment_stripped: str) -> bool:
     n = len(comment_stripped)
     for match in re.finditer(r"\bForEach\s*\(", comment_stripped):
@@ -419,10 +458,10 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 f"UX violation: {path_str} must render ask.messages so submitted prompts display sourced answers"
             )
 
+        comment_stripped = strip_swift_comments(text)
         if (
             Path(path_str.replace("\\", "/")).name in ("KoeMacApp.swift", "KoeWindowPresenter.swift")
-            and "NSApp?.windows.first" in text
-            and "isWorkspaceWindow" not in text
+            and has_unfiltered_windows_first(comment_stripped)
         ):
             violations.append(
                 f"UX violation: {path_str} must filter workspace windows via isWorkspaceWindow instead of falling back to NSApp?.windows.first (which matches NSStatusBarWindow)"
@@ -433,7 +472,6 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 f"UX violation: {path_str} must mark playheadMs instead of inflating durationMs + 1000 on add_slice_mark"
             )
 
-        comment_stripped = strip_swift_comments(text)
         if find_foreach_offset_churn(comment_stripped):
             violations.append(
                 f"Observation violation: {path_str} uses ForEach(..., id: \\.offset); use stable item identity instead"
