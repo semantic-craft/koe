@@ -50,30 +50,36 @@ fn live_minutes_keeps_final_and_draining_draft_until_the_next_recording() {
     audio(&mut r, t, 0, 320);
     let op = accept_windows(&mut r, "")[0];
     let final_segment = send(&mut r, json!({"type":"local_asr_result","operationId":op,"text":"已确认原文","startMs":0,"endMs":10,"isFinal":true}));
-    assert_eq!(final_segment["liveMinutes"]["parts"][0]["segments"][0]["text"], "已确认原文");
+    assert_eq!(
+        final_segment["workspaces"]["liveMinutes"]["segments"][0]["text"],
+        "已确认原文"
+    );
     send(&mut r, json!({"type":"local_asr_result","operationId":op,"text":"仍在识别","startMs":10,"endMs":20,"isFinal":false}));
     send(&mut r, json!({"type":"navigate","section":"live_minutes"}));
     send(&mut r, json!({"type":"stop_microphone"}));
     let saved = send(&mut r, json!({"type":"microphone_stopped","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":1}));
     assert_eq!(saved["section"], "live_minutes");
-    assert_eq!(saved["liveMinutes"]["phase"], "finishing");
-    assert_eq!(saved["liveMinutes"]["parts"][0]["drafts"], json!(["仍在识别"]));
+    assert_eq!(saved["workspaces"]["liveMinutes"]["phase"], "finishing");
+    assert_eq!(
+        saved["workspaces"]["liveMinutes"]["drafts"],
+        json!(["仍在识别"])
+    );
     send(&mut r, json!({"type":"local_asr_result","operationId":op,"text":"停止时的尾句","startMs":10,"endMs":20,"isFinal":true}));
     let finished = send(&mut r, json!({"type":"local_asr_finished","operationId":op}));
-    let minutes = &finished["liveMinutes"];
+    let minutes = &finished["workspaces"]["liveMinutes"];
     assert_eq!(minutes["phase"], "ended");
-    assert_eq!(minutes["parts"][0]["recordId"], t["recordId"]);
-    assert_eq!(minutes["parts"][0]["segments"][1]["text"], "停止时的尾句");
-    assert_eq!(minutes["parts"][0]["drafts"], json!([]));
-    assert_eq!(minutes["parts"][0]["analysis"], "unconfigured");
-    assert_eq!(minutes["parts"][0]["summary"], json!([]));
+    assert_eq!(minutes["selectedRecordId"], t["recordId"]);
+    assert_eq!(minutes["segments"][1]["text"], "停止时的尾句");
+    assert_eq!(minutes["drafts"], json!([]));
+    assert_eq!(minutes["configured"], false);
+    assert_eq!(minutes["liveSections"], json!([]));
 
     let next = send(&mut r, json!({"type":"start_capture_mode","mode":"meeting"}));
-    assert_ne!(next["liveMinutes"]["scope"], minutes["scope"]);
-    assert_eq!(next["liveMinutes"]["parts"], json!([]));
+    assert_ne!(next["workspaces"]["liveMinutes"]["activeRecordId"], minutes["selectedRecordId"]);
+    assert_eq!(next["workspaces"]["liveMinutes"]["segments"], json!([]));
     drop(r);
     let reopened = KoeRuntime::open(&d.0).unwrap();
-    assert!(reopened.snapshot(100)["liveMinutes"].is_null());
+    assert_eq!(reopened.snapshot(100)["workspaces"]["liveMinutes"]["isActive"], false);
     assert!(reopened.workspace().record(t["recordId"].as_str().unwrap()).is_some());
 }
 
@@ -321,6 +327,7 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         second.all_day.as_ref().unwrap().run_id,
         first.all_day.as_ref().unwrap().run_id
     );
+    let second_id = second.aggregate.recording_id.clone();
     release.send(()).unwrap();
     server.join().unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -340,19 +347,20 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         r.snapshot(100)["workspaces"]["allDay"]["dailyReview"]["overview"],
         "已封段原文"
     );
-    let live = r.snapshot(100);
-    let minutes = &live["liveMinutes"];
-    assert_eq!(minutes["scope"], json!({"kind":"all_day","id":first.all_day.as_ref().unwrap().run_id}));
-    assert_eq!(minutes["phase"], "recording");
-    assert_eq!(minutes["parts"][0]["recordId"], first.aggregate.recording_id);
-    assert_eq!(minutes["parts"][0]["analysis"], "ready");
-    assert_eq!(minutes["parts"][0]["summary"][0]["text"], "已封段原文");
-    let source = &minutes["parts"][0]["summary"][1]["sources"][0];
-    assert_eq!(source["recordId"], first.aggregate.recording_id);
-    assert_eq!(source["segmentId"], "S1");
-    assert_eq!(source["quote"], "已封段原文");
-    assert_eq!(minutes["parts"][1]["ordinal"], 2);
-    assert_eq!(minutes["parts"][1]["summary"], json!([]));
+    let first_record = r
+        .workspace()
+        .record(&first.aggregate.recording_id)
+        .unwrap();
+    let first_minutes = first_record.aggregate.minutes.as_ref().unwrap();
+    assert_eq!(first_minutes.overview, "已封段原文");
+    assert_eq!(first_minutes.topics[0].citations[0].to_string(), "S1");
+    assert!(r
+        .workspace()
+        .record(&second_id)
+        .unwrap()
+        .aggregate
+        .minutes
+        .is_none());
 
     send(&mut r, json!({"type":"stop_all_day"}));
     send(
@@ -361,7 +369,10 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
     );
     accept_windows(&mut r, "最后一句");
     r.poll_timers(0, 100);
-    assert_eq!(r.snapshot(100)["allDay"]["state"], "idle");
+    assert_eq!(
+        r.snapshot(100)["workspaces"]["allDay"]["isActive"],
+        false
+    );
     drop(r);
     let r = KoeRuntime::open(&d.0).unwrap();
     assert_eq!(r.workspace().records().len(), 2);
@@ -539,9 +550,9 @@ fn background_file_transcription_does_not_leak_into_live_minutes() {
         json!({"type":"local_asr_result","operationId":op,"text":"后台文件临时字幕","startMs":0,"endMs":20,"isFinal":false}),
     );
     assert_eq!(during_background_draft["liveCaption"]["text"], "后台文件临时字幕");
-    let live = &during_background_draft["liveMinutes"];
-    assert_eq!(live["parts"][0]["recordId"], ticket["recordId"]);
-    assert_eq!(live["parts"][0]["drafts"], json!([]));
+    let live = &during_background_draft["workspaces"]["liveMinutes"];
+    assert_eq!(live["activeRecordId"], ticket["recordId"]);
+    assert_eq!(live["drafts"], json!([]));
     send(
         &mut r,
         json!({"type":"local_asr_result","operationId":op,"text":"后台文件原文","startMs":0,"endMs":20,"isFinal":true}),
@@ -550,7 +561,10 @@ fn background_file_transcription_does_not_leak_into_live_minutes() {
         &mut r,
         json!({"type":"local_asr_finished","operationId":op}),
     );
-    assert_eq!(r.snapshot(100)["liveMinutes"]["parts"][0]["segments"], json!([]));
+    assert_eq!(
+        r.snapshot(100)["workspaces"]["liveMinutes"]["segments"],
+        json!([])
+    );
     assert_eq!(
         r.workspace()
             .record(s["selectedRecordId"].as_str().unwrap())

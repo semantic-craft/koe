@@ -118,13 +118,6 @@ public enum CaptureAction: String, Codable, Sendable {
     case cancel
 }
 
-public struct CaptureModeSnapshot: Codable, Equatable, Identifiable, Sendable {
-    public var id: CaptureMode { mode }
-    public let mode: CaptureMode
-    public let sourceLabel: String
-    public let available: Bool
-}
-
 public struct ActiveCaptureSnapshot: Codable, Equatable, Sendable {
     public let mode: CaptureMode
     public let phase: String

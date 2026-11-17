@@ -217,7 +217,11 @@ fn run_capture(s: &HostSessionGuard, ws: &Path, samples: &[i16], all_day: bool) 
         return Err(format!("expected saving error, got {}", failed["microphone"]));
     }
     dispatch(s, json!({"type":"retry_microphone_save"}))?;
-    wait(s, 300, |v| Ok(v["allDay"]["state"] == "idle" && record_ready(v, &seg1) && record_ready(v, &seg2)))?;
+    wait(s, 300, |v| {
+        Ok(v["workspaces"]["allDay"]["isActive"] == false
+            && record_ready(v, &seg1)
+            && record_ready(v, &seg2))
+    })?;
     Ok(vec![mic.record_id, seg2])
 }
 

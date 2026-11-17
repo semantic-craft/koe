@@ -3,6 +3,35 @@ use koe_engine::hash::sha256_hex;
 use koe_engine::session::{CustodyReceipt, TransferPhaseTag};
 
 impl KoeRuntime {
+    fn has_saved_audio(&self, id: &str) -> bool {
+        recording_assets::audio_path(&self.root, id).is_ok_and(|p| p.exists())
+            || recording_assets::opus_path(&self.root, id).is_ok_and(|p| p.exists())
+    }
+
+    pub(super) fn unsaved_bean_capture_record_id(&self, file_id: u32) -> Option<String> {
+        if file_id == 0 {
+            return None;
+        }
+        if let Some(id) = self.captures.active.get(&file_id) {
+            return Some(id.clone());
+        }
+        if let Some((_, id)) = self.captures.targets.iter().find(|(fid, _)| *fid == file_id) {
+            return Some(id.clone());
+        }
+        self.workspace()
+            .records()
+            .values()
+            .filter(|record| {
+                record.is_live()
+                    && record.origin == RecordOrigin::Bean
+                    && record.all_day.is_none()
+                    && record.aggregate.file_id == file_id
+                    && !self.has_saved_audio(&record.aggregate.recording_id)
+            })
+            .max_by_key(|record| record.aggregate.created_at_epoch_sec)
+            .map(|record| record.aggregate.recording_id.clone())
+    }
+
     pub(crate) fn is_device_file_synced(&self, file_id: u32) -> bool {
         if file_id == 0 {
             return false;
@@ -10,25 +39,11 @@ impl KoeRuntime {
         if self.device.session.has_disk_custody(file_id) {
             return true;
         }
-        let has_asset = |id: &str| {
-            recording_assets::audio_path(&self.root, id).is_ok_and(|p| p.exists())
-                || recording_assets::opus_path(&self.root, id).is_ok_and(|p| p.exists())
-        };
-        if let Some(id) = self.captures.records_by_file_id.get(&file_id) {
-            if has_asset(id)
-                && self
-                    .workspace()
-                    .record(id)
-                    .is_some_and(|r| r.all_day.is_none())
-            {
-                return true;
-            }
-        }
         self.workspace().records().values().any(|record| {
             record.origin == RecordOrigin::Bean
                 && record.all_day.is_none()
                 && record.aggregate.file_id == file_id
-                && has_asset(&record.aggregate.recording_id)
+                && self.has_saved_audio(&record.aggregate.recording_id)
         })
     }
 
@@ -50,11 +65,7 @@ impl KoeRuntime {
             .catalog
             .iter()
             .find(|entry| {
-                (!self.is_quitting()
-                    || self
-                        .captures
-                        .records_by_file_id
-                        .contains_key(&entry.file_id))
+                (!self.is_quitting() || self.unsaved_bean_capture_record_id(entry.file_id).is_some())
                     && entry.has_duration()
                     && entry.end_time != Some(0)
                     && !self.device.auto_pull_attempted.contains(&entry.file_id)
@@ -83,10 +94,9 @@ impl KoeRuntime {
                     .front()
                     .filter(|(fid, _)| *fid == entry.id)
                     .map(|(_, rid)| rid.clone())
-                    .or_else(|| self.captures.records_by_file_id.get(&entry.id).cloned())
-                    .or_else(|| self.captures.active.get(&entry.id).cloned())
+                    .or_else(|| self.unsaved_bean_capture_record_id(entry.id))
             } else {
-                self.captures.records_by_file_id.get(&entry.id).cloned()
+                self.unsaved_bean_capture_record_id(entry.id)
             };
             let id = capture_id
                 .clone()
@@ -157,11 +167,6 @@ impl KoeRuntime {
                     .is_some_and(|(fid, _)| *fid == entry.id)
             {
                 self.captures.targets.pop_front();
-            }
-            if !self.captures.active.contains_key(&entry.id)
-                && !self.captures.targets.iter().any(|(fid, _)| *fid == entry.id)
-            {
-                self.captures.records_by_file_id.remove(&entry.id);
             }
             self.error = None;
             self.notice = Some(

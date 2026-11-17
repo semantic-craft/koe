@@ -106,7 +106,7 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
         json!({"type":"microphone_stopped","recordId":capture["recordId"],"sessionId":capture["sessionId"],"lane":"microphone","sequence":sequence}),
     )?;
     wait(runtime, 120, |r| {
-        Ok(r.snapshot(now())["allDay"]["state"] == "idle")
+        Ok(r.snapshot(now())["workspaces"]["allDay"]["isActive"] == false)
     })?;
     let ids: Vec<_> = runtime.workspace().records().keys().cloned().collect();
     let mut records = Vec::new();

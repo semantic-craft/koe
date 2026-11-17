@@ -478,8 +478,8 @@ fn live_minutes_workspace_projects_retrospective_meetings_and_coverage_when_idle
     let mut rt = KoeRuntime::open(&sb.0).unwrap();
     let snap: Value = serde_json::from_str(&rt.snapshot_json(NOW + 100)).unwrap();
     assert!(
-        snap["liveMinutes"].is_null(),
-        "legacy top-level liveMinutes must stay null when idle"
+        snap.get("liveMinutes").is_none(),
+        "top-level legacy liveMinutes key must be absent"
     );
 
     let lm = &snap["workspaces"]["liveMinutes"];
@@ -509,7 +509,7 @@ fn live_minutes_workspace_projects_retrospective_meetings_and_coverage_when_idle
 }
 
 #[test]
-fn export_workspace_markdown_supports_record_and_all_day_while_preserving_legacy_export_record() {
+fn export_workspace_markdown_supports_record_and_all_day() {
     let sb = new_sandbox();
     {
         let mut store = ProductStore::open(&sb.0).unwrap();
@@ -613,15 +613,6 @@ fn export_workspace_markdown_supports_record_and_all_day_while_preserving_legacy
     let day_md = std::fs::read_to_string(&day_path).unwrap();
     assert!(day_md.contains("# 全天听记"));
     assert!(day_md.contains("全天切片原文行"));
-
-    let legacy_path = sb.0.join("legacy.md");
-    send_at(
-        &mut rt,
-        NOW,
-        json!({ "type": "export_record", "recordId": "qn-exp", "path": legacy_path }),
-    );
-    let legacy_md = std::fs::read_to_string(&legacy_path).unwrap();
-    assert!(legacy_md.starts_with("# 导出测试闪记\n"));
 }
 
 #[test]

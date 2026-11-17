@@ -1,6 +1,7 @@
 use super::*;
 use koe_client_providers::{
-    ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask, DASHSCOPE_ASR_MODEL,
+    ProviderConfig, ProviderLane, ProviderOutput, ProviderRequest, ProviderTask,
+    DASHSCOPE_ASR_MODEL,
 };
 use koe_client_services::product_store::StoreError;
 use koe_engine::minutes::{build_meeting_minutes_prompt, parse_meeting_minutes_json};
@@ -71,34 +72,51 @@ impl KoeRuntime {
         }
     }
 
+    pub(super) fn has_pending_in_lane(&self, lane: ProviderLane) -> bool {
+        self.pending.values().any(|work| work.lane() == lane)
+            || self.completed.iter().any(|event| {
+                self.pending
+                    .get(&event.operation_id)
+                    .is_some_and(|work| work.lane() == lane)
+            })
+    }
+
     fn is_stale_summary(&self, work: &PendingWork) -> bool {
-        let PendingWork::Summary(key) = work else {
-            return false;
-        };
-        self.workspace()
-            .record(&key.record_id)
-            .is_none_or(|record| {
-                !record.is_live()
-                    || record.content_revision != key.input_revision
+        match work {
+            PendingWork::Summary(key) => self.workspace().record(&key.record_id).is_none_or(|r| {
+                !r.is_live()
+                    || r.content_revision != key.input_revision
                     || !matches!(
-                        &record.analysis,
+                        &r.analysis,
                         AnalysisState::Pending {
                             key: cur,
                             stage: AnalysisStage::Summarizing,
                         } if cur == key
                     )
-            })
+            }),
+            PendingWork::LiveSummary { key, .. } => self
+                .workspace()
+                .record(&key.record_id)
+                .is_none_or(|r| !r.is_live()),
+            PendingWork::Transcription(_) | PendingWork::Ask(_) => false,
+        }
     }
 
     pub(super) fn reclaim_stale_summaries(&mut self) -> Result<(), String> {
-        if self.pending.is_empty() || !self.pending.values().all(|w| self.is_stale_summary(w)) {
+        let stale_ids: Vec<u64> = self
+            .pending
+            .iter()
+            .filter_map(|(&id, work)| self.is_stale_summary(work).then_some(id))
+            .collect();
+        if stale_ids.is_empty() {
             return Ok(());
         }
-        self.provider = ProviderWorker::new()?;
-        let pending = &self.pending;
+        for &id in &stale_ids {
+            self.provider.cancel(ProviderLane::Summary, id);
+            self.pending.remove(&id);
+        }
         self.completed
-            .retain(|event| !pending.contains_key(&event.operation_id));
-        self.pending.clear();
+            .retain(|event| !stale_ids.contains(&event.operation_id));
         Ok(())
     }
 
@@ -128,8 +146,7 @@ impl KoeRuntime {
         if self.settings.key.is_empty() {
             return Err("请先配置云端语音凭据；原始录音已保留".into());
         }
-        self.reclaim_stale_summaries()?;
-        if !self.pending.is_empty() {
+        if self.has_pending_in_lane(ProviderLane::Audio) {
             return Err(StartError::Other("已有云端任务正在处理，请稍后重试".into()));
         }
         let record = self.workspace().record(id).ok_or("记录不存在")?;
@@ -226,7 +243,7 @@ impl KoeRuntime {
         }
         let sources = record.aggregate.spine.format_cited_sources().join("\n");
         self.reclaim_stale_summaries()?;
-        if !self.pending.is_empty() {
+        if self.has_pending_in_lane(ProviderLane::Summary) {
             return Err(StartError::Other("已有云端任务正在处理，请稍后重试".into()));
         }
         let prompt = build_meeting_minutes_prompt(
@@ -259,7 +276,7 @@ impl KoeRuntime {
     pub(super) fn try_start_live_summary(&mut self, id: &str) -> Result<(), StartError> {
         self.ensure_configured()?;
         self.reclaim_stale_summaries()?;
-        if !self.pending.is_empty() || !self.completed.is_empty() {
+        if self.has_pending_in_lane(ProviderLane::Summary) {
             return Err("已有云端任务正在处理，请稍后重试".into());
         }
         let record = self.workspace().record(id).ok_or("记录不存在")?;
@@ -312,7 +329,9 @@ impl KoeRuntime {
                 Ok(())
             });
         }
-        self.reclaim_stale_summaries()?;
+        if self.has_pending_in_lane(ProviderLane::Ask) {
+            return Err("已有云端问答正在处理，请稍后重试".into());
+        }
         let request = self.commit(|w| w.begin_ask(scope, question, now))?;
         let Some(request) = request else {
             return Ok(());
@@ -367,13 +386,17 @@ impl KoeRuntime {
     ) -> Result<(), String> {
         let operation_id = self.next_job;
         self.next_job += 1;
-        self.provider.submit(ProviderRequest {
-            operation_id,
-            record_id: id.into(),
-            config,
-            task,
-            timeout,
-        })?;
+        let lane = pending.lane();
+        self.provider.submit(
+            lane,
+            ProviderRequest {
+                operation_id,
+                record_id: id.into(),
+                config,
+                task,
+                timeout,
+            },
+        )?;
         self.pending.insert(operation_id, pending);
         Ok(())
     }

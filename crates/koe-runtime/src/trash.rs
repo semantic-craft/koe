@@ -57,7 +57,6 @@ impl KoeRuntime {
             .captures
             .active
             .values()
-            .chain(self.captures.records_by_file_id.values())
             .chain(self.captures.sessions.keys())
             .chain(self.captures.targets.iter().map(|(_, rid)| rid))
         {
@@ -103,9 +102,7 @@ impl KoeRuntime {
         }
         {
             let workspace = self.store.workspace();
-            let all_day_active_run = self.all_day.run.as_ref().map(|run| run.id.as_str());
-            self.selection
-                .detach_records(removed_ids, workspace, all_day_active_run);
+            self.selection.detach_records(removed_ids, workspace);
             let purged_bean_ids = workspace.purged_bean_file_ids();
             if !purged_bean_ids.is_empty() {
                 self.device

@@ -16,6 +16,9 @@ public struct ViewRequestGeneration {
 @MainActor
 @Observable
 public final class HostSessionStore {
+    private static let encoder = JSONEncoder()
+    private static let decoder = JSONDecoder()
+
     @ObservationIgnored public private(set) var snapshot: HostSnapshot = .empty
     @ObservationIgnored public var lifecycle: LifecycleSnapshot? { snapshot.lifecycle }
     @ObservationIgnored public private(set) var nativeError: String? {
@@ -113,7 +116,7 @@ public final class HostSessionStore {
     public func send(_ command: HostCommand, nowEpochSec: UInt64 = 0) {
         guard handle != 0 else { return }
         do {
-            let data = try JSONEncoder().encode(command)
+            let data = try Self.encoder.encode(command)
             dispatchEncodedJSON(data, commandType: command.commandType, nowEpochSec: nowEpochSec)
         } catch {
             nativeError = "无法发送这次操作，请重试。"
@@ -123,7 +126,7 @@ public final class HostSessionStore {
     public func send(_ event: HostAdapterEvent, nowEpochSec: UInt64 = 0) {
         guard handle != 0 else { return }
         do {
-            let data = try JSONEncoder().encode(event)
+            let data = try Self.encoder.encode(event)
             dispatchEncodedJSON(data, commandType: event.eventType, nowEpochSec: nowEpochSec)
         } catch {
             nativeError = "无法发送这次操作，请重试。"
@@ -323,7 +326,7 @@ public final class HostSessionStore {
 
     func applySnapshotJSON(_ json: String, projectedNowSec: UInt64 = 0) {
         do {
-            let decoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(json.utf8))
+            let decoded = try Self.decoder.decode(HostSnapshot.self, from: Data(json.utf8))
             guard decoded.version == 2 else {
                 nativeError = "数据引擎返回了不兼容的版本。"
                 return

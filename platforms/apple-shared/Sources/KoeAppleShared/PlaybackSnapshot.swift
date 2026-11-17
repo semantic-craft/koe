@@ -79,7 +79,6 @@ extension HostSnapshot {
             microphone: microphone,
             capture: capture,
             lifecycle: lifecycle,
-            captureModes: captureModes,
             activeCapture: activeCapture,
             workspaces: workspaces,
             version: version,

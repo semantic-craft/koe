@@ -201,7 +201,7 @@ fn wav_import_and_markdown_export_are_real_files() {
     let output = dir.0.join("export.md");
     command(
         &mut runtime,
-        json!({"type":"export_record","recordId":id,"path":output}),
+        json!({"type":"export_workspace_markdown","recordId":id,"path":output}),
     );
     assert!(std::fs::read_to_string(output)
         .unwrap()

@@ -1,5 +1,4 @@
 use super::*;
-use serde_json::json;
 
 pub(super) const SEGMENT_MS: u64 = 5 * 60 * 1000;
 pub(super) struct AllDayRun {
@@ -26,24 +25,11 @@ impl KoeRuntime {
                 self.start_microphone(input_id, false, None, now)?;
             }
             "bean" => {
-                if self.microphone.is_some() {
-                    return Err("请先结束 Mac 录音".into());
-                }
-                if !self.device.is_connected() {
-                    return Err("请先连接录音豆".into());
-                }
-                self.ensure_device_idle()?;
-                let outcome = self
-                    .device
-                    .session
-                    .start_realtime_recording(None, now.saturating_mul(1000));
-                self.device.accept(outcome);
+                self.start_device_recording(now)?;
             }
             _ => return Err("请选择 Mac 麦克风或录音豆".into()),
         }
         let id = format!("day-{now}-{}", self.workspace().revision() + 1);
-        self.selection.live_minutes_scope =
-            Some(crate::live_minutes::LiveMinutesScope::AllDay(id.clone()));
         self.all_day.run = Some(AllDayRun {
             id,
             source: source.into(),
@@ -79,32 +65,6 @@ impl KoeRuntime {
             run_id: run.id.clone(),
             ordinal,
         })
-    }
-    pub(super) fn all_day_json(
-        &self,
-        mic: Option<&crate::microphone::MicrophoneStatus<'_>>,
-    ) -> Value {
-        let Some(run) = &self.all_day.run else {
-            return json!({"state":"idle","source":null,"runId":null,"segmentCount":0,"message":null});
-        };
-        let count = self
-            .workspace()
-            .records()
-            .values()
-            .filter(|r| r.all_day.as_ref().is_some_and(|s| s.run_id == run.id))
-            .count();
-        let failure = self
-            .microphone
-            .as_ref()
-            .and_then(|m| m.save_error.clone())
-            .or_else(|| mic.and_then(|m| m.interruption).map(str::to_owned))
-            .or_else(|| self.drain_error.clone());
-        let stopping = run.stopping
-            || (run.source == "microphone"
-                && !mic.is_some_and(|m| {
-                    matches!(m.phase, "starting" | "recording" | "paused" | "pausing")
-                }));
-        json!({"state":if stopping{"finishing"}else{"recording"},"source":run.source,"runId":run.id,"segmentCount":count,"message":failure.or_else(||stopping.then(||"正在保存最后一段".into()))})
     }
     pub(super) fn reconcile_all_day(&mut self) -> bool {
         if let Some(run) = &mut self.all_day.run {

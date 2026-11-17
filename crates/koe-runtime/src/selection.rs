@@ -2,10 +2,7 @@ use std::collections::BTreeSet;
 
 use koe_engine::product::{ProductRecord, ProductWorkspace};
 
-use crate::{
-    command::{Location, Page, Playback},
-    live_minutes::LiveMinutesScope,
-};
+use crate::command::{Location, Page, Playback};
 
 #[derive(Default)]
 pub(super) struct WorkspaceSelection {
@@ -15,7 +12,6 @@ pub(super) struct WorkspaceSelection {
     pub selected_quick_note_record: Option<String>,
     pub selected_all_day_date: Option<String>,
     pub selected_live_minutes_record: Option<String>,
-    pub live_minutes_scope: Option<LiveMinutesScope>,
 }
 
 impl WorkspaceSelection {
@@ -48,7 +44,6 @@ impl WorkspaceSelection {
         &mut self,
         removed_ids: &BTreeSet<String>,
         workspace: &ProductWorkspace,
-        all_day_active_run: Option<&str>,
     ) {
         if self
             .selected_quick_note_record
@@ -63,26 +58,6 @@ impl WorkspaceSelection {
             .is_some_and(|id| removed_ids.contains(id))
         {
             self.selected_live_minutes_record = None;
-        }
-        let clear_live_minutes = match &self.live_minutes_scope {
-            Some(LiveMinutesScope::Record(id)) => {
-                removed_ids.contains(id)
-                    || !workspace.record(id).is_some_and(ProductRecord::is_live)
-            }
-            Some(LiveMinutesScope::AllDay(run_id)) => {
-                all_day_active_run != Some(run_id.as_str())
-                    && !workspace.records().values().any(|record| {
-                        record.is_live()
-                            && record
-                                .all_day
-                                .as_ref()
-                                .is_some_and(|segment| &segment.run_id == run_id)
-                    })
-            }
-            Some(LiveMinutesScope::BeanStarting) | None => false,
-        };
-        if clear_live_minutes {
-            self.live_minutes_scope = None;
         }
         if self
             .playback

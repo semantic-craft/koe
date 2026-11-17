@@ -323,27 +323,55 @@ fn accepted_bean_start_replaces_prior_scope_before_the_file_header() {
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
     let mic = command(&mut runtime, json!({"type":"start_capture_mode","mode":"meeting"}));
     let ticket = &mic["microphone"];
+    command(
+        &mut runtime,
+        json!({"type":"microphone_started","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sampleRate":16000}),
+    );
+    let receipt = runtime.ingest_microphone_pcm(
+        ticket["recordId"].as_str().unwrap(),
+        ticket["sessionId"].as_str().unwrap(),
+        "microphone",
+        0,
+        &vec![100i16; 320],
+        None,
+        NOW,
+    );
+    assert_eq!(receipt.status, PcmIngestStatus::Accepted);
     command(&mut runtime, json!({"type":"stop_microphone"}));
     let stopped = command(
         &mut runtime,
-        json!({"type":"microphone_stopped","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sequence":0}),
+        json!({"type":"microphone_stopped","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sequence":1}),
     );
-    assert_eq!(stopped["liveMinutes"]["scope"]["id"], ticket["recordId"]);
+    assert_eq!(
+        stopped["workspaces"]["liveMinutes"]["selectedRecordId"],
+        ticket["recordId"]
+    );
 
     let rejected: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"device_start"}"#, NOW)).unwrap();
     assert!(rejected["error"].is_string());
-    assert_eq!(rejected["liveMinutes"]["scope"], stopped["liveMinutes"]["scope"]);
+    assert_eq!(
+        rejected["workspaces"]["liveMinutes"]["selectedRecordId"],
+        stopped["workspaces"]["liveMinutes"]["selectedRecordId"]
+    );
 
     runtime.device.session.set_session_key([0x55; 32]);
     let starting = command(&mut runtime, json!({"type":"start_capture_mode","mode":"meeting"}));
-    assert_eq!(starting["liveMinutes"]["scope"], json!({"kind":"bean_starting"}));
-    assert_eq!(starting["liveMinutes"]["phase"], "starting");
-    assert_eq!(starting["liveMinutes"]["parts"], json!([]));
+    assert_eq!(starting["workspaces"]["liveMinutes"]["isActive"], true);
+    assert_eq!(starting["workspaces"]["liveMinutes"]["phase"], "starting");
+    assert!(starting["workspaces"]["liveMinutes"]["activeRecordId"].is_null());
+    assert_eq!(starting["workspaces"]["liveMinutes"]["segments"], json!([]));
 
     runtime.ingest_ble_chunk(&file_head_rx(803, 0), NOW);
     let recording = runtime.snapshot(NOW);
-    assert_eq!(recording["liveMinutes"]["scope"], json!({"kind":"record","id":recording["device"]["liveRecordId"]}));
-    assert_eq!(recording["liveMinutes"]["phase"], "recording");
+    assert_eq!(
+        recording["workspaces"]["liveMinutes"]["activeRecordId"],
+        recording["device"]["liveRecordId"]
+    );
+    assert_eq!(
+        recording["workspaces"]["liveMinutes"]["selectedRecordId"],
+        recording["device"]["liveRecordId"]
+    );
+    assert_eq!(recording["workspaces"]["liveMinutes"]["phase"], "recording");
 }
 
 #[test]
@@ -1141,7 +1169,10 @@ fn assert_realtime_error_head_finishes_all_day(after_stop: bool, with_audio: boo
             assert!(local_effects(&mut runtime).is_empty());
         }
         runtime.poll_timers(0, NOW + 3);
-        assert_eq!(runtime.snapshot(NOW + 3)["allDay"]["state"], "idle");
+        assert_eq!(
+            runtime.snapshot(NOW + 3)["workspaces"]["allDay"]["isActive"],
+            false
+        );
         assert!(runtime.captures.sessions.is_empty());
         let quit = command(&mut runtime, json!({"type":"request_quit"}));
         assert_eq!(quit["lifecycle"]["quitPhase"], "ready");
@@ -1158,7 +1189,10 @@ fn assert_realtime_error_head_finishes_all_day(after_stop: bool, with_audio: boo
         assert!(!runtime.is_device_file_synced(950));
         drop(runtime);
         let reopened = KoeRuntime::open(&dir.0).unwrap();
-        assert_eq!(reopened.snapshot(NOW + 3)["allDay"]["state"], "idle");
+        assert_eq!(
+            reopened.snapshot(NOW + 3)["workspaces"]["allDay"]["isActive"],
+            false
+        );
         assert!(!reopened.is_device_file_synced(950));
         let reopen_record = reopened.workspace().record(&id);
         if let Some(pcm) = expected_audio {
@@ -1237,7 +1271,7 @@ fn physical_record_start_defaults_to_quick_note_and_preserves_saved_audio() {
     runtime.ingest_ble_chunk(&file_head_rx(960, 0), NOW);
     let started = runtime.snapshot(NOW);
     assert_eq!(started["activeCapture"]["mode"], "quick_note");
-    assert!(started["liveMinutes"].is_null());
+    assert_eq!(started["workspaces"]["liveMinutes"]["isActive"], false);
     let id = started["device"]["liveRecordId"].as_str().unwrap().to_owned();
     runtime.ingest_ble_chunk(&encrypted_slices(0..2), NOW);
     runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x82, &[2]), NOW);
@@ -1259,11 +1293,15 @@ fn explicit_bean_meeting_owns_only_its_session_and_next_physical_record_is_quick
     runtime.device.session.set_session_key(SESSION_KEY);
     let started = command(&mut runtime, json!({"type":"start_capture_mode","mode":"meeting"}));
     assert_eq!(started["activeCapture"]["mode"], "meeting");
-    assert_eq!(started["liveMinutes"]["scope"]["kind"], "bean_starting");
+    assert_eq!(started["workspaces"]["liveMinutes"]["isActive"], true);
+    assert_eq!(started["workspaces"]["liveMinutes"]["phase"], "starting");
     runtime.ingest_ble_chunk(&file_head_rx(961, 0), NOW);
     runtime.ingest_ble_chunk(&encrypted_slices(0..2), NOW);
     let meeting = runtime.snapshot(NOW);
-    assert_eq!(meeting["liveMinutes"]["scope"]["id"], meeting["device"]["liveRecordId"]);
+    assert_eq!(
+        meeting["workspaces"]["liveMinutes"]["activeRecordId"],
+        meeting["device"]["liveRecordId"]
+    );
     let duplicate: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"device_start"}"#, NOW)).unwrap();
     assert!(duplicate["error"].is_string());
     assert_eq!(duplicate["activeCapture"]["mode"], "meeting");
@@ -1274,7 +1312,10 @@ fn explicit_bean_meeting_owns_only_its_session_and_next_physical_record_is_quick
     runtime.ingest_ble_chunk(&file_head_rx(962, 0), NOW + 3);
     let next = runtime.snapshot(NOW + 3);
     assert_eq!(next["activeCapture"]["mode"], "quick_note");
-    assert_eq!(next["liveMinutes"]["scope"], meeting["liveMinutes"]["scope"]);
+    assert_eq!(
+        next["workspaces"]["liveMinutes"]["selectedRecordId"],
+        meeting["workspaces"]["liveMinutes"]["selectedRecordId"]
+    );
 }
 
 #[test]
@@ -1284,11 +1325,28 @@ fn ordinary_microphone_start_defaults_to_quick_note_after_explicit_meeting() {
     let first = command(&mut runtime, json!({"type":"start_capture_mode","mode":"meeting"}));
     let ticket = &first["microphone"];
     assert_eq!(first["activeCapture"]["mode"], "meeting");
+    command(
+        &mut runtime,
+        json!({"type":"microphone_started","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sampleRate":16000}),
+    );
+    let receipt = runtime.ingest_microphone_pcm(
+        ticket["recordId"].as_str().unwrap(),
+        ticket["sessionId"].as_str().unwrap(),
+        "microphone",
+        0,
+        &vec![100i16; 320],
+        None,
+        NOW,
+    );
+    assert_eq!(receipt.status, PcmIngestStatus::Accepted);
     command(&mut runtime, json!({"type":"stop_microphone"}));
-    command(&mut runtime, json!({"type":"microphone_stopped","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sequence":0}));
+    command(&mut runtime, json!({"type":"microphone_stopped","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sequence":1}));
     let next = command(&mut runtime, json!({"type":"start_microphone","inputId":""}));
     assert_eq!(next["activeCapture"]["mode"], "quick_note");
-    assert_eq!(next["liveMinutes"]["scope"], first["liveMinutes"]["scope"]);
+    assert_eq!(
+        next["workspaces"]["liveMinutes"]["selectedRecordId"],
+        ticket["recordId"]
+    );
 }
 
 #[test]
@@ -1303,7 +1361,10 @@ fn all_day_end_restores_quick_note_for_next_physical_recording() {
     command(&mut runtime, json!({"type":"stop_all_day"}));
     runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x82, &[2]), NOW);
     runtime.poll_timers(2_000, NOW + 2);
-    assert_eq!(runtime.snapshot(NOW + 2)["allDay"]["state"], "idle");
+    assert_eq!(
+        runtime.snapshot(NOW + 2)["workspaces"]["allDay"]["isActive"],
+        false
+    );
     runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x81, &[1]), NOW + 3);
     runtime.ingest_ble_chunk(&file_head_rx(964, 0), NOW + 3);
     assert_eq!(runtime.snapshot(NOW + 3)["activeCapture"]["mode"], "quick_note");

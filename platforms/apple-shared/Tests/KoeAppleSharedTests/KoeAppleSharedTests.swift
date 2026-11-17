@@ -201,8 +201,8 @@ struct KoeAppleSharedTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        #expect(store.snapshot.captureModes.count == 3)
-        #expect(store.snapshot.captureModes.allSatisfy { $0.available })
+        #expect(store.snapshot.workspaces?.picker.cards.count == 3)
+        #expect(store.snapshot.workspaces?.picker.cards.allSatisfy { $0.canToggleSession } == true)
 
         store.reportNativeError("麦克风权限未开启")
         store.send("sync_audio_inputs", ["inputs": [
@@ -214,12 +214,12 @@ struct KoeAppleSharedTests {
         #expect(store.nativeError == nil)
         #expect(store.snapshot.capture.selectedSource == "input:airpods-pro")
         #expect(store.snapshot.capture.selectedBadge == "Mac 蓝牙")
-        #expect(store.snapshot.captureModes.allSatisfy { $0.sourceLabel == "AirPods Pro" })
+        #expect(store.snapshot.workspaces?.picker.sourceLabel == "AirPods Pro")
 
         store.send("select_capture_source", ["source": "bean"])
         #expect(store.snapshot.capture.selectedSource == "bean")
         #expect(store.snapshot.capture.canStart == false)
-        #expect(store.snapshot.captureModes.allSatisfy { !$0.available })
+        #expect(store.snapshot.workspaces?.picker.cards.allSatisfy { !$0.canToggleSession } == true)
 
         store.send("navigate", ["section": "capture"])
         #expect(store.snapshot.section == "capture")
