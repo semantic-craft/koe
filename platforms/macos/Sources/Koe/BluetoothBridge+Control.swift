@@ -32,7 +32,6 @@ extension BluetoothBridge {
             UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
             if !wasAutoConnectDisabled,
                reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
-                writeProjectedTeardownStopFramesIfReady(for: device)
                 teardownLocalBleLink()
                 if device.phase != "disconnected" {
                     store?.send("device_disconnect")
@@ -40,14 +39,12 @@ extension BluetoothBridge {
             } else if !device.connected,
                       device.phase == "disconnected",
                       reportedReady || peripheral != nil || reconnectingPeripheral != nil {
-                writeProjectedTeardownStopFramesIfReady(for: device)
                 teardownLocalBleLink()
             }
             return
         }
         if !device.connected && device.phase == "disconnected" {
             if reportedReady {
-                writeProjectedTeardownStopFramesIfReady(for: device)
                 teardownLocalBleLink()
                 return
             }

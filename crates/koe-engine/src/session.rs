@@ -211,8 +211,6 @@ pub struct SessionIngestOutcome {
     pub slices_unpacked_count: u32,
     /// Newly observed mark positions in milliseconds during this step.
     pub new_marks_ms: Vec<u64>,
-    /// Newly decoded 16 kHz mono PCM16 LE bytes produced during this step.
-    pub live_pcm16_16khz: Vec<u8>,
     /// Finalized recording if `1A/0A` completed during this step.
     pub finalized: Option<FinalizedRecording>,
     /// Outbound TX command frames queued by protocol transitions.
@@ -243,43 +241,6 @@ pub enum CaptureEvent {
     },
 }
 
-/// Pure protocol-level companion signal emitted in slice order without I/O.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RawCompanionSignal {
-    /// Device recording state changed (`0` = stopped, `1` = recording, `2` = paused).
-    RecordingStateChanged {
-        /// D3200 recording state (`0`, `1`, or `2`).
-        state: u8,
-        /// Active or announced bean `file_id`, if known.
-        file_id: Option<u32>,
-    },
-    /// Front housing double-tap mark (`flags & 0x01`) on a 20 ms realtime audio slice.
-    FrontDoubleTap {
-        /// Active bean `file_id`.
-        file_id: u32,
-        /// Zero-based 20 ms slice sequence number.
-        slice_seq: u32,
-        /// Millisecond offset (`slice_seq * 20`).
-        offset_ms: u64,
-    },
-    /// Single 20 ms frame (`320` samples at `16 kHz` mono) of decoded realtime PCM16 audio.
-    LivePcm16 {
-        /// Active bean `file_id`.
-        file_id: u32,
-        /// Zero-based 20 ms slice sequence number.
-        slice_seq: u32,
-        /// Decoded 16 kHz mono signed 16-bit PCM samples.
-        samples: Vec<i16>,
-    },
-    /// Hardware file deletion response (`0x1A 0x10`).
-    DeleteFileAck {
-        /// Whether deletion succeeded.
-        success: bool,
-    },
-}
-
-const MAX_COMPANION_SIGNALS: usize = 4_096;
-
 /// Current phase of multi-page offline file catalog retrieval (`0x1B 0x0E`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CatalogLoadPhase {
@@ -304,7 +265,6 @@ enum FileDecryption {
 /// Stateful D3200 transport session engine.
 pub struct TransportSession {
     capture_events: VecDeque<CaptureEvent>,
-    companion_signals: VecDeque<RawCompanionSignal>,
     file_decryption: BTreeMap<u32, FileDecryption>,
     /// Streaming packet reassembler.
     pub reassembler: FrameReassembler,
@@ -346,8 +306,6 @@ pub struct TransportSession {
     pub staged_seen_wire_ids: BTreeSet<u32>,
     /// The first wire file ID observed on page 0 of the current catalog pagination.
     pub staged_first_page_head: Option<u32>,
-    /// Whether to skip existing audio slices when resuming an open stream at start.
-    pub skip_existing_slices_on_start: bool,
     /// Base slice offset when resuming an open stream mid-file.
     pub stream_base_slices: u32,
     /// Current transfer progress snapshot.
@@ -372,8 +330,6 @@ pub struct TransportSession {
     pub marks_ms: Vec<u64>,
     /// FIFO queue of finalized recordings produced during multi-file batches.
     pub finalized_queue: VecDeque<FinalizedRecording>,
-    /// Accumulated 16 kHz mono PCM16 LE bytes ready to drain via `take_live_pcm16`.
-    pub live_pcm16_16khz: Vec<u8>,
     /// Verified disk `fsync` custody receipts keyed by D3200 `file_id`, guarding `0x1A/0x10` deletion.
     pub custody_receipts: BTreeMap<u32, CustodyReceipt>,
     decoder_factory: Option<OpusDecoderFactory>,
@@ -390,7 +346,6 @@ impl Clone for TransportSession {
     fn clone(&self) -> Self {
         Self {
             capture_events: self.capture_events.clone(),
-            companion_signals: self.companion_signals.clone(),
             file_decryption: self.file_decryption.clone(),
             reassembler: self.reassembler.clone(),
             connection_phase: self.connection_phase,
@@ -412,7 +367,6 @@ impl Clone for TransportSession {
             catalog_started_for_subscribe: self.catalog_started_for_subscribe,
             staged_seen_wire_ids: self.staged_seen_wire_ids.clone(),
             staged_first_page_head: self.staged_first_page_head,
-            skip_existing_slices_on_start: self.skip_existing_slices_on_start,
             stream_base_slices: self.stream_base_slices,
             transfer: self.transfer,
             runtime_state: self.runtime_state.clone(),
@@ -425,7 +379,6 @@ impl Clone for TransportSession {
             opus_buffer: self.opus_buffer.clone(),
             marks_ms: self.marks_ms.clone(),
             finalized_queue: self.finalized_queue.clone(),
-            live_pcm16_16khz: self.live_pcm16_16khz.clone(),
             custody_receipts: self.custody_receipts.clone(),
             decoder_factory: self.decoder_factory,
             live_decoder_16k: None,
@@ -462,8 +415,6 @@ impl core::fmt::Debug for TransportSession {
             .field("opus_buffer_len", &self.opus_buffer.len())
             .field("marks_ms", &self.marks_ms)
             .field("finalized_queue_len", &self.finalized_queue.len())
-            .field("companion_signals_len", &self.companion_signals.len())
-            .field("live_pcm16_16khz_len", &self.live_pcm16_16khz.len())
             .field("has_decoder_factory", &self.decoder_factory.is_some())
             .field("has_live_decoder_16k", &self.live_decoder_16k.is_some())
             .finish()
@@ -482,7 +433,6 @@ impl TransportSession {
     pub fn with_decoder_factory(factory: Option<OpusDecoderFactory>) -> Self {
         Self {
             capture_events: VecDeque::new(),
-            companion_signals: VecDeque::new(),
             file_decryption: BTreeMap::new(),
             reassembler: FrameReassembler::default(),
             connection_phase: ConnectionPhaseTag::Disconnected,
@@ -504,7 +454,6 @@ impl TransportSession {
             catalog_started_for_subscribe: false,
             staged_seen_wire_ids: BTreeSet::new(),
             staged_first_page_head: None,
-            skip_existing_slices_on_start: false,
             stream_base_slices: 0,
             transfer: TransferProgress::default(),
             runtime_state: TransferRuntimeState::Idle,
@@ -517,7 +466,6 @@ impl TransportSession {
             opus_buffer: Vec::new(),
             marks_ms: Vec::new(),
             finalized_queue: VecDeque::new(),
-            live_pcm16_16khz: Vec::new(),
             custody_receipts: BTreeMap::new(),
             decoder_factory: factory,
             live_decoder_16k: None,
@@ -559,26 +507,9 @@ impl TransportSession {
         self.finalized_queue.pop_front()
     }
 
-    /// Drains and returns all buffered 16 kHz mono PCM16 LE bytes decoded during `ingest_ble_chunk`.
-    pub fn take_live_pcm16(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.live_pcm16_16khz)
-    }
-
     /// Drains audio and finalization events in protocol order.
     pub fn take_capture_events(&mut self) -> VecDeque<CaptureEvent> {
         std::mem::take(&mut self.capture_events)
-    }
-
-    /// Drains ordered companion signals accumulated since the previous call.
-    pub fn take_companion_signals(&mut self) -> Vec<RawCompanionSignal> {
-        self.companion_signals.drain(..).collect()
-    }
-
-    fn push_companion_signal(&mut self, signal: RawCompanionSignal) {
-        if self.companion_signals.len() >= MAX_COMPANION_SIGNALS {
-            self.companion_signals.pop_front();
-        }
-        self.companion_signals.push_back(signal);
     }
 
     /// Returns the number of complete 160-byte Opus slices currently buffered for the active file.
@@ -621,23 +552,6 @@ impl TransportSession {
         self.raw_catalog.retain(|f| f.file_id != fid);
     }
 
-    /// Computes the number of 20 ms audio slices already recorded in flash for `fid`.
-    pub fn known_base_slices_for(&self, fid: u32) -> u32 {
-        if !self.skip_existing_slices_on_start {
-            return 0;
-        }
-        let entry = self
-            .pre_start_entries
-            .get(&fid)
-            .or_else(|| self.raw_catalog.iter().find(|f| f.file_id == fid));
-        match entry {
-            Some(entry) if entry.has_duration() => {
-                (entry.duration_ms / 20).min(u32::MAX / (SLICE_RECORD_BYTES as u32))
-            }
-            _ => 0,
-        }
-    }
-
     /// Resets catalog pagination state and returns a `0x1B 0x0E` page-0 query frame.
     pub fn request_full_catalog(&mut self) -> Vec<u8> {
         if self.is_catalog_loading() {
@@ -652,17 +566,6 @@ impl TransportSession {
         self.staged_transport_timestamp = None;
         self.staged_with_end_time = true;
         DeviceCommands::list_files_with_end_time(0)
-    }
-
-    /// Starts a realtime recording, optionally skipping existing slices if resuming an open stream.
-    pub fn start_realtime_recording_with_options(
-        &mut self,
-        file_id: Option<u32>,
-        now_epoch_ms: u64,
-        skip_existing_slices: bool,
-    ) -> SessionIngestOutcome {
-        self.skip_existing_slices_on_start = skip_existing_slices;
-        self.start_realtime_recording(file_id, now_epoch_ms)
     }
 
     /// Returns `true` when the active realtime stream is in its post-stop 2-second quiet-drain window.
@@ -741,7 +644,6 @@ impl TransportSession {
         self.stream_base_slices = 0;
         self.opus_buffer.clear();
         self.marks_ms.clear();
-        self.live_pcm16_16khz.clear();
         if let Some(dec) = self.live_decoder_16k.as_mut() {
             dec.reset();
         }
@@ -770,8 +672,6 @@ impl TransportSession {
         self.catalog_timeout_retries = 0;
         self.catalog_refresh_queued = false;
         self.catalog_started_for_subscribe = false;
-        self.skip_existing_slices_on_start = false;
-        self.companion_signals.clear();
         if self.active_is_realtime {
             let _ = self.finalize_active_transfer(0);
         } else {
@@ -803,7 +703,6 @@ impl TransportSession {
         self.catalog_timeout_retries = 0;
         self.catalog_refresh_queued = false;
         self.catalog_started_for_subscribe = false;
-        self.skip_existing_slices_on_start = false;
         self.pre_start_entries.clear();
         match self.runtime_state {
             TransferRuntimeState::PullingOffline {
@@ -977,9 +876,8 @@ impl TransportSession {
             self.catalog_refresh_queued = false;
 
             if let Some(fid) = candidate_fid {
-                let base_slices = self.known_base_slices_for(fid);
                 if let Some(tx) =
-                    self.enter_or_resume_realtime_stream_at(fid, base_slices, now_epoch_sec)
+                    self.enter_or_resume_realtime_stream_at(fid, 0, now_epoch_sec)
                 {
                     outcome.outbound_tx_frames.push(tx);
                     outcome.transfer_updated = true;
@@ -1027,7 +925,6 @@ impl TransportSession {
             self.bind_file_decryption(file_id);
             self.opus_buffer.clear();
             self.marks_ms.clear();
-            self.live_pcm16_16khz.clear();
             if let Some(dec) = self.live_decoder_16k.as_mut() {
                 dec.reset();
             }
@@ -1038,10 +935,6 @@ impl TransportSession {
         if is_new_stream {
             self.capture_events
                 .push_back(CaptureEvent::Started { file_id });
-            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-                state: 1,
-                file_id: Some(file_id),
-            });
         }
         let offset = self
             .total_slice_offset()
@@ -1089,9 +982,8 @@ impl TransportSession {
             .outbound_tx_frames
             .push(DeviceCommands::start_app_recording());
         if let Some(fid) = file_id.filter(|&id| id > 0) {
-            let base_slices = self.known_base_slices_for(fid);
             if let Some(tx) =
-                self.enter_or_resume_realtime_stream_at(fid, base_slices, now_epoch_sec)
+                self.enter_or_resume_realtime_stream_at(fid, 0, now_epoch_sec)
             {
                 outcome.outbound_tx_frames.push(tx);
                 outcome.transfer_updated = true;
@@ -1114,13 +1006,6 @@ impl TransportSession {
                 }
             }
             outcome.transfer_updated = true;
-        }
-        if file_id.is_none() {
-            let signal_fid = self.active_file_id.filter(|&id| id > 0);
-            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-                state: 1,
-                file_id: signal_fid,
-            });
         }
         outcome
     }
@@ -1145,10 +1030,6 @@ impl TransportSession {
                 outcome.transfer_updated = true;
             }
         }
-        self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-            state: 2,
-            file_id: self.active_file_id.filter(|&id| id > 0),
-        });
         outcome
     }
 
@@ -1313,7 +1194,6 @@ impl TransportSession {
         self.stream_base_slices = 0;
         self.opus_buffer.clear();
         self.marks_ms.clear();
-        self.live_pcm16_16khz.clear();
         if let Some(dec) = self.live_decoder_16k.as_mut() {
             dec.reset();
         }
@@ -1381,7 +1261,6 @@ impl TransportSession {
                 (RxCmd::DEVICE_INFO_TYPE, RxCmd::DEVICE_INFO_ID) => {
                     let info = DeviceInfoModel::parse_packet(&pkt.raw);
                     let is_rec = info.recording();
-                    let rec_state = info.recording_status;
                     self.device_recording_active = is_rec;
                     if is_rec {
                         if !self.active_is_realtime || self.active_file_id.is_none() {
@@ -1399,12 +1278,6 @@ impl TransportSession {
                                 outcome.transfer_updated = true;
                             }
                         }
-                    }
-                    if rec_state <= 2 {
-                        self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-                            state: rec_state,
-                            file_id: self.active_file_id.filter(|&id| id > 0),
-                        });
                     }
                     self.telemetry = Some(info);
                     if self.ecdh_private_key.is_some() && self.session_key.is_none() {
@@ -1443,10 +1316,9 @@ impl TransportSession {
                         if state == 1 {
                             self.device_recording_active = true;
                             if fid > 0 {
-                                let base_slices = self.known_base_slices_for(fid);
                                 if let Some(tx) = self.enter_or_resume_realtime_stream_at(
                                     fid,
-                                    base_slices,
+                                    0,
                                     now_epoch_sec,
                                 ) {
                                     outcome.outbound_tx_frames.push(tx);
@@ -1457,10 +1329,9 @@ impl TransportSession {
                                 .filter(|&id| id > 0 && self.active_is_realtime)
                             {
                                 if self.is_realtime_quiet_draining() {
-                                    let base_slices = self.known_base_slices_for(active_fid);
                                     if let Some(tx) = self.enter_or_resume_realtime_stream_at(
                                         active_fid,
-                                        base_slices,
+                                        0,
                                         now_epoch_sec,
                                     ) {
                                         outcome.outbound_tx_frames.push(tx);
@@ -1505,14 +1376,6 @@ impl TransportSession {
                                 }
                             }
                             outcome.transfer_updated = true;
-                        }
-                        if state <= 2 {
-                            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-                                state,
-                                file_id: (fid > 0)
-                                    .then_some(fid)
-                                    .or_else(|| self.active_file_id.filter(|&id| id > 0)),
-                            });
                         }
                     }
                 }
@@ -1615,10 +1478,9 @@ impl TransportSession {
                         if state == 1 {
                             self.device_recording_active = true;
                             if fid > 0 {
-                                let base_slices = self.known_base_slices_for(fid);
                                 if let Some(tx) = self.enter_or_resume_realtime_stream_at(
                                     fid,
-                                    base_slices,
+                                    0,
                                     now_epoch_sec,
                                 ) {
                                     outcome.outbound_tx_frames.push(tx);
@@ -1628,10 +1490,9 @@ impl TransportSession {
                                 .active_file_id
                                 .filter(|&id| id > 0 && self.active_is_realtime)
                             {
-                                let base_slices = self.known_base_slices_for(active_fid);
                                 if let Some(tx) = self.enter_or_resume_realtime_stream_at(
                                     active_fid,
-                                    base_slices,
+                                    0,
                                     now_epoch_sec,
                                 ) {
                                     outcome.outbound_tx_frames.push(tx);
@@ -1678,14 +1539,6 @@ impl TransportSession {
                             }
                             outcome.transfer_updated = true;
                         }
-                        if state <= 2 {
-                            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-                                state,
-                                file_id: (fid > 0)
-                                    .then_some(fid)
-                                    .or_else(|| self.active_file_id.filter(|&id| id > 0)),
-                            });
-                        }
                     } else if pkt.payload.len() == 1 {
                         let state = pkt.payload[0];
                         if state == 1 {
@@ -1722,12 +1575,6 @@ impl TransportSession {
                                 outcome.outbound_tx_frames.push(self.request_full_catalog());
                             }
                             outcome.transfer_updated = true;
-                        }
-                        if state <= 2 {
-                            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-                                state,
-                                file_id: self.active_file_id.filter(|&id| id > 0),
-                            });
                         }
                     }
                 }
@@ -1802,7 +1649,6 @@ impl TransportSession {
                             }
                             self.opus_buffer.clear();
                             self.marks_ms.clear();
-                            self.live_pcm16_16khz.clear();
                             if let Some(dec) = self.live_decoder_16k.as_mut() {
                                 dec.reset();
                             }
@@ -1818,14 +1664,6 @@ impl TransportSession {
                             self.capture_events.push_back(CaptureEvent::Started {
                                 file_id: head.secret.file_id,
                             });
-                            if self.active_file_id != Some(head.secret.file_id) {
-                                self.push_companion_signal(
-                                    RawCompanionSignal::RecordingStateChanged {
-                                        state: 1,
-                                        file_id: Some(head.secret.file_id),
-                                    },
-                                );
-                            }
                         }
                         self.active_file_id = Some(head.secret.file_id);
                         if let Some(key) = head.file_key {
@@ -1936,15 +1774,13 @@ impl TransportSession {
                     } else {
                         self.received_slice_count()
                     };
-                    let (batch, slice_sequences) =
-                        TransportSliceProcessor::unpack_frame_with_sequences(
-                            &pkt.raw,
-                            dec.as_ref(),
-                            min_seq,
-                        );
+                    let batch = TransportSliceProcessor::unpack_frame_from(
+                        &pkt.raw,
+                        dec.as_ref(),
+                        min_seq,
+                    );
                     if batch.slice_count > 0 {
                         self.opus_buffer.extend_from_slice(&batch.opus_bytes);
-                        let mut newly_marked_seqs = Vec::new();
                         for seq in batch.marked_sequences {
                             let rel_seq = seq.saturating_sub(if self.active_is_realtime {
                                 self.stream_base_slices
@@ -1955,74 +1791,30 @@ impl TransportSession {
                             if !self.marks_ms.contains(&ms) {
                                 self.marks_ms.push(ms);
                                 outcome.new_marks_ms.push(ms);
-                                newly_marked_seqs.push(seq);
                             }
                         }
                         self.marks_ms.sort_unstable();
-                        if self.live_decoder_16k.is_none() {
-                            if let Some(factory) = self.decoder_factory {
-                                self.live_decoder_16k = factory(ASR_SAMPLE_RATE);
-                            }
-                        }
-                        let start_len = outcome.live_pcm16_16khz.len();
-                        let mut companion_batch = Vec::new();
-                        for (frame_idx, frame) in batch
-                            .opus_bytes
-                            .as_chunks::<OPUS_FRAME_BYTES>()
-                            .0
-                            .iter()
-                            .enumerate()
-                        {
-                            let slice_seq = slice_sequences
-                                .get(frame_idx)
-                                .copied()
-                                .unwrap_or_else(|| min_seq.saturating_add(frame_idx as u32));
-                            if self.active_is_realtime && newly_marked_seqs.contains(&slice_seq) {
-                                let rel_seq = slice_seq.saturating_sub(self.stream_base_slices);
-                                companion_batch.push(RawCompanionSignal::FrontDoubleTap {
-                                    file_id: fid,
-                                    slice_seq,
-                                    offset_ms: SliceMark::position_ms(rel_seq),
-                                });
-                            }
-                            if let Some(live_dec) = self.live_decoder_16k.as_mut() {
-                                let frame_start = outcome.live_pcm16_16khz.len();
-                                let _ = OpusWave::decode_frame_into(
-                                    live_dec.as_mut(),
-                                    frame,
-                                    &mut outcome.live_pcm16_16khz,
-                                );
-                                if self.active_is_realtime
-                                    && outcome.live_pcm16_16khz.len() > frame_start
-                                {
-                                    let samples: Vec<i16> = outcome.live_pcm16_16khz[frame_start..]
-                                        .as_chunks::<2>()
-                                        .0
-                                        .iter()
-                                        .copied()
-                                        .map(i16::from_le_bytes)
-                                        .collect();
-                                    if !samples.is_empty() {
-                                        companion_batch.push(RawCompanionSignal::LivePcm16 {
-                                            file_id: fid,
-                                            slice_seq,
-                                            samples,
-                                        });
-                                    }
+                        if self.active_is_realtime {
+                            if self.live_decoder_16k.is_none() {
+                                if let Some(factory) = self.decoder_factory {
+                                    self.live_decoder_16k = factory(ASR_SAMPLE_RATE);
                                 }
                             }
-                        }
-                        for signal in companion_batch {
-                            self.push_companion_signal(signal);
-                        }
-                        if outcome.live_pcm16_16khz.len() > start_len {
-                            self.live_pcm16_16khz
-                                .extend_from_slice(&outcome.live_pcm16_16khz[start_len..]);
-                            if self.active_is_realtime {
-                                self.capture_events.push_back(CaptureEvent::Audio {
-                                    file_id: fid,
-                                    pcm16: outcome.live_pcm16_16khz[start_len..].to_vec(),
-                                });
+                            if let Some(live_dec) = self.live_decoder_16k.as_mut() {
+                                let mut pcm16 = Vec::new();
+                                for frame in batch.opus_bytes.as_chunks::<OPUS_FRAME_BYTES>().0 {
+                                    let _ = OpusWave::decode_frame_into(
+                                        live_dec.as_mut(),
+                                        frame,
+                                        &mut pcm16,
+                                    );
+                                }
+                                if !pcm16.is_empty() {
+                                    self.capture_events.push_back(CaptureEvent::Audio {
+                                        file_id: fid,
+                                        pcm16,
+                                    });
+                                }
                             }
                         }
                         let new_received = if self.active_is_realtime {
@@ -2093,7 +1885,6 @@ impl TransportSession {
                 (RxCmd::TRANSPORT_TYPE, RxCmd::DELETE_ID)
                 | (RxCmd::TRANSPORT_TYPE_ALT, RxCmd::DELETE_ID) => {
                     let success = pkt.is_success();
-                    self.push_companion_signal(RawCompanionSignal::DeleteFileAck { success });
                     let deleted_fid = if pkt.payload.len() >= 4 {
                         read_u32_le(&pkt.payload, 0)
                     } else {
@@ -2214,9 +2005,7 @@ impl TransportSession {
             file_id: fid,
             saved: true,
         });
-        let retained_live_pcm = std::mem::take(&mut self.live_pcm16_16khz);
         self.reset_active_transfer();
-        self.live_pcm16_16khz = retained_live_pcm;
         Some(finalized)
     }
 
@@ -2354,14 +2143,71 @@ mod tests {
         assert!(fin.preview_wav_bytes.is_empty());
     }
 
+    fn drain_audio_pcm(session: &mut TransportSession) -> Vec<u8> {
+        session
+            .take_capture_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                CaptureEvent::Audio { pcm16, .. } => Some(pcm16),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
     #[test]
     fn session_with_decoder_factory_streams_16khz_pcm_and_finalizes_48khz_wav() {
         let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
         let fin = feed_realtime_60_slice_capture(&mut session, 1_700_000_000);
         assert_eq!(fin.preview_wav_bytes.len(), 44 + 60 * 960 * 2);
-        let live_pcm = session.take_live_pcm16();
+        let events: Vec<_> = session.take_capture_events().into_iter().collect();
+        assert!(matches!(
+            events.first(),
+            Some(CaptureEvent::Started { file_id: 20_261_107 })
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(CaptureEvent::Finished {
+                file_id: 20_261_107,
+                saved: true
+            })
+        ));
+        let live_pcm: Vec<u8> = events
+            .into_iter()
+            .filter_map(|event| match event {
+                CaptureEvent::Audio {
+                    file_id: 20_261_107,
+                    pcm16,
+                } => Some(pcm16),
+                _ => None,
+            })
+            .flatten()
+            .collect();
         assert_eq!(live_pcm.len(), 60 * 320 * 2);
-        assert!(session.take_live_pcm16().is_empty());
+        assert!(session.take_capture_events().is_empty());
+    }
+
+    #[test]
+    fn offline_pull_skips_16khz_decode_and_emits_no_audio_events() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x77u8; 32];
+        let fk = [0x88u8; 32];
+        let fn_iv = [0x99u8; 16];
+        session.set_session_key(sk);
+
+        let _ = session.begin_offline_pull(555, 40);
+        let head = build_test_head_frame(&sk, 555, 2 * 166, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_100);
+        let slices = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x01)]);
+        let step = session.ingest_ble_chunk(&slices, 1_700_000_100);
+        assert_eq!(step.slices_unpacked_count, 2);
+        assert!(drain_audio_pcm(&mut session).is_empty());
+        let fin = session.finalize_active_transfer(1_700_000_101).unwrap();
+        assert!(!fin.preview_wav_bytes.is_empty());
+        let events: Vec<_> = session.take_capture_events().into_iter().collect();
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, CaptureEvent::Audio { .. })));
     }
 
     #[test]
@@ -2449,9 +2295,8 @@ mod tests {
                 1_700_000_000,
             );
             let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0), (1, 1)]);
-            let first_pcm = session
-                .ingest_ble_chunk(&slices, 1_700_000_001)
-                .live_pcm16_16khz;
+            let _ = session.ingest_ble_chunk(&slices, 1_700_000_001);
+            let first_pcm = drain_audio_pcm(&mut session);
             let mut expected_opus = [0; OPUS_FRAME_BYTES];
             expected_opus[..REAL_OPUS_20MS_440HZ_PACKET.len()]
                 .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
@@ -2486,9 +2331,8 @@ mod tests {
                 }
                 _ => {}
             }
-            let second_pcm = session
-                .ingest_ble_chunk(&slices, 1_700_000_005)
-                .live_pcm16_16khz;
+            let _ = session.ingest_ble_chunk(&slices, 1_700_000_005);
+            let second_pcm = drain_audio_pcm(&mut session);
             assert_eq!(
                 session.opus_buffer,
                 expected_opus.repeat(2),
@@ -2520,15 +2364,15 @@ mod tests {
         let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0)]);
         let rejected = session.ingest_ble_chunk(&slices, 1_700_000_001);
         assert_eq!(rejected.slices_unpacked_count, 0);
-        assert!(rejected.live_pcm16_16khz.is_empty());
+        assert!(drain_audio_pcm(&mut session).is_empty());
         assert!(session.opus_buffer.is_empty());
         assert_ne!(session.transfer.error_code, 0);
         session.ingest_ble_chunk(
             &build_test_head_frame(&sk, 4001, u32::MAX, &fk, &nonce),
             1_700_000_002,
         );
-        let recovered = session.ingest_ble_chunk(&slices, 1_700_000_003);
-        assert_eq!(recovered.live_pcm16_16khz.len(), 320 * 2);
+        let _ = session.ingest_ble_chunk(&slices, 1_700_000_003);
+        assert_eq!(drain_audio_pcm(&mut session).len(), 320 * 2);
         assert_eq!(session.transfer.error_code, 0);
         session.stop_realtime_recording();
         assert!(
@@ -2552,18 +2396,13 @@ mod tests {
                 1_700_000_000,
             );
             let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0)]);
-            let expected_pcm = session
-                .ingest_ble_chunk(&slices, 1_700_000_001)
-                .live_pcm16_16khz;
+            let _ = session.ingest_ble_chunk(&slices, 1_700_000_001);
+            let expected_pcm = drain_audio_pcm(&mut session);
             session.stop_realtime_recording();
             session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_003);
             session.start_realtime_recording(Some(4001), 1_700_000_004_000);
-            assert_eq!(
-                session
-                    .ingest_ble_chunk(&slices, 1_700_000_004)
-                    .live_pcm16_16khz,
-                expected_pcm
-            );
+            let _ = session.ingest_ble_chunk(&slices, 1_700_000_004);
+            assert_eq!(drain_audio_pcm(&mut session), expected_pcm);
             session.reset_active_transfer();
 
             let file_id = match reset_kind {
@@ -2592,7 +2431,7 @@ mod tests {
             );
             let rejected = session.ingest_ble_chunk(&slices, 1_700_000_006);
             assert_eq!(rejected.slices_unpacked_count, 0, "reset kind {reset_kind}");
-            assert!(rejected.live_pcm16_16khz.is_empty());
+            assert!(drain_audio_pcm(&mut session).is_empty());
             assert!(session.opus_buffer.is_empty());
         }
     }
@@ -2882,14 +2721,17 @@ mod tests {
         let _ = session.ingest_ble_chunk(&slices, 1_700_000_721);
         assert_eq!(session.received_slice_count(), 2);
         assert_eq!(session.marks_ms, vec![20]);
-        assert_eq!(session.live_pcm16_16khz.len(), 2 * 320 * 2);
+        assert_eq!(drain_audio_pcm(&mut session).len(), 2 * 320 * 2);
 
         let repeated_head = build_test_head_frame(&sk, 4001, u32::MAX, &fk, &fn_iv);
         let _ = session.ingest_ble_chunk(&repeated_head, 1_700_000_722);
         assert_eq!(session.received_slice_count(), 2);
         assert_eq!(session.marks_ms, vec![20]);
-        assert_eq!(session.live_pcm16_16khz.len(), 2 * 320 * 2);
+        assert!(session.take_capture_events().is_empty());
         assert_eq!(session.transfer.received_wire_bytes, 2 * 166);
+        let next_slice = build_test_slice_frame(&fk, &fn_iv, &[(2, 0x00)]);
+        let _ = session.ingest_ble_chunk(&next_slice, 1_700_000_723);
+        assert_eq!(drain_audio_pcm(&mut session).len(), 320 * 2);
     }
 
     #[test]
@@ -3132,86 +2974,6 @@ mod tests {
     }
 
     #[test]
-    fn companion_signals_emit_recording_states_and_double_tap_before_slice_pcm() {
-        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
-        let sk = [0x61u8; 32];
-        let fk = [0x62u8; 32];
-        let fn_iv = [0x63u8; 16];
-        session.set_session_key(sk);
-
-        let _ = session.start_realtime_recording(Some(8801), 1_775_000_000_000);
-        assert_eq!(
-            session.take_companion_signals(),
-            vec![RawCompanionSignal::RecordingStateChanged {
-                state: 1,
-                file_id: Some(8801),
-            }]
-        );
-
-        let head = build_test_head_frame(&sk, 8801, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
-        let _ = session.ingest_ble_chunk(&head, 1_775_000_000);
-
-        let dec = AesCtrStreamDecrypt::new(&fk, &fn_iv).unwrap();
-        let mut payload = Vec::with_capacity(3 * SLICE_RECORD_BYTES);
-        for seq in 0..3u32 {
-            payload.extend_from_slice(&seq.to_le_bytes());
-            payload.push(if seq == 1 { 0x01 } else { 0x00 });
-            let mut opus = [0u8; OPUS_FRAME_BYTES];
-            opus[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
-            dec.decrypt_contiguous_in_place(&mut opus, seq);
-            payload.extend_from_slice(&opus);
-            payload.push(0);
-        }
-        let slices_rx = TransportSession::build_rx_frame(0x1A, 0x08, &payload);
-        let outcome = session.ingest_ble_chunk(&slices_rx, 1_775_000_001);
-        assert_eq!(outcome.new_marks_ms, vec![20]);
-        assert_eq!(outcome.live_pcm16_16khz.len(), 3 * 320 * 2);
-
-        let signals = session.take_companion_signals();
-        assert_eq!(signals.len(), 4);
-        assert!(matches!(
-            &signals[0],
-            RawCompanionSignal::LivePcm16 { file_id: 8801, slice_seq: 0, samples } if samples.len() == 320
-        ));
-        assert_eq!(
-            signals[1],
-            RawCompanionSignal::FrontDoubleTap {
-                file_id: 8801,
-                slice_seq: 1,
-                offset_ms: 20,
-            }
-        );
-        assert!(matches!(
-            &signals[2],
-            RawCompanionSignal::LivePcm16 { file_id: 8801, slice_seq: 1, samples } if samples.len() == 320
-        ));
-        assert!(matches!(
-            &signals[3],
-            RawCompanionSignal::LivePcm16 { file_id: 8801, slice_seq: 2, samples } if samples.len() == 320
-        ));
-
-        let _ = session.stop_realtime_recording();
-        assert_eq!(
-            session.take_companion_signals(),
-            vec![RawCompanionSignal::RecordingStateChanged {
-                state: 2,
-                file_id: Some(8801),
-            }]
-        );
-
-        let rx_state_zero = TransportSession::build_rx_frame(0x18, 0x82, &[0x00]);
-        let _ = session.ingest_ble_chunk(&rx_state_zero, 1_775_000_002);
-        session.on_disconnected();
-        assert!(session.take_companion_signals().is_empty());
-
-        let _ = session.begin_offline_pull(8802, 1_000);
-        let offline_head = build_test_head_frame(&sk, 8802, 3 * 166, &fk, &fn_iv);
-        let _ = session.ingest_ble_chunk(&offline_head, 1_775_000_003);
-        let _ = session.ingest_ble_chunk(&slices_rx, 1_775_000_004);
-        assert!(session.take_companion_signals().is_empty());
-    }
-
-    #[test]
     fn realtime_transfer_clamps_out_of_range_marks_to_duration() {
         let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
         let sk = [0x71u8; 32];
@@ -3331,20 +3093,25 @@ mod tests {
         let initial_page = build_1b0e_page(1, &files);
         let _ = session.ingest_ble_chunk(&initial_page, 1_700_000_200);
 
-        let _ = session.start_realtime_recording_with_options(None, 1_700_000_200_000, true);
-        let resume_page = build_1b0e_page(1, &files);
-        let resume_out = session.ingest_ble_chunk(&resume_page, 1_700_000_201);
+        let _ = session.start_realtime_recording(None, 1_700_000_200_000);
+        let start_page = build_1b0e_page(1, &files);
+        let start_out = session.ingest_ble_chunk(&start_page, 1_700_000_201);
 
         assert_eq!(session.active_file_id, Some(201));
+        assert_eq!(session.stream_base_slices, 0);
+        assert_eq!(
+            start_out.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(201, 0, 1)]
+        );
+
+        let resume_tx = session
+            .enter_or_resume_realtime_stream_at(201, 50, 1_700_000_201)
+            .unwrap();
         assert_eq!(session.stream_base_slices, 50);
         let expected_wire_offset = 50 * SLICE_RECORD_BYTES as u32;
         assert_eq!(
-            resume_out.outbound_tx_frames,
-            vec![DeviceCommands::start_transport_audio_file(
-                201,
-                expected_wire_offset,
-                1
-            )]
+            resume_tx,
+            DeviceCommands::start_transport_audio_file(201, expected_wire_offset, 1)
         );
 
         let head = build_test_head_frame(&sk, 201, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
@@ -3365,16 +3132,6 @@ mod tests {
         let outcome = session.ingest_ble_chunk(&slice_rx, 1_700_000_203);
         assert_eq!(outcome.new_marks_ms, vec![20]);
         assert_eq!(session.marks_ms, vec![20]);
-
-        let companion_signals = session.take_companion_signals();
-        assert!(companion_signals.iter().any(|s| matches!(
-            s,
-            RawCompanionSignal::FrontDoubleTap {
-                file_id: 201,
-                slice_seq: 51,
-                offset_ms: 20,
-            }
-        )));
     }
 
     #[test]

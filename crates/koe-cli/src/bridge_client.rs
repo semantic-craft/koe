@@ -6,10 +6,10 @@ use std::{
         net::UnixStream,
     },
     path::Path,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use koe_runtime::{resolve_bridge_socket_path, CompanionStreamEvent, McpToolError};
+use koe_runtime::{resolve_bridge_socket_path, McpToolError};
 use serde_json::{json, Value};
 
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
@@ -123,90 +123,6 @@ impl BridgeClient {
         match self.mcp_tool_call(name, &arguments) {
             Ok(inner) => inner,
             Err(err) => Err(err.message),
-        }
-    }
-
-    pub(crate) fn listen_companion(
-        mut self,
-        auto_gate: bool,
-        max_events: Option<usize>,
-        timeout_ms: Option<u64>,
-    ) -> Result<(), String> {
-        writeln!(
-            self.writer,
-            "{}",
-            json!({
-                "method": "companion/subscribe",
-                "params": { "autoGate": auto_gate }
-            })
-        )
-        .map_err(|e| format!("发送伴侣订阅请求失败：{e}"))?;
-        self.writer
-            .flush()
-            .map_err(|e| format!("刷新伴侣订阅请求失败：{e}"))?;
-
-        if max_events == Some(0) {
-            return Ok(());
-        }
-
-        let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
-        let mut stdout = io::stdout().lock();
-        let mut emitted = 0usize;
-
-        loop {
-            if let Some(dl) = deadline {
-                let now_inst = Instant::now();
-                if now_inst >= dl {
-                    return Ok(());
-                }
-                let remaining = dl
-                    .saturating_duration_since(now_inst)
-                    .max(Duration::from_millis(1));
-                self.reader
-                    .get_ref()
-                    .set_read_timeout(Some(remaining))
-                    .map_err(|e| format!("设置伴侣读取超时失败：{e}"))?;
-            }
-
-            let mut line = String::new();
-            let read = match self
-                .reader
-                .by_ref()
-                .take(MAX_LINE_BYTES + 1)
-                .read_line(&mut line)
-            {
-                Ok(n) => n,
-                Err(err)
-                    if matches!(
-                        err.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    return Ok(());
-                }
-                Err(err) => return Err(format!("读取伴侣事件流失败：{err}")),
-            };
-            if read == 0 {
-                return Ok(());
-            }
-            if read as u64 > MAX_LINE_BYTES {
-                return Err("伴侣事件帧超过 2 MiB 限制".into());
-            }
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let event: CompanionStreamEvent = serde_json::from_str(trimmed)
-                .map_err(|_| "收到无法识别的伴侣事件帧".to_string())?;
-            let normalized =
-                serde_json::to_string(&event).map_err(|e| format!("序列化伴侣事件失败：{e}"))?;
-            writeln!(stdout, "{normalized}").map_err(|e| e.to_string())?;
-            stdout.flush().map_err(|e| e.to_string())?;
-
-            emitted += 1;
-            if max_events.is_some_and(|max| emitted >= max) {
-                return Ok(());
-            }
         }
     }
 

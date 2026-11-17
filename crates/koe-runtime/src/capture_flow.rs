@@ -3,7 +3,6 @@ use crate::{
     capture_studio::CaptureSelection,
     command::{CaptureAction, CaptureMode},
     microphone::{MicrophoneStatus, Phase},
-    speech::DictationSource,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -24,20 +23,11 @@ struct ActiveCapture<'a> {
     source_label: &'a str,
     duration_ms: u64,
     actions: Vec<CaptureAction>,
-    dictating: bool,
     error: Option<&'a str>,
     level: Option<f64>,
 }
 
 impl KoeRuntime {
-    fn capture_dictation_source(&self) -> DictationSource {
-        if self.microphone.is_some() {
-            DictationSource::Microphone
-        } else {
-            DictationSource::Bean
-        }
-    }
-
     pub(super) fn bean_capture_pending(&self) -> bool {
         self.is_bean_meeting_recording()
             || self.device.session.pending_realtime_subscribe
@@ -49,39 +39,15 @@ impl KoeRuntime {
             })
     }
 
-    fn can_start_dictation_in_all_day(&self) -> bool {
-        self.all_day.run.as_ref().is_some_and(|run| {
-            !run.stopping
-                && if run.source == "microphone" {
-                    self.microphone
-                        .as_ref()
-                        .is_some_and(|mic| mic.phase == Phase::Recording)
-                } else {
-                    !self.device.awaiting_stop && !self.captures.active.is_empty()
-                }
-        }) && !self.dictation_active(self.capture_dictation_source())
-            && !self.is_quitting()
-            && !self.store.requires_reopen()
-    }
-
     pub(super) fn start_capture_mode(
         &mut self,
         mode: CaptureMode,
         stay_on_page: bool,
         now: u64,
     ) -> Result<(), String> {
-        if mode == CaptureMode::Dictation && self.can_start_dictation_in_all_day() {
-            self.set_source_dictation(self.capture_dictation_source(), true);
-            return Ok(());
-        }
         let selection = self.capture_selection();
         if !self.can_start_capture_mode(&selection) {
             return Err("当前无法开始记录，请检查录音音源或结束当前记录".into());
-        }
-        if mode != CaptureMode::Dictation
-            && self.active_companion_mode() == CompanionRoutingMode::CollarStandby
-        {
-            self.set_voice_input_session(false, now)?;
         }
         let bean = selection.source == "bean";
         if mode == CaptureMode::AllDay {
@@ -93,17 +59,17 @@ impl KoeRuntime {
         } else if bean {
             self.dispatch(Command::DeviceStart, now)?;
         } else {
-            let include_system =
-                self.capture_studio.include_system_audio && mode != CaptureMode::Dictation;
-            self.start_microphone(selection.input_id, include_system, None, now)?;
+            self.start_microphone(
+                selection.input_id,
+                self.capture_studio.include_system_audio,
+                None,
+                now,
+            )?;
         }
         if let Some(mic) = &mut self.microphone {
             mic.mode = Some(mode);
         } else if mode != CaptureMode::AllDay {
             self.bean_capture_mode = Some(mode);
-        }
-        if mode == CaptureMode::Dictation {
-            self.set_source_dictation(self.capture_dictation_source(), true);
         }
         if mode == CaptureMode::Meeting {
             let scope = if let Some(mic) = &self.microphone {
@@ -125,11 +91,8 @@ impl KoeRuntime {
     }
 
     pub(super) fn reconcile_bean_capture_mode(&mut self) {
-        if self.bean_capture_pending() {
-            return;
-        }
-        if self.bean_capture_mode.take() == Some(CaptureMode::Dictation) {
-            self.set_source_dictation(DictationSource::Bean, false);
+        if !self.bean_capture_pending() {
+            self.bean_capture_mode = None;
         }
     }
 
@@ -143,21 +106,7 @@ impl KoeRuntime {
             CaptureAction::Resume => {
                 self.resume_microphone(clock_ns.ok_or("缺少恢复录音的采样时钟")?)
             }
-            CaptureAction::EndDictation if self.all_day.run.is_some() => {
-                self.set_source_dictation(self.capture_dictation_source(), false);
-                Ok(())
-            }
-            CaptureAction::End | CaptureAction::EndDictation => {
-                if action == CaptureAction::EndDictation
-                    && self
-                        .microphone
-                        .as_ref()
-                        .and_then(|m| m.mode)
-                        .or(self.bean_capture_mode)
-                        != Some(CaptureMode::Dictation)
-                {
-                    return Err("没有正在进行的语音输入".into());
-                }
+            CaptureAction::End => {
                 if self.all_day.run.is_some() {
                     self.stop_all_day()
                 } else if self.microphone.is_some() {
@@ -183,13 +132,11 @@ impl KoeRuntime {
             CaptureMode::QuickNote,
             CaptureMode::AllDay,
             CaptureMode::Meeting,
-            CaptureMode::Dictation,
         ]
         .map(|mode| ModeEntry {
             mode,
             source_label: &selection.label,
-            available: self.can_start_capture_mode(selection)
-                || (mode == CaptureMode::Dictation && self.can_start_dictation_in_all_day()),
+            available: self.can_start_capture_mode(selection),
         }))
     }
 
@@ -200,7 +147,6 @@ impl KoeRuntime {
     ) -> Value {
         let run = self.all_day.run.as_ref();
         let can_control = !self.is_quitting() && !self.store.requires_reopen();
-        let dictating = self.dictation_active(self.capture_dictation_source());
         let mut actions = Vec::new();
         if let Some((mic, status)) = self.microphone.as_ref().zip(microphone) {
             let mode = if run.is_some() {
@@ -230,9 +176,6 @@ impl KoeRuntime {
                         }
                     }
                 }
-                if run.is_some() && dictating {
-                    actions.push(CaptureAction::EndDictation);
-                }
             }
             return json!(ActiveCapture {
                 mode,
@@ -240,7 +183,6 @@ impl KoeRuntime {
                 source_label: &status.input_label,
                 duration_ms: status.duration_ms,
                 actions,
-                dictating,
                 error: mic.save_error.as_deref().or(status.interruption),
                 level: Some(mic.level),
             });
@@ -258,9 +200,6 @@ impl KoeRuntime {
                 && !self.device.session.transfer.quiet_draining
             {
                 actions.push(CaptureAction::End);
-            }
-            if can_control && run.is_some() && dictating {
-                actions.push(CaptureAction::EndDictation);
             }
             return json!(ActiveCapture {
                 mode,
@@ -285,7 +224,6 @@ impl KoeRuntime {
                 },
                 duration_ms: live_duration_ms,
                 actions,
-                dictating,
                 error: self.drain_error.as_deref(),
                 level: None,
             });
@@ -312,21 +250,14 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_bean_capture_mode_clears_finished_mode_and_stops_dictation_only_for_dictation() {
+    fn reconcile_bean_capture_mode_clears_finished_mode() {
         let root = temp_dir("reconcile-mode");
         let mut runtime = KoeRuntime::open(&root).unwrap();
         assert!(!runtime.bean_capture_pending());
 
         runtime.bean_capture_mode = Some(CaptureMode::Meeting);
-        runtime.set_source_dictation(DictationSource::Bean, true);
         runtime.reconcile_bean_capture_mode();
         assert!(runtime.bean_capture_mode.is_none());
-        assert!(runtime.dictation_active(DictationSource::Bean));
-
-        runtime.bean_capture_mode = Some(CaptureMode::Dictation);
-        runtime.reconcile_bean_capture_mode();
-        assert!(runtime.bean_capture_mode.is_none());
-        assert!(!runtime.dictation_active(DictationSource::Bean));
 
         drop(runtime);
         let _ = std::fs::remove_dir_all(&root);

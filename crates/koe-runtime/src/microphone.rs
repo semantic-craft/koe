@@ -1,5 +1,5 @@
 use super::*;
-use crate::speech::DictationSource;
+use crate::speech::CaptureOrigin;
 use crate::command::{CaptureMode, CaptureTiming};
 use koe_client_services::capture_asset::{AppendOutcome, CaptureAsset};
 use koe_engine::product::{place_capture_span, CaptureLaneRecord, CaptureSpan};
@@ -236,7 +236,6 @@ impl KoeRuntime {
         m.level = 0.0;
         if m.lanes_paused() {
             m.phase = Phase::Paused;
-            self.set_source_dictation(DictationSource::Microphone, false);
         }
         Ok(())
     }
@@ -265,9 +264,6 @@ impl KoeRuntime {
         m.phase = Phase::Recording;
         for l in m.lanes.values_mut().filter(|l| !l.producer_stopped) {
             l.paused = false;
-        }
-        if m.mode == Some(CaptureMode::Dictation) {
-            self.set_source_dictation(DictationSource::Microphone, true);
         }
         Ok(())
     }
@@ -492,7 +488,7 @@ impl KoeRuntime {
                     .map_err(|e| format!("音频格式无效：{e:?}"))?
                     .mono_16khz()
             };
-            self.feed_speech(&id, &pcm, Some(DictationSource::Microphone))?;
+            self.feed_speech(&id, &pcm, Some(CaptureOrigin::Microphone))?;
         }
         if rotate {
             self.rotate_microphone_segment()?;
@@ -572,7 +568,6 @@ impl KoeRuntime {
             m.phase = Phase::Recording;
         } else if m.phase == Phase::Pausing && m.lanes_paused() {
             m.phase = Phase::Paused;
-            self.set_source_dictation(DictationSource::Microphone, false);
             return Ok(());
         }
         if !m.lanes.values().all(|l| l.producer_stopped) {
@@ -645,7 +640,6 @@ impl KoeRuntime {
                 } else {
                     format!("未保存录音：{}", reasons.join("；"))
                 });
-                self.set_source_dictation(DictationSource::Microphone, false);
                 return Ok(());
             }
             let mut outcomes = Vec::new();
@@ -719,7 +713,6 @@ impl KoeRuntime {
                 }
             }
             self.finish_speech(&m.current_record_id);
-            self.set_source_dictation(DictationSource::Microphone, false);
             self.capture_saved(&m.current_record_id);
             self.poll_captures();
             if m.mode.is_none() && self.selection.location.page != Page::LiveMinutes {

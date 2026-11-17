@@ -23,9 +23,6 @@ impl KoeRuntime {
         }
         match source {
             "microphone" => {
-                if self.active_companion_mode() == CompanionRoutingMode::CollarStandby {
-                    self.set_voice_input_session(false, now)?;
-                }
                 self.start_microphone(input_id, false, None, now)?;
             }
             "bean" => {
@@ -35,17 +32,11 @@ impl KoeRuntime {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
-                if self.active_companion_mode() == CompanionRoutingMode::CollarStandby
-                    && !self.companion.standby_stream_owned
-                {
-                    self.set_voice_input_session(false, now)?;
-                }
                 self.ensure_device_idle()?;
-                let outcome = self.device.session.start_realtime_recording_with_options(
-                    None,
-                    now.saturating_mul(1000),
-                    false,
-                );
+                let outcome = self
+                    .device
+                    .session
+                    .start_realtime_recording(None, now.saturating_mul(1000));
                 self.device.accept(outcome);
             }
             _ => return Err("请选择 Mac 麦克风或录音豆".into()),
@@ -140,15 +131,8 @@ impl KoeRuntime {
                         .is_some_and(|s| s.run_id == run.id)
                 })
         });
-        if done
-            && self
-                .all_day
-                .run
-                .take()
-                .is_some_and(|run| run.source == "bean")
-        {
-            self.companion.armed = false;
-            self.set_source_dictation(crate::speech::DictationSource::Bean, false);
+        if done {
+            self.all_day.run = None;
         }
         done
     }

@@ -201,7 +201,7 @@ struct KoeAppleSharedTests {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
 
-        #expect(store.snapshot.captureModes.count == 4)
+        #expect(store.snapshot.captureModes.count == 3)
         #expect(store.snapshot.captureModes.allSatisfy { $0.available })
 
         store.reportNativeError("麦克风权限未开启")

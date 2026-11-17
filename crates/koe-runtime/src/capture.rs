@@ -1,5 +1,5 @@
 use super::*;
-use crate::speech::DictationSource;
+use crate::speech::CaptureOrigin;
 use koe_engine::session::CaptureEvent;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -58,98 +58,69 @@ impl KoeRuntime {
         while let Some(event) = self.device.captures.front().cloned() {
             match event {
                 CaptureEvent::Started { file_id } => {
-                    if self.treats_file_as_standby(file_id) {
-                        if self.companion.standby_stream_owned
-                            || self.companion.pending_standby_stop
-                        {
-                            self.companion.active_standby_file_id = Some(file_id);
-                        }
-                        if self.can_own_as_standby_scratch(file_id) {
-                            self.mark_standby_scratch_file(file_id)?;
-                        }
-                        if self.companion.pending_standby_stop {
-                            self.companion.pending_standby_stop = false;
-                            self.companion.standby_stream_owned = false;
-                            self.device.stop_recording();
-                        }
-                    } else {
-                        self.ensure_capture(file_id, now)?;
-                    }
+                    self.ensure_capture(file_id, now)?;
                 }
                 CaptureEvent::Audio { file_id, pcm16 } => {
-                    if !self.captures.active.contains_key(&file_id)
-                        && self.treats_file_as_standby(file_id)
+                    let id = self.ensure_capture(file_id, now)?;
+                    self.feed_speech(&id, &pcm16, Some(CaptureOrigin::Bean))?;
+                    if self.all_day_group("bean").is_some()
+                        && self.device.session.received_slice_count() as u64 * 20
+                            >= crate::all_day::SEGMENT_MS
                     {
-                        if self.can_own_as_standby_scratch(file_id) {
-                            self.mark_standby_scratch_file(file_id)?;
-                        }
-                    } else {
-                        let id = self.ensure_capture(file_id, now)?;
-                        self.feed_speech(&id, &pcm16, Some(DictationSource::Bean))?;
-                        if self.all_day_group("bean").is_some()
-                            && self.device.session.received_slice_count() as u64 * 20
-                                >= crate::all_day::SEGMENT_MS
+                        if let Some(recording) =
+                            self.device.session.checkpoint_realtime_segment(now)
                         {
-                            if let Some(recording) =
-                                self.device.session.checkpoint_realtime_segment(now)
-                            {
-                                self.finish_speech(&id);
-                                self.captures.active.remove(&file_id);
-                                self.captures.targets.push_back((file_id, id));
-                                self.device.finalized.push(recording);
-                                self.save_device_recordings(now)?;
-                            }
+                            self.finish_speech(&id);
+                            self.captures.active.remove(&file_id);
+                            self.captures.targets.push_back((file_id, id));
+                            self.device.finalized.push(recording);
+                            self.save_device_recordings(now)?;
                         }
                     }
                 }
                 CaptureEvent::Finished { file_id, saved } => {
-                    if self.treats_file_as_standby(file_id) {
-                        self.captures.active.remove(&file_id);
-                    } else {
-                        let id = self.captures.active.remove(&file_id);
-                        if let Some(id) = &id {
-                            self.finish_speech(id);
-                            self.set_source_dictation(DictationSource::Bean, false);
+                    let id = self.captures.active.remove(&file_id);
+                    if let Some(id) = &id {
+                        self.finish_speech(id);
+                    }
+                    if saved {
+                        if let Some(id) = id {
+                            self.captures.targets.push_back((file_id, id));
                         }
-                        if saved {
-                            if let Some(id) = id {
-                                self.captures.targets.push_back((file_id, id));
-                            }
-                        } else {
-                            let salvageable_from_catalog = id.as_ref().is_some_and(|rid| {
-                                self.device.is_connected()
-                                    && self
-                                        .workspace()
+                    } else {
+                        let salvageable_from_catalog = id.as_ref().is_some_and(|rid| {
+                            self.device.is_connected()
+                                && self
+                                    .workspace()
                                     .record(rid)
                                     .is_some_and(|r| r.all_day.is_none())
-                                    && self.device.session.catalog.iter().any(|e| {
-                                        e.file_id == file_id
-                                            && e.has_duration()
-                                            && e.end_time != Some(0)
+                                && self.device.session.catalog.iter().any(|e| {
+                                    e.file_id == file_id
+                                        && e.has_duration()
+                                        && e.end_time != Some(0)
+                                })
+                        });
+                        if !salvageable_from_catalog {
+                            self.captures.records_by_file_id.remove(&file_id);
+                            if let Some(id) = id {
+                                if !self.captures.sessions.contains_key(&id)
+                                    && !has_recording_asset(&self.root, &id).unwrap_or(true)
+                                    && self.workspace().record(&id).is_some_and(|r| {
+                                        r.aggregate.duration_ms == 0
+                                            && r.aggregate.spine.is_empty()
                                     })
-                            });
-                            if !salvageable_from_catalog {
-                                self.captures.records_by_file_id.remove(&file_id);
-                                if let Some(id) = id {
-                                    if !self.captures.sessions.contains_key(&id)
-                                        && !has_recording_asset(&self.root, &id).unwrap_or(true)
-                                        && self.workspace().record(&id).is_some_and(|r| {
-                                            r.aggregate.duration_ms == 0
-                                                && r.aggregate.spine.is_empty()
-                                        })
-                                    {
-                                        let now_ms = now.max(1).saturating_mul(1000);
-                                        self.commit(|w| {
-                                            let was_purged = w.is_bean_file_purged(file_id);
-                                            w.trash_record(&id, now_ms)?;
-                                            let _ = w.purge_record(&id)?;
-                                            if !was_purged {
-                                                w.clear_purged_bean_file_id(file_id);
-                                            }
-                                            Ok(())
-                                        })?;
-                                        self.detach_records_from_session(&BTreeSet::from([id]));
-                                    }
+                                {
+                                    let now_ms = now.max(1).saturating_mul(1000);
+                                    self.commit(|w| {
+                                        let was_purged = w.is_bean_file_purged(file_id);
+                                        w.trash_record(&id, now_ms)?;
+                                        let _ = w.purge_record(&id)?;
+                                        if !was_purged {
+                                            w.clear_purged_bean_file_id(file_id);
+                                        }
+                                        Ok(())
+                                    })?;
+                                    self.detach_records_from_session(&BTreeSet::from([id]));
                                 }
                             }
                         }

@@ -36,8 +36,8 @@ A pure-Rust core (`#![forbid(unsafe_code)]` in 6 of 8 crates) owns the BLE proto
       <sub><strong>2. Collar wear &amp; instant switch</strong><br>Run all-day collar capture or one-press Quick Note, with one-click source switching on the Today strip.</sub>
     </td>
     <td align="center" width="25%" valign="top">
-      <img src="assets/product/guide_mark.webp" width="120" alt="Double-tap and thump gate"><br>
-      <sub><strong>3. Double-tap &amp; thump gate</strong><br>Logs <code>20 ms</code> bookmarks or triggers dictation while trimming <code>60 ms</code> head and <code>240 ms</code> tail housing thumps.</sub>
+      <img src="assets/product/guide_mark.webp" width="120" alt="Front double-tap bookmarks"><br>
+      <sub><strong>3. Front double-tap bookmarks</strong><br>Logs <code>20 ms</code> precision <code>SliceMark</code> bookmarks during D3200 capture for jump-to-audio playback and export.</sub>
     </td>
     <td align="center" width="25%" valign="top">
       <img src="assets/product/guide_sync.webp" width="120" alt="Verified local custody"><br>
@@ -47,18 +47,17 @@ A pure-Rust core (`#![forbid(unsafe_code)]` in 6 of 8 crates) owns the BLE proto
 </table>
 </div>
 
-## One day, four workspaces
+## One day, three workspaces
 
-Koe centers its Today screen on four daily capture workspaces. Starting or stopping a recording session is decoupled from opening a workspace view, and switching sidebar pages never interrupts active audio capture.
+Koe centers its Today screen on three daily capture workspaces. Starting or stopping a recording session is decoupled from opening a workspace view, and switching sidebar pages never interrupts active audio capture.
 
 | Workspace | Built for | How it runs |
 | --- | --- | --- |
 | **Quick Note** (default) | Fleeting thoughts, quick handoffs, reading lists | A D3200 button press or shortcut drops spoken notes into the inbox with original timestamps and project tags. AI notes sit beside your transcript without overwriting your words. |
 | **All-Day Listening** | Continuous collar wear across the day | Splits capture into 5-minute records automatically without dropping audio while prior segments summarize in the background. Merges wall-clock events, records pauses and unrecorded gaps honestly on a monotonic timeline, and groups end-of-day review. |
 | **Live Minutes** | Remote calls, in-person meetings, interviews | Captures **Mac dual-lane system audio and microphone** on a shared timeline via CoreAudio `CATapDescription` so headphone calls record both sides. Generates initial topics after 3 utterances or 20 seconds, refreshes on a 45-second debounce without overlapping jobs, tracks 3 coverage metrics, and extracts action items in one pass after stop. |
-| **Voice Input** | Cursor dictation inside any macOS app | Bridges clean `16 kHz` `PCM16` audio, physical `control_edge` gestures, and `transcript_final` events over `koe.sock` to external IMEs with a 6-step link check and cursor test box. |
 
-All four workspaces share one local library governed by three guarantees:
+All three workspaces share one local library governed by three guarantees:
 
 - **Every bullet links back to spoken audio.** Minutes, tasks, memories, and Q&A answers bind to composite `record_id + segment_id` references for click-to-seek playback. Editing a transcript latches `original_text` for one-click restoration and marks prior minutes stale, while `validate_minutes_grounding` rejects ungrounded numbers, out-of-range segment IDs, or fabricated glossary edits.
 - **Sub-5 ms search across 400k characters without an LLM.** A CJK bi-gram and Latin BM25 inverted index searches 16,000 utterances in under `5 ms` in unit benchmarks. When no text model is configured, Ask Koe returns cited `[S1]` and `[S2]` source excerpts offline and refuses ungrounded questions locally instead of guessing.
@@ -84,11 +83,9 @@ cargo run --package koe-cli -- status
 cargo run --package koe-cli -- search "product decisions"
 cargo run --package koe-cli -- ask "what needs follow-up next"
 cargo run --package koe-cli -- mcp-stdio
-cargo run --package koe-cli -- companion-listen
 ```
 
 - **16 MCP stdio tools.** Serves targeted projections for full-text search, today brief, record list and details, cited Q&A, task and memory review or completion, note creation, segment annotation, transcript editing, speaker rename and merge, archive and Trash recovery, D3200 status and control, and generation polling. **Permanent purge is excluded by design** so agents cannot trigger irreversible deletion.
-- **Local text and audio bridge for external IMEs.** The [local text bridge](docs/local-text-bridge.md) streams finalized `transcript_final` events, physical `control_edge` double-tap edges, and `audio_pcm16` frames to third-party voice input methods.
 
 ## Build and install
 
@@ -115,26 +112,26 @@ Koe enforces a strict four-layer dependency direction across C ABI `KOE_HOST_API
 | --- | --- | --- |
 | Layer 1 · Engine | [koe-engine](crates/koe-engine/), [koe-opus](crates/koe-opus/) | I/O-free protocol and domain rules, D3200 crypto and slice alignment, ordered capture events, minutes grounding checks, task and memory review, BM25, and static `libopus` |
 | Layer 2 · Client | [koe-client-base](crates/koe-client-base/), [koe-client-providers](crates/koe-client-providers/), [koe-client-services](crates/koe-client-services/) | Symlink-safe atomic writes and file locks, HTTPS and WebSocket providers, local ASR worker threads, single-writer `ProductStore`, and audio custody |
-| Layer 3 · Runtime & Host API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Session orchestration, `RequestKey` transactions, binary PCM FFI fast path, immutable `generation` snapshots, and `.koe/koe.sock` bridge |
+| Layer 3 · Runtime & Host API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Session orchestration, `RequestKey` transactions, binary PCM FFI fast path, immutable `generation` snapshots, and `.koe/koe.sock` local RPC |
 | Layer 4 · Native Hosts & CLI | [apple-shared](platforms/apple-shared/), [macos](platforms/macos/), [koe-cli](crates/koe-cli/) | Scoped SwiftUI workspace views, CoreBluetooth, CoreAudio dual-lane tap and HAL monitor, Keychain adapter, and CLI and MCP entrypoints |
 
-Further reading: [Architecture & State Ownership](docs/ARCHITECTURE.md) · [D3200 Protocol Notes](PROTOCOL.md) · [Mode Workspaces](docs/mode-workspaces.md) · [Local Text Bridge](docs/local-text-bridge.md) · [v2.1.0 Release Notes](docs/releases/v2.1.0.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+Further reading: [Architecture & State Ownership](docs/ARCHITECTURE.md) · [D3200 Protocol Notes](PROTOCOL.md) · [Mode Workspaces](docs/mode-workspaces.md) · [v2.1.0 Release Notes](docs/releases/v2.1.0.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
 ## Open-source acknowledgements
 
-Koe combines ideas from open-source voice, wearable, and native IME projects into an independent Rust and SwiftUI codebase with full upstream attribution:
+Koe combines ideas from open-source voice and wearable projects into an independent Rust and SwiftUI codebase with full upstream attribution:
 
 | Project | Inspiration | Implementation in Koe |
 | --- | --- | --- |
-| **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple host four-layer split | Exposes versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private `koe.sock` bridge shared by GUI, CLI, and MCP |
+| **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple host four-layer split | Exposes versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private `koe.sock` RPC socket shared by GUI, CLI, and MCP |
 | **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | Reverse-engineered D3200 BLE protocol notes and Dart client | Ports the protocol to `#![forbid(unsafe_code)]` Rust state machines with exact `166 * N` byte slice resume, double-tap flag parsing, and telemetry polling |
 | **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Wearable disconnect WAL custody and review confirmation cards | Requires `CustodyReceipt` disk verification before `0x1A/0x10` device deletion, and wires three-state review to 16 MCP tools |
 | **[screenpipe](https://github.com/screenpipe/screenpipe)** | Timeline context aggregation and global live caption strip | Drives `LiveCaptionBar` directly from Rust `SpeechSession` snapshots across both D3200 and Mac microphone streams |
-| **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day 5-minute memory segments, multi-mode workspaces, citation relabeling, and optimistic locks | Ships four formal workspaces, non-blocking 5-minute segment pipelines, `RequestKey` guards, and `relabel_citations` |
+| **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day 5-minute memory segments, multi-mode workspaces, citation relabeling, and optimistic locks | Ships three formal workspaces, non-blocking 5-minute segment pipelines, `RequestKey` guards, and `relabel_citations` |
 | **[Shiyin](https://github.com/juinwei7/Shiyin)** | CoreAudio mic + system audio capture and structured templates | Pairs `-100 dBFS` Barker-13 canary detection with system dialog inspection on a Rust-managed dual-lane sparse timeline |
 | **[Meetily](https://github.com/Zackriya-Solutions/meetily) & [Ownscribe](https://github.com/paberr/ownscribe)** | Structured topic, decision, and action schemas and anti-fabrication rules | Runs deterministic `validate_minutes_grounding` checks in Rust that reject missing citations, invalid segment IDs, or ungrounded glossary edits |
 | **[transcribe.cpp](https://github.com/anomalyco/transcribe.cpp) & [Hex](https://github.com/anomalyco/hex)** | Embedded static CPU ASR runtime and pinned model manifests | Hosts SenseVoice Small (~253 MB) and Qwen3 ASR 0.6B (~850 MB) in-process with streaming SHA-256 verification and atomic install |
-| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | Symlink path guards and debounced rolling live minutes | Enforces `reject_symlink_path` before disk I/O and schedules 3-utterance or 20s initial plus 45s debounced live minutes alongside IME bridging |
+| **[vecta](https://github.com/nitishagar/vecta) & Cicada** | Symlink path guards and debounced rolling live minutes | Enforces `reject_symlink_path` before disk I/O and schedules 3-utterance or 20s initial plus 45s debounced live minutes |
 
 ## Verification status in v2.1.0
 
@@ -142,7 +139,7 @@ Koe separates shipped and verified functionality, merged code awaiting physical 
 
 | Status | Scope |
 | --- | --- |
-| **Shipped & verified (`v2.1.0` build `10`)** | 8-crate Rust core, notarized Developer ID `arm64` bundle, 4 formal SwiftUI workspaces, CoreAudio `CATapDescription` dual-lane capture, offline GGUF plus macOS 26 `SpeechAnalyzer`, scoped `@Observable` slices plus binary PCM FFI, BM25 search plus `validate_minutes_grounding` gate, 16 MCP tools, and verified local `/Applications/Koe.app` upgrade preserving workspace and Keychain items. |
+| **Shipped & verified (`v2.1.0` build `10`)** | 8-crate Rust core, notarized Developer ID `arm64` bundle, SwiftUI workspaces, CoreAudio `CATapDescription` dual-lane capture, offline GGUF plus macOS 26 `SpeechAnalyzer`, scoped `@Observable` slices plus binary PCM FFI, BM25 search plus `validate_minutes_grounding` gate, 16 MCP tools, and verified local `/Applications/Koe.app` upgrade preserving workspace and Keychain items. |
 | **Merged, tracked for physical hardware check (`ready-for-human`)** | Today source strip and one-click bean switch physical check ([#722](https://github.com/semantic-craft/koe/issues/722)), and closed-window physical D3200 wakeup and external headset hot-plug check ([#725](https://github.com/semantic-craft/koe/issues/725)). |
 | **Next-stage roadmap (not wired in `2.1.0`)** | iOS and Android mobile hosts plus dual-device sync ([#124](https://github.com/semantic-craft/koe/issues/124), [#149](https://github.com/semantic-craft/koe/issues/149) to [#151](https://github.com/semantic-craft/koe/issues/151)), external AI delegation ([#152](https://github.com/semantic-craft/koe/issues/152) to [#155](https://github.com/semantic-craft/koe/issues/155)), Wi-Fi SoftAP fast transfer, firmware OTA, VAD dynamic segmentation, and local speaker diarization. |
 

@@ -246,65 +246,6 @@ fn queued_offline_pull_not_hijacked_by_aborted_live_capture() {
 }
 
 #[test]
-fn standby_open_file_disconnect_does_not_leak_target() {
-    for explicit_disconnect in [false, true] {
-        let dir = Sandbox::new();
-        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
-        command(
-            &mut runtime,
-            json!({"type":"set_ble_auto_connect","enabled":false}),
-        );
-        command(
-            &mut runtime,
-            json!({"type":"set_companion_mode","mode":"collar_standby"}),
-        );
-        let sk = connect_bean_session(&mut runtime, "conn-sb", false, NOW);
-        runtime.ingest_ble_chunk(&telemetry_rx_with_recording_status(1), NOW);
-        runtime.ingest_ble_chunk(
-            &catalog_entries_1b0e_rx(&[OfflineFileEntry {
-                file_id: 7601,
-                duration_ms: 2_000,
-                end_time: Some(0),
-            }]),
-            NOW,
-        );
-        runtime.poll_timers(0, NOW);
-        runtime.drain_outbound_ble_frames();
-        assert!(runtime.companion.standby_stream_owned);
-
-        runtime.ingest_ble_chunk(&rx(0x06, &7601u32.to_le_bytes()), NOW + 1);
-        runtime.ingest_ble_chunk(&file_head_rx_with_key(&sk, 7601, u32::MAX), NOW + 1);
-        runtime.ingest_ble_chunk(&encrypted_slices(0..3), NOW + 1);
-        assert!(!runtime.is_standby_file(7601));
-        assert!(runtime.treats_file_as_standby(7601));
-
-        if explicit_disconnect {
-            command(&mut runtime, json!({"type":"device_disconnect"}));
-        } else {
-            command(
-                &mut runtime,
-                json!({
-                    "type": "device_event",
-                    "event": "disconnected",
-                    "connectionId": "conn-sb"
-                }),
-            );
-        }
-
-        assert!(
-            runtime.captures.targets.is_empty(),
-            "disconnecting standby on open pre-existing file must not leak targets (explicit={explicit_disconnect}): {:?}",
-            runtime.captures.targets
-        );
-        assert!(
-            runtime.workspace().records().is_empty(),
-            "standby tail must not be saved as user record (explicit={explicit_disconnect})"
-        );
-        assert!(!runtime.is_device_file_synced(7601));
-    }
-}
-
-#[test]
 fn aborted_empty_bean_capture_purges_shell_and_device_release_finishes_all_day() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();

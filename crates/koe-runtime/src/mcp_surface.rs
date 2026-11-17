@@ -57,7 +57,7 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "get_today_brief",
-                "description": "读取「今天」视图摘要、近期记录、待审核数量与录音豆伴侣状态。",
+                "description": "读取「今天」视图摘要、近期记录、待审核数量与录音豆状态。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -235,7 +235,7 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "device_status",
-                "description": "读取 D3200 录音豆在线状态、电量、固件、存储、目录文件、同步进度与伴侣待命状态。",
+                "description": "读取 D3200 录音豆在线状态、电量、固件、存储、目录文件与同步进度。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -245,7 +245,7 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "device_control",
-                "description": "控制录音豆开始/停止录音、下载指定文件、刷新状态、断开或释放蓝牙控制权，以及切换自动重连与伴侣模式。",
+                "description": "控制录音豆开始/停止录音、下载指定文件、刷新状态、断开或释放蓝牙控制权，以及切换自动重连。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -258,13 +258,11 @@ impl KoeRuntime {
                                 "disconnect",
                                 "release_ble",
                                 "set_auto_connect",
-                                "set_companion_mode",
                                 "refresh"
                             ]
                         },
                         "file_id": { "type": "integer", "minimum": 1 },
-                        "enabled": { "type": "boolean" },
-                        "mode": { "type": "string", "enum": ["disabled", "collar_standby", "meeting_and_collar"] }
+                        "enabled": { "type": "boolean" }
                     },
                     "required": ["action"],
                     "additionalProperties": false
@@ -273,7 +271,7 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "poll_updates",
-                "description": "轮询工作区代次、修订号、后台转写/纪要/问答任务进度以及设备与领夹麦待命变更。",
+                "description": "轮询工作区代次、修订号、后台转写/纪要/问答任务进度以及设备状态变更。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -388,9 +386,7 @@ impl KoeRuntime {
                         "deviceName": device["deviceName"],
                         "batteryPercent": device["batteryPercent"],
                         "boxBatteryPercent": device["boxBatteryPercent"],
-                        "autoConnect": device["autoConnect"],
-                        "companionMode": device["companionMode"],
-                        "standbyReady": device["standbyReady"]
+                        "autoConnect": device["autoConnect"]
                     }
                 }))))
             }
@@ -738,18 +734,10 @@ impl KoeRuntime {
             }
             "device_status" => {
                 ensure_allowed_keys(obj, &[])?;
-                let mut device = self.device_json();
-                if let Some(map) = device.as_object_mut() {
-                    map.insert(
-                        "hardwareRecordingState".to_string(),
-                        json!(self.current_companion_recording_state()),
-                    );
-                    map.insert("epoch".to_string(), json!(self.companion.epoch));
-                }
-                Ok(McpToolCallState::Completed(Ok(device)))
+                Ok(McpToolCallState::Completed(Ok(self.device_json())))
             }
             "device_control" => {
-                ensure_allowed_keys(obj, &["action", "file_id", "enabled", "mode"])?;
+                ensure_allowed_keys(obj, &["action", "file_id", "enabled"])?;
                 let action = required_str(obj, "action")?;
                 let command = match action {
                     "start_recording" => Command::DeviceStart,
@@ -768,13 +756,6 @@ impl KoeRuntime {
                     "set_auto_connect" => Command::SetBleAutoConnect {
                         enabled: required_bool(obj, "enabled")?,
                     },
-                    "set_companion_mode" => {
-                        let mode = required_str(obj, "mode")?.to_string();
-                        if CompanionRoutingMode::parse(&mode).is_none() {
-                            return Err(McpToolError::invalid_params("无效的领夹麦伴侣模式"));
-                        }
-                        Command::SetCompanionMode { mode }
-                    }
                     "refresh" => Command::DeviceRefresh,
                     _ => return Err(McpToolError::invalid_params("无效的 device_control action")),
                 };
@@ -830,9 +811,7 @@ impl KoeRuntime {
                         "phase": device["phase"],
                         "transferPhase": device["transferPhase"],
                         "batteryPercent": device["batteryPercent"],
-                        "autoConnect": device["autoConnect"],
-                        "companionMode": device["companionMode"],
-                        "standbyReady": device["standbyReady"]
+                        "autoConnect": device["autoConnect"]
                     }
                 }))))
             }

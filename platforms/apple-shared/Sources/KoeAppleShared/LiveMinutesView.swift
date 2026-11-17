@@ -202,7 +202,6 @@ public struct LiveMinutesView: View {
         case .resume: "继续"
         case .end: "结束会议"
         case .retryStop: "重试停止"
-        case .endDictation: "结束语音输入"
         case .retrySave: "重试保存"
         case .cancel: "取消录音"
         }

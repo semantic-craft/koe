@@ -383,7 +383,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             ("notes", "随心闪记"),
             ("all_day", "全天听记"),
             ("live_minutes", "实时纪要"),
-            ("voice_input", "语音输入"),
             ("ask", "问 AI"),
             ("records", "所有记录"),
             ("tasks", "行动"),

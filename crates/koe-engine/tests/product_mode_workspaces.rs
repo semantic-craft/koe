@@ -15,7 +15,6 @@ fn record_mode_and_quick_note_project_lifecycle_and_dual_stage_restore() {
         (RecordMode::QuickNote, "quick_note"),
         (RecordMode::AllDay, "all_day"),
         (RecordMode::Meeting, "meeting"),
-        (RecordMode::Dictation, "dictation"),
     ] {
         assert_eq!(mode.as_str(), wire);
         assert_eq!(RecordMode::parse(wire), Some(mode));
@@ -119,7 +118,7 @@ fn record_mode_and_quick_note_project_lifecycle_and_dual_stage_restore() {
     w.trash_record("note-trashed", 1_800_000_305_000).unwrap();
     assert!(!w.record("note-trashed").unwrap().is_quick_note_inbox());
     assert_eq!(
-        w.set_record_mode("note-trashed", RecordMode::Dictation),
+        w.set_record_mode("note-trashed", RecordMode::Meeting),
         Err(ProductError::RecordTrashed)
     );
     assert_eq!(

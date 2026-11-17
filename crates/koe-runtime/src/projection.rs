@@ -251,7 +251,7 @@ impl KoeRuntime {
             microphone.as_ref(),
             &capture_selection,
         );
-        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
+        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"lifecycle": self.lifecycle_json(),
             "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
             "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.selection.location.page,
             "canGoBack":!self.selection.back.is_empty(),"selectedRecordId":self.selection.location.record,"focusSegmentId":self.selection.location.segment,
@@ -353,9 +353,8 @@ impl KoeRuntime {
             .and_then(|fid| self.captures.active.get(&fid))
             .or_else(|| self.captures.active.values().next())
             .map(String::as_str);
-        let live_duration_ms = if !self.companion.standby_stream_owned
-            && (device.device_recording_active
-                || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime))
+        let live_duration_ms = if device.device_recording_active
+            || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
         {
             let opus_ms = ((device.opus_buffer.len() / OPUS_FRAME_BYTES) as u64) * 20;
             let pcm_ms = live_record_id

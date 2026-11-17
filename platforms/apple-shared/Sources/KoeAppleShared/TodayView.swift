@@ -150,7 +150,6 @@ private struct ModePickerCardView: View, Equatable {
         case "notes": "bolt.horizontal"
         case "all_day": "clock"
         case "live_minutes": "waveform.path.ecg"
-        case "voice_input": "character.cursor.ibeam"
         default: "waveform"
         }
     }

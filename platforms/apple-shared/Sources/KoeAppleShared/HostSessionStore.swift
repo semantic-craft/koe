@@ -39,7 +39,6 @@ public final class HostSessionStore {
     public private(set) var allDayWorkspace: AllDayWorkspaceSnapshot = .empty
     public private(set) var liveMinutesWorkspace: LiveMinutesWorkspaceSnapshot = .empty
     public private(set) var liveMinutesCoverage: MeetingCoverageSnapshot?
-    public private(set) var voiceInputWorkspace: VoiceInputWorkspaceSnapshot = .empty
     public private(set) var recordDetail: RecordDetailSlice = .empty
     public private(set) var records: [RecordSnapshot] = []
     public private(set) var tasks: [TaskSnapshot] = []
@@ -347,8 +346,6 @@ public final class HostSessionStore {
         let strippedLive = resolvedLive.withoutCoverage()
         if liveMinutesWorkspace != strippedLive { liveMinutesWorkspace = strippedLive }
         if liveMinutesCoverage != resolvedLive.coverage { liveMinutesCoverage = resolvedLive.coverage }
-        let nextVoiceInput = snapshot.workspaces?.voiceInput ?? .empty
-        if voiceInputWorkspace != nextVoiceInput { voiceInputWorkspace = nextVoiceInput }
         let nextDetail = RecordDetailSlice(snapshot: snapshot)
         if recordDetail != nextDetail { recordDetail = nextDetail }
         if records != snapshot.records { records = snapshot.records }

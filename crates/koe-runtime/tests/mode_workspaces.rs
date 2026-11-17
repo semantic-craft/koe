@@ -111,10 +111,9 @@ fn pure_navigation_across_all_mode_workspaces_has_zero_session_or_host_side_effe
     let initial: Value = serde_json::from_str(&rt.snapshot_json(NOW)).unwrap();
     let initial_auto_connect = initial["device"]["autoConnect"].clone();
 
-    for section in ["notes", "all_day", "live_minutes", "voice_input", "today"] {
+    for section in ["notes", "all_day", "live_minutes", "today"] {
         let snap = send_at(&mut rt, NOW, json!({ "type": "navigate", "section": section }));
         assert_eq!(snap["section"], section);
-        assert_eq!(snap["device"]["companionMode"], "disabled");
         assert_eq!(snap["device"]["autoConnect"], initial_auto_connect);
         assert!(snap["activeCapture"].is_null());
     }
@@ -147,7 +146,7 @@ fn mode_stamping_and_stay_on_page_across_capture_and_note_creation() {
     let picker_cards = meeting_started["workspaces"]["picker"]["cards"]
         .as_array()
         .unwrap();
-    assert_eq!(picker_cards.len(), 4);
+    assert_eq!(picker_cards.len(), 3);
     let meeting_card = picker_cards
         .iter()
         .find(|c| c["id"] == "live_minutes")
@@ -168,24 +167,6 @@ fn mode_stamping_and_stay_on_page_across_capture_and_note_creation() {
         .unwrap();
     assert_eq!(meeting_row["mode"], "meeting");
 
-    let dict_started = send_at(
-        &mut rt,
-        NOW + 10,
-        json!({ "type": "start_capture_mode", "mode": "dictation", "stayOnPage": true }),
-    );
-    let dict_id = dict_started["microphone"]["recordId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let saved_dict = finish_mic_capture(&mut rt, &dict_started, NOW + 10);
-    let dict_row = saved_dict["records"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["id"] == dict_id)
-        .unwrap();
-    assert_eq!(dict_row["mode"], "dictation");
-
     let jump_meeting = send_at(
         &mut rt,
         NOW + 20,
@@ -200,56 +181,6 @@ fn mode_stamping_and_stay_on_page_across_capture_and_note_creation() {
         json!({ "type": "select_record", "recordId": note_id }),
     );
     assert_eq!(final_snap["detail"]["mode"], "quick_note");
-}
-
-#[test]
-fn voice_input_session_decoupled_from_page_navigation() {
-    let (mut rt, _sb) = runtime();
-
-    let snap = send_at(
-        &mut rt,
-        NOW,
-        json!({ "type": "set_voice_input_session", "enabled": true }),
-    );
-    assert_eq!(snap["section"], "today");
-    assert_eq!(snap["device"]["companionMode"], "collar_standby");
-    assert_eq!(snap["device"]["autoConnect"], true);
-    assert_eq!(snap["workspaces"]["voiceInput"]["sessionEnabled"], true);
-
-    let voice_card = snap["workspaces"]["picker"]["cards"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["id"] == "voice_input")
-        .unwrap();
-    assert_eq!(voice_card["isSessionActive"], true);
-
-    let steps = snap["workspaces"]["voiceInput"]["steps"].as_array().unwrap();
-    assert_eq!(steps.len(), 6);
-    assert_eq!(steps[2]["id"], "companion_bridge");
-    assert_eq!(steps[2]["statusLabel"], "等待订阅");
-    assert_eq!(steps[3]["id"], "shortcut_guide");
-    assert_eq!(steps[3]["statusLabel"], "双击或命令");
-    assert!(
-        steps[3]["detail"].as_str().unwrap().contains("双击录音豆正面")
-            && steps[3]["detail"].as_str().unwrap().contains("听写控制命令")
-    );
-    assert_eq!(steps[4]["statusLabel"], "待配置");
-    assert_eq!(steps[5]["statusLabel"], "待测试");
-
-    let raw_json = rt.snapshot_json(NOW);
-    assert!(
-        !raw_json.contains('·'),
-        "snapshot JSON must not contain middle-dot characters"
-    );
-
-    let disabled = send_at(
-        &mut rt,
-        NOW + 2,
-        json!({ "type": "set_voice_input_session", "enabled": false }),
-    );
-    assert_eq!(disabled["device"]["companionMode"], "disabled");
-    assert_eq!(disabled["workspaces"]["voiceInput"]["sessionEnabled"], false);
 }
 
 #[test]
@@ -697,128 +628,6 @@ fn export_workspace_markdown_supports_record_and_all_day_while_preserving_legacy
 }
 
 #[test]
-fn voice_input_reopen_disarms_session_and_retains_dictation_across_companion_drain() {
-    let sb = new_sandbox();
-    {
-        let mut rt = KoeRuntime::open(&sb.0).unwrap();
-        let armed = send_at(
-            &mut rt,
-            NOW,
-            json!({ "type": "set_voice_input_session", "enabled": true }),
-        );
-        assert_eq!(armed["workspaces"]["voiceInput"]["sessionEnabled"], true);
-    }
-
-    let mut reopened = KoeRuntime::open(&sb.0).unwrap();
-    let reopened_snap: Value = serde_json::from_str(&reopened.snapshot_json(NOW + 5)).unwrap();
-    assert_eq!(
-        reopened_snap["workspaces"]["voiceInput"]["sessionEnabled"], false,
-        "reopened runtime must not project disarmed CollarStandby as active"
-    );
-    let voice_card = reopened_snap["workspaces"]["picker"]["cards"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["id"] == "voice_input")
-        .unwrap();
-    assert_eq!(voice_card["isSessionActive"], false);
-
-    send_at(
-        &mut reopened,
-        NOW + 6,
-        json!({ "type": "configure_speech", "engine": "apple_speech" }),
-    );
-    send_at(
-        &mut reopened,
-        NOW + 6,
-        json!({ "type": "local_asr_readiness", "state": "ready", "message": "本机识别已就绪" }),
-    );
-    let dict_started = send_at(
-        &mut reopened,
-        NOW + 7,
-        json!({ "type": "start_capture_mode", "mode": "dictation", "stayOnPage": true }),
-    );
-    let rec_id = dict_started["microphone"]["recordId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let session_id = dict_started["microphone"]["sessionId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    send_at(
-        &mut reopened,
-        NOW + 7,
-        json!({
-            "type": "microphone_prepared",
-            "recordId": rec_id,
-            "sessionId": session_id,
-            "epoch": 0,
-            "clockNs": 1_000_000_000_u64
-        }),
-    );
-    send_at(
-        &mut reopened,
-        NOW + 7,
-        json!({
-            "type": "microphone_started",
-            "recordId": rec_id,
-            "sessionId": session_id,
-            "lane": "microphone",
-            "sampleRate": 16000
-        }),
-    );
-    for seq in 0..20_u64 {
-        send_at(
-            &mut reopened,
-            NOW + 7,
-            json!({
-                "type": "microphone_chunk",
-                "recordId": rec_id,
-                "sessionId": session_id,
-                "lane": "microphone",
-                "sequence": seq,
-                "samples": vec![240_i16; 1600],
-                "timing": {
-                    "epoch": 0,
-                    "capturedStartNs": 1_000_000_000_u64 + seq * 100_000_000_u64
-                }
-            }),
-        );
-    }
-    let asr_ops: Value = serde_json::from_str(&reopened.drain_local_asr_json()).unwrap();
-    let op_id = asr_ops[0]["operationId"].as_u64().unwrap();
-    send_at(
-        &mut reopened,
-        NOW + 8,
-        json!({
-            "type": "local_asr_result",
-            "operationId": op_id,
-            "text": "伴侣听写漏极保留文本",
-            "startMs": 0,
-            "endMs": 1200,
-            "isFinal": true
-        }),
-    );
-
-    let drained = reopened.drain_companion_events();
-    assert!(!drained.is_empty(), "expected TranscriptFinal in companion stream");
-
-    let post_drain: Value = serde_json::from_str(&reopened.snapshot_json(NOW + 9)).unwrap();
-    assert_eq!(
-        post_drain["workspaces"]["voiceInput"]["lastDictationText"],
-        "伴侣听写漏极保留文本",
-        "drain_companion_events must not wipe lastDictationText before snapshot_json"
-    );
-    assert!(
-        post_drain["workspaces"]["voiceInput"]["companionEpoch"]
-            .as_str()
-            .is_some_and(|e| !e.is_empty()),
-        "voiceInput must project companionEpoch"
-    );
-}
-
-#[test]
 fn create_note_stay_on_page_session_exclusivity_can_start_and_archived_quick_note_filtering() {
     let (mut rt, _sb) = runtime();
 
@@ -862,21 +671,10 @@ fn create_note_stay_on_page_session_exclusivity_can_start_and_archived_quick_not
     );
     assert_eq!(archived["workspaces"]["quickNote"]["cards"], json!([]));
 
-    let armed = send_at(
-        &mut rt,
-        NOW + 3,
-        json!({ "type": "set_voice_input_session", "enabled": true }),
-    );
-    assert_eq!(armed["workspaces"]["voiceInput"]["sessionEnabled"], true);
-
     let started = send_at(
         &mut rt,
         NOW + 4,
         json!({ "type": "start_capture_mode", "mode": "quick_note", "stayOnPage": true }),
-    );
-    assert_eq!(
-        started["workspaces"]["voiceInput"]["sessionEnabled"], false,
-        "starting QuickNote capture must auto-disarm CollarStandby"
     );
     let active_cards: Vec<&Value> = started["workspaces"]["picker"]["cards"]
         .as_array()

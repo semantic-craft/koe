@@ -61,10 +61,6 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
         runtime,
         json!({"type":"microphone_started","recordId":capture["recordId"],"sessionId":capture["sessionId"],"lane":"microphone","sampleRate":16000}),
     )?;
-    dispatch(
-        runtime,
-        json!({"type":"set_dictation_active","active":true}),
-    )?;
     let count = |r: &KoeRuntime| {
         r.workspace()
             .records()
@@ -74,7 +70,6 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
     };
     let mut offset = 0;
     let mut sequence = 0;
-    let mut events = Vec::new();
     for window in 0..21 {
         let previous = count(runtime);
         let length = if window == 20 { 3 * 16000 } else { 15 * 16000 };
@@ -93,16 +88,9 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
             remaining -= n;
             runtime.poll_timers(25, now());
         }
-        if window == 0 {
-            dispatch(
-                runtime,
-                json!({"type":"set_dictation_active","active":false}),
-            )?;
-        }
         if window < 20 {
             wait(runtime, 120, |r| Ok(count(r) > previous))?;
         }
-        events.extend(runtime.drain_companion_events());
     }
     dispatch(runtime, json!({"type":"stop_all_day"}))?;
     dispatch(
@@ -112,24 +100,6 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
     wait(runtime, 120, |r| {
         Ok(r.snapshot(now())["allDay"]["state"] == "idle")
     })?;
-    events.extend(runtime.drain_companion_events());
-    let events: Vec<Value> = events
-        .into_iter()
-        .map(|e| serde_json::to_value(e).unwrap())
-        .filter(|e| e["event"] == "transcript_final")
-        .collect();
-    if events.is_empty()
-        || events.iter().any(|e| {
-            e["dictation"] != true
-                || e["recordId"] != capture["recordId"]
-                || e["startMs"].as_u64().is_none()
-                || e["endMs"].as_u64().unwrap_or(u64::MAX) > 15_000
-        })
-    {
-        return Err(format!(
-            "dictation escaped its selected first 15 seconds: {events:?}"
-        ));
-    }
     let ids: Vec<_> = runtime.workspace().records().keys().cloned().collect();
     let mut records = Vec::new();
     for id in ids {
@@ -145,25 +115,7 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
             "303 seconds did not produce two transcribed records: {records:?}"
         ));
     }
-    for event in &events {
-        let saved = records
-            .iter()
-            .find(|r| r["recordId"] == event["recordId"])
-            .and_then(|r| r["segments"].as_array())
-            .and_then(|segments| {
-                segments
-                    .iter()
-                    .find(|segment| segment["id"] == event["segmentId"])
-            })
-            .ok_or("dictation event lacks a persisted source segment")?;
-        if saved["text"] != event["text"]
-            || saved["startMs"] != event["startMs"]
-            || saved["endMs"] != event["endMs"]
-        {
-            return Err("dictation event does not match its persisted source".into());
-        }
-    }
-    Ok(json!({"records":records,"dictationEvents":events,"fixtureDurationSeconds":303}))
+    Ok(json!({"records":records,"fixtureDurationSeconds":303}))
 }
 
 fn run() -> Result<(), String> {

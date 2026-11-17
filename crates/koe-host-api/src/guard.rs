@@ -44,7 +44,6 @@ pub(crate) unsafe fn read_string(pointer: *const c_char) -> Option<String> {
 
 pub(crate) struct SessionEntry {
     pub(crate) runtime: KoeRuntime,
-    pub(crate) subscribers: local_bridge::SubscriberHub,
 }
 
 #[derive(Default)]
@@ -63,37 +62,24 @@ pub(crate) fn lock_sessions() -> MutexGuard<'static, Sessions> {
     sessions().lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-pub(crate) fn with_session_broadcast<R>(
+pub(crate) fn with_session<R>(
     handle: u64,
     op: impl FnOnce(&mut KoeRuntime) -> R,
 ) -> Option<R> {
-    let (result, hub, events) = {
-        let mut table = lock_sessions();
-        let entry = table.entries.get_mut(&handle)?;
-        let result = op(&mut entry.runtime);
-        let events = entry.runtime.drain_companion_events();
-        (result, entry.subscribers.clone(), events)
-    };
-    hub.broadcast(&events);
-    Some(result)
+    let mut table = lock_sessions();
+    let entry = table.entries.get_mut(&handle)?;
+    Some(op(&mut entry.runtime))
 }
 
 pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
-    let subscribers = local_bridge::SubscriberHub::default();
     let handle = {
         let mut table = lock_sessions();
         table.next = table.next.saturating_add(1);
         let id = table.next;
-        table.entries.insert(
-            id,
-            SessionEntry {
-                runtime,
-                subscribers: subscribers.clone(),
-            },
-        );
+        table.entries.insert(id, SessionEntry { runtime });
         id
     };
-    if let Some(bridge) = local_bridge::BridgeServer::start(handle, workspace, subscribers) {
+    if let Some(bridge) = local_bridge::BridgeServer::start(handle, workspace) {
         let mut orphan_bridge = Some(bridge);
         let mut table = lock_sessions();
         if table.entries.contains_key(&handle) {

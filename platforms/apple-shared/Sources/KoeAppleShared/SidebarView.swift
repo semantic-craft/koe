@@ -24,7 +24,6 @@ public struct SidebarView: View {
             modeRow("notes", title: "随心闪记", icon: "bolt.horizontal", sidebar: sidebar)
             modeRow("all_day", title: "全天听记", icon: "clock", sidebar: sidebar)
             modeRow("live_minutes", title: "实时纪要", icon: "waveform.path.ecg", sidebar: sidebar)
-            modeRow("voice_input", title: "语音输入", icon: "character.cursor.ibeam", sidebar: sidebar)
 
             navigationRow("ask", title: "问 AI", icon: "bubble.left.and.text.bubble.right", section: sidebar.section)
                 .padding(.top, 4)

@@ -48,7 +48,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case selectPlaybackLane(lane: String)
     case seek(positionMs: UInt64)
 
-    case setVoiceInputSession(enabled: Bool)
     case startCaptureMode(mode: CaptureMode, stayOnPage: Bool = false)
     case captureAction(action: CaptureAction, clockNs: UInt64? = nil)
     case selectCaptureSource(source: String)
@@ -60,7 +59,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case deviceRefresh
     case deviceRelease
     case deviceDownload(fileId: UInt32)
-    case setCompanionMode(mode: String)
     case setBleAutoConnect(enabled: Bool)
 
     case configureSpeech(engine: String, modelId: String? = nil)
@@ -123,7 +121,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .playback: "playback"
         case .selectPlaybackLane: "select_playback_lane"
         case .seek: "seek"
-        case .setVoiceInputSession: "set_voice_input_session"
         case .startCaptureMode: "start_capture_mode"
         case .captureAction: "capture_action"
         case .selectCaptureSource: "select_capture_source"
@@ -134,7 +131,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .deviceRefresh: "device_refresh"
         case .deviceRelease: "device_release"
         case .deviceDownload: "device_download"
-        case .setCompanionMode: "set_companion_mode"
         case .setBleAutoConnect: "set_ble_auto_connect"
         case .configureSpeech: "configure_speech"
         case .prepareSpeechModel: "prepare_speech_model"
@@ -233,8 +229,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
             try c.encode(lane, forKey: .lane)
         case let .seek(positionMs):
             try c.encode(positionMs, forKey: .positionMs)
-        case let .setVoiceInputSession(enabled):
-            try c.encode(enabled, forKey: .enabled)
         case let .startCaptureMode(mode, stayOnPage):
             try c.encode(mode, forKey: .mode)
             try c.encode(stayOnPage, forKey: .stayOnPage)
@@ -248,8 +242,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
             try c.encode(enabled, forKey: .enabled)
         case let .deviceDownload(fileId):
             try c.encode(fileId, forKey: .fileId)
-        case let .setCompanionMode(mode):
-            try c.encode(mode, forKey: .mode)
         case let .configureSpeech(engine, modelId):
             try c.encode(engine, forKey: .engine)
             try c.encodeIfPresent(modelId, forKey: .modelId)

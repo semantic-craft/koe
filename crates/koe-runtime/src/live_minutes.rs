@@ -1,5 +1,5 @@
 use super::*;
-use crate::{microphone::Phase, speech::DictationSource};
+use crate::{microphone::Phase, speech::CaptureOrigin};
 use koe_engine::domain::UtteranceSegment;
 use serde::Serialize;
 
@@ -253,8 +253,8 @@ impl KoeRuntime {
 
     pub(super) fn capture_speech(&self, record: &ProductRecord) -> Option<&speech::SpeechSession> {
         let source = match record.origin {
-            RecordOrigin::Microphone => DictationSource::Microphone,
-            RecordOrigin::Bean => DictationSource::Bean,
+            RecordOrigin::Microphone => CaptureOrigin::Microphone,
+            RecordOrigin::Bean => CaptureOrigin::Bean,
             _ => return None,
         };
         self.captures
@@ -372,7 +372,7 @@ impl KoeRuntime {
             if session.terminal
                 || !matches!(
                     session.capture_source(),
-                    Some(DictationSource::Microphone | DictationSource::Bean)
+                    Some(CaptureOrigin::Microphone | CaptureOrigin::Bean)
                 )
             {
                 return None;

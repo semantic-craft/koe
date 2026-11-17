@@ -22,9 +22,6 @@ struct Options {
     record: Option<String>,
     limit: usize,
     safe: bool,
-    no_auto_gate: bool,
-    max_events: Option<usize>,
-    timeout_ms: Option<u64>,
 }
 
 impl Options {
@@ -37,9 +34,6 @@ impl Options {
             record: None,
             limit: 10,
             safe: false,
-            no_auto_gate: false,
-            max_events: None,
-            timeout_ms: None,
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -56,23 +50,6 @@ impl Options {
                     if !(1..=100).contains(&options.limit) {
                         return Err("结果数量必须在 1 到 100 之间".into());
                     }
-                }
-                "--no-auto-gate" => options.no_auto_gate = true,
-                "--max-events" => {
-                    options.max_events = Some(
-                        args.next()
-                            .ok_or("缺少 --max-events 参数值")?
-                            .parse()
-                            .map_err(|_| "--max-events 必须是非负整数")?,
-                    );
-                }
-                "--timeout-ms" => {
-                    options.timeout_ms = Some(
-                        args.next()
-                            .ok_or("缺少 --timeout-ms 参数值")?
-                            .parse()
-                            .map_err(|_| "--timeout-ms 必须是非负整数")?,
-                    );
                 }
                 "--safe" => options.safe = true,
                 "-h" | "--help" => options.command = "help".into(),
@@ -165,16 +142,6 @@ fn run() -> Result<(), String> {
         "benchmark" => {
             protocol::run_benchmark(!options.safe);
             return Ok(());
-        }
-        "companion-listen" => {
-            let workspace_path = options.path()?;
-            let client = BridgeClient::try_connect(&workspace_path)?
-                .ok_or_else(|| "未检测到运行中的 Koe 会话，请先启动 Koe.app".to_string())?;
-            return client.listen_companion(
-                !options.no_auto_gate,
-                options.max_events,
-                options.timeout_ms,
-            );
         }
         "status" | "doctor" | "search" | "ask" | "edit-segment" | "set-speaker"
         | "rename-speaker" | "mcp-stdio" => {}
@@ -363,5 +330,5 @@ fn run_rename_speaker(
 }
 
 fn help() {
-    println!("Koe {}\n\n用法：koe <命令> [参数]\n\n命令：\n  status                  查看与原生应用同源的工作区快照\n  doctor                  查看工作区、设备与模型状态\n  search <内容>           搜索真实记录及来源\n  ask <问题>              查询记录；未配置模型时返回本地来源\n  edit-segment <片段> <词> 修改指定记录的单段原文（需配合 --record）\n  set-speaker <片段> [人]  设置或清空指定片段说话人（需配合 --record）\n  rename-speaker <原> <新> 批量重命名或合并说话人（需配合 --record）\n  mcp-stdio               提供全部 16 个工作区与设备 MCP 工具\n  companion-listen        订阅运行中 Koe.app 的听写文字、按键与 PCM16 事件流\n  verify-protocol         在内存中验证协议与编解码\n  benchmark [--safe]      运行协议和音频封装基准\n  version                 查看版本\n\n参数：\n  --workspace <目录>      工作区（--export-dir 为兼容别名）\n  --record <ID>           限定 search/ask 或指定要编辑的记录\n  --limit <1..100>        搜索结果数量\n  --no-auto-gate          companion-listen 时禁用双击自动启停门控\n  --max-events <N>        companion-listen 收到 N 条事件后退出\n  --timeout-ms <MS>       companion-listen 超时毫秒数\n\n默认工作区：~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace\nKoe.app 运行时自动经本地桥访问活体会话；未运行时直接打开本地工作区。", env!("CARGO_PKG_VERSION"));
+    println!("Koe {}\n\n用法：koe <命令> [参数]\n\n命令：\n  status                  查看与原生应用同源的工作区快照\n  doctor                  查看工作区、设备与模型状态\n  search <内容>           搜索真实记录及来源\n  ask <问题>              查询记录；未配置模型时返回本地来源\n  edit-segment <片段> <词> 修改指定记录的单段原文（需配合 --record）\n  set-speaker <片段> [人]  设置或清空指定片段说话人（需配合 --record）\n  rename-speaker <原> <新> 批量重命名或合并说话人（需配合 --record）\n  mcp-stdio               提供全部 16 个工作区与设备 MCP 工具\n  verify-protocol         在内存中验证协议与编解码\n  benchmark [--safe]      运行协议和音频封装基准\n  version                 查看版本\n\n参数：\n  --workspace <目录>      工作区（--export-dir 为兼容别名）\n  --record <ID>           限定 search/ask 或指定要编辑的记录\n  --limit <1..100>        搜索结果数量\n\n默认工作区：~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace\nKoe.app 运行时自动经本地桥访问活体会话；未运行时直接打开本地工作区。", env!("CARGO_PKG_VERSION"));
 }

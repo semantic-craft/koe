@@ -48,18 +48,16 @@ impl ProductWorkspace {
         let id = nonempty(&id)?;
         let title = nonempty(&title)?;
         if self.records.contains_key(&id) {
-            if origin == RecordOrigin::Bean && file_id > 0 {
-                let removed_purged = self.purged_bean_file_ids.remove(&file_id);
-                let removed_reclaimed = self.reclaimed_standby_file_ids.remove(&file_id);
-                if removed_purged || removed_reclaimed {
-                    self.changed();
-                }
+            if origin == RecordOrigin::Bean
+                && file_id > 0
+                && self.purged_bean_file_ids.remove(&file_id)
+            {
+                self.changed();
             }
             return Ok(());
         }
         if origin == RecordOrigin::Bean && file_id > 0 {
             self.purged_bean_file_ids.remove(&file_id);
-            self.reclaimed_standby_file_ids.remove(&file_id);
         }
         let aggregate = RecordingAggregate::new(id.clone(), file_id, created_at, duration_ms);
         self.records.insert(

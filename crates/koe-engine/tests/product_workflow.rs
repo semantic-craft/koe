@@ -224,37 +224,22 @@ fn summary_candidates_keep_due_dates_and_do_not_overwrite_user_edits() {
 }
 
 #[test]
-fn companion_preferences_scratch_ledger_and_transcript_editing_preserve_invariants() {
+fn ble_auto_connect_purged_tombstone_and_transcript_editing_preserve_invariants() {
     let mut w = workspace();
     assert!(w.ble_auto_connect());
-    assert_eq!(w.companion_mode(), CompanionRoutingMode::Disabled);
-    assert_eq!(
-        CompanionRoutingMode::parse("collar_standby"),
-        Some(CompanionRoutingMode::CollarStandby)
-    );
-    assert_eq!(
-        CompanionRoutingMode::parse("meeting_and_collar"),
-        Some(CompanionRoutingMode::MeetingAndCollar)
-    );
-    assert_eq!(CompanionRoutingMode::parse("unknown"), None);
 
     w.set_ble_auto_connect(false);
-    w.set_companion_mode(CompanionRoutingMode::CollarStandby);
-    w.record_standby_scratch_file_id(0);
-    assert!(w.standby_scratch_file_ids().is_empty());
-    w.record_standby_scratch_file_id(501);
-    assert!(w.is_standby_scratch_file(501));
+    w.record_purged_bean_file_id(0);
+    assert!(w.purged_bean_file_ids().is_empty());
+    w.record_purged_bean_file_id(501);
+    assert!(w.is_bean_file_purged(501));
 
     let mut bad_state = w.export_state();
-    bad_state.standby_scratch_file_ids.insert(0);
+    bad_state.purged_bean_file_ids.insert(0);
     assert_eq!(
         ProductWorkspace::restore(bad_state),
         Err(ProductError::InvalidEvidence)
     );
-
-    w.record_purged_bean_file_id(501);
-    assert!(!w.is_standby_scratch_file(501));
-    assert!(w.is_bean_file_purged(501));
 
     w.append_transcript("a", "alpha draft", 0, 1_000, "manual")
         .unwrap();
@@ -301,7 +286,6 @@ fn companion_preferences_scratch_ledger_and_transcript_editing_preserve_invarian
 
     let restored = ProductWorkspace::restore(w.export_state()).unwrap();
     assert!(!restored.ble_auto_connect());
-    assert_eq!(restored.companion_mode(), CompanionRoutingMode::CollarStandby);
     assert!(restored.is_bean_file_purged(501));
 }
 
