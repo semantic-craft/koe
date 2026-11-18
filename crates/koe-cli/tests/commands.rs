@@ -859,3 +859,153 @@ fn mcp_stdio_online_reconnects_automatically_after_host_session_restart() {
     let status = mcp_proc.wait().unwrap();
     assert!(status.success());
 }
+
+#[test]
+fn cli_version_flags_run_without_workspace_and_doctor_exposes_version_build_and_update_state() {
+    use koe_engine::{KOE_APP_BUILD, KOE_APP_VERSION, KOE_GITHUB_RELEASES_URL};
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    for flag in ["version", "--version", "-V"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_koe"))
+            .arg(flag)
+            .env_remove("HOME")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "flag {flag} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let parsed: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(parsed["name"], "koe", "flag {flag}");
+        assert_eq!(parsed["version"], KOE_APP_VERSION, "flag {flag}");
+        assert_eq!(parsed["build"], KOE_APP_BUILD, "flag {flag}");
+    }
+
+    let untouched = Workspace::new();
+    let version_with_workspace = cli(&untouched.0, &["version"]);
+    assert!(version_with_workspace.status.success());
+    assert!(
+        !untouched.0.exists(),
+        "koe version must not create workspace directories"
+    );
+
+    let workspace = Workspace::new();
+    let offline_doctor = cli(&workspace.0, &["doctor"]);
+    assert!(
+        offline_doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&offline_doctor.stderr)
+    );
+    let offline_json: Value = serde_json::from_slice(&offline_doctor.stdout).unwrap();
+    assert_eq!(offline_json["workspaceReadable"], true);
+    assert_eq!(offline_json["version"], KOE_APP_VERSION);
+    assert_eq!(offline_json["build"], KOE_APP_BUILD);
+    assert_eq!(offline_json["appUpdate"]["currentVersion"], KOE_APP_VERSION);
+    assert_eq!(offline_json["appUpdate"]["currentBuild"], KOE_APP_BUILD);
+    assert_eq!(offline_json["appUpdate"]["phase"], "idle");
+    assert_eq!(
+        offline_json["appUpdate"]["releaseUrl"],
+        KOE_GITHUB_RELEASES_URL
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!(
+        "http://{}/repos/semantic-craft/koe/releases/latest",
+        listener.local_addr().unwrap()
+    );
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((s, _)) => break s,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "update request accept timeout");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("accept failed: {err}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut req_bytes = Vec::new();
+        let mut buf = [0u8; 2048];
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF before HTTP headers");
+            req_bytes.extend_from_slice(&buf[..n]);
+            if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let body = json!({
+            "tag_name": "v2.11.0",
+            "name": "Koe 2.11.0 (21)",
+            "draft": false,
+            "prerelease": false,
+            "html_url": "https://github.com/semantic-craft/koe/releases/tag/v2.11.0",
+            "body": "CLI doctor live bridge check",
+            "assets": []
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let now_sec = 1_815_000_000u64;
+    let host = HostSessionGuard::open(&workspace.0).expect("host session must open");
+    let _ = host
+        .dispatch_json(
+            &json!({
+                "type": "sync_app_metadata",
+                "version": "2.10.0",
+                "build": "20",
+                "updateEndpoint": endpoint,
+            })
+            .to_string(),
+            now_sec,
+        )
+        .unwrap();
+    let _ = host
+        .dispatch_json(r#"{"type":"check_app_update"}"#, now_sec + 1)
+        .unwrap();
+
+    let poll_deadline = Instant::now() + Duration::from_secs(5);
+    let online_json = loop {
+        let _ = host.poll_timers(50, now_sec + 2);
+        let out = cli(&workspace.0, &["doctor"]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        if doc["appUpdate"]["phase"] != "checking" {
+            break doc;
+        }
+        assert!(
+            Instant::now() < poll_deadline,
+            "online doctor stayed checking"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    server.join().unwrap();
+
+    assert_eq!(online_json["workspaceReadable"], true);
+    assert_eq!(online_json["version"], "2.10.0");
+    assert_eq!(online_json["build"], "20");
+    assert_eq!(online_json["appUpdate"]["currentVersion"], "2.10.0");
+    assert_eq!(online_json["appUpdate"]["currentBuild"], "20");
+    assert_eq!(online_json["appUpdate"]["phase"], "available");
+    assert_eq!(online_json["appUpdate"]["latestVersion"], "2.11.0");
+}

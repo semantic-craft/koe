@@ -59,6 +59,16 @@ struct HostCommandTests {
         #expect(try encodeObject(.stopMicrophone)["type"] as? String == "stop_microphone")
         #expect(try encodeObject(.cancelMicrophone)["type"] as? String == "cancel_microphone")
         #expect(try encodeObject(.retryMicrophoneSave)["type"] as? String == "retry_microphone_save")
+        #expect(try encodeObject(.checkAppUpdate)["type"] as? String == "check_app_update")
+
+        let syncMetaData = try JSONEncoder().encode(
+            HostAdapterEvent.syncAppMetadata(version: "2.3.0", build: "12", updateEndpoint: "http://127.0.0.1:8080/latest")
+        )
+        let syncMetaObj = try #require(JSONSerialization.jsonObject(with: syncMetaData) as? [String: Any])
+        #expect(syncMetaObj["type"] as? String == "sync_app_metadata")
+        #expect(syncMetaObj["version"] as? String == "2.3.0")
+        #expect(syncMetaObj["build"] as? String == "12")
+        #expect(syncMetaObj["updateEndpoint"] as? String == "http://127.0.0.1:8080/latest")
 
         #expect(HostSection.menuSections.map(\.rawValue) == [
             "today", "notes", "all_day", "live_minutes", "ask", "records", "tasks", "settings"
@@ -118,6 +128,12 @@ struct HostCommandTests {
         if let mic = store.snapshot.microphone {
             store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: mic.nextSequence, epoch: mic.epoch))
         }
+        #expect(store.sidebar.appVersion == AppUpdateSnapshot.defaultVersion)
+        #expect(store.sidebar.appBuild == AppUpdateSnapshot.defaultBuild)
+        #expect(!store.sidebar.hasAvailableUpdate)
+        #expect(store.settings.appUpdate.phase == "idle")
+        _ = AppUpdateSettingsCard(store: store).body
+        _ = SidebarView(store: store).body
         #expect(store.nativeError == nil)
         #expect(store.snapshot.error == nil)
     }

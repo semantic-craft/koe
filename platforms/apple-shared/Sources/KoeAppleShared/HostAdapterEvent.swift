@@ -5,15 +5,18 @@ public struct HostBridgeActions {
     public var requestBleScan: () -> Void
     public var flushBleOutbound: () -> Void
     public var resumeMicrophone: () -> Void
+    public var openExternalURL: (URL) -> Void
 
     public init(
         requestBleScan: @escaping () -> Void = {},
         flushBleOutbound: @escaping () -> Void = {},
-        resumeMicrophone: @escaping () -> Void = {}
+        resumeMicrophone: @escaping () -> Void = {},
+        openExternalURL: @escaping (URL) -> Void = { _ in }
     ) {
         self.requestBleScan = requestBleScan
         self.flushBleOutbound = flushBleOutbound
         self.resumeMicrophone = resumeMicrophone
+        self.openExternalURL = openExternalURL
     }
 }
 
@@ -33,6 +36,7 @@ public struct HostAudioInputDescriptor: Encodable, Equatable, Sendable {
 
 public enum HostAdapterEvent: Encodable, Equatable, Sendable {
     case syncAudioInputs(inputs: [HostAudioInputDescriptor])
+    case syncAppMetadata(version: String, build: String, updateEndpoint: String? = nil)
     case microphonePrepared(recordId: String, sessionId: String, epoch: UInt64, clockNs: UInt64)
     case resumeMicrophone(clockNs: UInt64)
     case microphoneStarted(recordId: String, sessionId: String, lane: String, sampleRate: UInt32)
@@ -49,7 +53,8 @@ public enum HostAdapterEvent: Encodable, Equatable, Sendable {
     case cancelQuit
 
     private enum CodingKeys: String, CodingKey {
-        case type, inputs, recordId, sessionId, epoch, clockNs, lane, sampleRate, sequence
+        case type, inputs, version, build, updateEndpoint
+        case recordId, sessionId, epoch, clockNs, lane, sampleRate, sequence
         case message, state, operationId, text, startMs, endMs, isFinal
         case event, connectionId, deviceName
     }
@@ -57,6 +62,7 @@ public enum HostAdapterEvent: Encodable, Equatable, Sendable {
     public var eventType: String {
         switch self {
         case .syncAudioInputs: "sync_audio_inputs"
+        case .syncAppMetadata: "sync_app_metadata"
         case .microphonePrepared: "microphone_prepared"
         case .resumeMicrophone: "resume_microphone"
         case .microphoneStarted: "microphone_started"
@@ -80,6 +86,10 @@ public enum HostAdapterEvent: Encodable, Equatable, Sendable {
         switch self {
         case let .syncAudioInputs(inputs):
             try c.encode(inputs, forKey: .inputs)
+        case let .syncAppMetadata(version, build, updateEndpoint):
+            try c.encode(version, forKey: .version)
+            try c.encode(build, forKey: .build)
+            try c.encodeIfPresent(updateEndpoint, forKey: .updateEndpoint)
         case let .microphonePrepared(recordId, sessionId, epoch, clockNs):
             try c.encode(recordId, forKey: .recordId)
             try c.encode(sessionId, forKey: .sessionId)

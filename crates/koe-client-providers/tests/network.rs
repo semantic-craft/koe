@@ -652,3 +652,407 @@ fn provider_pool_isolates_lanes_and_cancels_stale_summary_without_blocking() {
     ask_server.join().unwrap();
     summary_server.join().unwrap();
 }
+
+#[test]
+fn update_lane_validates_endpoints_redirects_payloads_and_sanitizes_untrusted_urls() {
+    use koe_client_providers::{
+        parse_release_payload, validate_update_endpoint, UpdateCheckOutcome,
+    };
+    use koe_engine::KOE_GITHUB_RELEASES_URL;
+    use std::io::Write;
+
+    assert_eq!(
+        validate_update_endpoint("https://api.github.com/repos/semantic-craft/koe/releases/latest"),
+        Ok(false)
+    );
+    assert_eq!(
+        validate_update_endpoint("https://api.github.com/repositories/987654321/releases/latest"),
+        Ok(false)
+    );
+    assert_eq!(
+        validate_update_endpoint("http://127.0.0.1:8080/releases/latest"),
+        Ok(true)
+    );
+    for rejected in [
+        "http://api.github.com/repos/semantic-craft/koe/releases/latest",
+        "https://api.github.com:8443/repos/semantic-craft/koe/releases/latest",
+        "https://api.github.com/repos/other-org/koe/releases/latest",
+        "https://api.github.com/repos/semantic-craft/koe/releases/../../../other-org/koe/releases/latest",
+        "https://api.github.com/repos/semantic-craft/koe/releases/%2e%2e/other/releases/latest",
+        "https://github.com/semantic-craft/koe/releases/latest",
+        "https://evil.example.com/repos/semantic-craft/koe/releases/latest",
+        "https://user:pass@api.github.com/repos/semantic-craft/koe/releases/latest",
+        "https://api.github.com/repos/semantic-craft/koe/releases/latest#frag",
+        "ftp://127.0.0.1/releases/latest",
+    ] {
+        assert!(
+            validate_update_endpoint(rejected).is_err(),
+            "accepted unsafe update endpoint: {rejected}"
+        );
+    }
+
+    // Untrusted html_url and browser_download_url are stripped or replaced with canonical GitHub URL.
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
+    let untrusted_json = serde_json::json!({
+        "tag_name": "v2.4.0",
+        "name": "Koe 2.4.0 (13)",
+        "draft": false,
+        "prerelease": false,
+        "html_url": "javascript:alert(1)",
+        "body": "Release notes",
+        "assets": [
+            {
+                "name": format!("Koe-2.4.0-macos-{arch}.zip"),
+                "size": 1024,
+                "browser_download_url": "https://evil.example.com/Koe.zip"
+            }
+        ]
+    });
+    match parse_release_payload(untrusted_json.to_string().as_bytes(), false).unwrap() {
+        UpdateCheckOutcome::Release(rel) => {
+            assert_eq!(rel.version.to_string(), "2.4.0");
+            assert_eq!(rel.release_url, KOE_GITHUB_RELEASES_URL);
+            assert!(
+                rel.asset.is_none(),
+                "untrusted download domain must be dropped"
+            );
+        }
+        other => panic!("expected Release, got {other:?}"),
+    }
+
+    // Draft and prerelease payloads resolve to Unavailable.
+    let prerelease_json = serde_json::json!({
+        "tag_name": "v2.5.0",
+        "prerelease": true
+    });
+    assert!(matches!(
+        parse_release_payload(prerelease_json.to_string().as_bytes(), false).unwrap(),
+        UpdateCheckOutcome::Unavailable { .. }
+    ));
+
+    fn read_http_headers(stream: &mut std::net::TcpStream) {
+        use std::io::Read;
+        let mut req_bytes = Vec::new();
+        let mut buf = [0u8; 2048];
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF before HTTP headers");
+            req_bytes.extend_from_slice(&buf[..n]);
+            if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+    }
+
+    // Loopback 302 redirect to final release payload succeeds on ProviderLane::Update.
+    let redirect_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    redirect_listener.set_nonblocking(true).unwrap();
+    let target_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    target_listener.set_nonblocking(true).unwrap();
+    let target_url = format!(
+        "http://{}/final-release",
+        target_listener.local_addr().unwrap()
+    );
+    let initial_url = format!("http://{}/latest", redirect_listener.local_addr().unwrap());
+
+    let target_url_for_redirect = target_url.clone();
+    let redirect_srv = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match redirect_listener.accept() {
+                Ok((s, _)) => break s,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "redirect accept timeout");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        read_http_headers(&mut stream);
+        write!(
+            stream,
+            "HTTP/1.1 302 Found\r\nLocation: {target_url_for_redirect}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+    });
+
+    let target_srv = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match target_listener.accept() {
+                Ok((s, _)) => break s,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "target accept timeout");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        read_http_headers(&mut stream);
+        let body = r#"{"tag_name":"v2.4.0","name":"Koe 2.4.0","html_url":"https://github.com/semantic-craft/koe/releases/tag/v2.4.0","assets":[]}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Update,
+        ProviderRequest {
+            operation_id: 99,
+            record_id: "app-update".into(),
+            config: ProviderConfig::empty(),
+            task: ProviderTask::CheckUpdate {
+                endpoint: initial_url,
+                user_agent: "Koe/2.3.0".into(),
+            },
+            timeout: Duration::from_secs(3),
+        },
+    )
+    .unwrap();
+
+    let ev = wait_result(&mut pool);
+    assert_eq!(ev.operation_id, 99);
+    match ev.result.unwrap() {
+        ProviderOutput::UpdateCheck(UpdateCheckOutcome::Release(rel)) => {
+            assert_eq!(rel.version.to_string(), "2.4.0");
+        }
+        other => panic!("unexpected output: {other:?}"),
+    }
+    redirect_srv.join().unwrap();
+    target_srv.join().unwrap();
+}
+
+#[test]
+fn update_lane_blocks_dot_segment_traversal_matches_universal_fallback_and_caps_chunked_and_redirect_loops(
+) {
+    use koe_client_providers::{parse_release_payload, UpdateCheckOutcome};
+    use koe_engine::KOE_GITHUB_RELEASES_URL;
+    use std::io::Write;
+
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    };
+
+    // 1. Dot-segment path traversal in html_url and browser_download_url must be rejected.
+    let traversal_json = serde_json::json!({
+        "tag_name": "v2.4.0",
+        "name": "Koe 2.4.0",
+        "draft": false,
+        "prerelease": false,
+        "html_url": "https://github.com/semantic-craft/koe/releases/../../../evil-org/malware",
+        "assets": [
+            {
+                "name": format!("Koe-2.4.0-macos-{arch}.zip"),
+                "size": 4096,
+                "browser_download_url": format!(
+                    "https://github.com/semantic-craft/koe/releases/download/../../../../evil-org/malware/Koe-2.4.0-macos-{arch}.zip"
+                )
+            },
+            {
+                "name": "Koe-2.4.0-macos-universal.zip",
+                "size": 8192,
+                "browser_download_url": "https://github.com/semantic-craft/koe/releases/download/%2e%2e/evil/Koe-2.4.0-macos-universal.zip"
+            }
+        ]
+    });
+    match parse_release_payload(traversal_json.to_string().as_bytes(), false).unwrap() {
+        UpdateCheckOutcome::Release(rel) => {
+            assert_eq!(rel.release_url, KOE_GITHUB_RELEASES_URL);
+            assert!(
+                rel.asset.is_none(),
+                "dot-segment traversal download URL must be rejected"
+            );
+        }
+        other => panic!("expected Release, got {other:?}"),
+    }
+
+    // 2. Universal zip matches as fallback, while exact arch takes priority when both exist.
+    let universal_only = serde_json::json!({
+        "tag_name": "v2.4.0",
+        "assets": [
+            {
+                "name": "Koe-2.4.0-macos-universal.zip",
+                "size": 12345,
+                "browser_download_url": "https://github.com/semantic-craft/koe/releases/download/v2.4.0/Koe-2.4.0-macos-universal.zip"
+            }
+        ]
+    });
+    match parse_release_payload(universal_only.to_string().as_bytes(), false).unwrap() {
+        UpdateCheckOutcome::Release(rel) => {
+            assert_eq!(
+                rel.asset.as_ref().map(|a| a.name.as_str()),
+                Some("Koe-2.4.0-macos-universal.zip")
+            );
+        }
+        other => panic!("expected Release, got {other:?}"),
+    }
+
+    let both_arch_and_universal = serde_json::json!({
+        "tag_name": "v2.4.0",
+        "assets": [
+            {
+                "name": "Koe-2.4.0-macos-universal.zip",
+                "size": 20000,
+                "browser_download_url": "https://github.com/semantic-craft/koe/releases/download/v2.4.0/Koe-2.4.0-macos-universal.zip"
+            },
+            {
+                "name": format!("Koe-2.4.0-macos-{arch}.zip"),
+                "size": 10000,
+                "browser_download_url": format!("https://github.com/semantic-craft/koe/releases/download/v2.4.0/Koe-2.4.0-macos-{arch}.zip")
+            }
+        ]
+    });
+    match parse_release_payload(both_arch_and_universal.to_string().as_bytes(), false).unwrap() {
+        UpdateCheckOutcome::Release(rel) => {
+            assert_eq!(
+                rel.asset.as_ref().map(|a| a.name.as_str()),
+                Some(format!("Koe-2.4.0-macos-{arch}.zip").as_str())
+            );
+        }
+        other => panic!("expected Release, got {other:?}"),
+    }
+
+    fn read_http_headers(stream: &mut std::net::TcpStream) {
+        use std::io::Read;
+        let mut req_bytes = Vec::new();
+        let mut buf = [0u8; 2048];
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF before HTTP headers");
+            req_bytes.extend_from_slice(&buf[..n]);
+            if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+    }
+
+    // 3. Chunked transfer encoding without Content-Length exceeding 512 KiB is rejected.
+    let chunked_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    chunked_listener.set_nonblocking(true).unwrap();
+    let chunked_url = format!("http://{}/chunked", chunked_listener.local_addr().unwrap());
+    let chunked_srv = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match chunked_listener.accept() {
+                Ok((s, _)) => break s,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "chunked accept timeout");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        read_http_headers(&mut stream);
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let chunk = vec![b'a'; 64 * 1024];
+        for _ in 0..9 {
+            if write!(stream, "{:X}\r\n", chunk.len()).is_err() {
+                break;
+            }
+            if stream.write_all(&chunk).is_err() || write!(stream, "\r\n").is_err() {
+                break;
+            }
+        }
+        let _ = write!(stream, "0\r\n\r\n");
+    });
+
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Update,
+        ProviderRequest {
+            operation_id: 101,
+            record_id: "app-update".into(),
+            config: ProviderConfig::empty(),
+            task: ProviderTask::CheckUpdate {
+                endpoint: chunked_url,
+                user_agent: "Koe/2.3.0".into(),
+            },
+            timeout: Duration::from_secs(3),
+        },
+    )
+    .unwrap();
+    let chunked_err = wait_result(&mut pool).result.unwrap_err();
+    assert!(
+        chunked_err.contains("512 KiB"),
+        "expected 512 KiB cap error, got: {chunked_err}"
+    );
+    chunked_srv.join().unwrap();
+
+    // 4. Redirect loop (> 3 hops) is rejected cleanly.
+    let loop_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    loop_listener.set_nonblocking(true).unwrap();
+    let loop_addr = loop_listener.local_addr().unwrap();
+    let loop_url = format!("http://{loop_addr}/hop0");
+    let loop_srv = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for hop in 1..=4 {
+            let mut stream = loop {
+                match loop_listener.accept() {
+                    Ok((s, _)) => break s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "redirect loop accept timeout");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            read_http_headers(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://{loop_addr}/hop{hop}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        }
+    });
+    pool.submit(
+        ProviderLane::Update,
+        ProviderRequest {
+            operation_id: 102,
+            record_id: "app-update".into(),
+            config: ProviderConfig::empty(),
+            task: ProviderTask::CheckUpdate {
+                endpoint: loop_url,
+                user_agent: "Koe/2.3.0".into(),
+            },
+            timeout: Duration::from_secs(3),
+        },
+    )
+    .unwrap();
+    let loop_err = wait_result(&mut pool).result.unwrap_err();
+    assert!(
+        loop_err.contains("重定向次数过多"),
+        "expected redirect loop error, got: {loop_err}"
+    );
+    loop_srv.join().unwrap();
+}

@@ -4,7 +4,8 @@ import KoeAppleShared
 import Testing
 @testable import Koe
 
-@Suite("Activity and durable quit")
+extension SerializedMacHostSuites {
+@Suite("Activity and durable quit", .serialized)
 @MainActor
 struct LifecycleTests {
     @Test("AppKit termination is intercepted before destroying the runtime")
@@ -156,4 +157,5 @@ struct LifecycleTests {
         bytes.append(bytes.reduce(0, &+))
         return Data(bytes)
     }
+}
 }

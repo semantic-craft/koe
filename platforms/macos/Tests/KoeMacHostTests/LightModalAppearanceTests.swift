@@ -5,7 +5,8 @@ import SwiftUI
 import Testing
 @testable import Koe
 
-@Suite("Light modal appearance under dark system mode")
+extension SerializedMacHostSuites {
+@Suite("Light modal appearance under dark system mode", .serialized)
 @MainActor
 struct LightModalAppearanceTests {
     @Test("Connect guide sheet stays light under a darkAqua window")
@@ -234,4 +235,5 @@ struct LightModalAppearanceTests {
         }
         return nil
     }
+}
 }

@@ -135,6 +135,7 @@ public final class HostSessionStore {
 
     private func dispatchEncodedJSON(_ data: Data, commandType: String?, nowEpochSec: UInt64) {
         let preservesNativeError = commandType == "sync_audio_inputs"
+            || commandType == "sync_app_metadata"
             || commandType?.hasPrefix("local_asr_") == true
         if !preservesNativeError, nativeError != nil {
             nativeError = nil
@@ -349,6 +350,8 @@ public final class HostSessionStore {
         let nextToday = TodaySlice(snapshot: snapshot)
         if today != nextToday { today = nextToday }
         if device != snapshot.device { device = snapshot.device }
+        let nextSettings = SettingsSlice(snapshot: snapshot)
+        if settings != nextSettings { settings = nextSettings }
     }
 
     private func reconcileSlices() {

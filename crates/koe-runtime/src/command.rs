@@ -247,6 +247,7 @@ pub(crate) enum HostIntent {
         #[serde(default)]
         authorize: bool,
     },
+    CheckAppUpdate,
     ClearError,
     Seek {
         position_ms: u64,
@@ -301,6 +302,12 @@ impl HostIntent {
 pub(crate) enum AdapterEvent {
     SyncAudioInputs {
         inputs: Vec<crate::capture_studio::AudioInputDescriptor>,
+    },
+    SyncAppMetadata {
+        version: String,
+        build: String,
+        #[serde(default)]
+        update_endpoint: Option<String>,
     },
     MicrophonePrepared {
         record_id: String,
@@ -378,6 +385,7 @@ impl AdapterEvent {
         !matches!(
             self,
             Self::SyncAudioInputs { .. }
+                | Self::SyncAppMetadata { .. }
                 | Self::LocalAsrReadiness { .. }
                 | Self::LocalAsrResult { .. }
                 | Self::LocalAsrFinished { .. }

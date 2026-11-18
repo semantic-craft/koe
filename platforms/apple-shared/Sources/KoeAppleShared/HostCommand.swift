@@ -77,6 +77,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     )
     case retryProviderCredentials(authorize: Bool = false)
     case clearProviderCredential
+    case checkAppUpdate
 
     private enum CodingKeys: String, CodingKey {
         case type, section, recordId, segmentId, path, title, text, stayOnPage
@@ -147,6 +148,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .configureProvider: "configure_provider"
         case .retryProviderCredentials: "retry_provider_credentials"
         case .clearProviderCredential: "clear_provider_credential"
+        case .checkAppUpdate: "check_app_update"
         }
     }
 
@@ -157,7 +159,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
              .pauseMicrophone, .stopMicrophone, .cancelMicrophone, .retryMicrophoneSave,
              .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh, .deviceRelease,
-             .cancelSpeechModel, .clearProviderCredential:
+             .cancelSpeechModel, .clearProviderCredential, .checkAppUpdate:
             break
         case let .navigate(section):
             try c.encode(section, forKey: .section)

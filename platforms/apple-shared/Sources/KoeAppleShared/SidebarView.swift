@@ -8,13 +8,23 @@ public struct SidebarView: View {
     public var body: some View {
         let sidebar = store.sidebar
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: "waveform")
                     .foregroundStyle(AppColors.accent)
                     .frame(width: 28, height: 28)
                     .background(AppColors.accentSoft, in: RoundedRectangle(cornerRadius: 8))
                 Text("Koe")
                     .font(.system(size: AppFontSizes.md, weight: .semibold))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Spacer(minLength: 4)
+                Text("v\(sidebar.appVersion)")
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textMuted)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help("版本 v\(sidebar.appVersion)（构建 \(sidebar.appBuild)）")
             }
             .padding(.horizontal, 10)
             .padding(.top, 14)
@@ -47,7 +57,11 @@ public struct SidebarView: View {
             )
 
             Spacer(minLength: 16)
-            navigationRow(HostSection.settings, section: sidebar.section)
+            navigationRow(
+                HostSection.settings,
+                section: sidebar.section,
+                badge: sidebar.hasAvailableUpdate ? "新版本" : nil
+            )
         }
         .padding(12)
         .frame(width: 196)
@@ -67,7 +81,8 @@ public struct SidebarView: View {
     private func navigationRow(
         _ dest: HostSection,
         section: String,
-        count: Int? = nil
+        count: Int? = nil,
+        badge: String? = nil
     ) -> some View {
         let selected = isSelected(dest.rawValue, section: section)
         return Button {
@@ -76,8 +91,12 @@ public struct SidebarView: View {
             HStack(spacing: 10) {
                 Image(systemName: dest.icon).frame(width: 18)
                 Text(dest.title)
+                    .lineLimit(1)
+                    .layoutPriority(1)
                 Spacer(minLength: 4)
-                if let count {
+                if let badge {
+                    KoeBadge(badge, tint: AppColors.warning)
+                } else if let count {
                     Text("\(count)")
                         .font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(selected ? AppColors.accent : AppColors.textMuted)
@@ -103,6 +122,8 @@ public struct SidebarView: View {
             HStack(spacing: 9) {
                 Image(systemName: dest.icon).frame(width: 16)
                 Text(dest.title)
+                    .lineLimit(1)
+                    .layoutPriority(1)
                 Spacer(minLength: 4)
                 if active {
                     Circle()

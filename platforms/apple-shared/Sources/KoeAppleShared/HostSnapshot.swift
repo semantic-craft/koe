@@ -365,6 +365,7 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
     public var speech: SpeechSnapshot = .empty
+    public var appUpdate: AppUpdateSnapshot = .empty
     public var liveCaption: LiveCaptionSnapshot? = nil
     public var microphone: MicrophoneSnapshot? = nil
     public var capture: CaptureStudioSnapshot = .empty
@@ -391,7 +392,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
-        case liveCaption, speech
+        case liveCaption, speech, appUpdate
         case activeCapture, workspaces
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records
@@ -423,6 +424,7 @@ extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         speech = try c.decodeIfPresent(SpeechSnapshot.self, forKey: .speech) ?? .empty
+        appUpdate = try c.decodeIfPresent(AppUpdateSnapshot.self, forKey: .appUpdate) ?? .empty
         liveCaption = try c.decodeIfPresent(LiveCaptionSnapshot.self, forKey: .liveCaption)
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
         capture = try c.decodeIfPresent(CaptureStudioSnapshot.self, forKey: .capture) ?? .empty

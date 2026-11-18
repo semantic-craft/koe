@@ -26,6 +26,7 @@ impl KoeRuntime {
             return;
         }
         self.quit = QuitState::Draining;
+        self.cancel_app_update_check();
         let _ = self.stop_microphone(false);
         let session = &self.device.session;
         if self.device.awaiting_stop

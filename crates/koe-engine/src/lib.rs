@@ -38,6 +38,7 @@ pub mod product;
 pub mod session;
 pub mod slice_marks;
 pub mod transport;
+pub mod version;
 pub mod wav;
 
 pub use koepack::{
@@ -63,3 +64,7 @@ pub use minutes::{
 };
 pub use product::RecordMode;
 pub use session::{CustodyReceipt, RecordingEntry};
+pub use version::{
+    validate_build_number, SemanticVersion, KOE_APP_BUILD, KOE_APP_VERSION,
+    KOE_GITHUB_DOWNLOAD_PREFIX, KOE_GITHUB_LATEST_RELEASE_API_URL, KOE_GITHUB_RELEASES_URL,
+};

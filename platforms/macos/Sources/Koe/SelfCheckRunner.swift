@@ -9,6 +9,9 @@ public enum KoeSelfCheckRunner {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
         guard store.handle != 0, store.snapshot.records.isEmpty else { return fail("initial workspace") }
+        guard !store.snapshot.appUpdate.currentVersion.isEmpty,
+              !store.snapshot.appUpdate.currentBuild.isEmpty,
+              store.snapshot.appUpdate.phase == "idle" else { return fail("initial app version metadata") }
         guard store.snapshot.device.autoConnect == true else { return fail("initial device state") }
         store.send(.deviceRelease)
         guard store.snapshot.device.autoConnect == false else { return fail("device release") }

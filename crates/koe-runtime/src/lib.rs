@@ -3,6 +3,7 @@
 #![deny(missing_docs)]
 
 mod all_day;
+mod app_update;
 #[cfg(test)]
 mod ask_tests;
 mod audio_policy;
@@ -137,6 +138,7 @@ pub struct KoeRuntime {
     selection: selection::WorkspaceSelection,
     device: DeviceRuntime,
     provider: ProviderPool,
+    app_update: app_update::AppUpdateState,
     settings: ProviderSettings,
     credentials: Box<dyn credentials::CredentialStore>,
     pending: BTreeMap<u64, PendingWork>,
@@ -183,6 +185,7 @@ impl KoeRuntime {
             selection: Default::default(),
             device: DeviceRuntime::default(),
             provider: ProviderPool::new()?,
+            app_update: Default::default(),
             settings: ProviderSettings::default(),
             credentials,
             pending: BTreeMap::new(),
@@ -661,7 +664,10 @@ impl KoeRuntime {
         self.poll_timers(0, now);
         json!({
             "workspaceReadable": true,
+            "version": self.app_update.current_version.to_string(),
+            "build": self.app_update.current_build,
             "generation": self.generation,
+            "appUpdate": self.app_update_json(),
             "device": self.device_json(),
             "provider": self.provider_json(),
             "error": self.error
