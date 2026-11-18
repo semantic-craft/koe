@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2.4.0 (13) · 2026-11-19
+
+- 准备 `2.4.0`（构建 13）私有 GitHub Release，交付全栈应用版本号展示与手动软件更新检查能力，范围与验收边界见[发行说明](docs/releases/v2.4.0.md)。
+- 贯通应用版本号展示与按需手动检查更新：在 `koe-engine` 落地严格 `MAJOR.MINOR.PATCH` 版本解析与跨层版本/构建号锁步契约测试，在 `koe-client-providers` 扩展独立 `ProviderLane::Update` 后台更新查询通道（`512 KiB` 流式上限与同信任边界重定向校验），在 `koe-runtime` 与 `koe-cli` 补齐 `AppUpdateState`、免工作区 `koe version` / `--version` / `-V` 与 `doctor` / `status` 更新字段，并在原生 macOS 侧边栏、系统「关于 Koe」面板、状态栏/Dock 菜单及设置页顶部「版本与软件更新」卡片提供一致展示与检查更新入口。（`#751`、`#753`）
+
 ## 2.3.0 (12) · 2026-11-19
 
 - 准备 `2.3.0`（构建 12）私有 GitHub Release，完整落地四层架构去胶水重构、后台多通道并发隔离、二进制 C ABI 收口与 Swift 6 严格并发加固，范围与验收边界见[发行说明](docs/releases/v2.3.0.md)。
