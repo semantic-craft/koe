@@ -7,7 +7,7 @@ use std::str::FromStr;
 pub const KOE_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Current macOS bundle build number (`CFBundleVersion`).
-pub const KOE_APP_BUILD: &str = "12";
+pub const KOE_APP_BUILD: &str = "13";
 
 /// Official GitHub Releases page for Koe.
 pub const KOE_GITHUB_RELEASES_URL: &str = "https://github.com/semantic-craft/koe/releases";
