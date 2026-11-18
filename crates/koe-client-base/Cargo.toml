@@ -1,6 +1,6 @@
 [package]
 name = "koe-client-base"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 publish = false
 description = "Atomic file persistence and advisory workspace lockfile primitives for Koe."
