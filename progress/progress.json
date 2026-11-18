@@ -295,9 +295,21 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-18T16:28:58Z"
+      },
+      {
+        "number": 751,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T20:41:06Z"
+      },
+      {
+        "number": 752,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-18T20:35:54Z"
       }
     ],
-    "main": "775d9fb8b6cec1a52a460ef31367e759ba51d4f1",
+    "main": "6fa7d1a3ea266763a883624e74f2f22ad6dff285",
     "open_pulls": [],
     "pulls": [
       {
@@ -843,6 +855,22 @@
         "merged": true,
         "number": 749,
         "state": "closed"
+      },
+      {
+        "base": "775d9fb8b6cec1a52a460ef31367e759ba51d4f1",
+        "head": "64b88d6cd4f21879b4f95e1aee81864b0db85b37",
+        "merge_commit": "e42f03bb2aa62d15ddf8981b8791978a7050ae1d",
+        "merged": true,
+        "number": 750,
+        "state": "closed"
+      },
+      {
+        "base": "e42f03bb2aa62d15ddf8981b8791978a7050ae1d",
+        "head": "cb754e8e3bcd92db920021344d82359d59dc70e3",
+        "merge_commit": "6fa7d1a3ea266763a883624e74f2f22ad6dff285",
+        "merged": true,
+        "number": 753,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -877,7 +905,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-18T18:16:53.241598Z",
+  "observed_at": "2026-11-18T20:43:39.398560Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2268,6 +2296,30 @@
           "status": "done",
           "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 81a0e45e-a21c-4646-a512-7087876208dc Accepted）并装订票据的 v2.3.0（构建 12，tag 指向 775d9fb）发行包，提供 arm64 zip（sha256 6ff7b4f42baf2d3fe9ae761a84f51f4f02929a7a26f21c1667bf4a93fc5aa11c）、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test。",
           "title": "Koe 2.3.0 私有发行包"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "全栈接入版本号展示与手动软件更新检查，通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（6fa7d1a）。",
+              "ref": 753
+            },
+            {
+              "kind": "issue",
+              "note": "功能需求与四层架构验收边界工单。",
+              "ref": 751
+            },
+            {
+              "kind": "issue",
+              "note": "签名版 /Applications/Koe.app 关于面板、状态栏/Dock 菜单与检查更新桌面巡检工单。",
+              "ref": 752
+            }
+          ],
+          "id": "app-version-and-update-check",
+          "next": "待当前运行中的 /Applications/Koe.app 空闲后执行 ./scripts/install-macos.sh，按 #752 核对签名包内关于面板、菜单与设置页顶部更新卡片。",
+          "status": "unverified",
+          "summary": "已在 koe-engine、koe-client-providers（独立 Update 车道）、koe-runtime、koe-cli 与原生 SwiftUI/AppKit 宿主贯通版本号/构建号展示（侧边栏、设置置顶卡片、状态栏/Dock 菜单、关于面板、CLI version/doctor）与按需 GitHub Releases 更新检查；自动化回归与跨层版本锁步契约全部通过，因当前 /Applications/Koe.app 正在运行暂未覆盖安装与桌面实点巡检。",
+          "title": "应用版本号展示与手动检查更新"
         }
       ],
       "title": "验收与交付"
@@ -2344,7 +2396,9 @@
       741,
       743,
       746,
-      747
+      747,
+      751,
+      752
     ],
     "pulls": [
       589,
@@ -2414,7 +2468,9 @@
       744,
       745,
       748,
-      749
+      749,
+      750,
+      753
     ]
   }
 }
