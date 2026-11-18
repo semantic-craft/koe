@@ -304,12 +304,12 @@
       },
       {
         "number": 752,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-18T20:35:54Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T23:01:23Z"
       }
     ],
-    "main": "6fa7d1a3ea266763a883624e74f2f22ad6dff285",
+    "main": "f87a1ec059ea187843f83fd196eb6c07ff77c2c7",
     "open_pulls": [],
     "pulls": [
       {
@@ -871,9 +871,32 @@
         "merged": true,
         "number": 753,
         "state": "closed"
+      },
+      {
+        "base": "6fa7d1a3ea266763a883624e74f2f22ad6dff285",
+        "head": "30f2bbf7968a2878cbc81f01251eed195099541e",
+        "merge_commit": "7ad9be6093704a2763f41c002008ae0cda172327",
+        "merged": true,
+        "number": 754,
+        "state": "closed"
+      },
+      {
+        "base": "7ad9be6093704a2763f41c002008ae0cda172327",
+        "head": "b65bdb3b2b361b8592b246244bd7d6587d9042c7",
+        "merge_commit": "f87a1ec059ea187843f83fd196eb6c07ff77c2c7",
+        "merged": true,
+        "number": 755,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 450659888,
+        "prerelease": false,
+        "published_at": "2026-11-18T22:58:21Z",
+        "tag": "v2.4.0"
+      },
       {
         "draft": false,
         "id": 450377853,
@@ -905,7 +928,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-18T20:43:39.398560Z",
+  "observed_at": "2026-11-18T23:05:00.994428Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2316,10 +2339,34 @@
             }
           ],
           "id": "app-version-and-update-check",
-          "next": "待当前运行中的 /Applications/Koe.app 空闲后执行 ./scripts/install-macos.sh，按 #752 核对签名包内关于面板、菜单与设置页顶部更新卡片。",
-          "status": "unverified",
-          "summary": "已在 koe-engine、koe-client-providers（独立 Update 车道）、koe-runtime、koe-cli 与原生 SwiftUI/AppKit 宿主贯通版本号/构建号展示（侧边栏、设置置顶卡片、状态栏/Dock 菜单、关于面板、CLI version/doctor）与按需 GitHub Releases 更新检查；自动化回归与跨层版本锁步契约全部通过，因当前 /Applications/Koe.app 正在运行暂未覆盖安装与桌面实点巡检。",
+          "next": "无待办；后续发布公开仓库版本时将自动展示新版本下载提示。",
+          "status": "done",
+          "summary": "已在 koe-engine、koe-client-providers（独立 Update 车道）、koe-runtime、koe-cli 与原生 SwiftUI/AppKit 宿主贯通版本号/构建号展示与按需 GitHub Releases 更新检查；已在签名版 /Applications/Koe.app（v2.4.0 构建 13）完成 Keychain 凭据继承、侧边栏 v2.4.0、状态栏菜单、标准关于面板、菜单触发检查更新跳转到设置置顶卡片及真实 api.github.com 私有库未公开提示自动验收，并关闭 #752。",
           "title": "应用版本号展示与手动检查更新"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "私有 GitHub Release v2.4.0（f87a1ec）已上传经 xw-notary 公证（cc6cdc9f-eafb-43db-b8ff-4505d6d6cf1b Accepted）的 Koe-2.4.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.4.0-release-receipt.json。",
+              "ref": "v2.4.0"
+            },
+            {
+              "kind": "pull",
+              "note": "2.4.0（构建 13）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（f87a1ec）。",
+              "ref": 755
+            },
+            {
+              "kind": "file",
+              "note": "2.4.0 发行说明与验收边界。",
+              "ref": "docs/releases/v2.4.0.md"
+            }
+          ],
+          "id": "private-release-240",
+          "next": "本机 /Applications/Koe.app 已替换为 2.4.0（构建 13）并通过自动验收；继续推进后续迭代。",
+          "status": "done",
+          "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 cc6cdc9f-eafb-43db-b8ff-4505d6d6cf1b Accepted）并装订票据的 v2.4.0（构建 13，tag 指向 f87a1ec）发行包，提供 arm64 zip（sha256 914f8c007606fe272bf15a91432911e33bf15d1543e0d5e818d8c0cd6571852d）、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，且已替换本机 /Applications/Koe.app 并完成桌面自动验收。",
+          "title": "Koe 2.4.0 私有发行包与本机升级验收"
         }
       ],
       "title": "验收与交付"
@@ -2470,7 +2517,9 @@
       748,
       749,
       750,
-      753
+      753,
+      754,
+      755
     ]
   }
 }
