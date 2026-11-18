@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-18T18:07:30.964354Z</p>
-<p>Main: <code>main: 66cfd5f216bcd64068bba3db01fb15b114957253</code></p>
+<p>Observed: 2026-11-18T18:16:53.241598Z</p>
+<p>Main: <code>main: 775d9fb8b6cec1a52a460ef31367e759ba51d4f1</code></p>
 <section id="mode-workspaces-definition"><h2>三模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>三种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -286,10 +286,11 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/745">pull 745: HostSection 元信息统一、消除弱类型命令调用与清零 Swift 6 严格并发警告（871794b）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/748">pull 748: 彻底移除旧 ProviderWorker、统一 CaptureMode 图标与优化 LifecycleState / QuickNote 热路径（66cfd5f）。</a></li>
 </ul><p>Next: 随 2.3.0 私有发行包交付并收口。</p></article>
-<article id="private-release-230"><h3>Koe 2.3.0 私有发行包</h3><span class="badge">in_progress</span><p>已准备 Koe 2.3.0（构建 12）版本定义、发行说明与全量自动化及实机核心验收，待合入 main 后执行公证与私有 Release 打包发布。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.3.0.md">file docs/releases/v2.3.0.md: 2.3.0（构建 12）版本升级与发行说明已就绪。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/CHANGELOG.md">file CHANGELOG.md: 2.3.0 更新日志与构建 12 信息。</a></li>
-</ul><p>Next: 待本发版准备 PR 合并 main 后，执行 scripts/release-macos.sh 完成 Apple 公证并发布私有 GitHub Release v2.3.0。</p></article>
+<article id="private-release-230"><h3>Koe 2.3.0 私有发行包</h3><span class="badge">done</span><p>2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 81a0e45e-a21c-4646-a512-7087876208dc Accepted）并装订票据的 v2.3.0（构建 12，tag 指向 775d9fb）发行包，提供 arm64 zip（sha256 6ff7b4f42baf2d3fe9ae761a84f51f4f02929a7a26f21c1667bf4a93fc5aa11c）、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.3.0">release v2.3.0: 私有 GitHub Release v2.3.0（775d9fb）已上传经 xw-notary 公证（81a0e45e-a21c-4646-a512-7087876208dc Accepted）的 Koe-2.3.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.3.0-release-receipt.json。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/749">pull 749: 2.3.0（构建 12）发版准备 PR 已通过 CI 并 squash 合并进 main（775d9fb）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.3.0.md">file docs/releases/v2.3.0.md: 2.3.0 发行说明与验收边界。</a></li>
+</ul><p>Next: 待当前运行中的 /Applications/Koe.app 完成 D3200 离线录音拉取后，替换为 2.3.0 正式包即可。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、Google 写回与 ACP 不计入当前 macOS 已接通功能；Mac 麦克风全天听记已接入，硬件验收见 #662。</p><ul>
@@ -298,6 +299,7 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.3.0">v2.3.0</a> 2026-11-18T18:16:20Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.2.0">v2.2.0</a> 2026-11-16T18:33:56Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.1.0">v2.1.0</a> 2026-11-16T09:05:32Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.0.0">v2.0.0</a> 2026-11-13T16:25:00Z (draft: False, prerelease: False)</li>
