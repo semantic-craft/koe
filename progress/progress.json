@@ -297,7 +297,7 @@
         "updated_at": "2026-11-18T16:28:58Z"
       }
     ],
-    "main": "66cfd5f216bcd64068bba3db01fb15b114957253",
+    "main": "775d9fb8b6cec1a52a460ef31367e759ba51d4f1",
     "open_pulls": [],
     "pulls": [
       {
@@ -835,9 +835,24 @@
         "merged": true,
         "number": 748,
         "state": "closed"
+      },
+      {
+        "base": "66cfd5f216bcd64068bba3db01fb15b114957253",
+        "head": "b2f15ce0e6bd6e0242e2794afd03c44de68e6c72",
+        "merge_commit": "775d9fb8b6cec1a52a460ef31367e759ba51d4f1",
+        "merged": true,
+        "number": 749,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 450377853,
+        "prerelease": false,
+        "published_at": "2026-11-18T18:16:20Z",
+        "tag": "v2.3.0"
+      },
       {
         "draft": false,
         "id": 447432521,
@@ -862,7 +877,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-18T18:07:30.964354Z",
+  "observed_at": "2026-11-18T18:16:53.241598Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2233,20 +2248,25 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "2.3.0（构建 12）版本升级与发行说明已就绪。",
-              "ref": "docs/releases/v2.3.0.md"
+              "kind": "release",
+              "note": "私有 GitHub Release v2.3.0（775d9fb）已上传经 xw-notary 公证（81a0e45e-a21c-4646-a512-7087876208dc Accepted）的 Koe-2.3.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.3.0-release-receipt.json。",
+              "ref": "v2.3.0"
+            },
+            {
+              "kind": "pull",
+              "note": "2.3.0（构建 12）发版准备 PR 已通过 CI 并 squash 合并进 main（775d9fb）。",
+              "ref": 749
             },
             {
               "kind": "file",
-              "note": "2.3.0 更新日志与构建 12 信息。",
-              "ref": "CHANGELOG.md"
+              "note": "2.3.0 发行说明与验收边界。",
+              "ref": "docs/releases/v2.3.0.md"
             }
           ],
           "id": "private-release-230",
-          "next": "待本发版准备 PR 合并 main 后，执行 scripts/release-macos.sh 完成 Apple 公证并发布私有 GitHub Release v2.3.0。",
-          "status": "in_progress",
-          "summary": "已准备 Koe 2.3.0（构建 12）版本定义、发行说明与全量自动化及实机核心验收，待合入 main 后执行公证与私有 Release 打包发布。",
+          "next": "待当前运行中的 /Applications/Koe.app 完成 D3200 离线录音拉取后，替换为 2.3.0 正式包即可。",
+          "status": "done",
+          "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 81a0e45e-a21c-4646-a512-7087876208dc Accepted）并装订票据的 v2.3.0（构建 12，tag 指向 775d9fb）发行包，提供 arm64 zip（sha256 6ff7b4f42baf2d3fe9ae761a84f51f4f02929a7a26f21c1667bf4a93fc5aa11c）、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test。",
           "title": "Koe 2.3.0 私有发行包"
         }
       ],
@@ -2393,7 +2413,8 @@
       742,
       744,
       745,
-      748
+      748,
+      749
     ]
   }
 }
