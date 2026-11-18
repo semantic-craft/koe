@@ -10,8 +10,15 @@ use tokio::sync::{mpsc, oneshot};
 mod asr;
 mod chat;
 mod live;
+mod update;
 
 pub use live::{LiveEvent, LiveTranscription};
+pub use update::{
+    parse_release_payload, validate_update_endpoint, ReleaseAsset, RemoteRelease,
+    UpdateCheckOutcome,
+};
+
+const LANE_COUNT: usize = 4;
 
 const MAX_PCM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
@@ -44,6 +51,16 @@ impl ProviderConfig {
             api_key,
         }
     }
+
+    /// Empty credential-free configuration for unauthenticated tasks such as [`ProviderTask::CheckUpdate`].
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            endpoint: String::new(),
+            model: String::new(),
+            api_key: String::new(),
+        }
+    }
 }
 
 impl fmt::Debug for ProviderConfig {
@@ -69,6 +86,13 @@ pub enum ProviderTask {
         system: String,
         /// User message, including any validated source material.
         user: String,
+    },
+    /// Query GitHub Releases metadata for the latest stable Koe version.
+    CheckUpdate {
+        /// Validated HTTPS GitHub API URL (or loopback HTTP URL in tests).
+        endpoint: String,
+        /// Explicit ASCII `User-Agent` header (`Koe/<version>`).
+        user_agent: String,
     },
 }
 
@@ -110,6 +134,8 @@ pub enum ProviderOutput {
         /// Provider response, not a local substitute.
         text: String,
     },
+    /// GitHub Releases metadata lookup outcome.
+    UpdateCheck(UpdateCheckOutcome),
 }
 
 /// Terminal result of exactly one accepted attempt.
@@ -132,6 +158,8 @@ pub enum ProviderLane {
     Summary = 1,
     /// Cross-record Q&A (`Ask`).
     Ask = 2,
+    /// Application release metadata check (`CheckUpdate`).
+    Update = 3,
 }
 
 enum PoolControl {
@@ -149,12 +177,12 @@ enum PoolControl {
 
 /// Multi-lane bounded background provider pool running on one Tokio runtime thread.
 ///
-/// Audio transcription, summary generation, and Q&A run in separate single-slot lanes so a slow
-/// question or summary never blocks another lane, and stale summaries cancel without joining threads.
+/// Audio transcription, summary generation, Q&A, and update checks run in separate single-slot
+/// lanes so a slow operation never blocks another lane, and stale tasks cancel without joining threads.
 pub struct ProviderPool {
     controls: mpsc::UnboundedSender<PoolControl>,
     events: mpsc::UnboundedReceiver<(ProviderLane, ProviderEvent)>,
-    active_ops: [Option<u64>; 3],
+    active_ops: [Option<u64>; LANE_COUNT],
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -171,8 +199,8 @@ impl ProviderPool {
             .name("koe-provider-pool".into())
             .spawn(move || {
                 runtime.block_on(async {
-                    let mut slots: [Option<(u64, tokio::task::JoinHandle<()>)>; 3] =
-                        [None, None, None];
+                    let mut slots: [Option<(u64, tokio::task::JoinHandle<()>)>; LANE_COUNT] =
+                        [None, None, None, None];
                     while let Some(control) = rx.recv().await {
                         match control {
                             PoolControl::Submit { lane, request } => {
@@ -187,7 +215,12 @@ impl ProviderPool {
                                         tokio::time::timeout(request.timeout, execute(&request))
                                             .await
                                             .unwrap_or_else(|_| {
-                                                Err("云端请求超时，结果未知；未自动重试".into())
+                                                if lane == ProviderLane::Update {
+                                                    Err("更新检查连接超时，请检查网络后重试。"
+                                                        .into())
+                                                } else {
+                                                    Err("云端请求超时，结果未知；未自动重试".into())
+                                                }
                                             });
                                     let _ = tx.send((
                                         lane,
@@ -235,7 +268,7 @@ impl ProviderPool {
         Ok(Self {
             controls,
             events,
-            active_ops: [None; 3],
+            active_ops: [None; LANE_COUNT],
             thread: Some(thread),
         })
     }
@@ -333,6 +366,14 @@ fn validate(request: &ProviderRequest) -> Result<(), String> {
             }
             ("https", "http")
         }
+        ProviderTask::CheckUpdate {
+            endpoint,
+            user_agent,
+        } => {
+            update::validate_update_endpoint(endpoint)?;
+            update::validate_user_agent(user_agent)?;
+            return Ok(());
+        }
     };
     validate_endpoint(&request.config, secure, local)
 }
@@ -366,5 +407,9 @@ async fn execute(request: &ProviderRequest) -> Result<ProviderOutput, String> {
     match &request.task {
         ProviderTask::TranscribePcm16 { pcm16 } => asr::transcribe(&request.config, pcm16).await,
         ProviderTask::Chat { system, user } => chat::complete(&request.config, system, user).await,
+        ProviderTask::CheckUpdate {
+            endpoint,
+            user_agent,
+        } => update::check_latest(endpoint, user_agent).await,
     }
 }

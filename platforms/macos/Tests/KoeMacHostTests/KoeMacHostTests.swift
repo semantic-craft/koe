@@ -5,7 +5,8 @@ import KoeAppleShared
 import Testing
 @testable import Koe
 
-@Suite("Native host lifecycle and product workflow")
+extension SerializedMacHostSuites {
+@Suite("Native host lifecycle and product workflow", .serialized)
 struct KoeMacHostTests {
     @Test("The isolated C ABI workflow and persisted-state self checks pass")
     @MainActor
@@ -457,4 +458,5 @@ struct KoeMacHostTests {
         #expect(!bridge.reportedReady)
         #expect(store.snapshot.device.phase == "disconnected")
     }
+}
 }

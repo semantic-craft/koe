@@ -7,7 +7,8 @@ public struct SettingsDoctorView: View {
         let device = store.device
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                PageHeading(title: "设置", subtitle: "管理录音音源、语音识别和文字整理服务。")
+                PageHeading(title: "设置", subtitle: "管理录音音源、语音识别、文字整理服务与应用版本更新。")
+                AppUpdateSettingsCard(store: store)
                 KoeCard {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {

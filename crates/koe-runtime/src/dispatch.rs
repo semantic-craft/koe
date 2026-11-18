@@ -32,6 +32,11 @@ impl KoeRuntime {
     fn dispatch_adapter_event(&mut self, event: AdapterEvent, now: u64) -> Result<(), String> {
         match event {
             AdapterEvent::SyncAudioInputs { inputs } => self.sync_audio_inputs(inputs)?,
+            AdapterEvent::SyncAppMetadata {
+                version,
+                build,
+                update_endpoint,
+            } => self.sync_app_metadata(&version, &build, update_endpoint.as_deref())?,
             AdapterEvent::MicrophonePrepared {
                 record_id,
                 session_id,
@@ -306,6 +311,7 @@ impl KoeRuntime {
             } => self.configure_provider(api_key, model, asr_endpoint, chat_endpoint)?,
             HostIntent::ClearProviderCredential => self.clear_credential()?,
             HostIntent::RetryProviderCredentials { authorize } => self.retry_credentials(authorize)?,
+            HostIntent::CheckAppUpdate => self.check_app_update(now)?,
             HostIntent::ClearError => {}
             HostIntent::Seek { position_ms } => self.seek_playback(position_ms)?,
             HostIntent::Playback { is_playing } => self.set_playback(is_playing)?,

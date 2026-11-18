@@ -53,6 +53,9 @@ public struct SidebarSlice: Equatable, Sendable {
     public let recordCount: Int
     public let proposedActionCount: Int
     public let activeModeIds: Set<String>
+    public let appVersion: String
+    public let appBuild: String
+    public let hasAvailableUpdate: Bool
 
     public static let empty = SidebarSlice(snapshot: .empty)
 
@@ -66,6 +69,9 @@ public struct SidebarSlice: Equatable, Sendable {
                 .filter(\.isSessionActive)
                 .map(\.id)
         )
+        appVersion = snapshot.appUpdate.currentVersion
+        appBuild = snapshot.appUpdate.currentBuild
+        hasAvailableUpdate = snapshot.appUpdate.isUpdateAvailable
     }
 }
 
@@ -132,12 +138,14 @@ public struct CaptureStudioSlice: Equatable, Sendable {
 public struct SettingsSlice: Equatable, Sendable {
     public let speech: SpeechSnapshot
     public let provider: ProviderSnapshot
+    public let appUpdate: AppUpdateSnapshot
 
     public static let empty = SettingsSlice(snapshot: .empty)
 
     public init(snapshot: HostSnapshot) {
         speech = snapshot.speech
         provider = snapshot.provider
+        appUpdate = snapshot.appUpdate
     }
 }
 

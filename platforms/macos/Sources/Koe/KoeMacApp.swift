@@ -13,6 +13,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
                 oldValue.shutdown()
             }
             lastSyncedInputs = nil
+            lastSyncedAppMetadata = nil
             lastObservedHardwareGeneration = 0
             bluetoothBridge.store = store
             files.store = store
@@ -26,10 +27,16 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             store?.bridgeActions = HostBridgeActions(
                 requestBleScan: { [weak self] in self?.handleBleScanRequest() },
                 flushBleOutbound: { [weak self] in self?.bluetoothBridge.flushOutboundFrames() },
-                resumeMicrophone: { [weak self] in self?.capture.resume() }
+                resumeMicrophone: { [weak self] in self?.capture.resume() },
+                openExternalURL: { url in KoeAppDelegate.openValidatedExternalURL(url) }
             )
             if let store {
-                KoeWindowPresenter.bind(store: store, onlyUnboundWindows: oldValue == nil)
+                KoeWindowPresenter.bind(
+                    store: store,
+                    replacing: oldValue,
+                    onlyUnboundWindows: oldValue == nil
+                )
+                syncAppMetadataIfNeeded()
                 audioInputMonitor.start { [weak self] in
                     self?.syncAudioInputsIfNeeded()
                 }
@@ -52,6 +59,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
     private var lastSyncedInputs: [MicrophoneInput]?
+    private var lastSyncedAppMetadata: (version: String, build: String)?
     private var lastObservedHardwareGeneration: UInt64 = 0
 
     public override convenience init() {
@@ -150,6 +158,63 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         store.send(.syncAudioInputs(inputs: descriptors))
     }
 
+    public func syncAppMetadataIfNeeded(infoDictionary: [String: Any]? = Bundle.main.infoDictionary) {
+        guard let store, store.handle != 0, let infoDictionary else { return }
+        guard let rawVersion = (infoDictionary["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawVersion.isEmpty else {
+            return
+        }
+        let rawBuild = (infoDictionary["CFBundleVersion"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveBuild = (rawBuild?.isEmpty == false) ? rawBuild! : AppUpdateSnapshot.defaultBuild
+        if let lastSyncedAppMetadata,
+           lastSyncedAppMetadata.version == rawVersion,
+           lastSyncedAppMetadata.build == effectiveBuild {
+            return
+        }
+        store.reconcileMenuSlicesIfNeeded()
+        let current = store.settings.appUpdate
+        lastSyncedAppMetadata = (version: rawVersion, build: effectiveBuild)
+        guard rawVersion != current.currentVersion || effectiveBuild != current.currentBuild else {
+            return
+        }
+        store.send(.syncAppMetadata(version: rawVersion, build: effectiveBuild))
+    }
+
+    public static func isAllowedExternalReleaseURL(_ url: URL) -> Bool {
+        guard url.user == nil, url.password == nil, url.fragment == nil else { return false }
+        let rawString = url.absoluteString
+        let rawBeforeQueryOrFrag = rawString.prefix { $0 != "?" && $0 != "#" }.lowercased()
+        if rawBeforeQueryOrFrag.contains("\\")
+            || rawBeforeQueryOrFrag.contains("%2e")
+            || rawBeforeQueryOrFrag.contains("%2f")
+            || rawBeforeQueryOrFrag.contains("%5c") {
+            return false
+        }
+        let pathSegments = url.path.split(separator: "/", omittingEmptySubsequences: false)
+        if pathSegments.contains(".") || pathSegments.contains("..") {
+            return false
+        }
+        let scheme = url.scheme?.lowercased()
+        let rawHost = url.host?.lowercased() ?? ""
+        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        if host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]" {
+            return scheme == "http" || scheme == "https"
+        }
+        guard scheme == "https", host == "github.com" else { return false }
+        let port = url.port ?? 443
+        guard port == 443 else { return false }
+        let path = url.path
+        return path == "/semantic-craft/koe/releases"
+            || path.hasPrefix("/semantic-craft/koe/releases/")
+    }
+
+    private static func openValidatedExternalURL(_ url: URL) {
+        guard isAllowedExternalReleaseURL(url) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
@@ -235,6 +300,24 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         open.target = self
         menu.addItem(open)
         menu.addItem(.separator())
+        let appUpdate = store?.settings.appUpdate ?? .empty
+        let versionItem = NSMenuItem(title: appUpdate.compactMenuVersionLabel, action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+        let updateTitle: String
+        if appUpdate.isChecking {
+            updateTitle = "正在检查更新…"
+        } else if appUpdate.isUpdateAvailable, let latest = appUpdate.latestVersion, !latest.isEmpty {
+            updateTitle = "检查更新…（新版本 v\(latest)）"
+        } else {
+            updateTitle = "检查更新…"
+        }
+        let isQuitting = store?.lifecycle.map { $0.quitPhase != "running" } ?? false
+        let checkUpdateItem = NSMenuItem(title: updateTitle, action: #selector(checkForUpdatesFromMenu), keyEquivalent: "")
+        checkUpdateItem.target = self
+        checkUpdateItem.isEnabled = !appUpdate.isChecking && !isQuitting
+        menu.addItem(checkUpdateItem)
+        menu.addItem(.separator())
         let quit = NSMenuItem(title: "退出 Koe", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -242,6 +325,33 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     @objc private func navigate(_ item: NSMenuItem) {
         if let section = item.representedObject as? String { store?.send(.navigate(section: section)) }
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+    }
+    public func requestUpdateCheck() {
+        let activeStore = ensureSessionStore()
+        activeStore.reconcileMenuSlicesIfNeeded()
+        if let quitPhase = activeStore.lifecycle?.quitPhase, quitPhase != "running" {
+            activeStore.send(.checkAppUpdate)
+            return
+        }
+        if activeStore.navigation.section != "settings" {
+            activeStore.send(.navigate(section: "settings"))
+        }
+        activeStore.send(.checkAppUpdate)
+    }
+    @objc public func checkForUpdatesFromMenu() {
+        KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+        requestUpdateCheck()
+    }
+    @objc public func showAboutPanel() {
+        let activeStore = ensureSessionStore()
+        activeStore.reconcileMenuSlicesIfNeeded()
+        let appUpdate = activeStore.settings.appUpdate
+        NSApp?.activate(ignoringOtherApps: true)
+        NSApp?.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Koe",
+            .applicationVersion: appUpdate.currentVersion,
+            .version: appUpdate.currentBuild
+        ])
     }
     func prepareManualScan() {
         store?.send(.deviceOpenGuide)
@@ -278,6 +388,17 @@ struct KoeNativeSceneApp: App {
             }
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("关于 Koe") {
+                    appDelegate.showAboutPanel()
+                }
+                Divider()
+                Button("检查更新…") {
+                    appDelegate.checkForUpdatesFromMenu()
+                }
+            }
+        }
     }
 }
 

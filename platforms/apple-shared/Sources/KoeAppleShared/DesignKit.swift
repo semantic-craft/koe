@@ -83,6 +83,8 @@ struct KoeBadge: View {
     init(_ text: String, tint: Color = AppColors.accent) { self.text = text; self.tint = tint }
     var body: some View {
         Text(text).font(.system(size: AppFontSizes.xs))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(tint).padding(.horizontal, 7).padding(.vertical, 4)
             .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
     }

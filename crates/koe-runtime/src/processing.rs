@@ -398,8 +398,16 @@ impl KoeRuntime {
 
     pub(super) fn poll_provider(&mut self) -> bool {
         let events = self.provider.poll();
-        let mut changed = !events.is_empty();
-        self.completed.extend(events);
+        let mut changed = false;
+        let now = self.last_now_sec;
+        for event in events {
+            if self.handle_app_update_event(&event, now) {
+                changed = true;
+            } else {
+                changed = true;
+                self.completed.push_back(event);
+            }
+        }
         while let Some(event) = self.completed.front().cloned() {
             let Some(work) = self.pending.get(&event.operation_id).cloned() else {
                 self.completed.pop_front();

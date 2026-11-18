@@ -31,7 +31,11 @@ public enum KoeWindowPresenter {
         return windowStores.object(forKey: window) ?? boundStore
     }
 
-    public static func bind(store: HostSessionStore?, onlyUnboundWindows: Bool = false) {
+    public static func bind(
+        store: HostSessionStore?,
+        replacing previousStore: HostSessionStore? = nil,
+        onlyUnboundWindows: Bool = false
+    ) {
         installObserversIfNeeded()
         boundStore = store
         guard let store else { return }
@@ -41,7 +45,15 @@ public enum KoeWindowPresenter {
         var ownsAnyWindow = false
         for win in trackedWindows.allObjects where isWorkspaceWindow(win) {
             let existing = windowStores.object(forKey: win)
-            guard !onlyUnboundWindows || existing == nil || existing?.handle == 0 || existing === store else {
+            let canClaim: Bool
+            if onlyUnboundWindows {
+                canClaim = existing == nil || existing?.handle == 0 || existing === store
+            } else if let previousStore {
+                canClaim = existing == nil || existing?.handle == 0 || existing === store || existing === previousStore
+            } else {
+                canClaim = true
+            }
+            guard canClaim else {
                 continue
             }
             ownsAnyWindow = true
@@ -59,8 +71,18 @@ public enum KoeWindowPresenter {
     }
 
     static func unbind(store: HostSessionStore?) {
-        if let store, boundStore === store {
+        guard let store else { return }
+        if boundStore === store {
             boundStore = nil
+        }
+        for win in trackedWindows.allObjects where windowStores.object(forKey: win) === store {
+            windowStores.removeObject(forKey: win)
+            trackedWindows.remove(win)
+            miniaturizedWindows.remove(win)
+            deminiaturizingWindows.remove(win)
+            if cachedWorkspaceWindow === win {
+                cachedWorkspaceWindow = nil
+            }
         }
     }
 

@@ -260,6 +260,7 @@ impl KoeRuntime {
             "ask":ask_json,
             "device":device_json,
             "liveCaption":self.live_caption_json(),
+            "appUpdate":self.app_update_json(),
             "provider":self.provider_json(),
             "playback":self.playback_json(),
             "error":self.error,"notice":self.notice})

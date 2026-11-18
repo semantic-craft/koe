@@ -75,6 +75,7 @@ extension HostSnapshot {
     ) -> HostSnapshot {
         HostSnapshot(
             speech: speech,
+            appUpdate: appUpdate,
             liveCaption: liveCaption,
             microphone: microphone,
             capture: capture,
