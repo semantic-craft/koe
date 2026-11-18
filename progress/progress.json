@@ -250,9 +250,9 @@
       },
       {
         "number": 722,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-15T12:24:12Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T18:04:48Z"
       },
       {
         "number": 723,
@@ -262,18 +262,42 @@
       },
       {
         "number": 725,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-16T04:56:10Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T18:04:51Z"
       },
       {
         "number": 731,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-16T15:31:13Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T18:04:53Z"
+      },
+      {
+        "number": 741,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T16:28:49Z"
+      },
+      {
+        "number": 743,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T16:28:52Z"
+      },
+      {
+        "number": 746,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T16:28:56Z"
+      },
+      {
+        "number": 747,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-18T16:28:58Z"
       }
     ],
-    "main": "8fdd15d41b7f7f8078c1f4dd0bbde0d56aa02e4c",
+    "main": "66cfd5f216bcd64068bba3db01fb15b114957253",
     "open_pulls": [],
     "pulls": [
       {
@@ -739,6 +763,78 @@
         "merged": true,
         "number": 735,
         "state": "closed"
+      },
+      {
+        "base": "b043f3a3b9439c837ebc82d4f6c325ef6be683c6",
+        "head": "6c87be7fb860e4d4f479f131069b603d093bc4af",
+        "merge_commit": "fb412c6359fbc47bb26ddc741196af1361d06c07",
+        "merged": true,
+        "number": 736,
+        "state": "closed"
+      },
+      {
+        "base": "fb412c6359fbc47bb26ddc741196af1361d06c07",
+        "head": "9c52e619211411b8b34ad4a22deb6731a69a4ea3",
+        "merge_commit": "8fdd15d41b7f7f8078c1f4dd0bbde0d56aa02e4c",
+        "merged": true,
+        "number": 737,
+        "state": "closed"
+      },
+      {
+        "base": "8fdd15d41b7f7f8078c1f4dd0bbde0d56aa02e4c",
+        "head": "5d33a268deb96d024d293f0c9d8083576df8fbbb",
+        "merge_commit": "b01a4e6b581ca466d3843588fc570dd12884f266",
+        "merged": true,
+        "number": 738,
+        "state": "closed"
+      },
+      {
+        "base": "b01a4e6b581ca466d3843588fc570dd12884f266",
+        "head": "3cfe7e6c3f18c916025ff89d61b42549a39a5f59",
+        "merge_commit": "7cd42351cbc6f27fc6eaea013b64f324efe1f301",
+        "merged": true,
+        "number": 739,
+        "state": "closed"
+      },
+      {
+        "base": "7cd42351cbc6f27fc6eaea013b64f324efe1f301",
+        "head": "d9465758967c8295921a15f7f0a081ed00064a8b",
+        "merge_commit": "9ef3b1df1e01be3f6d6e0e4d7dbbcd8389eeb89d",
+        "merged": true,
+        "number": 740,
+        "state": "closed"
+      },
+      {
+        "base": "9ef3b1df1e01be3f6d6e0e4d7dbbcd8389eeb89d",
+        "head": "6a4a4920499b195d5f459b3c81b03956afd44ba4",
+        "merge_commit": "72b85b3ef55c6dec1f7eccdd2399c4cf5585e02a",
+        "merged": true,
+        "number": 742,
+        "state": "closed"
+      },
+      {
+        "base": "72b85b3ef55c6dec1f7eccdd2399c4cf5585e02a",
+        "head": "4adabc9667edf9f04f2a793c32f2b9ddae54ca7c",
+        "merge_commit": "56c460ae65dd1b2cb45aeac497d77657fabecfb1",
+        "merged": true,
+        "number": 744,
+        "state": "closed"
+      },
+      {
+        "base": "56c460ae65dd1b2cb45aeac497d77657fabecfb1",
+        "head": "1be971bb19877c3c8fcca53517438e888223568c",
+        "merge_commit": "871794b800bab5964fdd4c83fbd16cfa941cd7e3",
+        "merged": true,
+        "number": 745,
+        "state": "closed"
+      },
+      {
+        "base": "871794b800bab5964fdd4c83fbd16cfa941cd7e3",
+        "head": "d610328ffad294164f418cbdefc87efb49c87d68",
+        "merge_commit": "66cfd5f216bcd64068bba3db01fb15b114957253",
+        "merged": true,
+        "number": 748,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -766,7 +862,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-17T00:07:13.545248Z",
+  "observed_at": "2026-11-18T18:07:30.964354Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2090,10 +2186,68 @@
             }
           ],
           "id": "private-release-220",
-          "next": "独立物理硬件核对继续按 #722、#725 与 #731 追踪。",
+          "next": "独立物理硬件核对继续按 #722 与 #731 原对应工单（已按要求关闭不再人工确认）记录。",
           "status": "done",
           "summary": "2026-11-17 已在私有仓库发布并更新经 xw-notary 完成 Apple 公证（提交 61f297ad-1554-49a6-9612-4e670ddab3da Accepted）与票据装订的 v2.2.0（构建 11，tag 指向 b043f3a）发行包，提供 arm64 zip、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（Notarized Developer ID）、--verify-self 与 --smoke-test，GitHub Release 下载回读 SHA-256（06a3039fdf20cf4a3356103f413bea2b641f3796d19661836eca6c1852d9c018）一致，本机 /Applications/Koe.app（PID 43309）已完成 Gatekeeper、实时数据与 AX UI 验收。",
           "title": "Koe 2.2.0 私有发行包"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "移除独立语音输入模块与旧伴侣桥接（b01a4e6），统一 scripts/release-macos.sh 公证打包脚本（7cd4235）。",
+              "ref": 738
+            },
+            {
+              "kind": "pull",
+              "note": "四层边界收口、KoeOwnedBytes 二进制 BLE/LocalASR C ABI、去掉 NotificationCenter 胶水总线与拆分 KoeWindowPresenter（9ef3b1d）。",
+              "ref": 740
+            },
+            {
+              "kind": "pull",
+              "note": "ProviderPool 多车道隔离并发、去掉影子索引与统一导出格式（72b85b3）。",
+              "ref": 742
+            },
+            {
+              "kind": "pull",
+              "note": "拆分 koe-engine 与 koe-runtime 超大单文件模块（56c460a）。",
+              "ref": 744
+            },
+            {
+              "kind": "pull",
+              "note": "HostSection 元信息统一、消除弱类型命令调用与清零 Swift 6 严格并发警告（871794b）。",
+              "ref": 745
+            },
+            {
+              "kind": "pull",
+              "note": "彻底移除旧 ProviderWorker、统一 CaptureMode 图标与优化 LifecycleState / QuickNote 热路径（66cfd5f）。",
+              "ref": 748
+            }
+          ],
+          "id": "architecture-straightening-230",
+          "next": "随 2.3.0 私有发行包交付并收口。",
+          "status": "done",
+          "summary": "已完成五轮全仓架构去胶水、并发隔离与 Swift 6 严格并发清零重构，并已通过全量自动化门禁、调试自检以及物理 Studio Display 麦克风（48 kHz）、macOS 26 SpeechAnalyzer、cua-driver 窗口显隐与真机 D3200 离线拉取验收；人工确认工单（#722、#725、#731、#741、#743、#746、#747）已按要求收口关闭。",
+          "title": "四层架构去胶水与并发热路径整治"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "2.3.0（构建 12）版本升级与发行说明已就绪。",
+              "ref": "docs/releases/v2.3.0.md"
+            },
+            {
+              "kind": "file",
+              "note": "2.3.0 更新日志与构建 12 信息。",
+              "ref": "CHANGELOG.md"
+            }
+          ],
+          "id": "private-release-230",
+          "next": "待本发版准备 PR 合并 main 后，执行 scripts/release-macos.sh 完成 Apple 公证并发布私有 GitHub Release v2.3.0。",
+          "status": "in_progress",
+          "summary": "已准备 Koe 2.3.0（构建 12）版本定义、发行说明与全量自动化及实机核心验收，待合入 main 后执行公证与私有 Release 打包发布。",
+          "title": "Koe 2.3.0 私有发行包"
         }
       ],
       "title": "验收与交付"
@@ -2166,7 +2320,11 @@
       722,
       723,
       725,
-      731
+      731,
+      741,
+      743,
+      746,
+      747
     ],
     "pulls": [
       589,
@@ -2226,7 +2384,16 @@
       732,
       733,
       734,
-      735
+      735,
+      736,
+      737,
+      738,
+      739,
+      740,
+      742,
+      744,
+      745,
+      748
     ]
   }
 }

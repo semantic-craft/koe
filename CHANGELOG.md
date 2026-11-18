@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2.3.0 (12) · 2026-11-19
+
+- 准备 `2.3.0`（构建 12）私有 GitHub Release，完整落地四层架构去胶水重构、后台多通道并发隔离、二进制 C ABI 收口与 Swift 6 严格并发加固，范围与验收边界见[发行说明](docs/releases/v2.3.0.md)。
+- 移除独立语音输入模块与旧伴侣桥接（`#738`），并将 `scripts/release-macos.sh` 统一为 `--options runtime --timestamp` 与 `xw-notary` 规范化公证打包入口（`#739`）。
+- 清理层间反向依赖与胶水总线：将纯 `hash` / `prng` 原语收回 `koe-engine` 并清理冗余 Cargo 依赖；拆分 `HostIntent` / `AdapterEvent`，落地 `KoeOwnedBytes` 二进制 BLE TX 与 Local ASR C ABI 通道，去除 `NotificationCenter` 字符串总线与抽离 `KoeWindowPresenter`，并强化 `verify-ui-principles.py` 门禁。（`#740`）
+- 隔离云端并发车道并统一导出契约：以多车道 `ProviderPool` 彻底替代单槽阻塞的 `ProviderWorker`，解决长耗时问答阻塞转写与纪要的问题；移除 `captures.records_by_file_id` 影子索引、`export_record` 双导出实现与过时顶层快照字段。（`#742`）
+- 模块拆分与热路径优化：拆分 `koe-engine`（`context` / `minutes` / `session`）与 `koe-runtime`（`mcp_surface` / `speech` / `dispatch`）超大单体文件（`#744`）；新增 `HostSection` 统一侧边栏/标题/模式图标元信息并清零 Swift 6 `-strict-concurrency=complete` 警告（`#745`）；以强类型 `LifecycleState` 替代每 250ms 的双次 JSON 比较，并预索引 `quick_note_workspace_json` 消除 $O(R \cdot I)$ 扫表（`#748`）。
+
 ## 2.2.0 (11) · 2026-11-17
 
 - 准备 `2.2.0`（构建 11）私有 GitHub Release，整合蓝牙控制权切换、本地桥接解耦与 Rust/SwiftUI 全栈指南加固，范围与硬件验收边界见[发行说明](docs/releases/v2.2.0.md)。

@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-17T00:07:13.545248Z</p>
-<p>Main: <code>main: 8fdd15d41b7f7f8078c1f4dd0bbde0d56aa02e4c</code></p>
+<p>Observed: 2026-11-18T18:07:30.964354Z</p>
+<p>Main: <code>main: 66cfd5f216bcd64068bba3db01fb15b114957253</code></p>
 <section id="mode-workspaces-definition"><h2>三模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>三种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -277,7 +277,19 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/734">pull 734: Rust FFI/panic 加固、SwiftUI 稳定标识与 CoreAudio/BLE 实时安全（42cfff2）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/735">pull 735: 版本号升至 2.2.0（构建 11）与发布说明定稿（b043f3a）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.2.0.md">file docs/releases/v2.2.0.md: 2.2.0 当前可用功能、未验收硬件边界与安装说明。</a></li>
-</ul><p>Next: 独立物理硬件核对继续按 #722、#725 与 #731 追踪。</p></article>
+</ul><p>Next: 独立物理硬件核对继续按 #722 与 #731 原对应工单（已按要求关闭不再人工确认）记录。</p></article>
+<article id="architecture-straightening-230"><h3>四层架构去胶水与并发热路径整治</h3><span class="badge">done</span><p>已完成五轮全仓架构去胶水、并发隔离与 Swift 6 严格并发清零重构，并已通过全量自动化门禁、调试自检以及物理 Studio Display 麦克风（48 kHz）、macOS 26 SpeechAnalyzer、cua-driver 窗口显隐与真机 D3200 离线拉取验收；人工确认工单（#722、#725、#731、#741、#743、#746、#747）已按要求收口关闭。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/738">pull 738: 移除独立语音输入模块与旧伴侣桥接（b01a4e6），统一 scripts/release-macos.sh 公证打包脚本（7cd4235）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/740">pull 740: 四层边界收口、KoeOwnedBytes 二进制 BLE/LocalASR C ABI、去掉 NotificationCenter 胶水总线与拆分 KoeWindowPresenter（9ef3b1d）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/742">pull 742: ProviderPool 多车道隔离并发、去掉影子索引与统一导出格式（72b85b3）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/744">pull 744: 拆分 koe-engine 与 koe-runtime 超大单文件模块（56c460a）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/745">pull 745: HostSection 元信息统一、消除弱类型命令调用与清零 Swift 6 严格并发警告（871794b）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/748">pull 748: 彻底移除旧 ProviderWorker、统一 CaptureMode 图标与优化 LifecycleState / QuickNote 热路径（66cfd5f）。</a></li>
+</ul><p>Next: 随 2.3.0 私有发行包交付并收口。</p></article>
+<article id="private-release-230"><h3>Koe 2.3.0 私有发行包</h3><span class="badge">in_progress</span><p>已准备 Koe 2.3.0（构建 12）版本定义、发行说明与全量自动化及实机核心验收，待合入 main 后执行公证与私有 Release 打包发布。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.3.0.md">file docs/releases/v2.3.0.md: 2.3.0（构建 12）版本升级与发行说明已就绪。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/CHANGELOG.md">file CHANGELOG.md: 2.3.0 更新日志与构建 12 信息。</a></li>
+</ul><p>Next: 待本发版准备 PR 合并 main 后，执行 scripts/release-macos.sh 完成 Apple 公证并发布私有 GitHub Release v2.3.0。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、Google 写回与 ACP 不计入当前 macOS 已接通功能；Mac 麦克风全天听记已接入，硬件验收见 #662。</p><ul>
