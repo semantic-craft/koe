@@ -315,7 +315,7 @@
         "updated_at": "2026-11-19T01:50:49Z"
       }
     ],
-    "main": "92fa0d606847a6e6884240a6a1a47fb24802b338",
+    "main": "6cb47c642be6d60c8da48a587fbc14f150d457ca",
     "open_pulls": [],
     "pulls": [
       {
@@ -909,9 +909,32 @@
         "merged": true,
         "number": 758,
         "state": "closed"
+      },
+      {
+        "base": "92fa0d606847a6e6884240a6a1a47fb24802b338",
+        "head": "d3bfc7299ff7b1d0957189dab8ea79c7cf1960e8",
+        "merge_commit": "d91ec482daa067cdb724bca95a04cb7e2a2a8c62",
+        "merged": true,
+        "number": 759,
+        "state": "closed"
+      },
+      {
+        "base": "d91ec482daa067cdb724bca95a04cb7e2a2a8c62",
+        "head": "5a388aae170210043ad7c2959b370e54b51507b0",
+        "merge_commit": "6cb47c642be6d60c8da48a587fbc14f150d457ca",
+        "merged": true,
+        "number": 760,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 450833256,
+        "prerelease": false,
+        "published_at": "2026-11-19T03:14:13Z",
+        "tag": "v2.5.0"
+      },
       {
         "draft": false,
         "id": 450659888,
@@ -950,7 +973,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-19T01:58:13.536637Z",
+  "observed_at": "2026-11-19T03:20:46.480761Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2404,10 +2427,34 @@
             }
           ],
           "id": "model-settings-and-recording-management",
-          "next": "按 #757 安装签名版 /Applications/Koe.app 完成双钥匙串持久化、最小窗口 GUI 巡检、DeepSeek 官方实网调用及物理 D3200 离线文件 -filetrans 异步转写验收。",
+          "next": "按 #757 完成最小窗口 GUI 巡检、模型设置内一键切换至 qwen3.7-plus 或配置 DeepSeek 实网调用，以及物理 D3200 离线文件 -filetrans 异步转写验收。",
           "status": "unverified",
-          "summary": "已将原设置拆分为「模型设置」（支持阿里云百炼 Qwen 与 DeepSeek 官方双钥匙串独立凭证、快捷组合与跨服务商混搭；ASR 覆盖 Qwen-Audio 3.1 四款最新模型含说话人分离及 DeepSeek /v1/tools/asr 超 120s 静音切段拼接；LLM 升级为 qwen3.7-plus / qwen4-max / qwen3.8-flash 与 deepseek-flash / deepseek-v4-pro 并支持深度思考开关）、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，版本检查收口至侧栏顶部版本胶囊弹层；7 个 Qwen 最新模型已完成北京 DashScope 实网实测，DeepSeek 线上接口与签名版 GUI/D3200 真机待按 #757 验收。",
+          "summary": "已将原设置拆分为「模型设置」（支持阿里云百炼 Qwen 与 DeepSeek 官方双钥匙串独立凭证、快捷组合与跨服务商混搭；ASR 覆盖 Qwen-Audio 3.1 四款最新模型含说话人分离及 DeepSeek /v1/tools/asr 超 120s 静音切段拼接；LLM 升级为 qwen3.7-plus / qwen4-max / qwen3.8-flash 与 deepseek-flash / deepseek-v4-pro 并支持深度思考开关）、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，版本检查收口至侧栏顶部版本胶囊弹层；7 个 Qwen 最新模型已完成北京 DashScope 实网实测，本机公证版 /Applications/Koe.app（v2.5.0 构建 14）已完成替换安装并实机确认 Qwen 钥匙串静默继承、录音豆双电量自动重连（100%/100%）与本机 139 条音频目录统计，剩余 DeepSeek 线上实网、GUI 巡检与 D3200 -filetrans 验收继续按 #757 推进。",
           "title": "模型设置重构、独立录音管理与录音豆状态弹层"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "私有 GitHub Release v2.5.0（6cb47c6）已上传经 xw-notary 公证（5acc5043-828a-452d-b539-776d29ade97c Accepted）的 Koe-2.5.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.5.0-release-receipt.json。",
+              "ref": "v2.5.0"
+            },
+            {
+              "kind": "pull",
+              "note": "2.5.0（构建 14）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（6cb47c6）。",
+              "ref": 760
+            },
+            {
+              "kind": "file",
+              "note": "2.5.0 发行说明与验收边界。",
+              "ref": "docs/releases/v2.5.0.md"
+            }
+          ],
+          "id": "private-release-250",
+          "next": "本机 /Applications/Koe.app 已替换为公证版 2.5.0（构建 14）并成功启动运行；剩余实机项按 #757 逐项核对。",
+          "status": "done",
+          "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 5acc5043-828a-452d-b539-776d29ade97c Accepted）并装订票据的 v2.5.0（构建 14，tag 指向 6cb47c6）发行包，提供 arm64 zip（sha256 b8d9bf3683d166eff55a9fe0eedc240b8406045623caaca7ad18c3c120929625，7993883 bytes）、SHA256SUMS.txt 与无秘密验收回执；解压包及替换安装的 /Applications/Koe.app 均已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，并已启动实机验证 2.5.0 (14) 凭据继承与录音豆重连。",
+          "title": "Koe 2.5.0 私有发行包与本机公证升级"
         }
       ],
       "title": "验收与交付"
@@ -2563,7 +2610,9 @@
       754,
       755,
       756,
-      758
+      758,
+      759,
+      760
     ]
   }
 }
