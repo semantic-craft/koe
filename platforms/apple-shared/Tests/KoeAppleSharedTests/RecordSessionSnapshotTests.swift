@@ -231,4 +231,78 @@ struct RecordSessionSnapshotTests {
         #expect(reopened.snapshot.error == nil)
         #expect(reopened.nativeError == nil)
     }
+
+    @Test("RecordSortOrder and RecordProjectFilter sort and filter records accurately")
+    func recordSortOrderAndProjectFilterWork() {
+        let records = [
+            RecordSnapshot(
+                id: "r1", title: "Beta 会议", createdAtEpochSec: 200, durationMs: 3_000,
+                source: "录音豆", status: "已整理", segmentCount: 1, preview: "短试音",
+                archived: false, mode: "quick_note", project: nil
+            ),
+            RecordSnapshot(
+                id: "r2", title: "Alpha 评审", createdAtEpochSec: 100, durationMs: 900_000,
+                source: "麦克风", status: "已整理", segmentCount: 5, preview: "长会议",
+                archived: true, mode: "meeting", project: "Q4 规划"
+            ),
+            RecordSnapshot(
+                id: "r3", title: "Gamma 随记", createdAtEpochSec: 300, durationMs: 45_000,
+                source: "麦克风", status: "已整理", segmentCount: 2, preview: "中等",
+                archived: false, mode: "quick_note", project: "学术写作"
+            ),
+        ]
+
+        #expect(RecordSortOrder.newest.sort(records).map(\.id) == ["r3", "r1", "r2"])
+        #expect(RecordSortOrder.oldest.sort(records).map(\.id) == ["r2", "r1", "r3"])
+        #expect(RecordSortOrder.longest.sort(records).map(\.id) == ["r2", "r3", "r1"])
+        #expect(RecordSortOrder.shortest.sort(records).map(\.id) == ["r1", "r3", "r2"])
+        #expect(RecordSortOrder.title.sort(records).map(\.id) == ["r2", "r1", "r3"])
+
+        #expect(records.filter { $0.matches(filter: .all, projectFilter: .unassigned, query: "") }.map(\.id) == ["r1"])
+        #expect(records.filter { $0.matches(filter: .all, projectFilter: .project("Q4 规划"), query: "") }.map(\.id) == ["r2"])
+    }
+
+    @Test("Batch record management commands work over C ABI v2 with undo and directory export")
+    @MainActor
+    func batchRecordManagementOverHostSession() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let exportDir = directory.appendingPathComponent("batch-export")
+        try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+        let t0: UInt64 = 1_800_100_000
+
+        store.send(.createNote(title: "归档保护项", text: "重要讨论内容。", stayOnPage: true), nowEpochSec: t0)
+        store.send(.createNote(title: "待清试音一", text: "测试麦克风一。", stayOnPage: true), nowEpochSec: t0 + 1)
+        store.send(.createNote(title: "待清试音二", text: "测试麦克风二。", stayOnPage: true), nowEpochSec: t0 + 2)
+
+        let ids = store.records.map(\.id)
+        #expect(ids.count == 3)
+        let protectedId = try #require(store.records.first(where: { $0.title == "归档保护项" })?.id)
+        let disposableIds = store.records.filter { $0.id != protectedId }.map(\.id)
+
+        store.send(.batchSetRecordProject(recordIds: ids, project: "项目甲"), nowEpochSec: t0 + 3)
+        #expect(store.records.allSatisfy { $0.project == "项目甲" })
+
+        store.send(.batchSetRecordArchived(recordIds: [protectedId], archived: true), nowEpochSec: t0 + 4)
+        #expect(store.records.first(where: { $0.id == protectedId })?.archived == true)
+
+        store.send(.exportRecordsMarkdown(recordIds: ids, directory: exportDir.path), nowEpochSec: t0 + 5)
+        let exportedFiles = try FileManager.default.contentsOfDirectory(atPath: exportDir.path)
+        #expect(exportedFiles.filter { $0.hasSuffix(".md") }.count == 3)
+
+        store.send(.batchTrashRecords(recordIds: ids), nowEpochSec: t0 + 6)
+        #expect(store.records.map(\.id) == [protectedId])
+        #expect(store.navigation.trashCount == 2)
+        let undo = try #require(store.navigation.undoTrash)
+        #expect(Set(undo.effectiveRecordIds) == Set(disposableIds))
+        #expect(undo.count == 2)
+
+        store.send(.batchRestoreRecords(recordIds: undo.effectiveRecordIds), nowEpochSec: t0 + 7)
+        #expect(store.records.count == 3)
+        #expect(store.navigation.trashCount == 0)
+        #expect(store.navigation.undoTrash == nil)
+    }
 }

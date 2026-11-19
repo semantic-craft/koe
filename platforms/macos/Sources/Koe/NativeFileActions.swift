@@ -48,4 +48,19 @@ final class NativeFileActions {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         store.send(request.command(path: url.path))
     }
+
+    func exportRecords(_ recordIds: [String]) {
+        guard let store, !recordIds.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "选择导出目录"
+        panel.message = "将选中的 \(recordIds.count) 条记录分别导出为 Markdown 文件。"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        store.send(.exportRecordsMarkdown(recordIds: recordIds, directory: url.path))
+    }
 }

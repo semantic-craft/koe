@@ -205,10 +205,23 @@ public struct TrashRecordSnapshot: Codable, Equatable, Identifiable, Sendable {
 public struct UndoTrashSnapshot: Codable, Equatable, Sendable {
     public let recordId: String
     public let title: String
+    public let recordIds: [String]?
 
-    public init(recordId: String, title: String) {
+    public var effectiveRecordIds: [String] {
+        if let recordIds, !recordIds.isEmpty {
+            return recordIds
+        }
+        return [recordId]
+    }
+
+    public var count: Int {
+        effectiveRecordIds.count
+    }
+
+    public init(recordId: String, title: String, recordIds: [String]? = nil) {
         self.recordId = recordId
         self.title = title
+        self.recordIds = recordIds
     }
 }
 

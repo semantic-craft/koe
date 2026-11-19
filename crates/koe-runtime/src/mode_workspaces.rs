@@ -26,6 +26,24 @@ struct ModePickerCounts {
     past_meeting_count: usize,
 }
 
+fn sanitize_export_filename(title: &str) -> String {
+    let cleaned: String = title
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_start_matches('.').trim();
+    if trimmed.is_empty() {
+        "Koe 记录".to_string()
+    } else {
+        trimmed.chars().take(80).collect()
+    }
+}
+
 impl KoeRuntime {
     pub(super) fn set_record_project(
         &mut self,
@@ -34,6 +52,37 @@ impl KoeRuntime {
     ) -> Result<(), String> {
         self.commit(|w| w.set_record_project(record_id, project))?;
         self.notice = Some("已更新项目归类".into());
+        Ok(())
+    }
+
+    pub(super) fn batch_set_record_project(
+        &mut self,
+        record_ids: &[String],
+        project: Option<&str>,
+    ) -> Result<(), String> {
+        let mut seen = BTreeSet::new();
+        let live_ids: Vec<String> = record_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty() && seen.insert((*id).to_owned()))
+            .filter(|id| self.workspace().record(id).is_some_and(|r| r.is_live()))
+            .map(ToOwned::to_owned)
+            .collect();
+        if live_ids.is_empty() {
+            return Err("请先选择至少一条记录".into());
+        }
+        let count = live_ids.len();
+        self.commit(|w| {
+            for id in &live_ids {
+                w.set_record_project(id, project)?;
+            }
+            Ok(())
+        })?;
+        let trimmed = project.map(str::trim).filter(|s| !s.is_empty());
+        self.notice = Some(match trimmed {
+            Some(name) => format!("已将 {count} 条记录归类到项目「{name}」"),
+            None => format!("已将 {count} 条记录移回收件箱"),
+        });
         Ok(())
     }
 
@@ -132,6 +181,59 @@ impl KoeRuntime {
         } else {
             Err("缺少导出目标".into())
         }
+    }
+
+    pub(super) fn export_records_markdown(
+        &mut self,
+        record_ids: &[String],
+        directory: &Path,
+        include_analysis: bool,
+        include_sources: bool,
+    ) -> Result<(), String> {
+        if !directory.is_dir() {
+            return Err("导出目录不存在或无法写入".into());
+        }
+        let mut seen = BTreeSet::new();
+        let live_ids: Vec<String> = record_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty() && seen.insert((*id).to_owned()))
+            .filter(|id| self.workspace().record(id).is_some_and(|r| r.is_live()))
+            .map(ToOwned::to_owned)
+            .collect();
+        if live_ids.is_empty() {
+            return Err("请先选择至少一条要导出的记录".into());
+        }
+        let options = MarkdownExportOptions {
+            include_analysis,
+            include_sources,
+        };
+        let live_items = self.live_sourced_items();
+        let mut used_names = BTreeSet::new();
+        let mut exported = 0usize;
+        for id in &live_ids {
+            let record = self.workspace().record(id).ok_or("记录不存在")?;
+            let output = format_record_markdown(record, &live_items, options);
+            let stem = sanitize_export_filename(&record.title);
+            let mut candidate_idx = 1usize;
+            let path = loop {
+                let name = if candidate_idx == 1 {
+                    format!("{stem}.md")
+                } else {
+                    format!("{stem}-{candidate_idx}.md")
+                };
+                let key = name.to_lowercase();
+                let candidate_path = directory.join(&name);
+                if used_names.insert(key) && !candidate_path.exists() {
+                    break candidate_path;
+                }
+                candidate_idx += 1;
+            };
+            write_atomic(&path, output.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
+            exported += 1;
+        }
+        self.notice = Some(format!("已导出 {exported} 条记录 Markdown"));
+        Ok(())
     }
 
     pub(super) fn active_capture_mode_tag(&self) -> Option<CaptureMode> {

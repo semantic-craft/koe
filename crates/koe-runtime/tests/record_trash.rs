@@ -1499,3 +1499,192 @@ fn cancelled_microphone_meeting_capture_detaches_live_minutes_scope_and_selectio
         cancelled["workspaces"]["liveMinutes"]["selectedRecordId"]
     );
 }
+
+#[test]
+fn batch_trash_skips_archived_records_and_batch_restore_undoes_entire_batch() {
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+
+    let rec_a = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "归档纪要", "text": "受保护内容。", "stayOnPage": true}),
+        NOW,
+    )["records"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rec_b = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "试音甲", "text": "第一条待清理。", "stayOnPage": true}),
+        NOW + 1,
+    )["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["title"] == "试音甲")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rec_c = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "试音乙", "text": "第二条待清理。", "stayOnPage": true}),
+        NOW + 2,
+    )["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["title"] == "试音乙")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "set_record_archived", "recordId": rec_a, "archived": true}),
+        NOW + 3,
+    );
+
+    let trashed = dispatch_ok(
+        &mut runtime,
+        json!({"type": "batch_trash_records", "recordIds": [rec_a, rec_b, rec_c]}),
+        NOW + 4,
+    );
+    let live_ids: Vec<&str> = trashed["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(live_ids, vec![rec_a.as_str()]);
+    assert_eq!(trashed["trashRecords"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        trashed["undoTrash"]["recordIds"],
+        json!([rec_b, rec_c]),
+        "batch undoTrash must carry all trashed ids"
+    );
+    assert!(
+        trashed["notice"]
+            .as_str()
+            .unwrap_or("")
+            .contains("跳过 1 条"),
+        "expected skipped protected count in notice, got: {:?}",
+        trashed["notice"]
+    );
+
+    let blocked = dispatch_raw(
+        &mut runtime,
+        json!({"type": "batch_trash_records", "recordIds": [rec_a]}),
+        NOW + 5,
+    );
+    assert!(
+        blocked["error"].is_string(),
+        "batch trash with only protected records must return an error"
+    );
+
+    let restored = dispatch_ok(
+        &mut runtime,
+        json!({"type": "batch_restore_records", "recordIds": [rec_b, rec_c]}),
+        NOW + 6,
+    );
+    assert_eq!(restored["records"].as_array().unwrap().len(), 3);
+    assert!(restored["trashRecords"].as_array().unwrap().is_empty());
+    assert!(restored["undoTrash"].is_null());
+}
+
+#[test]
+fn batch_project_archive_and_directory_markdown_export_work_atomically() {
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "评审记录", "text": "第一份评审原文。", "stayOnPage": true}),
+        NOW,
+    );
+    let snap = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "评审记录", "text": "第二份评审原文。", "stayOnPage": true}),
+        NOW + 1,
+    );
+    let ids: Vec<String> = snap["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids.len(), 2);
+
+    let assigned = dispatch_ok(
+        &mut runtime,
+        json!({"type": "batch_set_record_project", "recordIds": ids, "project": "Q4 规划"}),
+        NOW + 2,
+    );
+    assert!(assigned["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["project"] == "Q4 规划"));
+
+    let cleared = dispatch_ok(
+        &mut runtime,
+        json!({"type": "batch_set_record_project", "recordIds": ids, "project": null}),
+        NOW + 3,
+    );
+    assert!(cleared["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["project"].is_null()));
+
+    let archived = dispatch_ok(
+        &mut runtime,
+        json!({"type": "batch_set_record_archived", "recordIds": ids, "archived": true}),
+        NOW + 4,
+    );
+    assert!(archived["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["archived"] == true));
+
+    let unarchived = dispatch_ok(
+        &mut runtime,
+        json!({"type": "batch_set_record_archived", "recordIds": ids, "archived": false}),
+        NOW + 5,
+    );
+    assert!(unarchived["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["archived"] == false));
+
+    let export_dir = dir.0.join("exported-batch");
+    std::fs::create_dir_all(&export_dir).unwrap();
+    let exported = dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "export_records_markdown",
+            "recordIds": ids,
+            "directory": export_dir.to_string_lossy()
+        }),
+        NOW + 6,
+    );
+    assert!(
+        exported["notice"].as_str().unwrap_or("").contains("2 条"),
+        "expected export notice with count, got: {:?}",
+        exported["notice"]
+    );
+    let md1 = export_dir.join("评审记录.md");
+    let md2 = export_dir.join("评审记录-2.md");
+    assert!(md1.exists(), "first exported markdown should exist");
+    assert!(md2.exists(), "colliding title should be exported with -2 suffix");
+    let combined = format!(
+        "{}\n{}",
+        std::fs::read_to_string(&md1).unwrap(),
+        std::fs::read_to_string(&md2).unwrap()
+    );
+    assert!(combined.contains("第一份评审原文。"));
+    assert!(combined.contains("第二份评审原文。"));
+}

@@ -27,6 +27,7 @@ public struct NavigationChromeSlice: Equatable, Sendable {
     public let detailDurationMs: UInt64
     public let hasPlayableDetailAsset: Bool
     public let hasConnectGuide: Bool
+    public let trashCount: Int
     public let undoTrash: UndoTrashSnapshot?
     public let effectiveError: String?
     public let notice: String?
@@ -42,6 +43,7 @@ public struct NavigationChromeSlice: Equatable, Sendable {
         detailDurationMs = snapshot.detail?.durationMs ?? 0
         hasPlayableDetailAsset = snapshot.playback.asset != nil && snapshot.playback.recordId == snapshot.detail?.id
         hasConnectGuide = snapshot.device.guide != nil
+        trashCount = snapshot.trashRecords.count
         undoTrash = snapshot.undoTrash
         effectiveError = nativeError ?? snapshot.error
         notice = snapshot.notice

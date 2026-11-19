@@ -15,8 +15,12 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case selectAllDayDate(date: String)
     case selectLiveMinutesRecord(recordId: String?)
     case setRecordArchived(recordId: String, archived: Bool)
+    case batchSetRecordArchived(recordIds: [String], archived: Bool)
+    case batchSetRecordProject(recordIds: [String], project: String? = nil)
     case trashRecord(recordId: String)
+    case batchTrashRecords(recordIds: [String])
     case restoreRecord(recordId: String)
+    case batchRestoreRecords(recordIds: [String])
     case purgeRecord(recordId: String)
     case emptyTrash
     case dismissUndoTrash
@@ -24,6 +28,12 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         recordId: String? = nil,
         date: String? = nil,
         path: String,
+        includeAnalysis: Bool = true,
+        includeSources: Bool = true
+    )
+    case exportRecordsMarkdown(
+        recordIds: [String],
+        directory: String,
         includeAnalysis: Bool = true,
         includeSources: Bool = true
     )
@@ -88,7 +98,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case checkAppUpdate
 
     private enum CodingKeys: String, CodingKey {
-        case type, section, recordId, segmentId, path, title, text, stayOnPage
+        case type, section, recordId, recordIds, segmentId, path, directory, title, text, stayOnPage
         case project, date, archived, includeAnalysis, includeSources
         case itemId, decision, completed, due, speaker, fromSpeaker, toSpeaker
         case question, scope, positionMs, isPlaying, lane
@@ -112,12 +122,17 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .selectAllDayDate: "select_all_day_date"
         case .selectLiveMinutesRecord: "select_live_minutes_record"
         case .setRecordArchived: "set_record_archived"
+        case .batchSetRecordArchived: "batch_set_record_archived"
+        case .batchSetRecordProject: "batch_set_record_project"
         case .trashRecord: "trash_record"
+        case .batchTrashRecords: "batch_trash_records"
         case .restoreRecord: "restore_record"
+        case .batchRestoreRecords: "batch_restore_records"
         case .purgeRecord: "purge_record"
         case .emptyTrash: "empty_trash"
         case .dismissUndoTrash: "dismiss_undo_trash"
         case .exportWorkspaceMarkdown: "export_workspace_markdown"
+        case .exportRecordsMarkdown: "export_records_markdown"
         case .reviewItem: "review_item"
         case .completeTask: "complete_task"
         case .editItem: "edit_item"
@@ -206,10 +221,24 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case let .setRecordArchived(recordId, archived):
             try c.encode(recordId, forKey: .recordId)
             try c.encode(archived, forKey: .archived)
+        case let .batchSetRecordArchived(recordIds, archived):
+            try c.encode(recordIds, forKey: .recordIds)
+            try c.encode(archived, forKey: .archived)
+        case let .batchSetRecordProject(recordIds, project):
+            try c.encode(recordIds, forKey: .recordIds)
+            try c.encodeIfPresent(project, forKey: .project)
+        case let .batchTrashRecords(recordIds),
+             let .batchRestoreRecords(recordIds):
+            try c.encode(recordIds, forKey: .recordIds)
         case let .exportWorkspaceMarkdown(recordId, date, path, includeAnalysis, includeSources):
             try c.encodeIfPresent(recordId, forKey: .recordId)
             try c.encodeIfPresent(date, forKey: .date)
             try c.encode(path, forKey: .path)
+            try c.encode(includeAnalysis, forKey: .includeAnalysis)
+            try c.encode(includeSources, forKey: .includeSources)
+        case let .exportRecordsMarkdown(recordIds, directory, includeAnalysis, includeSources):
+            try c.encode(recordIds, forKey: .recordIds)
+            try c.encode(directory, forKey: .directory)
             try c.encode(includeAnalysis, forKey: .includeAnalysis)
             try c.encode(includeSources, forKey: .includeSources)
         case let .reviewItem(itemId, decision):
