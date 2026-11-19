@@ -58,6 +58,9 @@ impl CredentialStore for PlatformCredentials {
     fn prepare(&mut self, secret: &str) -> Result<String, CredentialError> {
         self.call(5, "", secret)?.ok_or(CredentialError)
     }
+    fn prepare_for_slot(&mut self, slot: &str, secret: &str) -> Result<String, CredentialError> {
+        self.call(5, slot, secret)?.ok_or(CredentialError)
+    }
     fn create(&mut self, reference: &str, secret: &str) -> Result<(), CredentialError> {
         match self.call(1, reference, secret)? {
             Some(created) if created == reference => Ok(()),

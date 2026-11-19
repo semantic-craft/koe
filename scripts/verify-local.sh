@@ -8,7 +8,7 @@
 set -euo pipefail
 export MACOSX_DEPLOYMENT_TARGET=14.0
 
-unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_API_KEY DOUBAO_TTS_API_KEY
+unset DASHSCOPE_API_KEY DEEPSEEK_API_KEY ARK_API_KEY DOUBAO_API_KEY DOUBAO_TTS_API_KEY
 root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 cd "$root"
 
@@ -28,6 +28,7 @@ python3 scripts/test_cleanup_app_registrations.py
 python3 scripts/test_install_macos.py
 python3 scripts/test_release_macos.py
 python3 scripts/test_ci.py
+python3 scripts/test_run_with_secrets.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
 perf_check="${KOE_SWIFTUI_PERF_CHECK:-$HOME/Projects/agent-home/tools/swiftui-perf-check/scripts/check_swiftui_perf.py}"

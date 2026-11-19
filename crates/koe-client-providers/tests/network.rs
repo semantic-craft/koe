@@ -1382,8 +1382,8 @@ fn chat_requests_encode_provider_specific_thinking_controls() {
 
     let mut pool = ProviderPool::new().unwrap();
     for (op, model, thinking) in [
-        (301, "qwen3.7-plus", Some(koe_client_providers::ThinkingMode::Qwen(false))),
-        (302, "deepseek-flash", Some(koe_client_providers::ThinkingMode::DeepSeek(true))),
+        (301, "deepseek-flash", Some(koe_client_providers::ThinkingMode::DeepSeek(false))),
+        (302, "deepseek-v4-pro", Some(koe_client_providers::ThinkingMode::DeepSeek(true))),
         (303, "local-ollama", None),
     ] {
         pool.submit(
@@ -1405,8 +1405,8 @@ fn chat_requests_encode_provider_specific_thinking_controls() {
     }
 
     let seen = server.join().unwrap();
-    assert_eq!(seen[0]["enable_thinking"], false);
-    assert!(seen[0].get("thinking").is_none());
+    assert_eq!(seen[0]["thinking"]["type"], "disabled");
+    assert!(seen[0].get("enable_thinking").is_none());
     assert_eq!(seen[1]["thinking"]["type"], "enabled");
     assert!(seen[1].get("enable_thinking").is_none());
     assert!(seen[2].get("enable_thinking").is_none());

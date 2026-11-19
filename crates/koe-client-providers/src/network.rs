@@ -2,8 +2,7 @@ use std::fmt;
 use std::time::Duration;
 
 use koe_engine::product::{
-    DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_HTTP_BASE_URL, DEFAULT_DASHSCOPE_WS_URL,
-    DEFAULT_TEXT_MODEL,
+    DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_WS_URL, DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_TEXT_MODEL,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -25,20 +24,18 @@ const MAX_PCM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
-/// Documented Beijing public endpoint; a workspace-specific WSS URL may override it.
+/// Documented Beijing public DashScope ASR endpoint; a workspace-specific WSS URL may override it.
 pub const DASHSCOPE_ASR_ENDPOINT: &str = DEFAULT_DASHSCOPE_WS_URL;
-/// Documented Beijing OpenAI-compatible public chat endpoint.
-pub const DASHSCOPE_CHAT_ENDPOINT: &str = DEFAULT_DASHSCOPE_HTTP_BASE_URL;
-/// Default real-time ASR model.
+/// Default DeepSeek official OpenAI-compatible chat endpoint.
+pub const DEEPSEEK_CHAT_ENDPOINT: &str = DEFAULT_DEEPSEEK_CHAT_URL;
+/// Default real-time ASR model (Qwen primary).
 pub const DASHSCOPE_ASR_MODEL: &str = DEFAULT_ASR_MODEL;
-/// Default general-purpose chat model.
-pub const DASHSCOPE_CHAT_MODEL: &str = DEFAULT_TEXT_MODEL;
+/// Default general-purpose chat model (DeepSeek 4.1 Flash).
+pub const DEEPSEEK_CHAT_MODEL: &str = DEFAULT_TEXT_MODEL;
 
 /// Provider-specific thinking control sent in chat completion payloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingMode {
-    /// Alibaba Cloud DashScope `enable_thinking: bool`.
-    Qwen(bool),
     /// DeepSeek official `thinking: { "type": "enabled" | "disabled" }`.
     DeepSeek(bool),
 }

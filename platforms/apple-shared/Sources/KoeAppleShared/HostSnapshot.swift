@@ -282,12 +282,12 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
         asrIsRealtime: true,
         asrProvider: "qwen",
         asrModel: "qwen-audio-3.1-asr-flash-streaming",
-        llmProvider: "qwen",
-        model: "qwen3.8-flash",
+        llmProvider: "deepseek",
+        model: "deepseek-flash",
         enableThinking: false,
         qwenWorkspaceId: "",
         asrEndpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-        chatEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        chatEndpoint: "https://api.deepseek.com/chat/completions",
         credentialState: "missing",
         deepseekCredentialState: "missing",
         isolated: true
@@ -308,7 +308,7 @@ extension ProviderSnapshot {
         asrIsRealtime = try values.decodeIfPresent(Bool.self, forKey: .asrIsRealtime) ?? true
         asrProvider = try values.decodeIfPresent(String.self, forKey: .asrProvider) ?? "qwen"
         asrModel = try values.decodeIfPresent(String.self, forKey: .asrModel) ?? "qwen-audio-3.1-asr-flash-streaming"
-        llmProvider = try values.decodeIfPresent(String.self, forKey: .llmProvider) ?? "qwen"
+        llmProvider = try values.decodeIfPresent(String.self, forKey: .llmProvider) ?? "deepseek"
         model = try values.decode(String.self, forKey: .model)
         enableThinking = try values.decodeIfPresent(Bool.self, forKey: .enableThinking) ?? false
         qwenWorkspaceId = try values.decodeIfPresent(String.self, forKey: .qwenWorkspaceId) ?? ""

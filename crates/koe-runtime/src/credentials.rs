@@ -14,6 +14,10 @@ pub trait CredentialStore: Send {
     /// Allocates a fresh unique reference without touching storage, so the
     /// workspace can record ownership before the item exists.
     fn prepare(&mut self, secret: &str) -> Result<String, CredentialError>;
+    /// Allocates a fresh unique reference for a named provider slot (`"qwen"` or `"deepseek"`).
+    fn prepare_for_slot(&mut self, _slot: &str, secret: &str) -> Result<String, CredentialError> {
+        self.prepare(secret)
+    }
     /// Creates a new item at a reference returned by `prepare`.
     fn create(&mut self, reference: &str, secret: &str) -> Result<(), CredentialError>;
     /// Deletes one previously created item. Missing is successful.
