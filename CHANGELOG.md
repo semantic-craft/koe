@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2.6.0 (15) · 2026-11-19
+
+- 准备 `2.6.0`（构建 15）私有 GitHub Release，落地模型分工新架构：默认文本模型全面切换为 DeepSeek 4.1 Flash（`deepseek-flash`），Qwen 专注主力语音识别（ASR），DeepSeek 保留次选 ASR，并补齐旧工作区无损自动迁移与双槽凭据隔离加固，范围与验收边界见[发行说明](docs/releases/v2.6.0.md)。
+- 模型分工与界面收口：文本处理（LLM）收口为 DeepSeek 官方（默认 `deepseek-flash` / 旗舰 `deepseek-v4-pro`）与自定义兼容，移除 Qwen LLM 路径与 `ThinkingMode::Qwen`；ASR 默认 Qwen-Audio 3.1（`-streaming` / `-message` / `-flash` / `-filetrans`），保留 DeepSeek `/v1/tools/asr`（超 120s 静音自动切片）；快捷组合收敛为「Qwen 语音 + DeepSeek 文本（推荐）」与「DeepSeek 官方全套」。（`#763`）
+- 旧工作区迁移与凭据加固：自动将旧版 Qwen LLM / 空白 `llm_provider` 工作区无损迁移至 DeepSeek 4.1 Flash 并保留 Qwen ASR 与业务空间 ID；`qwenWorkspaceId` 仅作用于 Qwen ASR 端点；打通 `CredentialStore::prepare_for_slot` 双槽隔离、环境变量首尾空白裁剪及 `scripts/run-with-secrets.py` 对 `DEEPSEEK_API_KEY` 的转发。（`#763`）
+
 ## 2.5.0 (14) · 2026-11-19
 
 - 准备 `2.5.0`（构建 14）私有 GitHub Release，交付重构后的「模型设置」（Qwen 最新版与 DeepSeek 官方 ASR/LLM）、独立顶级「录音管理」页面、侧栏底栏录音豆常驻状态弹层与顶部版本胶囊更新弹层，范围与验收边界见[发行说明](docs/releases/v2.5.0.md)。
