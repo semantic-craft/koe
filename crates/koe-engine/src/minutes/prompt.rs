@@ -95,9 +95,9 @@ impl MeetingMinutes {
 
         let replace_point = |pt: &mut MinutePoint| {
             pt.claim = r(&pt.claim);
-            pt.owner = pt.owner.as_deref().map(&r);
-            pt.due = pt.due.as_deref().map(&r);
-            pt.speaker = pt.speaker.as_deref().map(&r);
+            pt.owner = pt.owner.as_deref().map(r);
+            pt.due = pt.due.as_deref().map(r);
+            pt.speaker = pt.speaker.as_deref().map(r);
         };
         let replace_fb = |fb: &mut MinuteFishbone| {
             fb.issue = r(&fb.issue);
