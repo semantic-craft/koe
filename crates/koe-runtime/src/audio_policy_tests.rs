@@ -172,6 +172,7 @@ fn revoked_attempt_cannot_write_late_results_after_policy_is_restored() {
                     start_ms: 0,
                     end_ms: 20,
                     text: "late old words".into(),
+                    speaker: None,
                 }],
             }),
         });

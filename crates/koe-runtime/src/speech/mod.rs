@@ -7,7 +7,7 @@ mod tests;
 use super::*;
 use crate::local_asr::{LocalPhase, LocalSession, Readiness, MAX_MESSAGE_BYTES};
 use koe_client_providers::{
-    LiveEvent, LiveTranscription, OfflineSpeechWorker, ProviderConfig, DASHSCOPE_ASR_MODEL,
+    LiveEvent, LiveTranscription, OfflineSpeechWorker, ProviderConfig,
 };
 use std::collections::VecDeque;
 
@@ -24,6 +24,7 @@ pub(super) struct SpeechSession {
     pub(in crate::speech) key: RequestKey,
     pub(in crate::speech) engine: SpeechEngine,
     pub(in crate::speech) stream: Option<LiveTranscription>,
+    pub(in crate::speech) deferred_batch: bool,
     pub(in crate::speech) operations: BTreeMap<u64, LocalSession>,
     pub(in crate::speech) active_operation: Option<u64>,
     pub(in crate::speech) pcm: Vec<i16>,
@@ -105,7 +106,7 @@ impl KoeRuntime {
             SpeechEngine::Downloaded(id) => {
                 self.speech.loaded_model_id.as_deref() == Some(id.as_str())
             }
-            SpeechEngine::Cloud => !self.settings.key.is_empty(),
+            SpeechEngine::Cloud => self.cloud_asr_configured(),
         }
     }
     pub(in crate::speech) fn ensure_speech_session(&mut self, id: &str, source: Option<CaptureOrigin>) -> Result<(), String> {
@@ -131,6 +132,41 @@ impl KoeRuntime {
         } else {
             None
         };
+        let is_non_realtime_cloud = engine == SpeechEngine::Cloud
+            && blocked.is_none()
+            && self.cloud_asr_configured()
+            && !self
+                .workspace()
+                .provider_configuration()
+                .is_realtime_cloud_asr();
+        if is_non_realtime_cloud {
+            self.commit(|w| w.bind_speech_engine(id, engine.clone()))?;
+            let session = SpeechSession {
+                key: RequestKey {
+                    record_id: id.into(),
+                    attempt: 0,
+                    input_revision: 0,
+                },
+                engine,
+                stream: None,
+                deferred_batch: true,
+                operations: BTreeMap::new(),
+                active_operation: None,
+                pcm: Vec::new(),
+                consumed_samples: 0,
+                input_closed: false,
+                source,
+                file_audio: None,
+                results: VecDeque::new(),
+                minutes_schedule: Default::default(),
+                saved: false,
+                terminal: false,
+                success: false,
+                captured_pcm_bytes: 0,
+            };
+            self.captures.sessions.insert(id.into(), session);
+            return Ok(());
+        }
         let key = self.commit(|w| {
             w.bind_speech_engine(id, engine.clone())?;
             w.begin_analysis(id, AnalysisStage::Transcribing)
@@ -139,6 +175,7 @@ impl KoeRuntime {
             key,
             engine: engine.clone(),
             stream: None,
+            deferred_batch: false,
             operations: BTreeMap::new(),
             active_operation: None,
             pcm: Vec::new(),
@@ -156,18 +193,21 @@ impl KoeRuntime {
         if engine == SpeechEngine::Cloud {
             if let Some(error) = blocked {
                 session.results.push_back(LiveEvent::Failed(error));
-            } else if self.settings.key.is_empty() {
+            } else if !self.cloud_asr_configured() {
                 session.results.push_back(LiveEvent::Failed(
                     "请先配置云端语音凭据；原始录音已保留".into(),
                 ));
             } else {
+                let cfg = self.workspace().provider_configuration();
+                let asr_model = if cfg.asr_model.trim().is_empty() {
+                    DEFAULT_ASR_MODEL.to_string()
+                } else {
+                    cfg.asr_model.clone()
+                };
                 match LiveTranscription::start(ProviderConfig::new(
-                    self.workspace()
-                        .provider_configuration()
-                        .asr_endpoint
-                        .clone(),
-                    DASHSCOPE_ASR_MODEL.into(),
-                    self.settings.key.clone(),
+                    cfg.asr_endpoint.clone(),
+                    asr_model,
+                    self.active_asr_key().to_owned(),
                 )) {
                     Ok(stream) => session.stream = Some(stream),
                     Err(e) => session.results.push_back(LiveEvent::Failed(e)),
@@ -360,21 +400,25 @@ impl KoeRuntime {
     pub(super) fn finish_speech(&mut self, id: &str) {
         if let Some(mut s) = self.captures.sessions.remove(id) {
             s.input_closed = true;
-            let result = if let Some(stream) = &s.stream {
-                stream.finish()
+            if s.deferred_batch {
+                s.terminal = true;
             } else {
-                self.flush_speech_window(&mut s, true)
-            };
-            if let Err(error) = result {
-                s.results.push_back(LiveEvent::Failed(error));
-            }
-            if s.stream.is_none()
-                && s.operations.is_empty()
-                && s.pcm.is_empty()
-                && s.results.is_empty()
-                && !s.terminal
-            {
-                s.results.push_back(LiveEvent::Finished);
+                let result = if let Some(stream) = &s.stream {
+                    stream.finish()
+                } else {
+                    self.flush_speech_window(&mut s, true)
+                };
+                if let Err(error) = result {
+                    s.results.push_back(LiveEvent::Failed(error));
+                }
+                if s.stream.is_none()
+                    && s.operations.is_empty()
+                    && s.pcm.is_empty()
+                    && s.results.is_empty()
+                    && !s.terminal
+                {
+                    s.results.push_back(LiveEvent::Finished);
+                }
             }
             self.captures.sessions.insert(id.into(), s);
         }

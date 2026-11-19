@@ -442,6 +442,8 @@ impl KoeRuntime {
             ) {
                 self.settings.key.clear();
                 self.settings.unavailable = true;
+                self.settings.deepseek_key.clear();
+                self.settings.deepseek_unavailable = true;
             }
             e.to_string()
         })

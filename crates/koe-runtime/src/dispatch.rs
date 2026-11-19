@@ -305,11 +305,30 @@ impl KoeRuntime {
             HostIntent::Summarize { record_id } => self.start_summary(&record_id)?,
             HostIntent::ConfigureProvider {
                 api_key,
+                deepseek_api_key,
+                asr_provider,
+                asr_model,
+                llm_provider,
                 model,
+                enable_thinking,
+                qwen_workspace_id,
                 asr_endpoint,
                 chat_endpoint,
-            } => self.configure_provider(api_key, model, asr_endpoint, chat_endpoint)?,
-            HostIntent::ClearProviderCredential => self.clear_credential()?,
+            } => self.configure_provider(crate::provider_settings::ConfigureProviderParams {
+                api_key,
+                deepseek_api_key,
+                asr_provider,
+                asr_model,
+                llm_provider,
+                model,
+                enable_thinking,
+                qwen_workspace_id,
+                asr_endpoint,
+                chat_endpoint,
+            })?,
+            HostIntent::ClearProviderCredential { provider } => {
+                self.clear_credential(provider.as_deref())?
+            }
             HostIntent::RetryProviderCredentials { authorize } => self.retry_credentials(authorize)?,
             HostIntent::CheckAppUpdate => self.check_app_update(now)?,
             HostIntent::ClearError => {}
@@ -386,6 +405,20 @@ impl KoeRuntime {
                     .session
                     .begin_offline_pull(file_id, entry.duration_ms);
                 self.device.outbound.push(frame);
+            }
+            HostIntent::DeviceDownloadAll => {
+                if !self.device.is_connected() {
+                    return Err("请先连接录音豆".into());
+                }
+                let quitting = self.is_quitting();
+                self.device.reset_failed_transfer_if_idle(quitting);
+                self.ensure_device_idle()?;
+                self.device.auto_pull_attempted.clear();
+                if self.maybe_start_auto_offline_pull() {
+                    self.notice = Some("已开始取回录音豆离线文件".into());
+                } else {
+                    self.notice = Some("没有待取回的离线录音文件".into());
+                }
             }
             HostIntent::DeviceStart => {
                 self.start_device_recording(now)?;

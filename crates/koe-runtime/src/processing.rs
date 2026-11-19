@@ -1,7 +1,7 @@
 use super::*;
 use koe_client_providers::{
-    ProviderConfig, ProviderLane, ProviderOutput, ProviderRequest, ProviderTask,
-    DASHSCOPE_ASR_MODEL,
+    AsrTransportMode, ProviderConfig, ProviderLane, ProviderOutput, ProviderRequest, ProviderTask,
+    ThinkingMode,
 };
 use koe_client_services::product_store::StoreError;
 use koe_engine::minutes::{build_meeting_minutes_prompt, parse_meeting_minutes_json};
@@ -50,23 +50,14 @@ impl StartError {
 
 impl KoeRuntime {
     pub(super) fn text_provider_configured(&self) -> bool {
-        if !self.settings.key.is_empty() {
+        if !self.active_llm_key().is_empty() {
             return true;
         }
-        let endpoint = &self.workspace().provider_configuration().chat_endpoint;
-        endpoint.strip_prefix("http://").is_some_and(|rest| {
-            let authority = rest.split('/').next().unwrap_or("");
-            authority == "localhost"
-                || authority.starts_with("localhost:")
-                || authority == "127.0.0.1"
-                || authority.starts_with("127.0.0.1:")
-                || authority == "[::1]"
-                || authority.starts_with("[::1]:")
-        })
+        Self::is_loopback_http(&self.workspace().provider_configuration().chat_endpoint)
     }
     fn ensure_configured(&self) -> Result<(), String> {
         if !self.text_provider_configured() {
-            Err("请先在设置中配置模型；录音和文字已保存在本机".into())
+            Err("请先在模型设置中配置服务与 API Key；录音和文字已保存在本机".into())
         } else {
             Ok(())
         }
@@ -138,7 +129,7 @@ impl KoeRuntime {
             return Ok(());
         }
         self.ensure_meeting_audio_upload()?;
-        if self.settings.key.is_empty() {
+        if !self.cloud_asr_configured() {
             return Err("请先配置云端语音凭据；原始录音已保留".into());
         }
         if self.has_pending_in_lane(ProviderLane::Audio) {
@@ -197,14 +188,7 @@ impl KoeRuntime {
         let key = self
             .store
             .transact(|w| w.begin_analysis(id, AnalysisStage::Transcribing))?;
-        let config = ProviderConfig::new(
-            self.workspace()
-                .provider_configuration()
-                .asr_endpoint
-                .clone(),
-            DASHSCOPE_ASR_MODEL.into(),
-            self.settings.key.clone(),
-        );
+        let config = self.asr_config();
         let result = self.submit(
             id,
             config,
@@ -348,15 +332,44 @@ impl KoeRuntime {
         result
     }
 
-    fn chat_config(&self) -> ProviderConfig {
+    fn asr_config(&self) -> ProviderConfig {
+        let cfg = self.workspace().provider_configuration();
+        let asr_mode = match cfg.asr_provider {
+            CloudAsrProvider::DeepSeek => AsrTransportMode::DeepSeekHttp,
+            CloudAsrProvider::Qwen => match cfg.asr_model.trim() {
+                QWEN_FLASH_ASR_MODEL => AsrTransportMode::DashScopeFlashHttp,
+                QWEN_FILETRANS_ASR_MODEL => AsrTransportMode::DashScopeFiletransHttp,
+                _ => AsrTransportMode::DashScopeWebSocket,
+            },
+        };
+        let model = if cfg.asr_provider == CloudAsrProvider::DeepSeek {
+            String::new()
+        } else if cfg.asr_model.trim().is_empty() {
+            DEFAULT_ASR_MODEL.into()
+        } else {
+            cfg.asr_model.clone()
+        };
         ProviderConfig::new(
-            self.workspace()
-                .provider_configuration()
-                .chat_endpoint
-                .clone(),
-            self.workspace().provider_configuration().model.clone(),
-            self.settings.key.clone(),
+            cfg.asr_endpoint.clone(),
+            model,
+            self.active_asr_key().to_owned(),
         )
+        .with_asr_mode(asr_mode)
+    }
+
+    fn chat_config(&self) -> ProviderConfig {
+        let cfg = self.workspace().provider_configuration();
+        let thinking = match cfg.llm_provider {
+            LlmProvider::Qwen => Some(ThinkingMode::Qwen(cfg.enable_thinking)),
+            LlmProvider::DeepSeek => Some(ThinkingMode::DeepSeek(cfg.enable_thinking)),
+            LlmProvider::Custom => None,
+        };
+        ProviderConfig::new(
+            cfg.chat_endpoint.clone(),
+            cfg.model.clone(),
+            self.active_llm_key().to_owned(),
+        )
+        .with_thinking(thinking)
     }
 
     fn defer_failure(&mut self, id: &str, pending: PendingWork, error: &str) {
@@ -529,8 +542,12 @@ impl KoeRuntime {
                         "未识别到语音，录音仍已保留".into(),
                     ));
                 }
+                let provider_tag = match self.workspace().provider_configuration().asr_provider {
+                    CloudAsrProvider::DeepSeek => "deepseek",
+                    CloudAsrProvider::Qwen => "dashscope",
+                };
                 for (index, segment) in segments.iter().enumerate() {
-                    self.accept_speech_final(key, &index.to_string(), segment, "dashscope")?;
+                    self.accept_speech_final(key, &index.to_string(), segment, provider_tag)?;
                 }
                 self.store.transact(|w| w.finish_transcription(key))?;
                 self.notice = Some("转写完成".into());

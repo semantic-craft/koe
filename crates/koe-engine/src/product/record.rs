@@ -271,6 +271,21 @@ impl ProductWorkspace {
         end_ms: u64,
         provider: &str,
     ) -> Result<SegmentId, ProductError> {
+        self.accept_transcript_with_speaker(key, final_id, text, start_ms, end_ms, provider, None)
+    }
+
+    /// Commits a provider final with an optional diarized speaker label to its fixed recording/attempt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_transcript_with_speaker(
+        &mut self,
+        key: &RequestKey,
+        final_id: &str,
+        text: &str,
+        start_ms: u64,
+        end_ms: u64,
+        provider: &str,
+        speaker: Option<&str>,
+    ) -> Result<SegmentId, ProductError> {
         let final_id = nonempty(final_id)?;
         let clean = nonempty(text)?;
         if end_ms < start_ms {
@@ -278,6 +293,7 @@ impl ProductWorkspace {
                 "片段结束时间早于开始时间".to_string(),
             ));
         }
+        let sanitized_speaker = speaker.and_then(super::sanitize_speaker_lossy);
         let record = self
             .records
             .get_mut(&key.record_id)
@@ -288,7 +304,10 @@ impl ProductWorkspace {
         let segment =
             if let Some(&id) = record.final_keys.get(&delivery) {
                 if record.aggregate.spine.get(id).is_some_and(|s| {
-                    s.text == clean && s.start_ms == start_ms && s.end_ms == end_ms
+                    s.text == clean
+                        && s.start_ms == start_ms
+                        && s.end_ms == end_ms
+                        && (sanitized_speaker.is_none() || s.speaker == sanitized_speaker)
                 }) {
                     return Ok(id);
                 }
@@ -298,6 +317,9 @@ impl ProductWorkspace {
                     .update_segment(id, clean, start_ms, end_ms)
                 {
                     return Err(ProductError::InvalidSource);
+                }
+                if let Some(sp) = sanitized_speaker {
+                    record.aggregate.spine.set_speaker(id, Some(sp));
                 }
                 record.aggregate.minutes = None;
                 record.minutes_revision = None;
@@ -311,6 +333,9 @@ impl ProductWorkspace {
                     .spine
                     .append_segment(clean, start_ms, end_ms, "auto", provider)
                     .ok_or_else(|| ProductError::InvalidInput("无法保存文字片段".to_string()))?;
+                if let Some(sp) = sanitized_speaker {
+                    record.aggregate.spine.set_speaker(id, Some(sp));
+                }
                 record.final_keys.insert(delivery, id);
                 id
             };

@@ -2,72 +2,128 @@ import SwiftUI
 
 struct TextServiceSettingsCard: View {
     let store: HostSessionStore
-    @State private var apiKey = ""
-    @State private var model = ""
-    @State private var chatEndpoint = ""
-    @State private var asrEndpoint = ""
+    @Binding var draft: ModelSettingsDraft
+    let onSave: () -> Void
 
     var body: some View {
         let provider = store.settings.provider
         KoeCard {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Label("文字整理服务", systemImage: "text.alignleft")
+                HStack(spacing: 12) {
+                    Label("文本整理与问答（LLM）", systemImage: "text.alignleft")
                         .font(.system(size: AppFontSizes.md, weight: .medium))
+                    KoeBadge(provider.configured ? "已就绪" : "未配置", tint: provider.configured ? AppColors.success : AppColors.textMuted)
                     Spacer()
-                    KoeBadge(provider.configured ? "已配置" : "未配置")
-                    InfoTip("用于纪要、文字整理与问答。支持兼容服务和本机 localhost 服务。模型名称及完整接口地址按服务填写，本机无认证服务可不填 API Key。")
+                    Picker("LLM 服务商", selection: $draft.llmProvider) {
+                        Text("Qwen（阿里云百炼）").tag("qwen")
+                        Text("DeepSeek（官方）").tag("deepseek")
+                        Text("自定义兼容").tag("custom")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 340)
                 }
-                TextField("文本模型名称", text: $model).textFieldStyle(.roundedBorder).onSubmit { configure() }
-                TextField("对话完整接口地址，可填写 localhost 地址", text: $chatEndpoint)
-                    .textFieldStyle(.roundedBorder).onSubmit { configure() }
-                SecureField("API Key（本机无认证服务可留空）", text: $apiKey)
-                    .textFieldStyle(.roundedBorder).onSubmit { configure() }
-                DisclosureGroup("云端语音识别服务地址") {
-                    TextField("转写完整接口地址，留空使用默认", text: $asrEndpoint)
-                        .textFieldStyle(.roundedBorder).onSubmit { configure() }.padding(.top, 10)
-                }.font(.system(size: AppFontSizes.xs))
-                HStack {
-                    Text(provider.isolated ? "隔离运行，密钥仅在本次会话使用。" : "密钥保存在系统安全存储中，留空保留已存密钥。")
-                        .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+
+                if draft.llmProvider == "qwen" {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(ModelSettingsCatalog.qwenLlmModels) { option in
+                            llmOptionCard(option, selected: draft.qwenLlmModel == option.id) {
+                                draft.qwenLlmModel = option.id
+                            }
+                        }
+                    }
+                } else if draft.llmProvider == "deepseek" {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(ModelSettingsCatalog.deepseekLlmModels) { option in
+                            llmOptionCard(option, selected: draft.deepseekLlmModel == option.id) {
+                                draft.deepseekLlmModel = option.id
+                            }
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("自定义模型名称（Model ID）")
+                            .font(.system(size: AppFontSizes.xs))
+                            .foregroundStyle(AppColors.textSecondary)
+                        TextField("例如：qwen3.8-27b 或本机 Ollama 模型名", text: $draft.customLlmModel)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                            .onSubmit { onSave() }
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Text("当前 LLM 接口（OpenAI 兼容）")
+                        .font(.system(size: AppFontSizes.xs))
+                        .foregroundStyle(AppColors.textMuted)
                     Spacer()
-                    KoeActionButton("保存服务配置", isPrimary: true) { configure() }
+                    Text(endpointPreview)
+                        .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                        .foregroundStyle(AppColors.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+
                 HStack {
-                    KoeActionButton("清除密钥") { apiKey = ""; store.send(.clearProviderCredential) }
-                    KoeActionButton("重试读取安全配置") { store.send(.retryProviderCredentials(authorize: true)) }
-                }
-                if let message = credentialMessage(provider) {
-                    Text(message).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text("纪要与问答启用深度思考")
+                                .font(.system(size: AppFontSizes.sm, weight: .medium))
+                            InfoTip("Qwen 3.7+/4 与 DeepSeek V4.1/V4 支持思考切换。关闭（enable_thinking: false / thinking: disabled）可显著缩短实时纪要首字耗时与生成延迟。")
+                        }
+                        Text("关闭可缩短实时纪要生成耗时；开启适合复杂会议分析与长文推理。")
+                            .font(.system(size: AppFontSizes.xs))
+                            .foregroundStyle(AppColors.textMuted)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $draft.enableThinking)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityLabel("纪要与问答启用深度思考")
                 }
             }
         }
-        .onAppear {
-            let provider = store.settings.provider
-            model = provider.model
-            chatEndpoint = provider.chatEndpoint
-            asrEndpoint = provider.asrEndpoint
-        }
-        .onDisappear { apiKey = "" }
     }
 
-    private func credentialMessage(_ provider: ProviderSnapshot) -> String? {
-        switch provider.credentialState {
-        case "reopen_required": "工作区保存结果尚未确认，请退出并重新打开 Koe。"
-        case "missing_saved": "已保存的密钥在当前安全存储中不存在，请重新输入或清除。"
-        case "unavailable": "安全凭据暂不可读取，云端处理已停用。"
-        default: nil
-        }
+    private var endpointPreview: String {
+        let ep = draft.effectiveChatEndpoint()
+        return ep.isEmpty ? "自定义地址（见服务商凭证高级展开项）" : ep
     }
 
-    private func configure() {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        store.send(.configureProvider(
-            apiKey: trimmedKey.isEmpty ? nil : apiKey,
-            model: model,
-            asrEndpoint: asrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-            chatEndpoint: chatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        ))
-        apiKey = ""
+    private func llmOptionCard(_ option: LlmModelOption, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(option.id)
+                        .font(.system(size: AppFontSizes.xs, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(AppColors.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? AppColors.accent : AppColors.textMuted)
+                }
+                HStack(spacing: 4) {
+                    KoeBadge(option.primaryBadge, tint: option.primaryBadgeRecommended ? AppColors.success : AppColors.accent)
+                    ForEach(option.metaBadges, id: \.self) { badge in
+                        KoeBadge(badge, tint: AppColors.textMuted)
+                    }
+                }
+                Text(option.description)
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(selected ? AppColors.accentSoft : AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+            .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(selected ? AppColors.accent : AppColors.border))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

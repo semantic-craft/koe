@@ -400,8 +400,40 @@ impl super::KoeRuntime {
         let files: Vec<_> = device
             .catalog
             .iter()
-            .map(|f| json!({ "id": f.file_id, "title": format!("录音 {}", f.file_id), "durationMs": f.duration_ms }))
+            .map(|f| {
+                let synced = self.is_device_file_synced(f.file_id);
+                let downloading = device.active_file_id == Some(f.file_id)
+                    && matches!(device.transfer.phase, TransferPhaseTag::PullingOffline);
+                let record_id = if synced {
+                    self.workspace()
+                        .records()
+                        .values()
+                        .filter(|r| {
+                            r.is_live()
+                                && r.origin == koe_engine::product::RecordOrigin::Bean
+                                && r.all_day.is_none()
+                                && r.aggregate.file_id == f.file_id
+                        })
+                        .max_by_key(|r| r.aggregate.created_at_epoch_sec)
+                        .map(|r| r.aggregate.recording_id.clone())
+                } else {
+                    None
+                };
+                json!({
+                    "id": f.file_id,
+                    "title": format!("录音 {}", f.file_id),
+                    "durationMs": f.duration_ms,
+                    "synced": synced,
+                    "downloading": downloading,
+                    "recordId": record_id,
+                })
+            })
             .collect();
+        let storage_used_ratio = telemetry.and_then(|t| {
+            let total = u64::from(t.total_memory_kb?);
+            let free = u64::from(t.free_memory_kb?).min(total);
+            (total > 0).then_some(((total - free) as f64 / total as f64).clamp(0.0, 1.0))
+        });
         let progress = if device.transfer.expected_wire_bytes > 0 {
             (f64::from(device.transfer.received_wire_bytes)
                 / f64::from(device.transfer.expected_wire_bytes))
@@ -454,6 +486,7 @@ impl super::KoeRuntime {
             "serialNumber": telemetry.map(|t| t.serial_number.clone()).unwrap_or_default(),
             "firmwareVersion": telemetry.map(|t| t.firmware_version.clone()).unwrap_or_default(),
             "storageLabel": telemetry.map(|t| t.storage_label()).unwrap_or_else(|| "—".to_string()),
+            "storageUsedRatio": storage_used_ratio,
             "files": files,
             "progress": progress,
             "autoConnect": self.workspace().ble_auto_connect(),

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{ProviderConfig, ProviderOutput, MAX_RESPONSE_BYTES};
+use super::{ProviderConfig, ProviderOutput, ThinkingMode, MAX_RESPONSE_BYTES};
 
 pub(super) async fn complete(
     config: &ProviderConfig,
@@ -18,12 +18,30 @@ pub(super) async fn complete(
     if !config.api_key.trim().is_empty() {
         request = request.bearer_auth(&config.api_key);
     }
+    let mut payload = json!({
+        "model": config.model,
+        "stream": false,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ]
+    });
+    if let Some(obj) = payload.as_object_mut() {
+        match config.thinking {
+            Some(ThinkingMode::Qwen(enabled)) => {
+                obj.insert("enable_thinking".into(), json!(enabled));
+            }
+            Some(ThinkingMode::DeepSeek(enabled)) => {
+                obj.insert(
+                    "thinking".into(),
+                    json!({ "type": if enabled { "enabled" } else { "disabled" } }),
+                );
+            }
+            None => {}
+        }
+    }
     let mut response = request
-        .json(&json!({
-            "model": config.model, "stream": false,
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": user}]
-        }))
+        .json(&payload)
         .send()
         .await
         .map_err(|error| {

@@ -216,6 +216,7 @@ fn parse_sentence(value: &Value) -> Result<Event, String> {
                 start_ms,
                 end_ms,
                 text: text.to_owned(),
+                speaker: None,
             },
         ))));
     }
@@ -250,6 +251,7 @@ fn parse_sentence(value: &Value) -> Result<Event, String> {
             start_ms,
             end_ms,
             text: text.to_owned(),
+            speaker: None,
         },
     })
 }

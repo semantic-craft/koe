@@ -46,10 +46,22 @@ struct ProviderDto {
     speech_engine: String,
     #[serde(default)]
     speech_model_id: Option<String>,
+    #[serde(default)]
+    asr_provider: Option<String>,
+    #[serde(default)]
+    asr_model: Option<String>,
+    #[serde(default)]
+    llm_provider: Option<String>,
+    #[serde(default)]
+    enable_thinking: bool,
+    #[serde(default)]
+    qwen_workspace_id: String,
     model: String,
     asr_endpoint: String,
     chat_endpoint: String,
     credential: BindingDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deepseek_credential: Option<BindingDto>,
     retired_credentials: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pending_credentials: Vec<String>,
@@ -73,6 +85,24 @@ enum BindingDto {
     Saved(String),
     Cleared,
 }
+impl From<CredentialBinding> for BindingDto {
+    fn from(binding: CredentialBinding) -> Self {
+        match binding {
+            CredentialBinding::Uninitialized => Self::Uninitialized,
+            CredentialBinding::Saved(r) => Self::Saved(r),
+            CredentialBinding::Cleared => Self::Cleared,
+        }
+    }
+}
+impl From<BindingDto> for CredentialBinding {
+    fn from(dto: BindingDto) -> Self {
+        match dto {
+            BindingDto::Uninitialized => Self::Uninitialized,
+            BindingDto::Saved(r) => Self::Saved(r),
+            BindingDto::Cleared => Self::Cleared,
+        }
+    }
+}
 impl From<ProviderConfiguration> for ProviderDto {
     fn from(p: ProviderConfiguration) -> Self {
         Self {
@@ -85,21 +115,59 @@ impl From<ProviderConfiguration> for ProviderDto {
                 SpeechEngine::Downloaded(id) => Some(id),
                 _ => None,
             },
+            asr_provider: Some(p.asr_provider.as_str().into()),
+            asr_model: Some(p.asr_model),
+            llm_provider: Some(p.llm_provider.as_str().into()),
+            enable_thinking: p.enable_thinking,
+            qwen_workspace_id: p.qwen_workspace_id,
             model: p.model,
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,
             retired_credentials: p.retired_credentials,
             pending_credentials: p.pending_credentials,
-            credential: match p.credential {
-                CredentialBinding::Uninitialized => BindingDto::Uninitialized,
-                CredentialBinding::Saved(r) => BindingDto::Saved(r),
-                CredentialBinding::Cleared => BindingDto::Cleared,
+            credential: p.credential.into(),
+            deepseek_credential: match p.deepseek_credential {
+                CredentialBinding::Uninitialized => None,
+                other => Some(other.into()),
             },
         }
     }
 }
 impl From<ProviderDto> for ProviderConfiguration {
     fn from(p: ProviderDto) -> Self {
+        let asr_provider = p
+            .asr_provider
+            .as_deref()
+            .and_then(CloudAsrProvider::parse)
+            .unwrap_or_else(|| {
+                if p.asr_endpoint.contains("api.deepseek.com") {
+                    CloudAsrProvider::DeepSeek
+                } else {
+                    CloudAsrProvider::Qwen
+                }
+            });
+        let llm_provider = p
+            .llm_provider
+            .as_deref()
+            .and_then(LlmProvider::parse)
+            .unwrap_or_else(|| {
+                if p.chat_endpoint.contains("api.deepseek.com") {
+                    LlmProvider::DeepSeek
+                } else if p.chat_endpoint.contains("dashscope.aliyuncs.com")
+                    || p.chat_endpoint.contains(".maas.aliyuncs.com")
+                {
+                    LlmProvider::Qwen
+                } else {
+                    LlmProvider::Custom
+                }
+            });
+        let asr_model = p.asr_model.unwrap_or_else(|| {
+            if asr_provider == CloudAsrProvider::DeepSeek {
+                String::new()
+            } else {
+                DEFAULT_ASR_MODEL.into()
+            }
+        });
         Self {
             meeting_audio_policy: match p.meeting_audio_policy {
                 AudioPolicyDto::CloudAllowed => MeetingAudioPolicy::CloudAllowed,
@@ -110,16 +178,21 @@ impl From<ProviderDto> for ProviderConfiguration {
                 "downloaded" => SpeechEngine::Downloaded(p.speech_model_id.unwrap_or_default()),
                 _ => SpeechEngine::AppleSpeech,
             },
+            asr_provider,
+            asr_model,
+            llm_provider,
+            enable_thinking: p.enable_thinking,
+            qwen_workspace_id: p.qwen_workspace_id,
             model: p.model,
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,
             retired_credentials: p.retired_credentials,
             pending_credentials: p.pending_credentials,
-            credential: match p.credential {
-                BindingDto::Uninitialized => CredentialBinding::Uninitialized,
-                BindingDto::Saved(r) => CredentialBinding::Saved(r),
-                BindingDto::Cleared => CredentialBinding::Cleared,
-            },
+            credential: p.credential.into(),
+            deepseek_credential: p
+                .deepseek_credential
+                .map(Into::into)
+                .unwrap_or(CredentialBinding::Uninitialized),
         }
     }
 }

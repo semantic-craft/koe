@@ -23,7 +23,14 @@ impl KoeRuntime {
                     .map(|s| s.text.as_str())
             })
             .unwrap_or("");
-        json!({"recordId":id,"text":text.chars().rev().take(120).collect::<Vec<_>>().into_iter().rev().collect::<String>(),"status":if s.input_closed{"正在保存最后的字幕"}else{"正在转写"}})
+        let status = if s.deferred_batch {
+            "录音结束后自动转写（非实时模型）"
+        } else if s.input_closed {
+            "正在保存最后的字幕"
+        } else {
+            "正在转写"
+        };
+        json!({"recordId":id,"text":text.chars().rev().take(120).collect::<Vec<_>>().into_iter().rev().collect::<String>(),"status":status})
     }
     pub(crate) fn capture_saved(&mut self, id: &str) -> bool {
         if let Some(s) = self.captures.sessions.get_mut(id) {
@@ -49,6 +56,7 @@ impl KoeRuntime {
             .filter(|s| s.engine == SpeechEngine::Cloud)
         {
             session.stream = None;
+            session.deferred_batch = false;
             session.results.clear();
             session.terminal = true;
             session.success = false;
@@ -62,13 +70,14 @@ impl KoeRuntime {
         provider: &str,
     ) -> Result<SegmentId, StoreError> {
         self.store.transact(|w| {
-            w.accept_transcript(
+            w.accept_transcript_with_speaker(
                 key,
                 delivery,
                 &segment.text,
                 segment.start_ms,
                 segment.end_ms,
                 provider,
+                segment.speaker.as_deref(),
             )
         })
     }
@@ -153,7 +162,10 @@ impl KoeRuntime {
                     }
                 }
             }
-            if s.saved && s.terminal && s.success {
+            if s.saved && s.terminal && s.deferred_batch {
+                self.auto_transcribe.insert(id.clone());
+                changed = true;
+            } else if s.saved && s.terminal && s.success {
                 self.auto_summarize.insert(id.clone());
             }
         }

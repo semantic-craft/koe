@@ -90,6 +90,7 @@ fn asr_waits_for_ack_and_finish_and_keeps_latest_final_sentence() {
                 start_ms: 0,
                 end_ms: 200,
                 text: "corrected final".into(),
+                speaker: None,
             }]
         }
     );
@@ -1055,4 +1056,359 @@ fn update_lane_blocks_dot_segment_traversal_matches_universal_fallback_and_caps_
         "expected redirect loop error, got: {loop_err}"
     );
     loop_srv.join().unwrap();
+}
+
+fn read_http_request(stream: &mut std::net::TcpStream) -> (String, Vec<u8>) {
+    use std::io::Read;
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 8192];
+    let header_end = loop {
+        let n = stream.read(&mut buf).unwrap();
+        assert!(n > 0, "unexpected EOF reading HTTP headers");
+        raw.extend_from_slice(&buf[..n]);
+        if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+    };
+    let head = String::from_utf8_lossy(&raw[..header_end]).into_owned();
+    let content_length = head
+        .lines()
+        .find_map(|line| {
+            let (name, val) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| val.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    while raw.len() < header_end + content_length {
+        let n = stream.read(&mut buf).unwrap();
+        assert!(n > 0, "unexpected EOF reading HTTP body");
+        raw.extend_from_slice(&buf[..n]);
+    }
+    (head, raw[header_end..header_end + content_length].to_vec())
+}
+
+#[test]
+fn deepseek_asr_auto_splits_over_120s_at_silence_and_stitches_segments() {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/tools/asr", listener.local_addr().unwrap());
+
+    let server = std::thread::spawn(move || {
+        let mut received_chunks = 0usize;
+        for reply_text in ["第一段语音内容", "第二段语音内容"] {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let (head, body) = read_http_request(&mut stream);
+            assert!(head.starts_with("POST /v1/tools/asr HTTP/1.1"));
+            assert!(head.contains("authorization: Bearer ds-test-key") || head.contains("Authorization: Bearer ds-test-key"));
+            assert!(head.to_ascii_lowercase().contains("multipart/form-data; boundary="));
+            // Verify multipart body contains valid RIFF WAVE header
+            assert!(body.windows(4).any(|w| w == b"RIFF"));
+            assert!(body.windows(4).any(|w| w == b"WAVE"));
+            assert!(body.len() < 8 * 1024 * 1024);
+            received_chunks += 1;
+            let resp_body = serde_json::json!({ "text": reply_text }).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            )
+            .unwrap();
+        }
+        received_chunks
+    });
+
+    // 140s of loud audio with a 1-second silent gap at 95..96s
+    let total_samples = 140 * 16_000;
+    let mut pcm16 = Vec::with_capacity(total_samples * 2);
+    for i in 0..total_samples {
+        let sample: i16 = if i / 16_000 == 95 { 0 } else { 8_000 };
+        pcm16.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Audio,
+        ProviderRequest {
+            operation_id: 201,
+            record_id: "rec-ds-long".into(),
+            config: ProviderConfig::new(endpoint, String::new(), "ds-test-key".into())
+                .with_asr_mode(koe_client_providers::AsrTransportMode::DeepSeekHttp),
+            task: ProviderTask::TranscribePcm16 { pcm16 },
+            timeout: Duration::from_secs(10),
+        },
+    )
+    .unwrap();
+    let event = wait_result(&mut pool);
+    let ProviderOutput::Transcript { segments } = event.result.unwrap() else {
+        panic!("expected transcript output");
+    };
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].text, "第一段语音内容");
+    assert_eq!(segments[0].start_ms, 0);
+    assert!(segments[0].end_ms >= 95_000 && segments[0].end_ms <= 96_000);
+    assert_eq!(segments[1].text, "第二段语音内容");
+    assert_eq!(segments[1].start_ms, segments[0].end_ms);
+    assert_eq!(segments[1].end_ms, 140_000);
+    assert_eq!(server.join().unwrap(), 2);
+}
+
+#[test]
+fn qwen_flash_and_filetrans_http_asr_parse_diarized_speakers() {
+    use std::io::Write;
+    // 1. Qwen Flash HTTP ASR
+    let flash_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let flash_url = format!(
+        "http://{}/api/v1/services/aigc/multimodal-generation/generation",
+        flash_listener.local_addr().unwrap()
+    );
+    let flash_srv = std::thread::spawn(move || {
+        let (mut stream, _) = flash_listener.accept().unwrap();
+        let (_head, body) = read_http_request(&mut stream);
+        let req: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(req["model"], "qwen-audio-3.1-asr-flash");
+        assert_eq!(req["parameters"]["format"], "wav");
+        assert_eq!(req["parameters"]["speaker_diarization_enabled"], true);
+        let audio = req["input"]["messages"][0]["content"][0]["audio"]
+            .as_str()
+            .unwrap();
+        assert!(audio.starts_with("data:audio/wav;base64,"));
+        let resp = serde_json::json!({
+            "output": {
+                "sentences": [
+                    {"begin_time": 0, "end_time": 1200, "text": "大家好", "speaker_id": 0},
+                    {"begin_time": 1300, "end_time": 2800, "text": "开始同步进度", "speaker_id": 1}
+                ]
+            }
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            resp.len(),
+            resp
+        )
+        .unwrap();
+    });
+
+    let mut pool = ProviderPool::new().unwrap();
+    pool.submit(
+        ProviderLane::Audio,
+        ProviderRequest {
+            operation_id: 202,
+            record_id: "rec-qwen-flash".into(),
+            config: ProviderConfig::new(
+                flash_url,
+                "qwen-audio-3.1-asr-flash".into(),
+                "qwen-test-key".into(),
+            )
+            .with_asr_mode(koe_client_providers::AsrTransportMode::DashScopeFlashHttp),
+            task: ProviderTask::TranscribePcm16 {
+                pcm16: vec![0u8; 32_000],
+            },
+            timeout: Duration::from_secs(10),
+        },
+    )
+    .unwrap();
+    let ProviderOutput::Transcript { segments } = wait_result(&mut pool).result.unwrap() else {
+        panic!("expected transcript");
+    };
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].speaker.as_deref(), Some("说话人 1"));
+    assert_eq!(segments[1].speaker.as_deref(), Some("说话人 2"));
+    flash_srv.join().unwrap();
+
+    // 2. Qwen Filetrans 5-step async HTTP ASR
+    let ft_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = ft_listener.local_addr().unwrap();
+    let origin = format!("http://{addr}");
+    let ft_url = format!("{origin}/api/v1/services/audio/asr/transcription");
+    let origin_srv = origin.clone();
+    let ft_srv = std::thread::spawn(move || {
+        // Step 1: getPolicy
+        let (mut s1, _) = ft_listener.accept().unwrap();
+        let (h1, _) = read_http_request(&mut s1);
+        assert!(h1.starts_with("GET /api/v1/uploads?action=getPolicy&model=qwen-audio-3.1-asr-flash-filetrans"));
+        let pol = serde_json::json!({
+            "data": {
+                "upload_host": format!("{origin_srv}/oss-upload"),
+                "oss_access_key_id": "test-ak",
+                "signature": "test-sig",
+                "policy": "test-pol",
+                "upload_dir": "dashscope-instant/test",
+                "x_oss_object_acl": "private",
+                "x_oss_forbid_overwrite": "true"
+            }
+        })
+        .to_string();
+        write!(
+            s1,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            pol.len(),
+            pol
+        )
+        .unwrap();
+
+        // Step 2: OSS upload
+        let (mut s2, _) = ft_listener.accept().unwrap();
+        let (h2, b2) = read_http_request(&mut s2);
+        assert!(h2.starts_with("POST /oss-upload"));
+        assert!(b2.windows(4).any(|w| w == b"RIFF"));
+        write!(s2, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+
+        // Step 3: Submit async job
+        let (mut s3, _) = ft_listener.accept().unwrap();
+        let (h3, b3) = read_http_request(&mut s3);
+        assert!(h3.to_ascii_lowercase().contains("x-dashscope-async: enable"));
+        assert!(h3.to_ascii_lowercase().contains("x-dashscope-ossresourceresolve: enable"));
+        let req3: serde_json::Value = serde_json::from_slice(&b3).unwrap();
+        assert!(req3["input"]["file_url"].as_str().unwrap().starts_with("oss://dashscope-instant/test/"));
+        assert_eq!(req3["parameters"]["diarization_enabled"], true);
+        let sub = serde_json::json!({"output": {"task_id": "task-ft-1", "task_status": "PENDING"}}).to_string();
+        write!(
+            s3,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            sub.len(),
+            sub
+        )
+        .unwrap();
+
+        // Step 4a: Poll -> RUNNING, Step 4b: Poll -> SUCCEEDED
+        for (status, url) in [
+            ("RUNNING", None),
+            ("SUCCEEDED", Some(format!("{origin_srv}/result.json"))),
+        ] {
+            let (mut sp, _) = ft_listener.accept().unwrap();
+            let (hp, _) = read_http_request(&mut sp);
+            assert!(hp.starts_with("GET /api/v1/tasks/task-ft-1"));
+            let body = if let Some(turl) = url {
+                serde_json::json!({"output": {"task_status": status, "results": [{"transcription_url": turl}]}}).to_string()
+            } else {
+                serde_json::json!({"output": {"task_status": status}}).to_string()
+            };
+            write!(
+                sp,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        }
+
+        // Step 5: Download result JSON without Authorization header
+        let (mut s5, _) = ft_listener.accept().unwrap();
+        let (h5, _) = read_http_request(&mut s5);
+        assert!(h5.starts_with("GET /result.json"));
+        assert!(!h5.to_ascii_lowercase().contains("authorization:"));
+        let res = serde_json::json!({
+            "transcripts": [{
+                "channel_id": 0,
+                "sentences": [
+                    {"begin_time": 100, "end_time": 1500, "text": "离线文件第一句", "speaker_id": 0},
+                    {"begin_time": 1600, "end_time": 3200, "text": "离线文件第二句", "speaker_id": 2}
+                ]
+            }]
+        })
+        .to_string();
+        write!(
+            s5,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            res.len(),
+            res
+        )
+        .unwrap();
+    });
+
+    pool.submit(
+        ProviderLane::Audio,
+        ProviderRequest {
+            operation_id: 203,
+            record_id: "rec-qwen-ft".into(),
+            config: ProviderConfig::new(
+                ft_url,
+                "qwen-audio-3.1-asr-flash-filetrans".into(),
+                "qwen-test-key".into(),
+            )
+            .with_asr_mode(koe_client_providers::AsrTransportMode::DashScopeFiletransHttp),
+            task: ProviderTask::TranscribePcm16 {
+                pcm16: vec![0u8; 32_000],
+            },
+            timeout: Duration::from_secs(10),
+        },
+    )
+    .unwrap();
+    let ProviderOutput::Transcript { segments } = wait_result(&mut pool).result.unwrap() else {
+        panic!("expected transcript");
+    };
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].text, "离线文件第一句");
+    assert_eq!(segments[0].speaker.as_deref(), Some("说话人 1"));
+    assert_eq!(segments[1].text, "离线文件第二句");
+    assert_eq!(segments[1].speaker.as_deref(), Some("说话人 3"));
+    ft_srv.join().unwrap();
+}
+
+#[test]
+fn chat_requests_encode_provider_specific_thinking_controls() {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+
+    let server = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let (_head, body) = read_http_request(&mut stream);
+            let req: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            seen.push(req);
+            let resp = serde_json::json!({
+                "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp.len(),
+                resp
+            )
+            .unwrap();
+        }
+        seen
+    });
+
+    let mut pool = ProviderPool::new().unwrap();
+    for (op, model, thinking) in [
+        (301, "qwen3.7-plus", Some(koe_client_providers::ThinkingMode::Qwen(false))),
+        (302, "deepseek-flash", Some(koe_client_providers::ThinkingMode::DeepSeek(true))),
+        (303, "local-ollama", None),
+    ] {
+        pool.submit(
+            ProviderLane::Summary,
+            ProviderRequest {
+                operation_id: op,
+                record_id: "rec-thinking".into(),
+                config: ProviderConfig::new(endpoint.clone(), model.into(), "test-key".into())
+                    .with_thinking(thinking),
+                task: ProviderTask::Chat {
+                    system: "sys".into(),
+                    user: "hello".into(),
+                },
+                timeout: Duration::from_secs(5),
+            },
+        )
+        .unwrap();
+        assert!(wait_result(&mut pool).result.is_ok());
+    }
+
+    let seen = server.join().unwrap();
+    assert_eq!(seen[0]["enable_thinking"], false);
+    assert!(seen[0].get("thinking").is_none());
+    assert_eq!(seen[1]["thinking"]["type"], "enabled");
+    assert!(seen[1].get("enable_thinking").is_none());
+    assert!(seen[2].get("enable_thinking").is_none());
+    assert!(seen[2].get("thinking").is_none());
 }

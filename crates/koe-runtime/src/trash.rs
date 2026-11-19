@@ -354,6 +354,7 @@ mod tests {
                     start_ms: 0,
                     end_ms: 50,
                     text: "late transcript".into(),
+                    speaker: None,
                 }],
             }),
         });

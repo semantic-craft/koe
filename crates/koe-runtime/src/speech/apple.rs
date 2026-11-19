@@ -115,6 +115,7 @@ impl KoeRuntime {
                     start_ms: op.offset_ms + start_ms,
                     end_ms: op.offset_ms + end_ms,
                     text,
+                    speaker: None,
                 },
             });
             self.poll_captures();

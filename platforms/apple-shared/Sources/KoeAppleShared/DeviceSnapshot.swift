@@ -4,7 +4,40 @@ public struct DeviceFileSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let id: UInt32
     public let title: String
     public let durationMs: UInt64
+    public var synced: Bool = false
+    public var downloading: Bool = false
+    public var recordId: String? = nil
     public var fileId: UInt32 { id }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, durationMs, synced, downloading, recordId
+    }
+
+    public init(
+        id: UInt32,
+        title: String,
+        durationMs: UInt64,
+        synced: Bool = false,
+        downloading: Bool = false,
+        recordId: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.durationMs = durationMs
+        self.synced = synced
+        self.downloading = downloading
+        self.recordId = recordId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UInt32.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        durationMs = try c.decode(UInt64.self, forKey: .durationMs)
+        synced = try c.decodeIfPresent(Bool.self, forKey: .synced) ?? false
+        downloading = try c.decodeIfPresent(Bool.self, forKey: .downloading) ?? false
+        recordId = try c.decodeIfPresent(String.self, forKey: .recordId)
+    }
 }
 
 public struct DeviceGuideSnapshot: Codable, Equatable, Sendable {
@@ -34,6 +67,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public let serialNumber: String
     public let firmwareVersion: String
     public let storageLabel: String
+    public let storageUsedRatio: Double?
     public let files: [DeviceFileSnapshot]
     public let progress: Double
     public let guide: DeviceGuideSnapshot?
@@ -47,7 +81,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case phase, state, statusDetail, connected, busy, recording, stopping, deviceName
         case batteryPercent, charging, boxBatteryPercent, boxCharging
-        case serialNumber, firmwareVersion, storageLabel, files, progress, guide
+        case serialNumber, firmwareVersion, storageLabel, storageUsedRatio, files, progress, guide
         case transferPhase, liveDurationMs, liveBytes, liveRecordId
         case autoConnect, teardownStopFramesHex
     }
@@ -68,6 +102,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         serialNumber: "",
         firmwareVersion: "",
         storageLabel: "—",
+        storageUsedRatio: nil,
         files: [],
         progress: 0,
         guide: nil,
@@ -100,6 +135,7 @@ extension DeviceSnapshot {
         serialNumber = try c.decodeIfPresent(String.self, forKey: .serialNumber) ?? ""
         firmwareVersion = try c.decodeIfPresent(String.self, forKey: .firmwareVersion) ?? ""
         storageLabel = try c.decodeIfPresent(String.self, forKey: .storageLabel) ?? "—"
+        storageUsedRatio = try c.decodeIfPresent(Double.self, forKey: .storageUsedRatio)
         files = try c.decodeIfPresent([DeviceFileSnapshot].self, forKey: .files) ?? []
         progress = try c.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0
         guide = try c.decodeIfPresent(DeviceGuideSnapshot.self, forKey: .guide)
