@@ -307,9 +307,15 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-18T23:01:23Z"
+      },
+      {
+        "number": 757,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-19T01:50:49Z"
       }
     ],
-    "main": "f87a1ec059ea187843f83fd196eb6c07ff77c2c7",
+    "main": "92fa0d606847a6e6884240a6a1a47fb24802b338",
     "open_pulls": [],
     "pulls": [
       {
@@ -887,6 +893,22 @@
         "merged": true,
         "number": 755,
         "state": "closed"
+      },
+      {
+        "base": "f87a1ec059ea187843f83fd196eb6c07ff77c2c7",
+        "head": "3d3efe0749c5366c21dc041f0f22f1e056ef6268",
+        "merge_commit": "c4b208cf0ae9add7f20d20bf432a4fff6798dd5a",
+        "merged": true,
+        "number": 756,
+        "state": "closed"
+      },
+      {
+        "base": "c4b208cf0ae9add7f20d20bf432a4fff6798dd5a",
+        "head": "6384cb71c8284f1a6feb2376162e36548ae81ff0",
+        "merge_commit": "92fa0d606847a6e6884240a6a1a47fb24802b338",
+        "merged": true,
+        "number": 758,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -928,7 +950,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-18T23:05:00.994428Z",
+  "observed_at": "2026-11-19T01:58:13.536637Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2367,6 +2389,25 @@
           "status": "done",
           "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 cc6cdc9f-eafb-43db-b8ff-4505d6d6cf1b Accepted）并装订票据的 v2.4.0（构建 13，tag 指向 f87a1ec）发行包，提供 arm64 zip（sha256 914f8c007606fe272bf15a91432911e33bf15d1543e0d5e818d8c0cd6571852d）、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，且已替换本机 /Applications/Koe.app 并完成桌面自动验收。",
           "title": "Koe 2.4.0 私有发行包与本机升级验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "重构模型设置（Qwen 最新版与 DeepSeek 官方 ASR/LLM）、独立录音管理页、侧栏底栏录音豆状态弹层与版本胶囊更新弹层，已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（92fa0d6）。",
+              "ref": 758
+            },
+            {
+              "kind": "issue",
+              "note": "签名版 Koe.app 窗口巡检、双钥匙串继承、DeepSeek 实网调用与物理 D3200 离线文件 -filetrans 异步转写真机验收工单。",
+              "ref": 757
+            }
+          ],
+          "id": "model-settings-and-recording-management",
+          "next": "按 #757 安装签名版 /Applications/Koe.app 完成双钥匙串持久化、最小窗口 GUI 巡检、DeepSeek 官方实网调用及物理 D3200 离线文件 -filetrans 异步转写验收。",
+          "status": "unverified",
+          "summary": "已将原设置拆分为「模型设置」（支持阿里云百炼 Qwen 与 DeepSeek 官方双钥匙串独立凭证、快捷组合与跨服务商混搭；ASR 覆盖 Qwen-Audio 3.1 四款最新模型含说话人分离及 DeepSeek /v1/tools/asr 超 120s 静音切段拼接；LLM 升级为 qwen3.7-plus / qwen4-max / qwen3.8-flash 与 deepseek-flash / deepseek-v4-pro 并支持深度思考开关）、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，版本检查收口至侧栏顶部版本胶囊弹层；7 个 Qwen 最新模型已完成北京 DashScope 实网实测，DeepSeek 线上接口与签名版 GUI/D3200 真机待按 #757 验收。",
+          "title": "模型设置重构、独立录音管理与录音豆状态弹层"
         }
       ],
       "title": "验收与交付"
@@ -2445,7 +2486,8 @@
       746,
       747,
       751,
-      752
+      752,
+      757
     ],
     "pulls": [
       589,
@@ -2519,7 +2561,9 @@
       750,
       753,
       754,
-      755
+      755,
+      756,
+      758
     ]
   }
 }
