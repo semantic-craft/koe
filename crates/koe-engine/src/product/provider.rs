@@ -2,9 +2,6 @@ use super::{ProductError, ProductWorkspace};
 
 /// Default DashScope streaming ASR WebSocket endpoint.
 pub const DEFAULT_DASHSCOPE_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
-/// Default DashScope OpenAI-compatible chat-completions HTTP endpoint.
-pub const DEFAULT_DASHSCOPE_HTTP_BASE_URL: &str =
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 /// Default DashScope synchronous non-realtime ASR HTTP endpoint (`qwen-audio-3.1-asr-flash`).
 pub const DEFAULT_DASHSCOPE_FLASH_ASR_URL: &str =
     "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
@@ -15,10 +12,10 @@ pub const DEFAULT_DASHSCOPE_FILETRANS_ASR_URL: &str =
 pub const DEFAULT_DEEPSEEK_CHAT_URL: &str = "https://api.deepseek.com/chat/completions";
 /// Default DeepSeek standalone HTTP ASR endpoint (WAV/Opus, <= 120s per chunk).
 pub const DEFAULT_DEEPSEEK_ASR_URL: &str = "https://api.deepseek.com/v1/tools/asr";
-/// Default real-time streaming ASR model identifier.
+/// Default real-time streaming ASR model identifier (Qwen primary).
 pub const DEFAULT_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
-/// Default Qwen text generation and summarization model identifier.
-pub const DEFAULT_TEXT_MODEL: &str = "qwen3.8-flash";
+/// Default text generation and summarization model identifier (DeepSeek 4.1 Flash).
+pub const DEFAULT_TEXT_MODEL: &str = "deepseek-flash";
 /// Default DeepSeek text generation and summarization model identifier.
 pub const DEFAULT_DEEPSEEK_TEXT_MODEL: &str = "deepseek-flash";
 /// Qwen non-realtime synchronous ASR model identifier (<= 5 min, diarization).
@@ -77,10 +74,8 @@ impl CloudAsrProvider {
 /// Cloud or local text generation / summarization provider.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LlmProvider {
-    /// Alibaba Cloud Model Studio (DashScope / Qwen).
+    /// DeepSeek official OpenAI-compatible API (primary text provider).
     #[default]
-    Qwen,
-    /// DeepSeek official OpenAI-compatible API.
     DeepSeek,
     /// Custom OpenAI-compatible or local localhost service.
     Custom,
@@ -89,7 +84,6 @@ impl LlmProvider {
     /// Stable persisted and host-facing identifier.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Qwen => "qwen",
             Self::DeepSeek => "deepseek",
             Self::Custom => "custom",
         }
@@ -97,7 +91,6 @@ impl LlmProvider {
     /// Parses a persisted or host-supplied LLM provider identifier.
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
-            "qwen" => Some(Self::Qwen),
             "deepseek" => Some(Self::DeepSeek),
             "custom" => Some(Self::Custom),
             _ => None,
@@ -184,7 +177,7 @@ impl Default for ProviderConfiguration {
             enable_thinking: false,
             qwen_workspace_id: String::new(),
             asr_endpoint: DEFAULT_DASHSCOPE_WS_URL.into(),
-            chat_endpoint: DEFAULT_DASHSCOPE_HTTP_BASE_URL.into(),
+            chat_endpoint: DEFAULT_DEEPSEEK_CHAT_URL.into(),
             credential: CredentialBinding::Uninitialized,
             deepseek_credential: CredentialBinding::Uninitialized,
             retired_credentials: Vec::new(),
@@ -228,16 +221,10 @@ impl ProviderConfiguration {
         }
     }
 
-    /// Computes the canonical default chat endpoint for an LLM provider and workspace ID.
+    /// Computes the canonical default chat endpoint for an LLM provider.
     #[must_use]
-    pub fn default_chat_endpoint(provider: LlmProvider, workspace_id: &str) -> String {
-        match provider {
-            LlmProvider::DeepSeek => DEFAULT_DEEPSEEK_CHAT_URL.into(),
-            LlmProvider::Qwen | LlmProvider::Custom => {
-                let host = Self::qwen_host(workspace_id);
-                format!("https://{host}/compatible-mode/v1/chat/completions")
-            }
-        }
+    pub fn default_chat_endpoint(_provider: LlmProvider) -> String {
+        DEFAULT_DEEPSEEK_CHAT_URL.into()
     }
 
     /// Infers the cloud ASR provider from an endpoint's authority host.
@@ -256,15 +243,22 @@ impl ProviderConfiguration {
     pub fn infer_llm_provider(endpoint: &str) -> LlmProvider {
         match endpoint_host(endpoint) {
             Some(host) if host.eq_ignore_ascii_case("api.deepseek.com") => LlmProvider::DeepSeek,
-            Some(host)
-                if host.eq_ignore_ascii_case("dashscope.aliyuncs.com")
+            _ => LlmProvider::Custom,
+        }
+    }
+
+    /// Returns whether an endpoint belongs to Alibaba Cloud DashScope / Model Studio
+    /// (used only to migrate legacy persisted Qwen LLM settings to DeepSeek).
+    #[must_use]
+    pub fn is_legacy_qwen_chat_endpoint(endpoint: &str) -> bool {
+        match endpoint_host(endpoint) {
+            Some(host) => {
+                host.eq_ignore_ascii_case("dashscope.aliyuncs.com")
                     || host
                         .to_ascii_lowercase()
-                        .ends_with(".maas.aliyuncs.com") =>
-            {
-                LlmProvider::Qwen
+                        .ends_with(".maas.aliyuncs.com")
             }
-            _ => LlmProvider::Custom,
+            None => false,
         }
     }
 
@@ -373,6 +367,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_provider_uses_qwen_asr_and_deepseek_flash_llm() {
+        let cfg = ProviderConfiguration::default();
+        assert_eq!(cfg.asr_provider, CloudAsrProvider::Qwen);
+        assert_eq!(cfg.asr_model, "qwen-audio-3.1-asr-flash-streaming");
+        assert_eq!(cfg.asr_endpoint, DEFAULT_DASHSCOPE_WS_URL);
+        assert_eq!(cfg.llm_provider, LlmProvider::DeepSeek);
+        assert_eq!(cfg.model, "deepseek-flash");
+        assert_eq!(cfg.chat_endpoint, DEFAULT_DEEPSEEK_CHAT_URL);
+        assert!(LlmProvider::parse("qwen").is_none());
+        assert_eq!(LlmProvider::parse("deepseek"), Some(LlmProvider::DeepSeek));
+        assert_eq!(LlmProvider::parse("custom"), Some(LlmProvider::Custom));
+    }
+
+    #[test]
     fn provider_inference_matches_authority_host_only() {
         assert_eq!(
             ProviderConfiguration::infer_asr_provider("https://api.deepseek.com/v1/tools/asr"),
@@ -386,11 +394,20 @@ mod tests {
             ProviderConfiguration::infer_llm_provider("https://api.deepseek.com/chat/completions"),
             LlmProvider::DeepSeek
         );
+        assert!(ProviderConfiguration::is_legacy_qwen_chat_endpoint(
+            "https://ws-bj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+        ));
+        assert!(ProviderConfiguration::is_legacy_qwen_chat_endpoint(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        ));
+        assert!(!ProviderConfiguration::is_legacy_qwen_chat_endpoint(
+            "https://evil.example/dashscope.aliyuncs.com/chat/completions"
+        ));
         assert_eq!(
             ProviderConfiguration::infer_llm_provider(
                 "https://ws-bj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
             ),
-            LlmProvider::Qwen
+            LlmProvider::Custom
         );
         assert_eq!(
             ProviderConfiguration::infer_llm_provider(

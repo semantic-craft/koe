@@ -76,7 +76,7 @@ struct ModelSettingsCredentialsCard: View {
     }
 
     private func qwenCredentialBox(_ provider: ProviderSnapshot) -> some View {
-        let active = draft.asrProvider == "qwen" || draft.llmProvider == "qwen"
+        let active = draft.asrProvider == "qwen"
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Qwen（阿里云百炼）")
@@ -120,9 +120,8 @@ struct ModelSettingsCredentialsCard: View {
                     .onSubmit { onSave() }
             }
             HStack(spacing: 6) {
-                KoeBadge("流式 ASR", tint: AppColors.textSecondary)
-                KoeBadge("异步转写", tint: AppColors.textSecondary)
-                KoeBadge("文本 LLM", tint: AppColors.textSecondary)
+                KoeBadge("主力 ASR", tint: AppColors.success)
+                KoeBadge("流式 / 异步转写", tint: AppColors.textSecondary)
             }
         }
         .padding(12)
@@ -179,8 +178,8 @@ struct ModelSettingsCredentialsCard: View {
                     .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: 4))
             }
             HStack(spacing: 6) {
-                KoeBadge("短语音 ASR（<=120s 自动切段）", tint: AppColors.textSecondary)
-                KoeBadge("文本 LLM", tint: AppColors.textSecondary)
+                KoeBadge("默认文本 LLM", tint: AppColors.success)
+                KoeBadge("可选短语音 ASR（<=120s）", tint: AppColors.textSecondary)
             }
         }
         .padding(12)

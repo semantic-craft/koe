@@ -28,9 +28,6 @@ pub(super) async fn complete(
     });
     if let Some(obj) = payload.as_object_mut() {
         match config.thinking {
-            Some(ThinkingMode::Qwen(enabled)) => {
-                obj.insert("enable_thinking".into(), json!(enabled));
-            }
             Some(ThinkingMode::DeepSeek(enabled)) => {
                 obj.insert(
                     "thinking".into(),

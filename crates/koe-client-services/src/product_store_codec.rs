@@ -140,11 +140,26 @@ impl From<ProviderDto> for ProviderConfiguration {
             .as_deref()
             .and_then(CloudAsrProvider::parse)
             .unwrap_or_else(|| ProviderConfiguration::infer_asr_provider(&p.asr_endpoint));
-        let llm_provider = p
+        let raw_llm_provider = p
             .llm_provider
             .as_deref()
-            .and_then(LlmProvider::parse)
-            .unwrap_or_else(|| ProviderConfiguration::infer_llm_provider(&p.chat_endpoint));
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let legacy_qwen_llm = raw_llm_provider.is_some_and(|raw| raw.eq_ignore_ascii_case("qwen"))
+            || (raw_llm_provider.is_none()
+                && ProviderConfiguration::is_legacy_qwen_chat_endpoint(&p.chat_endpoint));
+        let (llm_provider, model, chat_endpoint) = if legacy_qwen_llm {
+            (
+                LlmProvider::DeepSeek,
+                DEFAULT_TEXT_MODEL.into(),
+                DEFAULT_DEEPSEEK_CHAT_URL.into(),
+            )
+        } else {
+            let llm_provider = raw_llm_provider
+                .and_then(LlmProvider::parse)
+                .unwrap_or_else(|| ProviderConfiguration::infer_llm_provider(&p.chat_endpoint));
+            (llm_provider, p.model, p.chat_endpoint)
+        };
         let asr_model = p.asr_model.unwrap_or_else(|| {
             if asr_provider == CloudAsrProvider::DeepSeek {
                 String::new()
@@ -167,9 +182,9 @@ impl From<ProviderDto> for ProviderConfiguration {
             llm_provider,
             enable_thinking: p.enable_thinking,
             qwen_workspace_id: p.qwen_workspace_id,
-            model: p.model,
+            model,
             asr_endpoint: p.asr_endpoint,
-            chat_endpoint: p.chat_endpoint,
+            chat_endpoint,
             retired_credentials: p.retired_credentials,
             pending_credentials: p.pending_credentials,
             credential: p.credential.into(),

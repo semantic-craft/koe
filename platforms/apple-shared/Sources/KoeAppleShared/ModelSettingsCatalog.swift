@@ -58,30 +58,6 @@ enum ModelSettingsCatalog {
         )
     ]
 
-    static let qwenLlmModels: [LlmModelOption] = [
-        LlmModelOption(
-            id: "qwen3.8-flash",
-            primaryBadge: "默认推荐",
-            primaryBadgeRecommended: true,
-            metaBadges: ["1M / 128K"],
-            description: "最新 Flash 系列，响应最快、单价最低，兼顾实时纪要、高频随心闪记与问答体验。"
-        ),
-        LlmModelOption(
-            id: "qwen3.7-plus",
-            primaryBadge: "均衡档",
-            primaryBadgeRecommended: false,
-            metaBadges: ["1M / 128K"],
-            description: "百炼官方均衡档，替代旧版 qwen-plus，兼顾纪要质量与成本。"
-        ),
-        LlmModelOption(
-            id: "qwen4-max",
-            primaryBadge: "旗舰 深度推理",
-            primaryBadgeRecommended: false,
-            metaBadges: ["1M / 262K"],
-            description: "通义千问新一代旗舰模型，适合复杂会议纪要、多记录综合问答与长文梳理。"
-        )
-    ]
-
     static let deepseekLlmModels: [LlmModelOption] = [
         LlmModelOption(
             id: "deepseek-flash",
@@ -117,32 +93,30 @@ struct ModelSettingsDraft: Equatable {
     var customAsrEndpoint = ""
     var asrProvider = "qwen"
     var qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
-    var llmProvider = "qwen"
-    var qwenLlmModel = "qwen3.8-flash"
+    var llmProvider = "deepseek"
     var deepseekLlmModel = "deepseek-flash"
     var customLlmModel = ""
     var enableThinking = false
 
     mutating func sync(from provider: ProviderSnapshot) {
         qwenWorkspaceId = provider.qwenWorkspaceId
-        asrProvider = provider.asrProvider
+        asrProvider = provider.asrProvider == "deepseek" ? "deepseek" : "qwen"
         if ModelSettingsCatalog.qwenAsrModels.contains(where: { $0.id == provider.asrModel }) {
             qwenAsrModel = provider.asrModel
         } else if !provider.asrModel.isEmpty {
             qwenAsrModel = provider.asrModel
         }
-        llmProvider = provider.llmProvider
-        if provider.llmProvider == "deepseek" {
-            deepseekLlmModel = provider.model.isEmpty ? "deepseek-flash" : provider.model
-        } else if provider.llmProvider == "custom" {
+        llmProvider = provider.llmProvider == "custom" ? "custom" : "deepseek"
+        if llmProvider == "custom" {
             customLlmModel = provider.model
         } else {
-            qwenLlmModel = provider.model.isEmpty ? "qwen3.8-flash" : provider.model
+            let validDeepSeek = provider.llmProvider == "deepseek" && !provider.model.isEmpty
+            deepseekLlmModel = validDeepSeek ? provider.model : "deepseek-flash"
         }
         enableThinking = provider.enableThinking
 
         let defaultChat = computedDefaultChatEndpoint()
-        customChatEndpoint = (provider.llmProvider == "custom" || provider.chatEndpoint != defaultChat)
+        customChatEndpoint = (llmProvider == "custom" || (provider.llmProvider == "deepseek" && provider.chatEndpoint != defaultChat))
             ? provider.chatEndpoint
             : ""
         let defaultAsr = computedDefaultAsrEndpoint()
@@ -151,24 +125,23 @@ struct ModelSettingsDraft: Equatable {
 
     var activeLlmModel: String {
         switch llmProvider {
-        case "qwen": qwenLlmModel
-        case "deepseek": deepseekLlmModel
-        default: customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        case "custom": customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        default: deepseekLlmModel
         }
     }
 
     var resolvedLlmModelForSave: String {
         switch llmProvider {
-        case "qwen": qwenLlmModel.isEmpty ? "qwen3.8-flash" : qwenLlmModel
-        case "deepseek": deepseekLlmModel.isEmpty ? "deepseek-flash" : deepseekLlmModel
-        default: customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        case "custom": customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        default: deepseekLlmModel.isEmpty ? "deepseek-flash" : deepseekLlmModel
         }
     }
 
     mutating func selectLlmProvider(_ provider: String) {
-        guard llmProvider != provider else { return }
-        llmProvider = provider
-        if provider == "qwen" || provider == "deepseek" {
+        let normalized = provider == "custom" ? "custom" : "deepseek"
+        guard llmProvider != normalized else { return }
+        llmProvider = normalized
+        if normalized == "deepseek" {
             customChatEndpoint = ""
         }
     }
@@ -188,11 +161,7 @@ struct ModelSettingsDraft: Equatable {
     }
 
     func computedDefaultChatEndpoint() -> String {
-        if llmProvider == "deepseek" {
-            return "https://api.deepseek.com/chat/completions"
-        }
-        let host = ModelSettingsCatalog.qwenHost(workspaceId: qwenWorkspaceId)
-        return "https://\(host)/compatible-mode/v1/chat/completions"
+        "https://api.deepseek.com/chat/completions"
     }
 
     func effectiveChatEndpoint() -> String {
@@ -207,11 +176,6 @@ struct ModelSettingsDraft: Equatable {
         customAsrEndpoint = ""
         customChatEndpoint = ""
         switch preset {
-        case "hybrid":
-            asrProvider = "qwen"
-            qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
-            llmProvider = "deepseek"
-            deepseekLlmModel = "deepseek-flash"
         case "deepseek-full":
             asrProvider = "deepseek"
             llmProvider = "deepseek"
@@ -219,16 +183,13 @@ struct ModelSettingsDraft: Equatable {
         default:
             asrProvider = "qwen"
             qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
-            llmProvider = "qwen"
-            qwenLlmModel = "qwen3.8-flash"
+            llmProvider = "deepseek"
+            deepseekLlmModel = "deepseek-flash"
         }
     }
 
     func matchedPreset(speechEngine: String) -> String? {
         guard speechEngine == "cloud" else { return nil }
-        if asrProvider == "qwen" && qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming" && llmProvider == "qwen" {
-            return "qwen-full"
-        }
         if asrProvider == "qwen" && qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming" && llmProvider == "deepseek" {
             return "hybrid"
         }

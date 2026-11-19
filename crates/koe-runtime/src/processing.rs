@@ -360,7 +360,6 @@ impl KoeRuntime {
     fn chat_config(&self) -> ProviderConfig {
         let cfg = self.workspace().provider_configuration();
         let thinking = match cfg.llm_provider {
-            LlmProvider::Qwen => Some(ThinkingMode::Qwen(cfg.enable_thinking)),
             LlmProvider::DeepSeek => Some(ThinkingMode::DeepSeek(cfg.enable_thinking)),
             LlmProvider::Custom => None,
         };

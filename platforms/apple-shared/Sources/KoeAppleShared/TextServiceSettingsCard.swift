@@ -18,24 +18,15 @@ struct TextServiceSettingsCard: View {
                         get: { draft.llmProvider },
                         set: { draft.selectLlmProvider($0) }
                     )) {
-                        Text("Qwen（阿里云百炼）").tag("qwen")
                         Text("DeepSeek（官方）").tag("deepseek")
                         Text("自定义兼容").tag("custom")
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(maxWidth: 340)
+                    .frame(maxWidth: 240)
                 }
 
-                if draft.llmProvider == "qwen" {
-                    HStack(alignment: .top, spacing: 10) {
-                        ForEach(ModelSettingsCatalog.qwenLlmModels) { option in
-                            llmOptionCard(option, selected: draft.qwenLlmModel == option.id) {
-                                draft.qwenLlmModel = option.id
-                            }
-                        }
-                    }
-                } else if draft.llmProvider == "deepseek" {
+                if draft.llmProvider != "custom" {
                     HStack(alignment: .top, spacing: 10) {
                         ForEach(ModelSettingsCatalog.deepseekLlmModels) { option in
                             llmOptionCard(option, selected: draft.deepseekLlmModel == option.id) {
@@ -49,7 +40,7 @@ struct TextServiceSettingsCard: View {
                             Text("自定义模型名称（Model ID）")
                                 .font(.system(size: AppFontSizes.xs))
                                 .foregroundStyle(AppColors.textSecondary)
-                            TextField("例如：qwen3.8-27b 或本机 Ollama 模型名", text: $draft.customLlmModel)
+                            TextField("例如：deepseek-flash 或本机 Ollama 模型名", text: $draft.customLlmModel)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: AppFontSizes.xs, design: .monospaced))
                                 .onSubmit { onSave() }
@@ -87,7 +78,7 @@ struct TextServiceSettingsCard: View {
                         HStack(spacing: 6) {
                             Text("纪要与问答启用深度思考")
                                 .font(.system(size: AppFontSizes.sm, weight: .medium))
-                            InfoTip("Qwen 3.7+/4 与 DeepSeek V4.1/V4 支持思考切换。关闭（enable_thinking: false / thinking: disabled）可显著缩短实时纪要首字耗时与生成延迟。")
+                            InfoTip("DeepSeek V4.1 / V4 支持深度思考切换。关闭（thinking: disabled）可显著缩短实时纪要首字耗时与生成延迟。")
                         }
                         Text("关闭可缩短实时纪要生成耗时；开启适合复杂会议分析与长文推理。")
                             .font(.system(size: AppFontSizes.xs))

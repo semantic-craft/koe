@@ -111,7 +111,7 @@ fn analysis_queue_retains_storage_failure_but_consumes_permanent_rejection() {
         json!({"type":"create_note","title":"Queue","text":"Keep the original source."}),
     );
     let id = note["selectedRecordId"].as_str().unwrap().to_string();
-    runtime.settings.key = "local-test".into();
+    runtime.settings.deepseek_key = "local-test".into();
     let mut configuration = runtime.workspace().provider_configuration().clone();
     configuration.chat_endpoint = "http://remote.invalid/chat".into();
     runtime

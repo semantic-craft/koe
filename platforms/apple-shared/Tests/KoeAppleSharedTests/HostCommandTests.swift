@@ -165,6 +165,28 @@ struct HostCommandTests {
         #expect(store.snapshot.error == nil)
 
         var draft = ModelSettingsDraft()
+        #expect(draft.asrProvider == "qwen")
+        #expect(draft.qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming")
+        #expect(draft.llmProvider == "deepseek")
+        #expect(draft.deepseekLlmModel == "deepseek-flash")
+        #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+        #expect(draft.effectiveChatEndpoint() == "https://api.deepseek.com/chat/completions")
+        #expect(draft.matchedPreset(speechEngine: "cloud") == "hybrid")
+
+        draft.applyPreset("deepseek-full")
+        #expect(draft.asrProvider == "deepseek")
+        #expect(draft.effectiveAsrEndpoint() == "https://api.deepseek.com/v1/tools/asr")
+        #expect(draft.llmProvider == "deepseek")
+        #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+        #expect(draft.matchedPreset(speechEngine: "cloud") == "deepseek-full")
+
+        draft.applyPreset("hybrid")
+        #expect(draft.asrProvider == "qwen")
+        #expect(draft.qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming")
+        #expect(draft.llmProvider == "deepseek")
+        #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+        #expect(draft.matchedPreset(speechEngine: "cloud") == "hybrid")
+
         draft.llmProvider = "custom"
         draft.customLlmModel = ""
         draft.customChatEndpoint = "http://127.0.0.1:11434/v1/chat/completions"
@@ -173,8 +195,40 @@ struct HostCommandTests {
         #expect(draft.customChatEndpoint.isEmpty)
         #expect(draft.effectiveChatEndpoint() == "https://api.deepseek.com/chat/completions")
         #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+        // Selecting legacy "qwen" as LLM normalizes to DeepSeek (Qwen is ASR-only).
         draft.selectLlmProvider("qwen")
-        #expect(draft.effectiveChatEndpoint() == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-        #expect(draft.resolvedLlmModelForSave == "qwen3.8-flash")
+        #expect(draft.llmProvider == "deepseek")
+        #expect(draft.effectiveChatEndpoint() == "https://api.deepseek.com/chat/completions")
+        #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+
+        // Syncing a stale legacy Qwen LLM snapshot maps cleanly to DeepSeek 4.1 Flash while preserving Qwen ASR.
+        let legacySnapshot = ProviderSnapshot(
+            meetingAudioPolicy: "cloud_allowed",
+            meetingAudioStatus: nil,
+            meetingAudioPolicyError: nil,
+            configured: false,
+            qwenConfigured: true,
+            deepseekConfigured: false,
+            asrConfigured: true,
+            asrIsRealtime: true,
+            asrProvider: "qwen",
+            asrModel: "qwen-audio-3.1-asr-flash-message",
+            llmProvider: "qwen",
+            model: "qwen3.8-flash",
+            enableThinking: false,
+            qwenWorkspaceId: "ws-legacy",
+            asrEndpoint: "wss://ws-legacy.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
+            chatEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            credentialState: "ready",
+            deepseekCredentialState: "missing",
+            isolated: true
+        )
+        draft.sync(from: legacySnapshot)
+        #expect(draft.asrProvider == "qwen")
+        #expect(draft.qwenAsrModel == "qwen-audio-3.1-asr-flash-message")
+        #expect(draft.llmProvider == "deepseek")
+        #expect(draft.deepseekLlmModel == "deepseek-flash")
+        #expect(draft.customChatEndpoint.isEmpty)
+        #expect(draft.effectiveChatEndpoint() == "https://api.deepseek.com/chat/completions")
     }
 }

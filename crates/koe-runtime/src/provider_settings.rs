@@ -33,6 +33,14 @@ enum CredentialSlot {
     Qwen,
     DeepSeek,
 }
+impl CredentialSlot {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Qwen => "qwen",
+            Self::DeepSeek => "deepseek",
+        }
+    }
+}
 
 impl KoeRuntime {
     pub(crate) fn credential_state(&self) -> &'static str {
@@ -80,13 +88,12 @@ impl KoeRuntime {
 
     pub(crate) fn active_llm_key(&self) -> &str {
         match self.workspace().provider_configuration().llm_provider {
-            LlmProvider::Qwen => &self.settings.key,
             LlmProvider::DeepSeek => &self.settings.deepseek_key,
             LlmProvider::Custom => {
-                if !self.settings.key.is_empty() {
-                    &self.settings.key
-                } else {
+                if !self.settings.deepseek_key.is_empty() {
                     &self.settings.deepseek_key
+                } else {
+                    &self.settings.key
                 }
             }
         }
@@ -121,49 +128,61 @@ impl KoeRuntime {
         self.settings.deepseek_unavailable = true;
 
         let qwen_binding = self.workspace().provider_configuration().credential.clone();
+        let ds_binding = self
+            .workspace()
+            .provider_configuration()
+            .deepseek_credential
+            .clone();
+        let need_legacy_qwen = matches!(qwen_binding, CredentialBinding::Uninitialized);
+        let need_legacy_ds = self.credentials.isolated()
+            && matches!(ds_binding, CredentialBinding::Uninitialized);
+        let legacy_values: Option<std::collections::BTreeMap<String, Option<String>>> =
+            if need_legacy_qwen || need_legacy_ds {
+                match self.credentials.read_legacy().map_err(|_| STORAGE_ERROR)? {
+                    None => None,
+                    Some(raw) => {
+                        let values: std::collections::BTreeMap<String, Option<String>> =
+                            serde_json::from_str(&raw).map_err(|_| STORAGE_ERROR)?;
+                        if values.keys().any(|k| {
+                            ![
+                                "qwen",
+                                "deepseek",
+                                "doubao",
+                                "analysisOpenAiCompatible",
+                                "mcpSyncToken",
+                            ]
+                            .contains(&k.as_str())
+                        }) {
+                            return Err(STORAGE_ERROR.into());
+                        }
+                        Some(values)
+                    }
+                }
+            } else {
+                None
+            };
+
         let qwen_value = match qwen_binding {
             CredentialBinding::Saved(reference) => self
                 .credentials
                 .read(&reference)
                 .map_err(|_| STORAGE_ERROR)?,
             CredentialBinding::Cleared => None,
-            CredentialBinding::Uninitialized => {
-                let legacy = self.credentials.read_legacy().map_err(|_| STORAGE_ERROR)?;
-                match legacy {
-                    None => None,
-                    Some(raw) => {
-                        let values: std::collections::BTreeMap<String, Option<String>> =
-                            serde_json::from_str(&raw).map_err(|_| STORAGE_ERROR)?;
-                        if values.keys().any(|k| {
-                            !["qwen", "doubao", "analysisOpenAiCompatible", "mcpSyncToken"]
-                                .contains(&k.as_str())
-                        }) {
-                            return Err(STORAGE_ERROR.into());
-                        }
-                        match values.get("qwen") {
-                            Some(Some(key)) if !key.trim().is_empty() => {
-                                validate_key(key)?;
-                                let configuration =
-                                    self.workspace().provider_configuration().clone();
-                                self.save_credential_slot(
-                                    configuration,
-                                    CredentialSlot::Qwen,
-                                    key.trim(),
-                                )?;
-                                None
-                            }
-                            Some(None) => {
-                                let mut configuration =
-                                    self.workspace().provider_configuration().clone();
-                                configuration.credential = CredentialBinding::Cleared;
-                                self.commit(|w| w.configure_provider(configuration))?;
-                                None
-                            }
-                            _ => None,
-                        }
-                    }
+            CredentialBinding::Uninitialized => match legacy_values.as_ref().and_then(|v| v.get("qwen")) {
+                Some(Some(key)) if !key.trim().is_empty() => {
+                    validate_key(key)?;
+                    let configuration = self.workspace().provider_configuration().clone();
+                    self.save_credential_slot(configuration, CredentialSlot::Qwen, key.trim())?;
+                    None
                 }
-            }
+                Some(None) => {
+                    let mut configuration = self.workspace().provider_configuration().clone();
+                    configuration.credential = CredentialBinding::Cleared;
+                    self.commit(|w| w.configure_provider(configuration))?;
+                    None
+                }
+                _ => None,
+            },
         };
         if let Some(key) = qwen_value {
             validate_key(&key)?;
@@ -171,17 +190,31 @@ impl KoeRuntime {
         }
         self.settings.unavailable = false;
 
-        let ds_binding = self
-            .workspace()
-            .provider_configuration()
-            .deepseek_credential
-            .clone();
         let ds_value = match ds_binding {
             CredentialBinding::Saved(reference) => self
                 .credentials
                 .read(&reference)
                 .map_err(|_| STORAGE_ERROR)?,
-            CredentialBinding::Cleared | CredentialBinding::Uninitialized => None,
+            CredentialBinding::Cleared => None,
+            CredentialBinding::Uninitialized => {
+                if self.credentials.isolated() {
+                    match legacy_values.as_ref().and_then(|v| v.get("deepseek")) {
+                        Some(Some(key)) if !key.trim().is_empty() => {
+                            validate_key(key)?;
+                            let configuration = self.workspace().provider_configuration().clone();
+                            self.save_credential_slot(
+                                configuration,
+                                CredentialSlot::DeepSeek,
+                                key.trim(),
+                            )?;
+                            None
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
         };
         if let Some(key) = ds_value {
             validate_key(&key)?;
@@ -275,8 +308,8 @@ impl KoeRuntime {
 
         let llm_provider_explicit = params.llm_provider.is_some();
         if let Some(raw_llm) = params.llm_provider {
-            configuration.llm_provider =
-                LlmProvider::parse(&raw_llm).ok_or("无法识别文本整理服务商")?;
+            configuration.llm_provider = LlmProvider::parse(&raw_llm)
+                .ok_or("无法识别文本整理服务商（文本处理仅支持 DeepSeek 官方或自定义兼容服务）")?;
         }
         if let Some(thinking) = params.enable_thinking {
             configuration.enable_thinking = thinking;
@@ -300,7 +333,10 @@ impl KoeRuntime {
                 }
                 trimmed.into()
             };
-        } else if asr_provider_explicit || asr_model_explicit || workspace_changed {
+        } else if asr_provider_explicit
+            || asr_model_explicit
+            || (workspace_changed && configuration.asr_provider == CloudAsrProvider::Qwen)
+        {
             configuration.asr_endpoint = ProviderConfiguration::default_asr_endpoint(
                 configuration.asr_provider,
                 &configuration.asr_model,
@@ -315,12 +351,9 @@ impl KoeRuntime {
                     if llm_provider_explicit {
                         return Err("使用自定义兼容服务时，请填写对话接口地址。".into());
                     }
-                    configuration.llm_provider = LlmProvider::Qwen;
+                    configuration.llm_provider = LlmProvider::DeepSeek;
                 }
-                ProviderConfiguration::default_chat_endpoint(
-                    configuration.llm_provider,
-                    &configuration.qwen_workspace_id,
-                )
+                ProviderConfiguration::default_chat_endpoint(configuration.llm_provider)
             } else {
                 if !llm_provider_explicit {
                     configuration.llm_provider =
@@ -328,13 +361,9 @@ impl KoeRuntime {
                 }
                 trimmed.into()
             };
-        } else if (llm_provider_explicit || workspace_changed)
-            && configuration.llm_provider != LlmProvider::Custom
-        {
-            configuration.chat_endpoint = ProviderConfiguration::default_chat_endpoint(
-                configuration.llm_provider,
-                &configuration.qwen_workspace_id,
-            );
+        } else if llm_provider_explicit && configuration.llm_provider != LlmProvider::Custom {
+            configuration.chat_endpoint =
+                ProviderConfiguration::default_chat_endpoint(configuration.llm_provider);
         }
 
         configuration
@@ -405,7 +434,10 @@ impl KoeRuntime {
         slot: CredentialSlot,
         key: &str,
     ) -> Result<(), String> {
-        let candidate = self.credentials.prepare(key).map_err(|_| STORAGE_ERROR)?;
+        let candidate = self
+            .credentials
+            .prepare_for_slot(slot.as_str(), key)
+            .map_err(|_| STORAGE_ERROR)?;
         if !valid_reference(&candidate) {
             self.mark_slot_unavailable(slot);
             return Err(STORAGE_ERROR.into());

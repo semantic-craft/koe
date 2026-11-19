@@ -7,12 +7,13 @@ final class NativeCredentials: HostCredentials {
     private enum Source {
         case productionKeychain
         case isolated
-        case environment(String?)
+        case environment(qwen: String?, deepseek: String?)
     }
     private static let lock = NSLock()
     private static let service = "com.semanticcraft.koe.provider.credentials"
     private static let legacyService = "com.semanticcraft.soundcore.credentials"
-    private static let environmentReferencePrefix = "isolated-environment-qwen-"
+    private static let environmentQwenReferencePrefix = "isolated-environment-qwen-"
+    private static let environmentDeepSeekReferencePrefix = "isolated-environment-deepseek-"
     private let source: Source
     private var memory: [String: String] = [:]
     private var deleted: Set<String> = []
@@ -32,8 +33,16 @@ final class NativeCredentials: HostCredentials {
         let debug = false
         #endif
         if environment["KOE_CREDENTIAL_SOURCE"] == "environment" {
-            let key = environment["DASHSCOPE_API_KEY"]
-            source = .environment(key)
+            let clean: (String?) -> String? = { raw in
+                guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+                    return nil
+                }
+                return trimmed
+            }
+            source = .environment(
+                qwen: clean(environment["DASHSCOPE_API_KEY"]),
+                deepseek: clean(environment["DEEPSEEK_API_KEY"])
+            )
         } else if Self.allowsSystemStorage(
             debug: debug,
             sourceOverride: environment["KOE_CREDENTIAL_SOURCE"] != nil,
@@ -94,16 +103,19 @@ final class NativeCredentials: HostCredentials {
         switch operation {
         case 0:
             if let value = memory[reference] { return value }
-            guard case .environment(let key) = source,
-                  !deleted.contains(reference),
-                  reference.hasPrefix(Self.environmentReferencePrefix),
-                  UUID(uuidString: String(reference.dropFirst(Self.environmentReferencePrefix.count))) != nil
-            else { return nil }
-            return key
+            guard case .environment(let qwen, let deepseek) = source,
+                  !deleted.contains(reference) else { return nil }
+            if reference.hasPrefix(Self.environmentQwenReferencePrefix),
+               UUID(uuidString: String(reference.dropFirst(Self.environmentQwenReferencePrefix.count))) != nil {
+                return qwen
+            }
+            if reference.hasPrefix(Self.environmentDeepSeekReferencePrefix),
+               UUID(uuidString: String(reference.dropFirst(Self.environmentDeepSeekReferencePrefix.count))) != nil {
+                return deepseek
+            }
+            return nil
         case 1:
-            let prefix = isolatedPrefix(value)
-            guard reference.hasPrefix(prefix),
-                  UUID(uuidString: String(reference.dropFirst(prefix.count))) != nil else { throw Failure.unavailable }
+            guard isValidIsolatedReference(reference, for: value) else { throw Failure.unavailable }
             memory[reference] = value
             return reference
         case 2:
@@ -111,16 +123,42 @@ final class NativeCredentials: HostCredentials {
             deleted.insert(reference)
             return ""
         case 3:
-            guard case .environment(let key?) = source else { return nil }
-            return String(decoding: try JSONEncoder().encode(["qwen": key]), as: UTF8.self)
+            guard case .environment(let qwen, let deepseek) = source else { return nil }
+            var payload: [String: String] = [:]
+            if let qwen { payload["qwen"] = qwen }
+            if let deepseek { payload["deepseek"] = deepseek }
+            guard !payload.isEmpty else { return nil }
+            return String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)
         case 4: return ""
-        case 5: return isolatedPrefix(value) + UUID().uuidString.lowercased()
+        case 5: return isolatedPrefix(value: value, slot: reference) + UUID().uuidString.lowercased()
         default: throw Failure.unavailable
         }
     }
 
-    private func isolatedPrefix(_ value: String) -> String {
-        if case .environment(let key) = source, key == value { return Self.environmentReferencePrefix }
+    private func isValidIsolatedReference(_ reference: String, for value: String) -> Bool {
+        if reference.hasPrefix(Self.environmentQwenReferencePrefix) {
+            guard case .environment(let qwen, _) = source, qwen == value else { return false }
+            return UUID(uuidString: String(reference.dropFirst(Self.environmentQwenReferencePrefix.count))) != nil
+        }
+        if reference.hasPrefix(Self.environmentDeepSeekReferencePrefix) {
+            guard case .environment(_, let deepseek) = source, deepseek == value else { return false }
+            return UUID(uuidString: String(reference.dropFirst(Self.environmentDeepSeekReferencePrefix.count))) != nil
+        }
+        guard reference.hasPrefix("isolated-") else { return false }
+        return UUID(uuidString: String(reference.dropFirst("isolated-".count))) != nil
+    }
+
+    private func isolatedPrefix(value: String, slot: String = "") -> String {
+        if case .environment(let qwen, let deepseek) = source {
+            if slot == "qwen" {
+                return qwen == value ? Self.environmentQwenReferencePrefix : "isolated-"
+            }
+            if slot == "deepseek" {
+                return deepseek == value ? Self.environmentDeepSeekReferencePrefix : "isolated-"
+            }
+            if deepseek == value { return Self.environmentDeepSeekReferencePrefix }
+            if qwen == value { return Self.environmentQwenReferencePrefix }
+        }
         return "isolated-"
     }
 

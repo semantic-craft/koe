@@ -8,7 +8,7 @@
 | --- | --- |
 | 输入 | D3200 蓝牙连接与录音取回；Mac 麦克风与指定输入录音，随心闪记与实时纪要可选同时采集系统音频；WAV、TXT、Markdown、含文字的 `.koepack` 导入；手动文字记录 |
 | 录音管理 | 独立顶级导航「录音管理」统一编排 D3200 录音豆、Mac 蓝牙耳机与 CoreAudio 输入设备，支持自动优先与手动选源、系统音频双路采集、录音豆离线文件取回与本机音频存储路径管理；录音豆连接状态、双电量与蓝牙控制权移至侧栏底部常驻状态胶囊与原生弹层 |
-| 模型设置 | 原「设置」收口为「模型设置」，支持阿里云百炼（Qwen）与 DeepSeek 官方双服务商独立钥匙串凭证与跨服务商混搭；ASR 接入 Qwen-Audio 3.1（`-streaming` / `-message` 实时流式与 `-flash` / `-filetrans` 非实时及说话人分离）、DeepSeek 官方 `/v1/tools/asr`（超 120 秒静音自动切段拼接）及 Apple 本机 / 离线模型；LLM 接入 Qwen（默认 `qwen3.8-flash`，可选 `qwen3.7-plus` / `qwen4-max`）与 DeepSeek（`deepseek-flash` / `deepseek-v4-pro`）及深度思考开关 |
+| 模型设置 | 原「设置」收口为「模型设置」，支持阿里云百炼（Qwen）与 DeepSeek 官方双服务商独立钥匙串凭证；ASR 以 Qwen-Audio 3.1 为主（`-streaming` / `-message` 实时流式与 `-flash` / `-filetrans` 非实时及说话人分离），同时支持 DeepSeek 官方 `/v1/tools/asr`（超 120 秒静音自动切段拼接）及 Apple 本机 / 离线模型；LLM 文本整理与问答统一由 DeepSeek 官方承担（默认 DeepSeek 4.1 Flash `deepseek-flash`，可选旗舰 `deepseek-v4-pro`，支持深度思考开关）并保留自定义 OpenAI 兼容服务 |
 | 处理 | Rust 管理音频与记录归属；共享 SpeechSession 接 Apple、下载模型与云端识别（含非实时云端 ASR 录后自动批转写）；全天五分钟分段，已封段记录增量整理，文字服务生成有原文引用的纪要 |
 | 首页 | 已交付模式选择首页（独立会话开关与进入工作区解耦）、分层侧栏、随心闪记（收件箱/项目归类与原文对照 AI 理解）、全天听记（跨切片事件/暂停/未录音空档时间线与当日复查）与实时纪要（三项覆盖指标与往期会议回看） |
 | 记录详情 | 单条记录的纪要与过期重算提示、原文分段编辑与说话人改名合并、重点、音频播放、重命名、归档防误删与移到回收站、Markdown 导出 |

@@ -23,7 +23,7 @@ public struct SettingsDoctorView: View {
                 HStack(alignment: .top) {
                     PageHeading(
                         title: "模型设置",
-                        subtitle: "配置阿里云百炼（Qwen）与 DeepSeek 官方服务的语音识别（ASR）和文本整理（LLM）模型。"
+                        subtitle: "阿里云百炼（Qwen）主打语音识别（ASR），DeepSeek 官方负责文本整理（LLM）并可选语音识别。"
                     )
                     Spacer(minLength: 12)
                     KoeActionButton("保存设置", isPrimary: true) { saveConfiguration() }
@@ -60,8 +60,7 @@ public struct SettingsDoctorView: View {
             Text("快捷组合")
                 .font(.system(size: AppFontSizes.xs))
                 .foregroundStyle(AppColors.textMuted)
-            presetChip("Qwen 全家桶（推荐）", id: "qwen-full", active: matched == "qwen-full")
-            presetChip("Qwen 流式 ASR + DeepSeek LLM", id: "hybrid", active: matched == "hybrid")
+            presetChip("Qwen 语音 + DeepSeek 文本（推荐）", id: "hybrid", active: matched == "hybrid")
             presetChip("DeepSeek 官方全套", id: "deepseek-full", active: matched == "deepseek-full")
             Spacer(minLength: 0)
         }
@@ -98,7 +97,7 @@ public struct SettingsDoctorView: View {
                 .lineLimit(2)
             Spacer(minLength: 8)
             KoeActionButton("恢复官方默认") {
-                draft.applyPreset("qwen-full")
+                draft.applyPreset("hybrid")
                 draft.qwenWorkspaceId = ""
                 draft.enableThinking = false
                 if speech.engine != "cloud" {
@@ -125,12 +124,10 @@ public struct SettingsDoctorView: View {
             "Apple 本机识别"
         }
         let llmText: String = switch draft.llmProvider {
-        case "deepseek":
-            "DeepSeek LLM（\(draft.deepseekLlmModel)）"
         case "custom":
             "自定义 LLM（\(draft.activeLlmModel.isEmpty ? "未填写" : draft.activeLlmModel)）"
         default:
-            "Qwen LLM（\(draft.qwenLlmModel)）"
+            "DeepSeek LLM（\(draft.deepseekLlmModel)）"
         }
         return "当前组合：\(asrText) + \(llmText)"
     }
