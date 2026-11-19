@@ -25,6 +25,7 @@ SETTLE_SECONDS = float(os.environ.get('KOE_CLEANUP_SETTLE_SECONDS') or '0.65')
 
 PC_CASE_SENSITIVE = 11
 F_GETPATH = 50
+F_GETPATH_BUF_SIZE = 1024
 RENAME_SWAP = 0x00000002
 SYSTEM_ROOT_LINKS = frozenset({Path('/var'), Path('/tmp'), Path('/etc')})
 
@@ -88,7 +89,7 @@ def _real_disk_path(path):
         try:
             fd = os.open(resolved, os.O_RDONLY)
             try:
-                raw = fcntl.fcntl(fd, F_GETPATH, bytes(4096)).split(b'\x00', 1)[0]
+                raw = fcntl.fcntl(fd, F_GETPATH, bytes(F_GETPATH_BUF_SIZE)).split(b'\x00', 1)[0]
                 if raw:
                     resolved = Path(os.fsdecode(raw))
             finally:
@@ -168,7 +169,7 @@ def canonicalize_bundle_path(raw_arg, caller_pwd, home_dir, label, allowed_link_
             try:
                 fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW)
                 try:
-                    raw = fcntl.fcntl(fd, F_GETPATH, bytes(4096)).split(b'\x00', 1)[0]
+                    raw = fcntl.fcntl(fd, F_GETPATH, bytes(F_GETPATH_BUF_SIZE)).split(b'\x00', 1)[0]
                     if raw:
                         matched = Path(os.fsdecode(raw)).name
                 finally:
