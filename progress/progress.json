@@ -315,7 +315,7 @@
         "updated_at": "2026-11-19T04:35:12Z"
       }
     ],
-    "main": "170d6f4a1032556649493aa3ad52b7d0a61bead0",
+    "main": "e2c431d1320128e1e931985954afa9d9959b9734",
     "open_pulls": [],
     "pulls": [
       {
@@ -949,9 +949,32 @@
         "merged": true,
         "number": 763,
         "state": "closed"
+      },
+      {
+        "base": "170d6f4a1032556649493aa3ad52b7d0a61bead0",
+        "head": "97113858e3b4057131e0c1b6cf60aa00db84a6b8",
+        "merge_commit": "b4e6799bc9cfa025748575106c4695e4a24358a3",
+        "merged": true,
+        "number": 764,
+        "state": "closed"
+      },
+      {
+        "base": "b4e6799bc9cfa025748575106c4695e4a24358a3",
+        "head": "c0aaec4d5359b2f8d57e3624416af937ab7a586d",
+        "merge_commit": "e2c431d1320128e1e931985954afa9d9959b9734",
+        "merged": true,
+        "number": 765,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 451031101,
+        "prerelease": false,
+        "published_at": "2026-11-19T07:58:16Z",
+        "tag": "v2.6.0"
+      },
       {
         "draft": false,
         "id": 450833256,
@@ -997,7 +1020,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-19T04:41:40.301491Z",
+  "observed_at": "2026-11-19T08:02:42.756939Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2456,9 +2479,9 @@
             }
           ],
           "id": "model-settings-and-recording-management",
-          "next": "按 #757 安装包含 #763 的新签名版并验证从 v2.5.0 自动迁移至 DeepSeek 4.1 Flash、DeepSeek 官方实网调用（deepseek-flash / deepseek-v4-pro / /v1/tools/asr）、最小窗口 GUI 巡检及物理 D3200 离线文件 -filetrans 异步转写。",
+          "next": "按 #757 填入 DEEPSEEK_API_KEY 后完成 DeepSeek 实网调用（deepseek-flash / deepseek-v4-pro / /v1/tools/asr）与物理 D3200 离线文件 -filetrans 异步转写验收。",
           "status": "unverified",
-          "summary": "已将原设置拆分为「模型设置」、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，并将版本检查收口至侧栏顶部版本胶囊弹层；#763 进一步收口模型分工——文本处理默认采用 DeepSeek 4.1 Flash（deepseek-flash）并由 DeepSeek（+ 自定义兼容）承担，Qwen 专注主力 ASR（Qwen-Audio 3.1 四款模型含实时流式与说话人分离），同时保留 DeepSeek 次选 ASR（超 120s 自动静音切片），旧 Qwen LLM 工作区自动无损迁移至 DeepSeek 并保留 Qwen ASR 与业务空间 ID。本地全量门禁（55 条 Python 契约测试、94 文件 UI 原则 0 违规、Rust/Swift 全量测试）与远端 CI 均通过；真机升级迁移、DeepSeek 实网与物理 D3200 验收继续按 #757 推进。",
+          "summary": "已将原设置拆分为「模型设置」、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，并将版本检查收口至侧栏顶部版本胶囊弹层；#763 进一步收口模型分工——文本处理默认采用 DeepSeek 4.1 Flash（deepseek-flash）并由 DeepSeek（+ 自定义兼容）承担，Qwen 专注主力 ASR（Qwen-Audio 3.1 四款模型含实时流式与说话人分离），同时保留 DeepSeek 次选 ASR（超 120s 自动静音切片）。公证版 /Applications/Koe.app（v2.6.0 构建 15）已替换安装并完成实机升级验证：原 v2.5.0 Qwen LLM 工作区自动迁移至 llmProvider=deepseek / model=deepseek-flash，既有 Qwen 钥匙串静默继承（ready），且 cua-driver 已实机巡检新版「模型设置」界面；剩余 DeepSeek 实网调用与物理 D3200 -filetrans 离线转写继续按 #757 推进。",
           "title": "模型设置重构、独立录音管理与录音豆状态弹层"
         },
         {
@@ -2480,10 +2503,34 @@
             }
           ],
           "id": "private-release-250",
-          "next": "本机 /Applications/Koe.app 已替换为公证版 2.5.0（构建 14）并成功启动运行；剩余实机项按 #757 逐项核对。",
+          "next": "已被 v2.6.0（构建 15）接替。",
           "status": "done",
           "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 5acc5043-828a-452d-b539-776d29ade97c Accepted）并装订票据的 v2.5.0（构建 14，tag 指向 6cb47c6）发行包，提供 arm64 zip（sha256 b8d9bf3683d166eff55a9fe0eedc240b8406045623caaca7ad18c3c120929625，7993883 bytes）、SHA256SUMS.txt 与无秘密验收回执；解压包及替换安装的 /Applications/Koe.app 均已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，并已启动实机验证 2.5.0 (14) 凭据继承与录音豆重连。",
           "title": "Koe 2.5.0 私有发行包与本机公证升级"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "私有 GitHub Release v2.6.0（e2c431d）已上传经 xw-notary 公证（aea774a8-fc4a-4b06-a036-39f753ab2b47 Accepted）的 Koe-2.6.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.6.0-release-receipt.json。",
+              "ref": "v2.6.0"
+            },
+            {
+              "kind": "pull",
+              "note": "2.6.0（构建 15）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（e2c431d）。",
+              "ref": 765
+            },
+            {
+              "kind": "file",
+              "note": "2.6.0 发行说明与验收边界。",
+              "ref": "docs/releases/v2.6.0.md"
+            }
+          ],
+          "id": "private-release-260",
+          "next": "本机 /Applications/Koe.app 已升级并运行在公证版 2.6.0（构建 15），可在「模型设置」填入 DeepSeek API Key 后直接体验并按 #757 完成剩余实机核对。",
+          "status": "done",
+          "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 aea774a8-fc4a-4b06-a036-39f753ab2b47 Accepted）并装订票据的 v2.6.0（构建 15，tag 指向 e2c431d）发行包，提供 arm64 zip（sha256 c67be8ebdc56f1589e94ac75ff3003785ad86f6f2288b3598e720aa3f2552cd2，7992241 bytes）、SHA256SUMS.txt 与无秘密验收回执；解压包及替换安装的 /Applications/Koe.app 均已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，且已实机确认 v2.5.0 工作区自动迁移至 DeepSeek 4.1 Flash、Qwen 钥匙串静默继承与新版「模型设置」窗口呈现。",
+          "title": "Koe 2.6.0 私有发行包与本机公证升级"
         }
       ],
       "title": "验收与交付"
@@ -2644,7 +2691,9 @@
       760,
       761,
       762,
-      763
+      763,
+      764,
+      765
     ]
   }
 }
