@@ -315,7 +315,7 @@
         "updated_at": "2026-11-19T04:35:12Z"
       }
     ],
-    "main": "e2c431d1320128e1e931985954afa9d9959b9734",
+    "main": "490efb16136d2cd75c738b2eee27f2290e327aab",
     "open_pulls": [],
     "pulls": [
       {
@@ -965,6 +965,30 @@
         "merged": true,
         "number": 765,
         "state": "closed"
+      },
+      {
+        "base": "e2c431d1320128e1e931985954afa9d9959b9734",
+        "head": "9efd6ab87c57a8b59661731e2b0cf9ef1c8d2d52",
+        "merge_commit": "79a75c80d165f04a4b2d2c19a19582973b2230da",
+        "merged": true,
+        "number": 766,
+        "state": "closed"
+      },
+      {
+        "base": "79a75c80d165f04a4b2d2c19a19582973b2230da",
+        "head": "7efbc10e2a57c36ed2acf7ae10e6161e14d4d5e4",
+        "merge_commit": "2c767e6c96434e7ee773534a2e41b30b57b3aa20",
+        "merged": true,
+        "number": 767,
+        "state": "closed"
+      },
+      {
+        "base": "2c767e6c96434e7ee773534a2e41b30b57b3aa20",
+        "head": "f354938f3925cebf37639c1818d64abd2f3383b8",
+        "merge_commit": "490efb16136d2cd75c738b2eee27f2290e327aab",
+        "merged": true,
+        "number": 768,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -1020,7 +1044,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-19T08:02:42.756939Z",
+  "observed_at": "2026-11-19T16:11:49.553228Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1920,12 +1944,12 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "独立需要真机工单",
+              "note": "原真机验收清单工单（已于 2026-11-15 按日常使用替代人工清单原则关闭为 not_planned）。",
               "ref": 588
             }
           ],
           "id": "hardware-cloud",
-          "next": "按 #588 继续验收完整取回、边录边转写与真实云服务。",
+          "next": "日常使用签名版 /Applications/Koe.app 持续核对完整音频取回与真实云端服务；当前开放真机验收以 #757 为入口。",
           "status": "in_progress",
           "summary": "实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。",
           "title": "真实设备与付费服务"
@@ -2059,12 +2083,12 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "独立真机工单，保持开放未验。",
+              "note": "原真机验收清单工单（已于 2026-11-15 关闭为 not_planned，转日常使用核对）。",
               "ref": 616
             }
           ],
           "id": "microphone-device-acceptance",
-          "next": "按 #616 在签名安装版逐项验收。系统双路、本机 ASR、暂停与崩溃恢复不属于本片。",
+          "next": "#616 已关闭（not_planned）；系统授权、物理音源切换、人耳回放与退出重开转由日常使用最新版 /Applications/Koe.app 直接核对。",
           "status": "unverified",
           "summary": "本轮以隔离音源、真实 C ABI 与磁盘验证，不使用真实麦克风或个人 Keychain，未安装签名版。系统授权、物理音源切换、人耳回放和实际退出重开仍未验。",
           "title": "麦克风签名版与真机验收"
@@ -2073,12 +2097,12 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "独立真机验收工单，保持开放未验。",
+              "note": "原真机验收清单工单（已于 2026-11-15 关闭为 not_planned，转日常使用核对）。",
               "ref": 645
             }
           ],
           "id": "capture-studio-device-acceptance",
-          "next": "连接实体 D3200 与蓝牙耳机按 #645 逐项核对。",
+          "next": "#645 已关闭（not_planned）；实体 D3200 与蓝牙耳机热插拔切换及实时字幕提示转由日常使用核对。",
           "status": "unverified",
           "summary": "本轮已通过 C ABI v2 隔离音源回归、CoreAudio 传输类型分类测试与签名版二进制自检；尚未在真机连接实体 D3200 与蓝牙耳机核对热插拔选源切换、闲置态 A2DP 音质保持、录音期电平跳动与实时字幕提示。",
           "title": "独立「录音」页音源切换与实时字幕真机验收"
@@ -2233,7 +2257,7 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "独立真机核对工单，保持开放未验。",
+              "note": "原真机核对工单（已于 2026-11-18 关闭为 completed，基础 UI/命令已由自动回归与签名窗口核对覆盖）。",
               "ref": 722
             },
             {
@@ -2243,7 +2267,7 @@
             }
           ],
           "id": "today-source-device-acceptance",
-          "next": "升级 /Applications/Koe.app 后按 #722 实机核对录音豆未连、外接麦下已连一键切换与录音中状态显示。",
+          "next": "#722 已关闭；实体 D3200 与外接麦克风物理场景转由日常使用最新版 /Applications/Koe.app 核对。",
           "status": "unverified",
           "summary": "代码实现、C ABI 快照回归与 UI 原则门禁已于 PR #721 通过；尚未覆盖安装新版签名包连接实体 D3200 与外接麦克风完成首页窗口核对。",
           "title": "首页音源条与录音豆一键切换真机核对"
@@ -2252,7 +2276,7 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "独立真机核对工单，保持开放未验。",
+              "note": "原真机核对工单（已于 2026-11-18 关闭为 completed，离屏显隐已由自动门禁与 cua-driver 覆盖）。",
               "ref": 725
             },
             {
@@ -2262,7 +2286,7 @@
             }
           ],
           "id": "offscreen-wake-hotplug-acceptance",
-          "next": "升级 /Applications/Koe.app 后按 #725 实机核对 Cmd+W 关窗态实体录音键自动弹窗与蓝牙或 USB 耳机插拔即时刷新。",
+          "next": "#725 已关闭；实体 D3200 关窗唤醒与外接耳机热插拔物理场景转由日常使用核对。",
           "status": "unverified",
           "summary": "关窗与最小化离屏重排门控、录音豆边缘唤醒回调及 CoreAudioInputMonitor HAL 监听已于 PR #726 通过 Swift 回归与 Release 基准验证；尚未在实体 D3200 与真实外接耳机上复测。",
           "title": "离屏关窗后台唤醒与外接麦克风热插拔真机核对"
@@ -2295,7 +2319,7 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "独立真机核对工单，保持开放未验。",
+              "note": "原真机核对工单（已于 2026-11-18 关闭为 completed，切换守门逻辑已由自动化测试与签名自检覆盖）。",
               "ref": 731
             },
             {
@@ -2305,7 +2329,7 @@
             }
           ],
           "id": "phone-handoff-acceptance",
-          "next": "安装 2.2.0 签名版后按 #731 在实体 D3200 与 iPhone 飞书妙记之间实测切回与重连。",
+          "next": "#731 已关闭；实体 D3200 与 iPhone 切回重连物理场景转由日常使用核对。",
           "status": "unverified",
           "summary": "首页「Mac 使用 / 手机接管」分段开关、状态栏菜单同步、Rust 离线拉取/录音守门与四端统一已在 PR #732 通过全量自动化门禁与多模型对抗复审；实体 D3200 与 iPhone 切回切换仍待物理硬件核对。",
           "title": "Mac 到手机控制权切换真机核对"
@@ -2431,7 +2455,7 @@
             }
           ],
           "id": "app-version-and-update-check",
-          "next": "无待办；后续发布公开仓库版本时将自动展示新版本下载提示。",
+          "next": "仓库已于 PR #768 切换为公开，后续公开版本发布将直接通过 GitHub Releases 触发更新提示。",
           "status": "done",
           "summary": "已在 koe-engine、koe-client-providers（独立 Update 车道）、koe-runtime、koe-cli 与原生 SwiftUI/AppKit 宿主贯通版本号/构建号展示与按需 GitHub Releases 更新检查；已在签名版 /Applications/Koe.app（v2.4.0 构建 13）完成 Keychain 凭据继承、侧边栏 v2.4.0、状态栏菜单、标准关于面板、菜单触发检查更新跳转到设置置顶卡片及真实 api.github.com 私有库未公开提示自动验收，并关闭 #752。",
           "title": "应用版本号展示与手动检查更新"
@@ -2531,6 +2555,44 @@
           "status": "done",
           "summary": "2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 aea774a8-fc4a-4b06-a036-39f753ab2b47 Accepted）并装订票据的 v2.6.0（构建 15，tag 指向 e2c431d）发行包，提供 arm64 zip（sha256 c67be8ebdc56f1589e94ac75ff3003785ad86f6f2288b3598e720aa3f2552cd2，7992241 bytes）、SHA256SUMS.txt 与无秘密验收回执；解压包及替换安装的 /Applications/Koe.app 均已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，且已实机确认 v2.5.0 工作区自动迁移至 DeepSeek 4.1 Flash、Qwen 钥匙串静默继承与新版「模型设置」窗口呈现。",
           "title": "Koe 2.6.0 私有发行包与本机公证升级"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "重构「所有记录」管理台界面、移除顶栏多余「新建记录」并新增批量操作与目录导出，已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（2c767e6）。",
+              "ref": 767
+            }
+          ],
+          "id": "all-records-batch-management",
+          "next": "在日常使用签名版 /Applications/Koe.app 时核对「所有记录」单条悬停操作、排序筛选与批量归类/归档/导出 Markdown/批量移入回收站后撤销。",
+          "status": "unverified",
+          "summary": "PR #767（2c767e6）已合入主线：移除顶栏多余「新建记录」（⌘N）入口，「所有记录」页新增单条悬停快捷操作（行内重命名、快捷归类项目、归档保护、移到回收站）、按时间/时长/标题排序、按项目筛选与「批量管理」多选模式；Rust 内核补齐原子级 batch_trash_records（自动跳过归档/处理中并支持 8 秒批量撤销）、batch_restore_records、batch_set_record_archived、batch_set_record_project 与 export_records_markdown 目录防覆盖导出。已通过全量 ./scripts/check（Rust record_trash 12/12、Swift RecordSessionSnapshotTests 4/4、96 个 Swift 文件 0 UI 违规）及 Developer ID 签名版 /Applications/Koe.app 的 --verify-self 与 --smoke-test；真实窗口交互点击与 NSOpenPanel 导出目录弹窗留待日常使用核对。",
+          "title": "「所有记录」管理台重构与批量管理"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "开源前安全加固、切换 GitHub 托管 macos-26 CI、补充 MIT LICENSE 与移除版本胶囊蓝色焦点框，已通过本地 ./scripts/check 与托管 macos-26 CI 并 squash 合并进 main（490efb1）。",
+              "ref": 768
+            },
+            {
+              "kind": "file",
+              "note": "根目录 MIT 许可证文件。",
+              "ref": "LICENSE"
+            },
+            {
+              "kind": "file",
+              "note": "公开仓库托管 macos-26 CI 与轻量文档分流说明。",
+              "ref": "docs/agents/ci-runner.md"
+            }
+          ],
+          "id": "public-repo-security-and-ci",
+          "next": "下次安装最新签名版 /Applications/Koe.app 后确认左上角版本胶囊无蓝色焦点框，并在下次使用 D3200 录音豆时核对自动回连正常。",
+          "status": "unverified",
+          "summary": "PR #768（490efb1）已合入主线且仓库已切换为公开（PUBLIC）：补充根目录 MIT LICENSE，将 CI 迁至 GitHub 托管 macos-26 ARM64 运行机并移除本机自托管 runner（koe-mac），收紧 Release entitlements（移除未用 network.server 与 calendars）、收窄 BLE 设备名匹配并推迟 savedPeripheralKey 持久化至 checkReady()、为 FrameReassembler 增加 128 KiB 缓冲上限、将 run-with-secrets.py 改为环境变量最小白名单、限制 Release 禁用回环更新 URL 并加固 revealLocalDirectory 路径校验，同时为侧栏版本胶囊补加 .focusEffectDisabled() 移除启动蓝色焦点框。本地 ./scripts/check 与 GitHub macos-26 CI 均通过；安装新版后主窗口无蓝框与 D3200 自动回连留待日常使用确认。",
+          "title": "公开仓库安全加固、MIT 许可与托管 macos-26 CI"
         }
       ],
       "title": "验收与交付"
@@ -2693,7 +2755,10 @@
       762,
       763,
       764,
-      765
+      765,
+      766,
+      767,
+      768
     ]
   }
 }

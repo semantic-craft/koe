@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-19T08:02:42.756939Z</p>
-<p>Main: <code>main: e2c431d1320128e1e931985954afa9d9959b9734</code></p>
+<p>Observed: 2026-11-19T16:11:49.553228Z</p>
+<p>Main: <code>main: 490efb16136d2cd75c738b2eee27f2290e327aab</code></p>
 <section id="mode-workspaces-definition"><h2>三模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>三种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -189,8 +189,8 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/726">pull 726: 宿主分域 @Observable 切片、二进制 PCM 快路径与离屏重排门控通过全量 scripts/check、check_swiftui_perf 零告警、独立审查及远端 CI。</a></li>
 </ul><p>Next: 后续改动继续运行统一门禁与 SwiftUI 静态性能检查。</p></article>
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
-</ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 原真机验收清单工单（已于 2026-11-15 按日常使用替代人工清单原则关闭为 not_planned）。</a></li>
+</ul><p>Next: 日常使用签名版 /Applications/Koe.app 持续核对完整音频取回与真实云端服务；当前开放真机验收以 #757 为入口。</p></article>
 <article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-17 本机 /Applications/Koe.app 已安装并运行经 Apple 公证装订的 Developer ID 签名版 2.2.0（构建 11，CDHash a736534cb1b51bc94e8464eddb3bcca50a3ecea0，Apple Notary 提交 61f297ad-1554-49a6-9612-4e670ddab3da Accepted，运行 PID 43309），Designated Requirement 逐字节保留，xcrun stapler validate 与 spctl 均返回 Notarized Developer ID；koe status 与 mac-ax 验证 70 条记录、21 条待办、localAsr ready 与「模式选择 / 已让出给手机 / Mac 使用 / 手机接管」四卡正常。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/594">issue 594: 未运行态下已在同一 Dock 并排截图确认 Responsay、Sonori、Koe、Micro Input、Kotone 视觉轮廓对齐。</a></li>
@@ -218,11 +218,11 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/612">issue 612: 独立真机验收，仍开放未验。</a></li>
 </ul><p>Next: 在签名安装版核对活动重叠释放、锁屏、停止确认恢复及录音中退出重开。</p></article>
 <article id="microphone-device-acceptance"><h3>麦克风签名版与真机验收</h3><span class="badge">unverified</span><p>本轮以隔离音源、真实 C ABI 与磁盘验证，不使用真实麦克风或个人 Keychain，未安装签名版。系统授权、物理音源切换、人耳回放和实际退出重开仍未验。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/616">issue 616: 独立真机工单，保持开放未验。</a></li>
-</ul><p>Next: 按 #616 在签名安装版逐项验收。系统双路、本机 ASR、暂停与崩溃恢复不属于本片。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/616">issue 616: 原真机验收清单工单（已于 2026-11-15 关闭为 not_planned，转日常使用核对）。</a></li>
+</ul><p>Next: #616 已关闭（not_planned）；系统授权、物理音源切换、人耳回放与退出重开转由日常使用最新版 /Applications/Koe.app 直接核对。</p></article>
 <article id="capture-studio-device-acceptance"><h3>独立「录音」页音源切换与实时字幕真机验收</h3><span class="badge">unverified</span><p>本轮已通过 C ABI v2 隔离音源回归、CoreAudio 传输类型分类测试与签名版二进制自检；尚未在真机连接实体 D3200 与蓝牙耳机核对热插拔选源切换、闲置态 A2DP 音质保持、录音期电平跳动与实时字幕提示。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/645">issue 645: 独立真机验收工单，保持开放未验。</a></li>
-</ul><p>Next: 连接实体 D3200 与蓝牙耳机按 #645 逐项核对。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/645">issue 645: 原真机验收清单工单（已于 2026-11-15 关闭为 not_planned，转日常使用核对）。</a></li>
+</ul><p>Next: #645 已关闭（not_planned）；实体 D3200 与蓝牙耳机热插拔切换及实时字幕提示转由日常使用核对。</p></article>
 <article id="plaud-light-install"><h3>浅色版日常安装与退出修复</h3><span class="badge">done</span><p>已安装 Developer ID 签名浅色修复版（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22）。自检不覆盖日常通信入口，Cmd-Q 退出重开与 59 条既有记录读取通过；在 -AppleInterfaceStyle Dark 实机进程下完成 ConnectGuideSheet、ItemEditor（待办/记忆）、AllDayDemoView 双场景及 NativeQuitPanel 正在退出面板截图复核，全部保持纯白浅色表面与深色可读正文，#654 已结案。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/654">issue 654: 签名日常安装、-AppleInterfaceStyle Dark 四个浅色弹窗实机截图复核与 GUI 退出重开全部通过，工单已关闭。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/657">issue 657: 路径删除后的退出死锁有先红后绿回归和真机采样。</a></li>
@@ -254,22 +254,22 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/README.md">file README.md: 中文主入口文档与当前诚实边界。</a></li>
 </ul><p>Next: 四层单向依赖、文件行数上限与 4 Hz 观测边界继续由 scripts/check 静态守护。</p></article>
 <article id="today-source-device-acceptance"><h3>首页音源条与录音豆一键切换真机核对</h3><span class="badge">unverified</span><p>代码实现、C ABI 快照回归与 UI 原则门禁已于 PR #721 通过；尚未覆盖安装新版签名包连接实体 D3200 与外接麦克风完成首页窗口核对。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/722">issue 722: 独立真机核对工单，保持开放未验。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/722">issue 722: 原真机核对工单（已于 2026-11-18 关闭为 completed，基础 UI/命令已由自动回归与签名窗口核对覆盖）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/721">pull 721: 首页音源条引导与一键切换实现。</a></li>
-</ul><p>Next: 升级 /Applications/Koe.app 后按 #722 实机核对录音豆未连、外接麦下已连一键切换与录音中状态显示。</p></article>
+</ul><p>Next: #722 已关闭；实体 D3200 与外接麦克风物理场景转由日常使用最新版 /Applications/Koe.app 核对。</p></article>
 <article id="offscreen-wake-hotplug-acceptance"><h3>离屏关窗后台唤醒与外接麦克风热插拔真机核对</h3><span class="badge">unverified</span><p>关窗与最小化离屏重排门控、录音豆边缘唤醒回调及 CoreAudioInputMonitor HAL 监听已于 PR #726 通过 Swift 回归与 Release 基准验证；尚未在实体 D3200 与真实外接耳机上复测。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/725">issue 725: 独立真机核对工单，保持开放未验。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/725">issue 725: 原真机核对工单（已于 2026-11-18 关闭为 completed，离屏显隐已由自动门禁与 cua-driver 覆盖）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/726">pull 726: 宿主分域观测、离屏关窗重排门控与 CoreAudio HAL 监听实现。</a></li>
-</ul><p>Next: 升级 /Applications/Koe.app 后按 #725 实机核对 Cmd+W 关窗态实体录音键自动弹窗与蓝牙或 USB 耳机插拔即时刷新。</p></article>
+</ul><p>Next: #725 已关闭；实体 D3200 关窗唤醒与外接耳机热插拔物理场景转由日常使用核对。</p></article>
 <article id="private-release-210"><h3>Koe 2.1.0 私有发行包</h3><span class="badge">done</span><p>2026-11-16 已在私有仓库发布 v2.1.0（构建 10），提供 Apple silicon Developer ID 时间戳签名包、SHA256SUMS 与无秘密验收回执。完整门禁、独立审查、Apple Notary 公证（Accepted，2671c580-1bea-4eb5-936f-f1b15b941edf）、票据装订与解压包 Gatekeeper（Notarized Developer ID）、verify-self、smoke-test 及 8 份许可证逐字节核对全部通过，回读下载哈希与发布哈希一致；本机已从正式发行包完成 /Applications/Koe.app 2.1.0（构建 10）平滑升级并验证记录、连接与权限保留。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.1.0">release v2.1.0: 正式私有 Release，arm64 zip、SHA256SUMS 与无秘密验收回执均已上传并完成下载哈希回读校验。zip SHA-256 8701a8b6fa406a4c1ddc3469ff6d4dc96e43109888e30a0d0a2e445e9a278801。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/727">pull 727: 版本准备经独立审查与完整门禁通过，squash 合并为 d5da243fc7678860c2efefdf660d6f13643fd79a。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.1.0.md">file docs/releases/v2.1.0.md: 2.1.0 当前可用功能、未验收硬件边界与安装说明。</a></li>
 </ul><p>Next: 独立物理硬件核对继续按 #722 与 #725 追踪。</p></article>
 <article id="phone-handoff-acceptance"><h3>Mac 到手机控制权切换真机核对</h3><span class="badge">unverified</span><p>首页「Mac 使用 / 手机接管」分段开关、状态栏菜单同步、Rust 离线拉取/录音守门与四端统一已在 PR #732 通过全量自动化门禁与多模型对抗复审；实体 D3200 与 iPhone 切回切换仍待物理硬件核对。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/731">issue 731: 独立真机核对工单，保持开放未验。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/731">issue 731: 原真机核对工单（已于 2026-11-18 关闭为 completed，切换守门逻辑已由自动化测试与签名自检覆盖）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/732">pull 732: Mac 到手机 BLE 控制权切换、Rust 守门与四端统一实现。</a></li>
-</ul><p>Next: 安装 2.2.0 签名版后按 #731 在实体 D3200 与 iPhone 飞书妙记之间实测切回与重连。</p></article>
+</ul><p>Next: #731 已关闭；实体 D3200 与 iPhone 切回重连物理场景转由日常使用核对。</p></article>
 <article id="private-release-220"><h3>Koe 2.2.0 私有发行包</h3><span class="badge">done</span><p>2026-11-17 已在私有仓库发布并更新经 xw-notary 完成 Apple 公证（提交 61f297ad-1554-49a6-9612-4e670ddab3da Accepted）与票据装订的 v2.2.0（构建 11，tag 指向 b043f3a）发行包，提供 arm64 zip、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（Notarized Developer ID）、--verify-self 与 --smoke-test，GitHub Release 下载回读 SHA-256（06a3039fdf20cf4a3356103f413bea2b641f3796d19661836eca6c1852d9c018）一致，本机 /Applications/Koe.app（PID 43309）已完成 Gatekeeper、实时数据与 AX UI 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.2.0">release v2.2.0: 私有 GitHub Release v2.2.0（tag 指向 b043f3a）已刷新为经 xw-notary 公证（61f297ad-1554-49a6-9612-4e670ddab3da Accepted）并装订票据的发行包、SHA256SUMS.txt 与 Koe-2.2.0-release-receipt.json，下载回读 SHA-256（06a3039fdf20cf4a3356103f413bea2b641f3796d19661836eca6c1852d9c018）一致，spctl 为 Notarized Developer ID。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/732">pull 732: Mac 到手机控制权切换与 HostAction 空壳清理（326ac6b）。</a></li>
@@ -295,7 +295,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/753">pull 753: 全栈接入版本号展示与手动软件更新检查，通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（6fa7d1a）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/751">issue 751: 功能需求与四层架构验收边界工单。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/752">issue 752: 签名版 /Applications/Koe.app 关于面板、状态栏/Dock 菜单与检查更新桌面巡检工单。</a></li>
-</ul><p>Next: 无待办；后续发布公开仓库版本时将自动展示新版本下载提示。</p></article>
+</ul><p>Next: 仓库已于 PR #768 切换为公开，后续公开版本发布将直接通过 GitHub Releases 触发更新提示。</p></article>
 <article id="private-release-240"><h3>Koe 2.4.0 私有发行包与本机升级验收</h3><span class="badge">done</span><p>2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 cc6cdc9f-eafb-43db-b8ff-4505d6d6cf1b Accepted）并装订票据的 v2.4.0（构建 13，tag 指向 f87a1ec）发行包，提供 arm64 zip（sha256 914f8c007606fe272bf15a91432911e33bf15d1543e0d5e818d8c0cd6571852d）、SHA256SUMS.txt 与无秘密验收回执；解压包已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，且已替换本机 /Applications/Koe.app 并完成桌面自动验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.4.0">release v2.4.0: 私有 GitHub Release v2.4.0（f87a1ec）已上传经 xw-notary 公证（cc6cdc9f-eafb-43db-b8ff-4505d6d6cf1b Accepted）的 Koe-2.4.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.4.0-release-receipt.json。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/755">pull 755: 2.4.0（构建 13）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（f87a1ec）。</a></li>
@@ -316,6 +316,14 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/765">pull 765: 2.6.0（构建 15）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（e2c431d）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.6.0.md">file docs/releases/v2.6.0.md: 2.6.0 发行说明与验收边界。</a></li>
 </ul><p>Next: 本机 /Applications/Koe.app 已升级并运行在公证版 2.6.0（构建 15），可在「模型设置」填入 DeepSeek API Key 后直接体验并按 #757 完成剩余实机核对。</p></article>
+<article id="all-records-batch-management"><h3>「所有记录」管理台重构与批量管理</h3><span class="badge">unverified</span><p>PR #767（2c767e6）已合入主线：移除顶栏多余「新建记录」（⌘N）入口，「所有记录」页新增单条悬停快捷操作（行内重命名、快捷归类项目、归档保护、移到回收站）、按时间/时长/标题排序、按项目筛选与「批量管理」多选模式；Rust 内核补齐原子级 batch_trash_records（自动跳过归档/处理中并支持 8 秒批量撤销）、batch_restore_records、batch_set_record_archived、batch_set_record_project 与 export_records_markdown 目录防覆盖导出。已通过全量 ./scripts/check（Rust record_trash 12/12、Swift RecordSessionSnapshotTests 4/4、96 个 Swift 文件 0 UI 违规）及 Developer ID 签名版 /Applications/Koe.app 的 --verify-self 与 --smoke-test；真实窗口交互点击与 NSOpenPanel 导出目录弹窗留待日常使用核对。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/767">pull 767: 重构「所有记录」管理台界面、移除顶栏多余「新建记录」并新增批量操作与目录导出，已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（2c767e6）。</a></li>
+</ul><p>Next: 在日常使用签名版 /Applications/Koe.app 时核对「所有记录」单条悬停操作、排序筛选与批量归类/归档/导出 Markdown/批量移入回收站后撤销。</p></article>
+<article id="public-repo-security-and-ci"><h3>公开仓库安全加固、MIT 许可与托管 macos-26 CI</h3><span class="badge">unverified</span><p>PR #768（490efb1）已合入主线且仓库已切换为公开（PUBLIC）：补充根目录 MIT LICENSE，将 CI 迁至 GitHub 托管 macos-26 ARM64 运行机并移除本机自托管 runner（koe-mac），收紧 Release entitlements（移除未用 network.server 与 calendars）、收窄 BLE 设备名匹配并推迟 savedPeripheralKey 持久化至 checkReady()、为 FrameReassembler 增加 128 KiB 缓冲上限、将 run-with-secrets.py 改为环境变量最小白名单、限制 Release 禁用回环更新 URL 并加固 revealLocalDirectory 路径校验，同时为侧栏版本胶囊补加 .focusEffectDisabled() 移除启动蓝色焦点框。本地 ./scripts/check 与 GitHub macos-26 CI 均通过；安装新版后主窗口无蓝框与 D3200 自动回连留待日常使用确认。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/768">pull 768: 开源前安全加固、切换 GitHub 托管 macos-26 CI、补充 MIT LICENSE 与移除版本胶囊蓝色焦点框，已通过本地 ./scripts/check 与托管 macos-26 CI 并 squash 合并进 main（490efb1）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/LICENSE">file LICENSE: 根目录 MIT 许可证文件。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/agents/ci-runner.md">file docs/agents/ci-runner.md: 公开仓库托管 macos-26 CI 与轻量文档分流说明。</a></li>
+</ul><p>Next: 下次安装最新签名版 /Applications/Koe.app 后确认左上角版本胶囊无蓝色焦点框，并在下次使用 D3200 录音豆时核对自动回连正常。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、Google 写回与 ACP 不计入当前 macOS 已接通功能；Mac 麦克风全天听记已接入，硬件验收见 #662。</p><ul>
