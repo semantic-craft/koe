@@ -18,6 +18,11 @@ from urllib.parse import quote, unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = 'progress/progress.json'
 STATUSES = {'done', 'in_progress', 'blocked', 'planned', 'unverified'}
+VISIBILITIES = {'PRIVATE', 'PUBLIC'}
+
+
+def expected_visibility(c):
+    return c.get('visibility', 'PRIVATE')
 
 
 def require(ok, message):
@@ -131,6 +136,9 @@ def schema(c, snapshot=True):
             require(k in o and type(o[k]) in (t if isinstance(t, tuple) else (t,)), f'Invalid {k}')
     typed(c, dict(schema_version=int, repository=str, title=str, page=str, renderer=(str, type(None)), inputs=list, outputs=list, related_repositories=list, tracked=dict, observed_at=(str, type(None)), facts=dict, sections=list))
     require(c['schema_version'] == 1, 'schema_version must be 1')
+    if 'visibility' in c:
+        typed(c, dict(visibility=str))
+        require(c['visibility'] in VISIBILITIES, 'Invalid visibility')
     for repo in [c['repository']] + c['related_repositories']:
         require(isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo), 'Invalid repository')
     for key in ('inputs', 'outputs'):
@@ -534,7 +542,8 @@ def check(c, online=False, proof=None):
             test('publication', lambda: publication(c, json.loads(Path(proof).read_text(encoding='utf-8'))))
         if online:
             test('live-facts', lambda: live_matches(c))
-            test('private-repo', lambda: require(json.loads(run('gh', 'repo', 'view', c['repository'], '--json', 'visibility'))['visibility'] == 'PRIVATE', 'Repository must be PRIVATE'))
+            expected = expected_visibility(c)
+            test('private-repo', lambda: require(json.loads(run('gh', 'repo', 'view', c['repository'], '--json', 'visibility'))['visibility'] == expected, f'Repository must be {expected}'))
     for error in errors:
         print(error, file=sys.stderr)
     return not errors
@@ -544,6 +553,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['init', 'refresh', 'render', 'check', 'publish'])
     parser.add_argument('--repository'); parser.add_argument('--title')
+    parser.add_argument('--visibility', choices=['PRIVATE', 'PUBLIC'])
     parser.add_argument('--live', action='store_true'); parser.add_argument('--publication')
     parser.add_argument('--adapter'); parser.add_argument('--receipt')
     a = parser.parse_args()
@@ -554,6 +564,8 @@ def main():
         require(a.repository and a.title, 'init requires --repository and --title')
         require(not (root / 'progress').exists(), 'progress already exists')
         c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main='', pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
+        if a.visibility is not None:
+            c['visibility'] = a.visibility
         schema(c)
         write_json(root / CONFIG, c)
         shutil.copyfile(__file__, root / 'progress/progress.py')
