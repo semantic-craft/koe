@@ -136,6 +136,19 @@ struct AppUpdateHostTests {
         #expect(KoeAppDelegate.isAllowedExternalReleaseURL(
             try #require(URL(string: "http://127.0.0.1:9090/release?asset=Koe%2Ezip"))
         ))
+        #expect(KoeAppDelegate.isAllowedExternalReleaseURL(
+            try #require(URL(string: "https://github.com/semantic-craft/koe/releases/tag/v2.6.0")),
+            allowLoopback: false
+        ))
+        for loopbackRaw in [
+            "http://127.0.0.1:9090/release",
+            "https://127.0.0.1:9090/release",
+            "http://localhost:8080/release",
+            "http://[::1]:8080/release"
+        ] {
+            let url = try #require(URL(string: loopbackRaw))
+            #expect(!KoeAppDelegate.isAllowedExternalReleaseURL(url, allowLoopback: false), "accepted loopback in release mode: \(loopbackRaw)")
+        }
 
         for unsafeRaw in [
             "http://github.com/semantic-craft/koe/releases",
@@ -154,6 +167,37 @@ struct AppUpdateHostTests {
                 #expect(!KoeAppDelegate.isAllowedExternalReleaseURL(url), "accepted unsafe URL: \(unsafeRaw)")
             }
         }
+    }
+
+    @Test("Safe Finder reveal allows workspace audio directory and rejects outside paths, traversal, files, and symlinks")
+    @MainActor
+    func safeRevealDirectoryContainment() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("koe-reveal-\(UUID().uuidString)")
+        let workspace = base.appendingPathComponent("workspace", isDirectory: true)
+        let audioDir = workspace.appendingPathComponent("audio", isDirectory: true)
+        let outsideDir = base.appendingPathComponent("workspace-evil", isDirectory: true)
+        let regularFile = audioDir.appendingPathComponent("clip.wav")
+        try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
+        try Data("wav".utf8).write(to: regularFile)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let escapeLink = workspace.appendingPathComponent("escape-link")
+        try FileManager.default.createSymbolicLink(at: escapeLink, withDestinationURL: outsideDir)
+        let innerLink = workspace.appendingPathComponent("inner-link")
+        try FileManager.default.createSymbolicLink(at: innerLink, withDestinationURL: audioDir)
+
+        #expect(KoeAppDelegate.isSafeRevealDirectory(audioDir.path, withinWorkspace: workspace.path))
+        #expect(KoeAppDelegate.isSafeRevealDirectory(workspace.path, withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory("", withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory("audio", withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory(outsideDir.path, withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory("\(workspace.path)/audio/../../workspace-evil", withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory("\(workspace.path)/audio/..", withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory(escapeLink.path, withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory(innerLink.path, withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory(regularFile.path, withinWorkspace: workspace.path))
+        #expect(!KoeAppDelegate.isSafeRevealDirectory(workspace.appendingPathComponent("missing").path, withinWorkspace: workspace.path))
     }
 
     @Test("Bundle Info.plist metadata syncs idempotently, status menu displays version, and menu update check surfaces newer release")

@@ -1,35 +1,19 @@
-# CI 运行机（自己的 Mac）
+# CI 运行环境
 
-CI（[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）只在带 `self-hosted, macOS, ARM64` 标签的运行机上跑，不用 GitHub 托管机器，也就不花 GitHub 托管分钟。运行机就是装好 Rust 工具链（`cargo` / `rustc`）与 Xcode Command Line Tools（`swift`）的这台 Mac。
+公开仓库的 CI（[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）运行在 GitHub 托管的 `macos-26` ARM64 运行机上（包含 macOS 26 SDK，满足 `SpeechAnalyzer` 编译要求），不再对公开 PR 使用自托管运行机，避免不受信任的 PR 代码在个人机器上执行。工作流顶层仅申请最小只读权限 `permissions: { contents: read }`。
 
 ## 按改动分流
 
-必过检查名仍为 `test`，所有 PR 和 main 推送都会产生结果。`scripts/ci.py` 只将根目录 Markdown、`docs/` 下的 Markdown、`progress/progress.json` 和 `progress/index.html` 视为轻量改动。
+必过检查名为 `test`，所有 PR 和 `main` 推送都会产生结果。`scripts/ci.py` 只将根目录 Markdown、`docs/` 下的 Markdown、`progress/progress.json` 和 `progress/index.html` 视为轻量改动。
 
 - 纯文档检查改动中的空白错误。涉及进度文件时，再运行 `python3 progress/progress.py check`，验证生成一致性和本地链接，不访问 GitHub。
 - 其他文件，包括 `progress/progress.py`、工作流和脚本，先检查进度生成，再运行 `cargo --version` 及 `./scripts/check`（Python 契约测试、`verify-ui-principles.py`、全量 `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `swift test --package-path platforms/macos`）。进度脚本或生成器改动也不会漏掉生成校验。
-- PR 从共同祖先计算改动；main 推送检查整个推送范围。重命名同时检查旧、新路径，删除同样参与分流。手动触发、空范围或无法确定改动时运行完整检查。
+- PR 从共同祖先计算改动；`main` 推送检查整个推送范围。重命名同时检查旧、新路径，删除同样参与分流。手动触发、空范围或无法确定改动时运行完整检查。
 
 CI 不按路径跳过整个工作流，避免必过检查一直等待。没有代码改动时不启动 Rust / Swift 全量编译；代码检查保留 Python、Rust 四层工作区与 Apple 原生宿主（AppKit + SwiftUI）完整覆盖。
 
-## 注册（一次）
+## 环境与离线模式
 
-1. 打开 <https://github.com/semantic-craft/koe/settings/actions/runners/new>，选 **macOS**、**ARM64**。
-2. 页面会给出 Download 和 Configure 两段命令。在「终端」里**逐行**粘贴运行；目录用页面默认的 `~/actions-runner`，不要放进仓库。`--token` 是一次性注册令牌，只在终端里用，不要发到聊天、工单或 PR 里。
-3. `./config.sh` 会问几个问题，全部按回车接受默认值即可（名称默认是电脑名，标签默认已含 `self-hosted, macOS, ARM64`）。
-4. 让它在后台常驻（开机登录后自动启动）：
-
-   ```bash
-   cd ~/actions-runner && ./svc.sh install && ./svc.sh start
-   ```
-
-   只想临时跑一次，就改用 `./run.sh`，关掉终端即停。
-5. 刷新 <https://github.com/semantic-craft/koe/settings/actions/runners>，看到运行机显示 **Idle**（绿点）就成功了。
-6. 在 <https://github.com/semantic-craft/koe/settings/actions> 打开 Actions（Allow all actions），然后在 PR 页面点 Re-run，或推一个新提交。
-
-## 注意
-
-- **Mac 要开着、联网、已登录**，CI 才会跑；关机时任务会排队等待。
-- **PR 的代码会以你的用户身份在这台 Mac 上执行。** 仓库保持私有、只接受自己和受信 agent 的 PR；workflow 不读任何密钥。开发构建默认隔离 Keychain（见 [CONTRIBUTING](../../CONTRIBUTING.md) 规则 3），测试不会读个人凭据。
-- 账单：自托管运行机不消耗托管分钟。如果 GitHub 仍以「付款失败 / 支出上限」拒绝任务，去 <https://github.com/settings/billing> 处理付款状态；支出上限保持 $0 就不会产生托管机器费用。
-- 停用：`cd ~/actions-runner && ./svc.sh stop && ./svc.sh uninstall`，再在 Runners 页面删掉这台运行机。
+- `macos-26` 托管镜像预装 Rust 工具链（`cargo` / `rustc`）、Xcode 26+ Command Line Tools（`swift` 与 macOS 26 SDK）、`python3`、`cmake` 与 `pkg-config`；工作流在执行前保留 `export PATH="/opt/homebrew/bin:$PATH"`。
+- `scripts/verify-local.sh` 默认允许 Cargo 按 `Cargo.lock` 拉取依赖，以便 GitHub 托管运行机与全新克隆开箱即用；本地断网验证可设置 `KOE_CARGO_OFFLINE=1 ./scripts/verify-local.sh`。
+- 开发构建默认隔离 Keychain（见 [CONTRIBUTING](../../CONTRIBUTING.md) 规则 3），CI 工作流不读取任何密钥或签名证书。

@@ -101,6 +101,18 @@ struct KoeMacHostTests {
 
         #expect(BluetoothBridge.isWriteCharacteristic(BluetoothBridge.writeCharacteristicUUID))
         #expect(BluetoothBridge.isNotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID))
+        let otherService = BluetoothBridge.secondaryServiceUUIDForTest("00007000-0000-1000-8000-00805F9B34FB")
+        #expect(BluetoothBridge.isD3200WriteCharacteristic(BluetoothBridge.writeCharacteristicUUID, serviceUUID: BluetoothBridge.d3200ServiceUUID))
+        #expect(!BluetoothBridge.isD3200WriteCharacteristic(BluetoothBridge.writeCharacteristicUUID, serviceUUID: otherService))
+        #expect(BluetoothBridge.isD3200NotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID, serviceUUID: BluetoothBridge.d3200ServiceUUID))
+        #expect(!BluetoothBridge.isD3200NotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID, serviceUUID: otherService))
+        #expect(!BluetoothBridge.isD3200NotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID, serviceUUID: nil))
+
+        #expect(BleAdvertisementCandidate.match(peripheralName: "soundcore Work", advertisementData: [:])?.matchedByName == true)
+        #expect(BleAdvertisementCandidate.match(peripheralName: "D3200", advertisementData: [:])?.matchedByName == true)
+        #expect(BleAdvertisementCandidate.match(peripheralName: "My Work Laptop", advertisementData: [:]) == nil)
+        #expect(BleAdvertisementCandidate.match(peripheralName: "Workshop Speaker", advertisementData: [:]) == nil)
+        #expect(BleAdvertisementCandidate.match(peripheralName: nil, advertisementData: ["kCBAdvDataLocalName": "My Work Laptop"]) == nil)
     }
 
     @Test("BLE outbound queue paces frames at 300ms intervals and resets on disconnect")

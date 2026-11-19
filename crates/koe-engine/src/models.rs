@@ -56,9 +56,8 @@ impl BleAdvertisementMatch {
 
         let trimmed_name = local_name.map(str::trim).unwrap_or("");
         let lower_name = trimmed_name.to_ascii_lowercase();
-        let matched_local_name = lower_name.contains("soundcore")
-            || lower_name.contains("d3200")
-            || lower_name.contains("work");
+        let matched_local_name =
+            lower_name.contains("soundcore") || lower_name.contains("d3200");
 
         let mut matched_manufacturer_data = false;
         let mut ble_mac = String::new();
@@ -674,7 +673,10 @@ mod tests {
         let by_name = BleAdvertisementMatch::parse(Some("Anker Soundcore Work"), &[], &[])
             .expect("should match local name");
         assert!(by_name.matched_local_name);
+        assert!(BleAdvertisementMatch::parse(Some("D3200"), &[], &[]).is_some());
 
+        assert!(BleAdvertisementMatch::parse(Some("My Work Laptop"), &[], &[]).is_none());
+        assert!(BleAdvertisementMatch::parse(Some("Workshop Speaker"), &[], &[]).is_none());
         assert!(BleAdvertisementMatch::parse(Some("AirPods Pro"), &["180A"], &[]).is_none());
         assert!(BleAdvertisementMatch::is_d3200_service_uuid(
             "020CF5DA-0000-1000-8000-00805F9B34FB"

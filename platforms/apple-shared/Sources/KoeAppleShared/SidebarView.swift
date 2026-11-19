@@ -88,6 +88,7 @@ public struct SidebarView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .focusEffectDisabled()
             .help("版本 v\(sidebar.appVersion)（构建 \(sidebar.appBuild)），点击检查软件更新")
             .popover(isPresented: $showUpdatePopover, arrowEdge: .bottom) {
                 AppUpdateSettingsCard(store: store)

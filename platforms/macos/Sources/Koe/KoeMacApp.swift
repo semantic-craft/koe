@@ -29,7 +29,10 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
                 flushBleOutbound: { [weak self] in self?.bluetoothBridge.flushOutboundFrames() },
                 resumeMicrophone: { [weak self] in self?.capture.resume() },
                 openExternalURL: { url in KoeAppDelegate.openValidatedExternalURL(url) },
-                revealPathInFinder: { path in KoeAppDelegate.revealLocalDirectory(path) }
+                revealPathInFinder: { [weak self] path in
+                    let root = self?.store?.workspacePath ?? KoeMainEntry.workspacePath ?? HostSessionStore.defaultWorkspacePath()
+                    KoeAppDelegate.revealLocalDirectory(path, withinWorkspace: root)
+                }
             )
             if let store {
                 KoeWindowPresenter.bind(
@@ -183,7 +186,16 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         store.send(.syncAppMetadata(version: rawVersion, build: effectiveBuild))
     }
 
-    public static func isAllowedExternalReleaseURL(_ url: URL) -> Bool {
+    #if DEBUG
+    nonisolated public static let defaultAllowLoopback = true
+    #else
+    nonisolated public static let defaultAllowLoopback = false
+    #endif
+
+    public static func isAllowedExternalReleaseURL(
+        _ url: URL,
+        allowLoopback: Bool = defaultAllowLoopback
+    ) -> Bool {
         guard url.user == nil, url.password == nil, url.fragment == nil else { return false }
         let rawString = url.absoluteString
         let rawBeforeQueryOrFrag = rawString.prefix { $0 != "?" && $0 != "#" }.lowercased()
@@ -201,7 +213,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         let rawHost = url.host?.lowercased() ?? ""
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
         if host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]" {
-            return scheme == "http" || scheme == "https"
+            return allowLoopback && (scheme == "http" || scheme == "https")
         }
         guard scheme == "https", host == "github.com" else { return false }
         let port = url.port ?? 443
@@ -216,12 +228,64 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         NSWorkspace.shared.open(url)
     }
 
-    private static func revealLocalDirectory(_ path: String) {
+    private static func normalizedDirectoryPath(_ url: URL) -> String {
+        var path = url.path
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        return path
+    }
+
+    public static func isSafeRevealDirectory(_ path: String, withinWorkspace workspaceRoot: String) -> Bool {
+        validatedRevealDirectoryURL(path, withinWorkspace: workspaceRoot) != nil
+    }
+
+    private static func validatedRevealDirectoryURL(_ path: String, withinWorkspace workspaceRoot: String) -> URL? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("/") else { return }
-        let url = URL(fileURLWithPath: trimmed)
-        let target = FileManager.default.fileExists(atPath: url.path) ? url : url.deletingLastPathComponent()
-        guard FileManager.default.fileExists(atPath: target.path) else { return }
+        let trimmedRoot = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.hasPrefix("/"), !trimmed.contains("\0"),
+              !trimmedRoot.isEmpty, trimmedRoot.hasPrefix("/"), !trimmedRoot.contains("\0") else {
+            return nil
+        }
+        if trimmed.split(separator: "/").contains("..") || trimmedRoot.split(separator: "/").contains("..") {
+            return nil
+        }
+        let fm = FileManager.default
+        let stdRoot = URL(fileURLWithPath: trimmedRoot).standardizedFileURL
+        let rootURL = stdRoot.resolvingSymlinksInPath()
+        var rootIsDir: ObjCBool = false
+        guard fm.fileExists(atPath: rootURL.path, isDirectory: &rootIsDir), rootIsDir.boolValue else { return nil }
+
+        let stdTarget = URL(fileURLWithPath: trimmed).standardizedFileURL
+        if let attrs = try? fm.attributesOfItem(atPath: stdTarget.path),
+           (attrs[.type] as? FileAttributeType) == .typeSymbolicLink {
+            return nil
+        }
+        let targetURL = stdTarget.resolvingSymlinksInPath()
+        var targetIsDir: ObjCBool = false
+        guard fm.fileExists(atPath: targetURL.path, isDirectory: &targetIsDir), targetIsDir.boolValue else { return nil }
+
+        let rootPath = normalizedDirectoryPath(rootURL)
+        let targetPath = normalizedDirectoryPath(targetURL)
+        let rootPrefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard targetPath == rootPath || targetPath.hasPrefix(rootPrefix) else { return nil }
+
+        let stdRootPath = normalizedDirectoryPath(stdRoot)
+        let stdTargetPath = normalizedDirectoryPath(stdTarget)
+        let stdRootPrefix = stdRootPath == "/" ? "/" : stdRootPath + "/"
+        if stdTargetPath.hasPrefix(stdRootPrefix) {
+            var cursor = rootURL
+            for component in stdTargetPath.dropFirst(stdRootPrefix.count).split(separator: "/") {
+                cursor = cursor.appendingPathComponent(String(component))
+                if let attrs = try? fm.attributesOfItem(atPath: cursor.path),
+                   (attrs[.type] as? FileAttributeType) == .typeSymbolicLink {
+                    return nil
+                }
+            }
+        }
+        return targetURL
+    }
+
+    private static func revealLocalDirectory(_ path: String, withinWorkspace workspaceRoot: String) {
+        guard let target = validatedRevealDirectoryURL(path, withinWorkspace: workspaceRoot) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([target])
     }
 

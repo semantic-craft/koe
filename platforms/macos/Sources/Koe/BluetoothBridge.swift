@@ -10,6 +10,14 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     nonisolated public static var notifyCharacteristicUUID: CBUUID { CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB") }
     nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool { uuid.uuidString.lowercased().contains("7777") }
     nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool { uuid.uuidString.lowercased().contains("8888") }
+    nonisolated public static func isD3200WriteCharacteristic(_ uuid: CBUUID, serviceUUID: CBUUID?) -> Bool {
+        guard let serviceUUID, isPrimaryD3200Service(serviceUUID) else { return false }
+        return isWriteCharacteristic(uuid)
+    }
+    nonisolated public static func isD3200NotifyCharacteristic(_ uuid: CBUUID, serviceUUID: CBUUID?) -> Bool {
+        guard let serviceUUID, isPrimaryD3200Service(serviceUUID) else { return false }
+        return isNotifyCharacteristic(uuid)
+    }
     nonisolated public static func isPrimaryD3200Service(_ uuid: CBUUID) -> Bool {
         let s = uuid.uuidString.lowercased()
         return uuid == d3200ServiceUUID || s.contains("020cf5da") || s == "f5da"
@@ -157,6 +165,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     private func checkReady() {
         guard notifyReady, writeCharacteristic != nil, !reportedReady else { return }
+        if let peripheral {
+            UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.savedPeripheralKey)
+        }
         reportedReady = true
         emit("ready")
         flushOutboundFrames()
@@ -298,7 +309,6 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
                 central.stopScan()
             }
             guard self.peripheral === connected else { return }
-            UserDefaults.standard.set(connected.identifier.uuidString, forKey: Self.savedPeripheralKey)
             connected.delegate = self
             connected.discoverServices(nil)
         }
@@ -349,7 +359,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             }
             self.pendingServices = max(0, self.pendingServices - 1)
             for characteristic in service.characteristics ?? [] {
-                if Self.isWriteCharacteristic(characteristic.uuid) {
+                if Self.isD3200WriteCharacteristic(characteristic.uuid, serviceUUID: service.uuid) {
                     if Self.shouldPreferWriteCharacteristic(
                         existingServiceUUID: self.writeCharacteristic?.service?.uuid,
                         candidateServiceUUID: service.uuid
@@ -357,7 +367,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
                         self.writeCharacteristic = characteristic
                     }
                 }
-                if Self.isNotifyCharacteristic(characteristic.uuid) {
+                if Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: service.uuid) {
                     self.notifyFound = true
                     source.setNotifyValue(true, for: characteristic)
                 }
@@ -374,7 +384,8 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
         onMainActorIsolated {
-            guard self.peripheral === source, Self.isNotifyCharacteristic(characteristic.uuid) else { return }
+            guard self.peripheral === source,
+                  Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: characteristic.service?.uuid) else { return }
             guard error == nil, characteristic.isNotifying else {
                 self.store?.reportNativeError("无法订阅录音豆通知，请重新连接。")
                 self.central?.cancelPeripheralConnection(source)
@@ -387,7 +398,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
-        guard error == nil, Self.isNotifyCharacteristic(characteristic.uuid), let data = characteristic.value else { return }
+        guard error == nil,
+              Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: characteristic.service?.uuid),
+              let data = characteristic.value else { return }
         onMainActorIsolated {
             guard self.peripheral === source, self.reportedReady else { return }
             self.store?.ingestBleChunk(data)

@@ -8,15 +8,28 @@ from pathlib import Path
 import subprocess
 import sys
 
+ALLOWED_ENV_KEYS = (
+    'PATH',
+    'HOME',
+    'USER',
+    'LOGNAME',
+    'SHELL',
+    'TMPDIR',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    '__CF_USER_TEXT_ENCODING',
+    'XPC_FLAGS',
+    'XPC_SERVICE_NAME',
+)
+
 provider_keys = {
     name: os.environ[name]
-    for name in ('DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY', 'DOUBAO_API_KEY')
+    for name in ('DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY')
     if os.environ.get(name)
 }
-if 'DOUBAO_API_KEY' not in provider_keys and os.environ.get('DOUBAO_TTS_API_KEY'):
-    provider_keys['DOUBAO_API_KEY'] = os.environ['DOUBAO_TTS_API_KEY']
 if len(sys.argv) == 2 and sys.argv[1] == 'macos':
-    environment = {k: v for k, v in os.environ.items() if not any(x in k for x in ('KEY', 'TOKEN', 'SECRET'))}
+    environment = {k: os.environ[k] for k in ALLOWED_ENV_KEYS if k in os.environ}
     environment.update(provider_keys)
     environment["KOE_CREDENTIAL_SOURCE"] = "environment"
     # LaunchServices gives Koe its own privacy-permission identity. Executing

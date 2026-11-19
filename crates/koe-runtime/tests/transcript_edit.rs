@@ -778,6 +778,8 @@ fn custody_guards_reject_edits_across_trash_archive_mic_ble_and_cloud_transcript
         "这条录音正在同步或保存中，请等待完成后再编辑原文"
     );
     dispatch_ok(&mut runtime, json!({"type": "device_disconnect"}), NOW + 3);
+    dispatch_ok(&mut runtime, json!({"type": "trash_record", "recordId": mic_id}), NOW + 3);
+    dispatch_ok(&mut runtime, json!({"type": "trash_record", "recordId": live_id}), NOW + 3);
 
     let wav_path = dir.0.join("cloud-transcribe.wav");
     write_wav(&wav_path);

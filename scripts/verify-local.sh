@@ -21,6 +21,11 @@ for arg in "$@"; do
   esac
 done
 
+cargo_offline_args=()
+if [[ "${KOE_CARGO_OFFLINE:-0}" == "1" ]]; then
+  cargo_offline_args=(--offline)
+fi
+
 note() { printf '\n=== %s ===\n' "$1"; }
 
 note "contracts & tooling tests"
@@ -42,8 +47,8 @@ fi
 python3 progress/progress.py check
 
 note "compile & clippy: rust workspace"
-cargo check --workspace --all-targets --offline --quiet
-cargo clippy --workspace --all-targets --offline -- -D warnings
+cargo check --workspace --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
+cargo clippy --workspace --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} -- -D warnings
 
 if [[ "$quick" -eq 1 ]]; then
   echo "verify-local (--quick): all compile and contract gates passed."
@@ -51,14 +56,14 @@ if [[ "$quick" -eq 1 ]]; then
 fi
 
 note "test: rust workspace"
-cargo test --workspace --offline --quiet
+cargo test --workspace ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
 
 if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && "$(uname -s)" == "Darwin" ]]; then
   note "native host: platforms/apple-shared & platforms/macos"
   swift scripts/generate-app-icons.swift
   swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset
-  cargo build --package koe-host-api --offline --quiet
-  cargo build --release --package koe-host-api --offline --quiet
+  cargo build --package koe-host-api ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
+  cargo build --release --package koe-host-api ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
   swift test --package-path "$root/platforms/apple-shared"
   swift test --package-path "$root/platforms/macos"
 fi
