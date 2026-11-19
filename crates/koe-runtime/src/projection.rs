@@ -236,10 +236,13 @@ impl KoeRuntime {
                 }))
             })
             .collect();
-        let undo_trash = self
-            .undo_trash
-            .as_ref()
-            .map(|b| json!({"recordId": b.record_id, "title": b.title}));
+        let undo_trash = self.undo_trash.as_ref().map(|b| {
+            if b.record_ids.len() > 1 {
+                json!({"recordId": b.record_id, "title": b.title, "recordIds": b.record_ids})
+            } else {
+                json!({"recordId": b.record_id, "title": b.title})
+            }
+        });
         let detail = self
             .selection
             .location

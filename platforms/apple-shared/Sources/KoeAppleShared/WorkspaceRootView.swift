@@ -4,18 +4,20 @@ public struct KoeWorkspaceRootView: View {
     public let store: HostSessionStore
     private let importAction: () -> Void
     private let exportAction: (String) -> Void
+    private let exportRecordsAction: ([String]) -> Void
     let exportWorkspaceAction: (WorkspaceExportRequest) -> Void
-    @State private var showNewNote = false
 
     public init(
         store: HostSessionStore,
         onImport: @escaping () -> Void = {},
         onExport: @escaping (String) -> Void = { _ in },
+        onExportRecords: @escaping ([String]) -> Void = { _ in },
         onExportWorkspace: @escaping (WorkspaceExportRequest) -> Void = { _ in }
     ) {
         self.store = store
         importAction = onImport
         exportAction = onExport
+        exportRecordsAction = onExportRecords
         exportWorkspaceAction = onExportWorkspace
     }
 
@@ -63,14 +65,16 @@ public struct KoeWorkspaceRootView: View {
                 }
             }
         }
-        .sheet(isPresented: $showNewNote) { NewNoteSheet(store: store) }
     }
 
     private func toolbar(_ nav: NavigationChromeSlice) -> some View {
         HStack(spacing: 12) {
             Button { store.send(.back) } label: {
                 Image(systemName: "chevron.left").frame(width: 30, height: 34).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!nav.canGoBack).help("返回上一页")
+            }
+            .buttonStyle(.plain)
+            .disabled(!nav.canGoBack)
+            .help("返回上一页")
             Text(sectionTitle(nav)).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
             Spacer()
             if let detailId = nav.detailId, nav.section == "detail" {
@@ -81,12 +85,11 @@ public struct KoeWorkspaceRootView: View {
                 KoeActionButton("导出") { exportAction(detailId) }
             }
             if nav.section == "records" {
-                KoeActionButton("回收站", systemImage: "trash") {
+                let trashTitle = nav.trashCount > 0 ? "回收站 \(nav.trashCount)" : "回收站"
+                KoeActionButton(trashTitle, systemImage: "trash") {
                     store.send(.navigate(section: "trash"))
                 }
             }
-            KoeActionButton("新建记录", systemImage: "plus") { showNewNote = true }
-                .keyboardShortcut("n", modifiers: .command)
             KoeActionButton("导入", systemImage: "square.and.arrow.down", isPrimary: true, action: importAction)
                 .keyboardShortcut("o", modifiers: .command)
         }
@@ -103,7 +106,12 @@ public struct KoeWorkspaceRootView: View {
         case "capture": CaptureView(store: store)
         case "notes": QuickNoteWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)
         case "all_day": AllDayWorkspaceView(store: store, onExportWorkspace: exportWorkspaceAction)
-        case "records": RecordListView(store: store)
+        case "records":
+            RecordListView(
+                store: store,
+                onExportRecord: exportAction,
+                onExportRecords: exportRecordsAction
+            )
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)
         case "memory": MemoryView(store: store)
@@ -120,18 +128,29 @@ private struct UndoTrashBar: View {
     let undo: UndoTrashSnapshot
     let store: HostSessionStore
 
+    private var summaryText: String {
+        if undo.count > 1 {
+            return "已将 \(undo.count) 条记录移入回收站"
+        }
+        return "已将《\(undo.title)》移入回收站"
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "trash")
                 .font(.system(size: AppFontSizes.xs))
                 .foregroundStyle(AppColors.textMuted)
-            Text("已将《\(undo.title)》移入回收站")
+            Text(summaryText)
                 .font(.system(size: AppFontSizes.xs))
                 .foregroundStyle(AppColors.textSecondary)
                 .lineLimit(1)
             Spacer()
             KoeActionButton("撤销", systemImage: "arrow.uturn.backward") {
-                store.send(.restoreRecord(recordId: undo.recordId))
+                if undo.count > 1 {
+                    store.send(.batchRestoreRecords(recordIds: undo.effectiveRecordIds))
+                } else {
+                    store.send(.restoreRecord(recordId: undo.recordId))
+                }
             }
             Button {
                 store.send(.dismissUndoTrash)
@@ -149,40 +168,5 @@ private struct UndoTrashBar: View {
         .padding(.vertical, 10)
         .background(AppColors.surface1)
         .overlay(alignment: .top) { Rectangle().fill(AppColors.border).frame(height: 1) }
-    }
-}
-
-private struct NewNoteSheet: View {
-    let store: HostSessionStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var title = ""
-    @State private var text = ""
-    @FocusState private var focusTitle: Bool
-    var body: some View {
-        let error = store.navigation.effectiveError
-        VStack(alignment: .leading, spacing: 18) {
-            PageHeading(title: "新建记录", subtitle: "写下真实的想法和讨论，之后可以整理、标记和提问。")
-            TextField("标题", text: $title).textFieldStyle(.roundedBorder)
-                .focused($focusTitle).onSubmit { save() }
-            TextEditor(text: $text).font(.system(size: AppFontSizes.sm)).scrollContentBackground(.hidden)
-                .padding(8).frame(height: 220).background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: 6))
-            if let error {
-                Text(error).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
-            }
-            HStack {
-                Spacer()
-                KoeActionButton("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                KoeActionButton("保存记录", isPrimary: true) { save() }
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .keyboardShortcut(.return, modifiers: .command)
-            }
-        }.padding(28).frame(width: 570).background(AppColors.surface0)
-            .foregroundStyle(AppColors.textPrimary).preferredColorScheme(.light)
-            .onAppear { focusTitle = true }
-    }
-    private func save() {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        store.send(.createNote(title: title, text: text))
-        if store.navigation.effectiveError == nil { dismiss() }
     }
 }

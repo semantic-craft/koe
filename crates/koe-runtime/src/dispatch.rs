@@ -210,8 +210,22 @@ impl KoeRuntime {
                 record_id,
                 archived,
             } => self.handle_set_record_archived(&record_id, archived)?,
+            HostIntent::BatchSetRecordArchived {
+                record_ids,
+                archived,
+            } => self.handle_batch_set_record_archived(&record_ids, archived)?,
+            HostIntent::BatchSetRecordProject {
+                record_ids,
+                project,
+            } => self.batch_set_record_project(&record_ids, project.as_deref())?,
             HostIntent::TrashRecord { record_id } => self.handle_trash_record(&record_id, now)?,
+            HostIntent::BatchTrashRecords { record_ids } => {
+                self.handle_batch_trash_records(&record_ids, now)?
+            }
             HostIntent::RestoreRecord { record_id } => self.handle_restore_record(&record_id)?,
+            HostIntent::BatchRestoreRecords { record_ids } => {
+                self.handle_batch_restore_records(&record_ids)?
+            }
             HostIntent::PurgeRecord { record_id } => self.handle_purge_record(&record_id)?,
             HostIntent::EmptyTrash => self.handle_empty_trash()?,
             HostIntent::DismissUndoTrash => self.handle_dismiss_undo_trash(),
@@ -225,6 +239,17 @@ impl KoeRuntime {
                 record_id.as_deref(),
                 date.as_deref(),
                 Path::new(&path),
+                include_analysis,
+                include_sources,
+            )?,
+            HostIntent::ExportRecordsMarkdown {
+                record_ids,
+                directory,
+                include_analysis,
+                include_sources,
+            } => self.export_records_markdown(
+                &record_ids,
+                Path::new(&directory),
                 include_analysis,
                 include_sources,
             )?,

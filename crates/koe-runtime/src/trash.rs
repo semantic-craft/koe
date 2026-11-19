@@ -9,7 +9,20 @@ pub(super) const UNDO_TRASH_WINDOW_MS: u64 = 8_000;
 pub(super) struct UndoTrashBanner {
     pub record_id: String,
     pub title: String,
+    pub record_ids: Vec<String>,
     pub remaining_ms: u64,
+}
+
+fn dedup_record_ids(record_ids: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::with_capacity(record_ids.len());
+    for id in record_ids {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() && seen.insert(trimmed.to_owned()) {
+            out.push(trimmed.to_owned());
+        }
+    }
+    out
 }
 
 impl KoeRuntime {
@@ -73,22 +86,34 @@ impl KoeRuntime {
     }
 
     pub(super) fn clear_undo_trash_for(&mut self, id: &str) {
-        if self
-            .undo_trash
-            .as_ref()
-            .is_some_and(|u| u.record_id == id)
-        {
-            self.undo_trash = None;
-        }
+        self.clear_undo_trash_in(&BTreeSet::from([id.to_string()]));
     }
 
     pub(super) fn clear_undo_trash_in(&mut self, ids: &BTreeSet<String>) {
-        if self
-            .undo_trash
-            .as_ref()
-            .is_some_and(|u| ids.contains(&u.record_id))
-        {
-            self.undo_trash = None;
+        let next_primary = {
+            let Some(banner) = &mut self.undo_trash else {
+                return;
+            };
+            banner.record_ids.retain(|rid| !ids.contains(rid));
+            if banner.record_ids.is_empty() {
+                self.undo_trash = None;
+                return;
+            }
+            if ids.contains(&banner.record_id) {
+                banner.record_id = banner.record_ids[0].clone();
+                Some(banner.record_id.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(primary_id) = next_primary {
+            let title = self
+                .workspace()
+                .record(&primary_id)
+                .map(|r| r.title.clone());
+            if let (Some(banner), Some(title)) = (&mut self.undo_trash, title) {
+                banner.title = title;
+            }
         }
     }
 
@@ -130,6 +155,37 @@ impl KoeRuntime {
         Ok(())
     }
 
+    pub(super) fn handle_batch_set_record_archived(
+        &mut self,
+        record_ids: &[String],
+        archived: bool,
+    ) -> Result<(), String> {
+        let ids = dedup_record_ids(record_ids);
+        if ids.is_empty() {
+            return Err("请先选择至少一条记录".into());
+        }
+        let live_ids: Vec<String> = ids
+            .into_iter()
+            .filter(|id| self.workspace().record(id).is_some_and(|r| r.is_live()))
+            .collect();
+        if live_ids.is_empty() {
+            return Err("所选记录不存在或已在回收站中".into());
+        }
+        let count = live_ids.len();
+        self.commit(|w| {
+            for id in &live_ids {
+                w.set_record_archived(id, archived)?;
+            }
+            Ok(())
+        })?;
+        self.notice = Some(if archived {
+            format!("已批量开启归档保护（{count} 条）")
+        } else {
+            format!("已批量取消归档保护（{count} 条）")
+        });
+        Ok(())
+    }
+
     pub(super) fn handle_trash_record(&mut self, record_id: &str, now: u64) -> Result<(), String> {
         let _ = self.reclaim_stale_summaries();
         self.ensure_record_deletable(record_id)?;
@@ -144,8 +200,69 @@ impl KoeRuntime {
         self.undo_trash = Some(UndoTrashBanner {
             record_id: record_id.to_string(),
             title,
+            record_ids: vec![record_id.to_string()],
             remaining_ms: UNDO_TRASH_WINDOW_MS,
         });
+        Ok(())
+    }
+
+    pub(super) fn handle_batch_trash_records(
+        &mut self,
+        record_ids: &[String],
+        now: u64,
+    ) -> Result<(), String> {
+        let ids = dedup_record_ids(record_ids);
+        if ids.is_empty() {
+            return Err("请先选择至少一条记录".into());
+        }
+        let _ = self.reclaim_stale_summaries();
+        let mut deletable = Vec::new();
+        let mut skipped_protected = 0usize;
+        for id in &ids {
+            let Some(record) = self.workspace().record(id) else {
+                continue;
+            };
+            if record.is_trashed() {
+                continue;
+            }
+            if record.is_archived() || self.ensure_record_deletable(id).is_err() {
+                skipped_protected += 1;
+                continue;
+            }
+            deletable.push(id.clone());
+        }
+        if deletable.is_empty() {
+            return Err(if skipped_protected > 0 {
+                "选中的记录均已开启归档保护或正在处理，无法移入回收站".into()
+            } else {
+                "没有可移入回收站的记录".into()
+            });
+        }
+        let now_ms = now.max(1).saturating_mul(1000);
+        let first_title = self.commit(|w| {
+            for id in &deletable {
+                w.trash_record(id, now_ms)?;
+            }
+            Ok(w.record(&deletable[0])
+                .map(|r| r.title.clone())
+                .unwrap_or_default())
+        })?;
+        let trashed_set: BTreeSet<String> = deletable.iter().cloned().collect();
+        self.detach_records_from_session(&trashed_set);
+        let trashed_count = deletable.len();
+        self.undo_trash = Some(UndoTrashBanner {
+            record_id: deletable[0].clone(),
+            title: first_title,
+            record_ids: deletable,
+            remaining_ms: UNDO_TRASH_WINDOW_MS,
+        });
+        if skipped_protected > 0 {
+            self.notice = Some(format!(
+                "已将 {trashed_count} 条记录移入回收站（已跳过 {skipped_protected} 条受保护或处理中记录）"
+            ));
+        } else if trashed_count > 1 {
+            self.notice = Some(format!("已将 {trashed_count} 条记录移入回收站"));
+        }
         Ok(())
     }
 
@@ -154,6 +271,39 @@ impl KoeRuntime {
         self.clear_undo_trash_for(record_id);
         self.error = None;
         self.notice = Some("已从回收站恢复记录".into());
+        Ok(())
+    }
+
+    pub(super) fn handle_batch_restore_records(
+        &mut self,
+        record_ids: &[String],
+    ) -> Result<(), String> {
+        let ids = dedup_record_ids(record_ids);
+        if ids.is_empty() {
+            return Err("请先选择要恢复的记录".into());
+        }
+        let restorable: Vec<String> = ids
+            .into_iter()
+            .filter(|id| self.workspace().record(id).is_some_and(|r| r.is_trashed()))
+            .collect();
+        if restorable.is_empty() {
+            return Err("所选记录不在回收站中".into());
+        }
+        let count = restorable.len();
+        self.commit(|w| {
+            for id in &restorable {
+                w.restore_record(id)?;
+            }
+            Ok(())
+        })?;
+        let restored_set: BTreeSet<String> = restorable.into_iter().collect();
+        self.clear_undo_trash_in(&restored_set);
+        self.error = None;
+        self.notice = Some(if count == 1 {
+            "已从回收站恢复记录".into()
+        } else {
+            format!("已从回收站恢复 {count} 条记录")
+        });
         Ok(())
     }
 

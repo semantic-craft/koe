@@ -152,11 +152,26 @@ pub(crate) enum HostIntent {
         record_id: String,
         archived: bool,
     },
+    BatchSetRecordArchived {
+        record_ids: Vec<String>,
+        archived: bool,
+    },
+    BatchSetRecordProject {
+        record_ids: Vec<String>,
+        #[serde(default)]
+        project: Option<String>,
+    },
     TrashRecord {
         record_id: String,
     },
+    BatchTrashRecords {
+        record_ids: Vec<String>,
+    },
     RestoreRecord {
         record_id: String,
+    },
+    BatchRestoreRecords {
+        record_ids: Vec<String>,
     },
     PurgeRecord {
         record_id: String,
@@ -169,6 +184,14 @@ pub(crate) enum HostIntent {
         #[serde(default)]
         date: Option<String>,
         path: String,
+        #[serde(default = "default_true")]
+        include_analysis: bool,
+        #[serde(default = "default_true")]
+        include_sources: bool,
+    },
+    ExportRecordsMarkdown {
+        record_ids: Vec<String>,
+        directory: String,
         #[serde(default = "default_true")]
         include_analysis: bool,
         #[serde(default = "default_true")]
