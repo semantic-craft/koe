@@ -1,2 +1,0 @@
-# Copy to .envrc on Helios; values remain in 1Password Environments.
-use secrets DASHSCOPE_API_KEY DOUBAO_TTS_API_KEY
