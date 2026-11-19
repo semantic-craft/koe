@@ -175,6 +175,6 @@ struct HostCommandTests {
         #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
         draft.selectLlmProvider("qwen")
         #expect(draft.effectiveChatEndpoint() == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-        #expect(draft.resolvedLlmModelForSave == "qwen3.7-plus")
+        #expect(draft.resolvedLlmModelForSave == "qwen3.8-flash")
     }
 }
