@@ -6,17 +6,20 @@ public struct HostBridgeActions {
     public var flushBleOutbound: () -> Void
     public var resumeMicrophone: () -> Void
     public var openExternalURL: (URL) -> Void
+    public var revealPathInFinder: (String) -> Void
 
     public init(
         requestBleScan: @escaping () -> Void = {},
         flushBleOutbound: @escaping () -> Void = {},
         resumeMicrophone: @escaping () -> Void = {},
-        openExternalURL: @escaping (URL) -> Void = { _ in }
+        openExternalURL: @escaping (URL) -> Void = { _ in },
+        revealPathInFinder: @escaping (String) -> Void = { _ in }
     ) {
         self.requestBleScan = requestBleScan
         self.flushBleOutbound = flushBleOutbound
         self.resumeMicrophone = resumeMicrophone
         self.openExternalURL = openExternalURL
+        self.revealPathInFinder = revealPathInFinder
     }
 }
 

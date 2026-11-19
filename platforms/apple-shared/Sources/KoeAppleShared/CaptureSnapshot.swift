@@ -40,6 +40,18 @@ public struct AudioInputSnapshot: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public struct AudioStorageSnapshot: Codable, Equatable, Sendable {
+    public let path: String
+    public let totalBytes: UInt64
+    public let fileCount: UInt64
+
+    public init(path: String, totalBytes: UInt64, fileCount: UInt64) {
+        self.path = path
+        self.totalBytes = totalBytes
+        self.fileCount = fileCount
+    }
+}
+
 public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
     public let selectedSource: String
     public let selectedInputId: String
@@ -51,10 +63,12 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
     public let inputs: [AudioInputSnapshot]
     public var includeSystemAudio: Bool = false
     public var canIncludeSystemAudio: Bool = false
+    public var audioStorage: AudioStorageSnapshot? = nil
 
     private enum CodingKeys: String, CodingKey {
         case selectedSource, selectedInputId, selectedLabel, selectedBadge
         case selectionMode, activeSource, canStart, inputs, includeSystemAudio, canIncludeSystemAudio
+        case audioStorage
     }
 
     public static let empty = CaptureStudioSnapshot(
@@ -100,6 +114,7 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
         inputs = try c.decodeIfPresent([AudioInputSnapshot].self, forKey: .inputs) ?? []
         includeSystemAudio = try c.decodeIfPresent(Bool.self, forKey: .includeSystemAudio) ?? false
         canIncludeSystemAudio = try c.decodeIfPresent(Bool.self, forKey: .canIncludeSystemAudio) ?? false
+        audioStorage = try c.decodeIfPresent(AudioStorageSnapshot.self, forKey: .audioStorage)
     }
 }
 

@@ -80,6 +80,30 @@ struct HostCommandTests {
         #expect(HostSection.allDay.icon == CaptureMode.allDay.icon)
         #expect(HostSection.liveMinutes.icon == CaptureMode.meeting.icon)
         #expect(HostSection.title(for: "detail", detailTitle: "周会") == "周会")
+        #expect(HostSection.title(for: "settings") == "模型设置")
+        #expect(HostSection.title(for: "capture") == "录音管理")
+
+        let cfgObj = try encodeObject(.configureProvider(
+            apiKey: "qwen-k",
+            deepseekApiKey: "ds-k",
+            asrProvider: "deepseek",
+            asrModel: "",
+            llmProvider: "deepseek",
+            model: "deepseek-flash",
+            enableThinking: true,
+            qwenWorkspaceId: "ws-01"
+        ))
+        #expect(cfgObj["type"] as? String == "configure_provider")
+        #expect(cfgObj["deepseekApiKey"] as? String == "ds-k")
+        #expect(cfgObj["asrProvider"] as? String == "deepseek")
+        #expect(cfgObj["llmProvider"] as? String == "deepseek")
+        #expect(cfgObj["enableThinking"] as? Bool == true)
+        #expect(cfgObj["qwenWorkspaceId"] as? String == "ws-01")
+
+        let clearDsObj = try encodeObject(.clearProviderCredentialFor(provider: "deepseek"))
+        #expect(clearDsObj["type"] as? String == "clear_provider_credential")
+        #expect(clearDsObj["provider"] as? String == "deepseek")
+        #expect(try encodeObject(.deviceDownloadAll)["type"] as? String == "device_download_all")
     }
 
     @Test("HostSessionStore.send(HostCommand) roundtrips optional and capture commands through KoeRuntime")
@@ -134,7 +158,23 @@ struct HostCommandTests {
         #expect(store.settings.appUpdate.phase == "idle")
         _ = AppUpdateSettingsCard(store: store).body
         _ = SidebarView(store: store).body
+        _ = BeanDevicePopoverView(store: store).body
+        _ = CaptureView(store: store).body
+        _ = SettingsDoctorView(store: store).body
         #expect(store.nativeError == nil)
         #expect(store.snapshot.error == nil)
+
+        var draft = ModelSettingsDraft()
+        draft.llmProvider = "custom"
+        draft.customLlmModel = ""
+        draft.customChatEndpoint = "http://127.0.0.1:11434/v1/chat/completions"
+        #expect(draft.resolvedLlmModelForSave.isEmpty)
+        draft.selectLlmProvider("deepseek")
+        #expect(draft.customChatEndpoint.isEmpty)
+        #expect(draft.effectiveChatEndpoint() == "https://api.deepseek.com/chat/completions")
+        #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+        draft.selectLlmProvider("qwen")
+        #expect(draft.effectiveChatEndpoint() == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        #expect(draft.resolvedLlmModelForSave == "qwen3.7-plus")
     }
 }

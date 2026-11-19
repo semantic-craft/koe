@@ -63,6 +63,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case deviceRefresh
     case deviceRelease
     case deviceDownload(fileId: UInt32)
+    case deviceDownloadAll
     case setBleAutoConnect(enabled: Bool)
 
     case configureSpeech(engine: String, modelId: String? = nil)
@@ -71,12 +72,19 @@ public enum HostCommand: Encodable, Equatable, Sendable {
     case setMeetingAudioPolicy(policy: String)
     case configureProvider(
         apiKey: String? = nil,
+        deepseekApiKey: String? = nil,
+        asrProvider: String? = nil,
+        asrModel: String? = nil,
+        llmProvider: String? = nil,
         model: String,
+        enableThinking: Bool? = nil,
+        qwenWorkspaceId: String? = nil,
         asrEndpoint: String? = nil,
         chatEndpoint: String? = nil
     )
     case retryProviderCredentials(authorize: Bool = false)
     case clearProviderCredential
+    case clearProviderCredentialFor(provider: String)
     case checkAppUpdate
 
     private enum CodingKeys: String, CodingKey {
@@ -85,7 +93,8 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case itemId, decision, completed, due, speaker, fromSpeaker, toSpeaker
         case question, scope, positionMs, isPlaying, lane
         case enabled, mode, action, clockNs, inputId, includeSystem, source, fileId
-        case engine, modelId, policy, apiKey, model, asrEndpoint, chatEndpoint, authorize
+        case engine, modelId, policy, apiKey, deepseekApiKey, asrProvider, asrModel, llmProvider
+        case model, enableThinking, qwenWorkspaceId, asrEndpoint, chatEndpoint, authorize, provider
     }
 
     public var commandType: String {
@@ -140,6 +149,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .deviceRefresh: "device_refresh"
         case .deviceRelease: "device_release"
         case .deviceDownload: "device_download"
+        case .deviceDownloadAll: "device_download_all"
         case .setBleAutoConnect: "set_ble_auto_connect"
         case .configureSpeech: "configure_speech"
         case .prepareSpeechModel: "prepare_speech_model"
@@ -147,7 +157,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .setMeetingAudioPolicy: "set_meeting_audio_policy"
         case .configureProvider: "configure_provider"
         case .retryProviderCredentials: "retry_provider_credentials"
-        case .clearProviderCredential: "clear_provider_credential"
+        case .clearProviderCredential, .clearProviderCredentialFor: "clear_provider_credential"
         case .checkAppUpdate: "check_app_update"
         }
     }
@@ -159,7 +169,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
              .pauseMicrophone, .stopMicrophone, .cancelMicrophone, .retryMicrophoneSave,
              .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh, .deviceRelease,
-             .cancelSpeechModel, .clearProviderCredential, .checkAppUpdate:
+             .deviceDownloadAll, .cancelSpeechModel, .clearProviderCredential, .checkAppUpdate:
             break
         case let .navigate(section):
             try c.encode(section, forKey: .section)
@@ -261,11 +271,22 @@ public enum HostCommand: Encodable, Equatable, Sendable {
             try c.encode(modelId, forKey: .modelId)
         case let .setMeetingAudioPolicy(policy):
             try c.encode(policy, forKey: .policy)
-        case let .configureProvider(apiKey, model, asrEndpoint, chatEndpoint):
+        case let .configureProvider(
+            apiKey, deepseekApiKey, asrProvider, asrModel, llmProvider,
+            model, enableThinking, qwenWorkspaceId, asrEndpoint, chatEndpoint
+        ):
             try c.encodeIfPresent(apiKey, forKey: .apiKey)
+            try c.encodeIfPresent(deepseekApiKey, forKey: .deepseekApiKey)
+            try c.encodeIfPresent(asrProvider, forKey: .asrProvider)
+            try c.encodeIfPresent(asrModel, forKey: .asrModel)
+            try c.encodeIfPresent(llmProvider, forKey: .llmProvider)
             try c.encode(model, forKey: .model)
+            try c.encodeIfPresent(enableThinking, forKey: .enableThinking)
+            try c.encodeIfPresent(qwenWorkspaceId, forKey: .qwenWorkspaceId)
             try c.encodeIfPresent(asrEndpoint, forKey: .asrEndpoint)
             try c.encodeIfPresent(chatEndpoint, forKey: .chatEndpoint)
+        case let .clearProviderCredentialFor(provider):
+            try c.encode(provider, forKey: .provider)
         case let .retryProviderCredentials(authorize):
             try c.encode(authorize, forKey: .authorize)
         }

@@ -30,8 +30,8 @@ public enum HostSection: String, CaseIterable, Sendable {
         case .records: "所有记录"
         case .tasks: "行动"
         case .memory: "记忆"
-        case .settings: "设置"
-        case .capture: "设置 / 录音管理"
+        case .settings: "模型设置"
+        case .capture: "录音管理"
         case .trash: "回收站"
         case .detail: "记录"
         }
@@ -47,8 +47,8 @@ public enum HostSection: String, CaseIterable, Sendable {
         case .records: "tray.full"
         case .tasks: "checklist"
         case .memory: "brain"
-        case .settings: "gearshape"
-        case .capture: "waveform"
+        case .settings: "slider.horizontal.3"
+        case .capture: "mic"
         case .trash: "trash"
         case .detail: "doc.text"
         }

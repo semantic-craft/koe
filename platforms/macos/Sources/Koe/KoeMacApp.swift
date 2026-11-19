@@ -28,7 +28,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
                 requestBleScan: { [weak self] in self?.handleBleScanRequest() },
                 flushBleOutbound: { [weak self] in self?.bluetoothBridge.flushOutboundFrames() },
                 resumeMicrophone: { [weak self] in self?.capture.resume() },
-                openExternalURL: { url in KoeAppDelegate.openValidatedExternalURL(url) }
+                openExternalURL: { url in KoeAppDelegate.openValidatedExternalURL(url) },
+                revealPathInFinder: { path in KoeAppDelegate.revealLocalDirectory(path) }
             )
             if let store {
                 KoeWindowPresenter.bind(
@@ -215,6 +216,15 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         NSWorkspace.shared.open(url)
     }
 
+    private static func revealLocalDirectory(_ path: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/") else { return }
+        let url = URL(fileURLWithPath: trimmed)
+        let target = FileManager.default.fileExists(atPath: url.path) ? url : url.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: target.path) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([target])
+    }
+
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
@@ -333,9 +343,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             activeStore.send(.checkAppUpdate)
             return
         }
-        if activeStore.navigation.section != "settings" {
-            activeStore.send(.navigate(section: "settings"))
-        }
+        activeStore.requestUpdatePopoverPresentation()
         activeStore.send(.checkAppUpdate)
     }
     @objc public func checkForUpdatesFromMenu() {

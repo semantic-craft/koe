@@ -361,6 +361,26 @@ impl KoeRuntime {
             })
             .collect();
 
+        let audio_dir = self.root.join("audio");
+        let (audio_total_bytes, audio_file_count) = match std::fs::read_dir(&audio_dir) {
+            Ok(entries) => entries.flatten().fold((0u64, 0u64), |(bytes, count), entry| {
+                let path = entry.path();
+                let is_saved_asset = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| matches!(ext, "wav" | "opus"));
+                if is_saved_asset {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            return (bytes.saturating_add(meta.len()), count.saturating_add(1));
+                        }
+                    }
+                }
+                (bytes, count)
+            }),
+            Err(_) => (0, 0),
+        };
+
         json!({
             "selectedSource": selection.source,
             "selectedInputId": selection.input_id,
@@ -372,6 +392,11 @@ impl KoeRuntime {
             "includeSystemAudio": self.capture_studio.include_system_audio,
             "canIncludeSystemAudio": selection.source != "bean",
             "inputs": inputs_json,
+            "audioStorage": {
+                "path": audio_dir.to_string_lossy(),
+                "totalBytes": audio_total_bytes,
+                "fileCount": audio_file_count,
+            },
         })
     }
 }

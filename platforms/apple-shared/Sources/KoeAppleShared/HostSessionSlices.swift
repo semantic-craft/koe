@@ -52,10 +52,18 @@ public struct SidebarSlice: Equatable, Sendable {
     public let section: String
     public let recordCount: Int
     public let proposedActionCount: Int
+    public let memoryCount: Int
     public let activeModeIds: Set<String>
     public let appVersion: String
     public let appBuild: String
     public let hasAvailableUpdate: Bool
+    public let beanControlOwner: String
+    public let deviceName: String
+    public let deviceConnected: Bool
+    public let devicePhase: String
+    public let deviceState: String
+    public let batteryPercent: Int?
+    public let boxBatteryPercent: Int?
 
     public static let empty = SidebarSlice(snapshot: .empty)
 
@@ -63,7 +71,7 @@ public struct SidebarSlice: Equatable, Sendable {
         section = snapshot.section
         recordCount = snapshot.records.count
         proposedActionCount = snapshot.tasks.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
-            + snapshot.memories.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
+        memoryCount = snapshot.memories.reduce(0) { $0 + ($1.state != "dismissed" ? 1 : 0) }
         activeModeIds = Set(
             (snapshot.workspaces?.picker.cards ?? [])
                 .filter(\.isSessionActive)
@@ -72,6 +80,13 @@ public struct SidebarSlice: Equatable, Sendable {
         appVersion = snapshot.appUpdate.currentVersion
         appBuild = snapshot.appUpdate.currentBuild
         hasAvailableUpdate = snapshot.appUpdate.isUpdateAvailable
+        beanControlOwner = snapshot.workspaces?.picker.beanControlOwner ?? "mac"
+        deviceName = snapshot.device.deviceName
+        deviceConnected = snapshot.device.connected
+        devicePhase = snapshot.device.phase
+        deviceState = snapshot.device.state
+        batteryPercent = snapshot.device.batteryPercent
+        boxBatteryPercent = snapshot.device.boxBatteryPercent
     }
 }
 

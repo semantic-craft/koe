@@ -167,7 +167,7 @@ struct LiveMinutesSplitBody: View {
                             .font(.system(size: AppFontSizes.xs))
                             .foregroundStyle(AppColors.textMuted)
                         Spacer()
-                        KoeActionButton("打开设置", systemImage: "gearshape") {
+                        KoeActionButton("打开模型设置", systemImage: "slider.horizontal.3") {
                             store.send(.navigate(section: "settings"))
                         }
                     }

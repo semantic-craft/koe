@@ -164,10 +164,20 @@ impl KoeRuntime {
                 self.ensure_meeting_audio_upload().err()
             },
             "configured": self.text_provider_configured(),
+            "qwenConfigured": !self.settings.key.is_empty(),
+            "deepseekConfigured": !self.settings.deepseek_key.is_empty(),
+            "asrConfigured": self.cloud_asr_configured(),
+            "asrIsRealtime": config.is_realtime_cloud_asr(),
+            "asrProvider": config.asr_provider.as_str(),
+            "asrModel": config.asr_model,
+            "llmProvider": config.llm_provider.as_str(),
             "model": config.model,
+            "enableThinking": config.enable_thinking,
+            "qwenWorkspaceId": config.qwen_workspace_id,
             "asrEndpoint": config.asr_endpoint,
             "chatEndpoint": config.chat_endpoint,
             "credentialState": self.credential_state(),
+            "deepseekCredentialState": self.deepseek_credential_state(),
             "isolated": self.credentials.isolated(),
         })
     }

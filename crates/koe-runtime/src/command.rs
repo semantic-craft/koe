@@ -236,13 +236,28 @@ pub(crate) enum HostIntent {
     ConfigureProvider {
         #[serde(default)]
         api_key: Option<String>,
+        #[serde(default)]
+        deepseek_api_key: Option<String>,
+        #[serde(default)]
+        asr_provider: Option<String>,
+        #[serde(default)]
+        asr_model: Option<String>,
+        #[serde(default)]
+        llm_provider: Option<String>,
         model: String,
+        #[serde(default)]
+        enable_thinking: Option<bool>,
+        #[serde(default)]
+        qwen_workspace_id: Option<String>,
         #[serde(default)]
         asr_endpoint: Option<String>,
         #[serde(default)]
         chat_endpoint: Option<String>,
     },
-    ClearProviderCredential,
+    ClearProviderCredential {
+        #[serde(default)]
+        provider: Option<String>,
+    },
     RetryProviderCredentials {
         #[serde(default)]
         authorize: bool,
@@ -269,6 +284,7 @@ pub(crate) enum HostIntent {
     DeviceDownload {
         file_id: u32,
     },
+    DeviceDownloadAll,
     DeviceStart,
     DeviceStop,
 }

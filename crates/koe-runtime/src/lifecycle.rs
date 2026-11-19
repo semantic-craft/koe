@@ -53,8 +53,14 @@ impl KoeRuntime {
             || !self.completed.is_empty()
             || (self.is_quitting() && session.transfer.phase == TransferPhaseTag::Failed);
         let queued_work = !self.is_quitting()
-            && !self.settings.key.is_empty()
-            && (!self.auto_summarize.is_empty() || !self.auto_transcribe.is_empty());
+            && ((!self.auto_summarize.is_empty() && self.text_provider_configured())
+                || (!self.auto_transcribe.is_empty()
+                    && self.auto_transcribe.iter().any(|id| {
+                        let engine = self.record_speech_engine(id);
+                        engine != SpeechEngine::Cloud
+                            || (self.cloud_asr_configured()
+                                && self.ensure_meeting_audio_upload().is_ok())
+                    })));
         let failure = if self.store.requires_reopen() {
             Some("无法确认保存结果，退出已暂停。请保留应用并恢复存储后处理。".to_string())
         } else if let Some(error) = self.microphone.as_ref().and_then(|m| m.save_error.as_ref()) {

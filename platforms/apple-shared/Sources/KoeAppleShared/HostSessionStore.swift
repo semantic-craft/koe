@@ -56,6 +56,7 @@ public final class HostSessionStore {
     public private(set) var activeCapture: ActiveCaptureSnapshot?
     public private(set) var activeCaptureActions: [CaptureAction] = []
     public private(set) var liveCaption: LiveCaptionSnapshot?
+    public private(set) var updatePopoverRequestCount: UInt64 = 0
 
     public init(workspacePath: String? = nil, credentials: HostCredentials? = nil) {
         self.credentials = credentials
@@ -111,6 +112,10 @@ public final class HostSessionStore {
     public func clearError() {
         if nativeError != nil { nativeError = nil }
         send(.clearError)
+    }
+
+    public func requestUpdatePopoverPresentation() {
+        updatePopoverRequestCount &+= 1
     }
 
     public func send(_ command: HostCommand, nowEpochSec: UInt64 = 0) {

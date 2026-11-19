@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 
 mod asr;
 mod chat;
+mod http_asr;
 mod live;
 mod update;
 
@@ -33,12 +34,37 @@ pub const DASHSCOPE_ASR_MODEL: &str = DEFAULT_ASR_MODEL;
 /// Default general-purpose chat model.
 pub const DASHSCOPE_CHAT_MODEL: &str = DEFAULT_TEXT_MODEL;
 
+/// Provider-specific thinking control sent in chat completion payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingMode {
+    /// Alibaba Cloud DashScope `enable_thinking: bool`.
+    Qwen(bool),
+    /// DeepSeek official `thinking: { "type": "enabled" | "disabled" }`.
+    DeepSeek(bool),
+}
+
+/// Wire protocol used for batch cloud audio transcription.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AsrTransportMode {
+    /// DashScope duplex WebSocket protocol (`run-task` / binary PCM / `finish-task`).
+    #[default]
+    DashScopeWebSocket,
+    /// DashScope synchronous HTTP multimodal-generation (`qwen-audio-3.1-asr-flash`, <= 5 min).
+    DashScopeFlashHttp,
+    /// DashScope asynchronous file transcription (`qwen-audio-3.1-asr-flash-filetrans`).
+    DashScopeFiletransHttp,
+    /// DeepSeek official multipart WAV upload (`POST /v1/tools/asr`, auto silence-split <= 110s).
+    DeepSeekHttp,
+}
+
 /// Per-request connection settings. Credentials are never read from disk or the environment.
 #[derive(Clone)]
 pub struct ProviderConfig {
     pub(super) endpoint: String,
     pub(super) model: String,
     pub(super) api_key: String,
+    pub(super) thinking: Option<ThinkingMode>,
+    pub(super) asr_mode: AsrTransportMode,
 }
 
 impl ProviderConfig {
@@ -49,7 +75,23 @@ impl ProviderConfig {
             endpoint,
             model,
             api_key,
+            thinking: None,
+            asr_mode: AsrTransportMode::DashScopeWebSocket,
         }
+    }
+
+    /// Configures provider-specific thinking mode for chat requests.
+    #[must_use]
+    pub const fn with_thinking(mut self, thinking: Option<ThinkingMode>) -> Self {
+        self.thinking = thinking;
+        self
+    }
+
+    /// Configures the wire protocol used for batch ASR transcription.
+    #[must_use]
+    pub const fn with_asr_mode(mut self, asr_mode: AsrTransportMode) -> Self {
+        self.asr_mode = asr_mode;
+        self
     }
 
     /// Empty credential-free configuration for unauthenticated tasks such as [`ProviderTask::CheckUpdate`].
@@ -59,6 +101,8 @@ impl ProviderConfig {
             endpoint: String::new(),
             model: String::new(),
             api_key: String::new(),
+            thinking: None,
+            asr_mode: AsrTransportMode::DashScopeWebSocket,
         }
     }
 }
@@ -119,6 +163,8 @@ pub struct TranscriptSegment {
     pub end_ms: u64,
     /// Recognized text.
     pub text: String,
+    /// Optional diarized speaker label (e.g. `说话人 1`).
+    pub speaker: Option<String>,
 }
 
 /// Successfully completed provider work.
@@ -353,18 +399,24 @@ fn validate(request: &ProviderRequest) -> Result<(), String> {
     if request.timeout.is_zero() || request.timeout > Duration::from_secs(1_800) {
         return Err("云端请求超时设置必须在 0 到 30 分钟之间".into());
     }
-    let (secure, local) = match &request.task {
+    let (secure, local, require_model) = match &request.task {
         ProviderTask::TranscribePcm16 { pcm16 } => {
             if pcm16.is_empty() || pcm16.len() % 2 != 0 || pcm16.len() > MAX_PCM_BYTES {
                 return Err("音频必须为非空 16 位 PCM，且不能超过 64 MiB".into());
             }
-            ("wss", "ws")
+            match request.config.asr_mode {
+                AsrTransportMode::DashScopeWebSocket => ("wss", "ws", true),
+                AsrTransportMode::DashScopeFlashHttp | AsrTransportMode::DashScopeFiletransHttp => {
+                    ("https", "http", true)
+                }
+                AsrTransportMode::DeepSeekHttp => ("https", "http", false),
+            }
         }
         ProviderTask::Chat { system, user } => {
             if user.trim().is_empty() || system.len().saturating_add(user.len()) > MAX_TEXT_BYTES {
                 return Err("问答内容为空或超过 2 MiB 限制".into());
             }
-            ("https", "http")
+            ("https", "http", true)
         }
         ProviderTask::CheckUpdate {
             endpoint,
@@ -375,11 +427,20 @@ fn validate(request: &ProviderRequest) -> Result<(), String> {
             return Ok(());
         }
     };
-    validate_endpoint(&request.config, secure, local)
+    validate_endpoint_inner(&request.config, secure, local, require_model)
 }
 
 fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Result<(), String> {
-    if config.model.trim().is_empty() {
+    validate_endpoint_inner(config, secure, local, true)
+}
+
+fn validate_endpoint_inner(
+    config: &ProviderConfig,
+    secure: &str,
+    local: &str,
+    require_model: bool,
+) -> Result<(), String> {
+    if require_model && config.model.trim().is_empty() {
         return Err("缺少模型名称".into());
     }
     let url = reqwest::Url::parse(&config.endpoint).map_err(|_| "云端地址无效")?;
@@ -393,8 +454,8 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
                 .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
     });
-    let keyless_local_chat = secure == "https" && url.scheme() == "http" && loopback;
-    if config.api_key.trim().is_empty() && !keyless_local_chat {
+    let keyless_local_http = secure == "https" && url.scheme() == "http" && loopback;
+    if config.api_key.trim().is_empty() && !keyless_local_http {
         return Err("尚未配置云端 API Key".into());
     }
     if url.scheme() != secure && !(url.scheme() == local && loopback) {
@@ -405,7 +466,18 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
 
 async fn execute(request: &ProviderRequest) -> Result<ProviderOutput, String> {
     match &request.task {
-        ProviderTask::TranscribePcm16 { pcm16 } => asr::transcribe(&request.config, pcm16).await,
+        ProviderTask::TranscribePcm16 { pcm16 } => match request.config.asr_mode {
+            AsrTransportMode::DashScopeWebSocket => asr::transcribe(&request.config, pcm16).await,
+            AsrTransportMode::DashScopeFlashHttp => {
+                http_asr::transcribe_qwen_flash(&request.config, pcm16).await
+            }
+            AsrTransportMode::DashScopeFiletransHttp => {
+                http_asr::transcribe_qwen_filetrans(&request.config, pcm16).await
+            }
+            AsrTransportMode::DeepSeekHttp => {
+                http_asr::transcribe_deepseek(&request.config, pcm16).await
+            }
+        },
         ProviderTask::Chat { system, user } => chat::complete(&request.config, system, user).await,
         ProviderTask::CheckUpdate {
             endpoint,

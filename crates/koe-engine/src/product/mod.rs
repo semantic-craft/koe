@@ -3,9 +3,12 @@
 mod ask;
 mod provider;
 pub use provider::{
-    CredentialBinding, DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_HTTP_BASE_URL,
-    DEFAULT_DASHSCOPE_WS_URL, DEFAULT_TEXT_MODEL, MeetingAudioPolicy, ProviderConfiguration,
-    SpeechEngine, valid_reference,
+    CloudAsrProvider, CredentialBinding, DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_FILETRANS_ASR_URL,
+    DEFAULT_DASHSCOPE_FLASH_ASR_URL, DEFAULT_DASHSCOPE_HTTP_BASE_URL, DEFAULT_DASHSCOPE_WS_URL,
+    DEFAULT_DEEPSEEK_ASR_URL, DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_DEEPSEEK_TEXT_MODEL,
+    DEFAULT_TEXT_MODEL, LlmProvider, MeetingAudioPolicy, ProviderConfiguration,
+    QWEN_FILETRANS_ASR_MODEL, QWEN_FLASH_ASR_MODEL, QWEN_MESSAGE_ASR_MODEL, SpeechEngine,
+    valid_reference,
 };
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};

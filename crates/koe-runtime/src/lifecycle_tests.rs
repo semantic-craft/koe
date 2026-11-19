@@ -88,6 +88,7 @@ fn queue_transcript(runtime: &mut KoeRuntime, id: &str, operation: u64, text: &s
                 text: text.into(),
                 start_ms: 0,
                 end_ms: 20,
+                speaker: None,
             }],
         }),
     });
