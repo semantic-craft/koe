@@ -1,6 +1,6 @@
 [package]
 name = "koe-engine"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 publish = false
 description = "Pure deterministic Rust domain & protocol engine for Koe: D3200 BLE framing, HKDF/AES-CTR decryption, Ogg Opus/WAV framing, UtteranceSpine (S1..Sn), anti-hallucination minutes grounding, and BM25 retrieval."
