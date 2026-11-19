@@ -22,14 +22,17 @@ class RunWithSecretsTest(unittest.TestCase):
                 'import Foundation\n'
                 'let env = ProcessInfo.processInfo.environment\n'
                 'let data = try JSONSerialization.data(withJSONObject: env, options: [.sortedKeys])\n'
-                'try data.write(to: URL(fileURLWithPath: env["TEST_ENV_OUT"]!))\n'
+                f'try data.write(to: URL(fileURLWithPath: {json.dumps(str(out))}))\n'
             )
             env = {
                 'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
                 'HOME': os.environ.get('HOME', tmp),
-                'TEST_ENV_OUT': str(out),
                 'DASHSCOPE_API_KEY': 'fixture-qwen',
                 'DEEPSEEK_API_KEY': 'fixture-deepseek',
+                'DB_PASSWORD': 'should-be-stripped',
+                'SSH_AUTH_SOCK': '/tmp/ssh-agent.sock',
+                'lowercase_secret': 'should-be-stripped',
+                'API_CREDENTIAL': 'should-be-stripped',
                 'UNRELATED_SECRET': 'should-be-stripped',
                 'OTHER_API_TOKEN': 'should-be-stripped',
             }
@@ -45,8 +48,15 @@ class RunWithSecretsTest(unittest.TestCase):
             self.assertEqual(forwarded.get('KOE_CREDENTIAL_SOURCE'), 'environment')
             self.assertEqual(forwarded.get('DASHSCOPE_API_KEY'), 'fixture-qwen')
             self.assertEqual(forwarded.get('DEEPSEEK_API_KEY'), 'fixture-deepseek')
-            self.assertNotIn('UNRELATED_SECRET', forwarded)
-            self.assertNotIn('OTHER_API_TOKEN', forwarded)
+            for stripped in (
+                'DB_PASSWORD',
+                'SSH_AUTH_SOCK',
+                'lowercase_secret',
+                'API_CREDENTIAL',
+                'UNRELATED_SECRET',
+                'OTHER_API_TOKEN',
+            ):
+                self.assertNotIn(stripped, forwarded)
 
 
 if __name__ == '__main__':

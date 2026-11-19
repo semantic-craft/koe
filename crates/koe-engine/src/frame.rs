@@ -20,6 +20,9 @@ pub const TX_MAGIC: [u8; 5] = [0x08, 0xEE, 0x00, 0x00, 0x00];
 /// Magic prefix for inbound packets received from the D3200 device.
 pub const RX_MAGIC: [u8; 4] = [0x09, 0xFF, 0x00, 0x00];
 
+/// Upper bound on buffered bytes retained by `FrameReassembler` between chunks.
+pub const MAX_REASSEMBLER_BUFFER_BYTES: usize = 128 * 1024;
+
 /// Stateless framing encoder, checksum verifier, and streaming RX reassembler.
 #[derive(Debug, Clone, Copy)]
 pub struct ProtocolFrame;
@@ -108,9 +111,9 @@ impl ProtocolFrame {
     pub fn process_buffer(buffer: &mut Vec<u8>) -> Vec<DecodedPacket> {
         let mut results = Vec::new();
         let mut i = 0usize;
-        while i + 10 <= buffer.len() {
+        while i + RX_MAGIC.len() <= buffer.len() {
             let mut found: Option<usize> = None;
-            let limit = buffer.len() - 10;
+            let limit = buffer.len() - RX_MAGIC.len();
             for j in i..=limit {
                 if Self::is_rx_header(buffer, j) {
                     found = Some(j);
@@ -118,10 +121,11 @@ impl ProtocolFrame {
                 }
             }
             let Some(header_pos) = found else {
+                i = buffer.len().saturating_sub(RX_MAGIC.len() - 1);
                 break;
             };
             i = header_pos;
-            if i + 9 > buffer.len() {
+            if i + 10 > buffer.len() {
                 break;
             }
             let total_len = read_u16_le(buffer, i + 7) as usize;
@@ -181,10 +185,25 @@ impl FrameReassembler {
     /// checksum-verified `09 FF 00 00` packets in arrival order, and compacts
     /// consumed prefix bytes.
     pub fn ingest(&mut self, chunk: &[u8]) -> Vec<DecodedPacket> {
-        if !chunk.is_empty() {
-            self.buffer.extend_from_slice(chunk);
+        if chunk.is_empty() {
+            let packets = ProtocolFrame::process_buffer(&mut self.buffer);
+            self.enforce_buffer_cap();
+            return packets;
         }
-        ProtocolFrame::process_buffer(&mut self.buffer)
+        let mut packets = Vec::new();
+        for piece in chunk.chunks(MAX_REASSEMBLER_BUFFER_BYTES) {
+            self.buffer.extend_from_slice(piece);
+            packets.extend(ProtocolFrame::process_buffer(&mut self.buffer));
+            self.enforce_buffer_cap();
+        }
+        packets
+    }
+
+    fn enforce_buffer_cap(&mut self) {
+        if self.buffer.len() > MAX_REASSEMBLER_BUFFER_BYTES {
+            let keep_from = self.buffer.len() - (RX_MAGIC.len() - 1);
+            self.buffer.drain(0..keep_from);
+        }
     }
 
     /// Returns the number of unconsumed partial bytes currently buffered.
@@ -334,5 +353,62 @@ mod tests {
         assert_eq!(pkts.len(), 1);
         assert_eq!(pkts[0].payload, vec![0x42, 0x43]);
         assert_eq!(stream, vec![0x09, 0xFF, 0x00]);
+    }
+
+    #[test]
+    fn reassembler_decodes_split_magic_after_noise() {
+        let body = [
+            0x09u8, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x05, 0x0C, 0x00, 0x42, 0x43,
+        ];
+        let csum = ProtocolFrame::checksum(&body);
+        let mut first_chunk = vec![0xAA; 64];
+        first_chunk.extend_from_slice(&body[..2]);
+        let mut second_chunk = body[2..].to_vec();
+        second_chunk.push(csum);
+
+        let mut reassembler = FrameReassembler::new();
+        assert!(reassembler.ingest(&first_chunk).is_empty());
+        assert!(reassembler.buffered_len() <= 3);
+
+        let decoded = reassembler.ingest(&second_chunk);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].payload, vec![0x42, 0x43]);
+        assert_eq!(reassembler.buffered_len(), 0);
+    }
+
+    #[test]
+    fn reassembler_bounds_continuous_non_header_noise() {
+        let mut reassembler = FrameReassembler::new();
+        let noise = vec![0x5Au8; 4096];
+        for _ in 0..8 {
+            assert!(reassembler.ingest(&noise).is_empty());
+            assert!(
+                reassembler.buffered_len() <= 3,
+                "noise accumulated to {} bytes",
+                reassembler.buffered_len()
+            );
+        }
+    }
+
+    #[test]
+    fn reassembler_bounds_truncated_huge_header_plus_noise() {
+        let mut reassembler = FrameReassembler::new();
+        let huge_header = [0x09u8, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 0xFF, 0xFF];
+        assert!(reassembler.ingest(&huge_header).is_empty());
+
+        let noise_chunk = vec![0xCCu8; 8 * 1024];
+        for _ in 0..24 {
+            let _ = reassembler.ingest(&noise_chunk);
+            assert!(
+                reassembler.buffered_len() <= 128 * 1024,
+                "buffer exceeded 128 KiB cap: {} bytes",
+                reassembler.buffered_len()
+            );
+        }
+        assert!(
+            reassembler.buffered_len() <= 3,
+            "trailing noise after malformed frame was not drained: {} bytes",
+            reassembler.buffered_len()
+        );
     }
 }

@@ -31,6 +31,7 @@ public final class HostSessionStore {
     @ObservationIgnored private var hasDeferredSliceReconcile: Bool = false
     @ObservationIgnored internal private(set) var lastProjectedNowSec: UInt64 = 0
     @ObservationIgnored public private(set) var handle: UInt64 = 0
+    @ObservationIgnored public let workspacePath: String
     @ObservationIgnored public var onSnapshotChanged: ((HostSnapshot) -> Void)?
     @ObservationIgnored public var bridgeActions = HostBridgeActions()
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
@@ -60,11 +61,12 @@ public final class HostSessionStore {
 
     public init(workspacePath: String? = nil, credentials: HostCredentials? = nil) {
         self.credentials = credentials
+        let directory = workspacePath ?? Self.defaultWorkspacePath(isolated: credentials?.isolated == true)
+        self.workspacePath = directory
         guard Self.apiVersion() == 2 else {
             nativeError = "应用与数据引擎版本不一致，请重新构建应用。"
             return
         }
-        let directory = workspacePath ?? Self.defaultWorkspacePath(isolated: credentials?.isolated == true)
         if let credentials {
             let context = Unmanaged.passUnretained(credentials as AnyObject).toOpaque()
             handle = directory.withCString {

@@ -33,7 +33,6 @@ public struct BleAdvertisementCandidate: Equatable, Sendable {
             : advName.trimmingCharacters(in: .whitespacesAndNewlines)
         let matchedByName = rawName.localizedCaseInsensitiveContains("soundcore")
             || rawName.localizedCaseInsensitiveContains("d3200")
-            || rawName.localizedCaseInsensitiveContains("work")
 
         var matchedByMfg = false
         var macAddress = ""

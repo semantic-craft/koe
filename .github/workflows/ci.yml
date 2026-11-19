@@ -1,12 +1,14 @@
 name: CI
 
-# Runs on the owner's own Mac (self-hosted runner), so it uses no paid
-# GitHub-hosted minutes. Registration steps: docs/agents/ci-runner.md.
+# Runs on GitHub-hosted macOS ARM64 runners. Routing rules: docs/agents/ci-runner.md.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -14,10 +16,8 @@ concurrency:
 
 jobs:
   test:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-15
     timeout-minutes: 30
-    env:
-      FLUTTER_VERSION: 3.47.7
     steps:
       - uses: actions/checkout@v4
         with:
