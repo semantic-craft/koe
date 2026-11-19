@@ -243,16 +243,15 @@ struct AppUpdateHostTests {
             updateEndpoint: fixture.endpointURL
         ), nowEpochSec: 1_800_000_000)
 
+        let popoverCountBefore = store.updatePopoverRequestCount
         delegate.requestUpdateCheck()
-        #expect(store.navigation.section == "settings")
-        #expect(store.navigation.canGoBack == true)
-
-        // Repeating requestUpdateCheck while already on settings does not push a duplicate settings entry onto back stack.
-        delegate.requestUpdateCheck()
-        store.send(.back)
         #expect(store.navigation.section == "today")
+        #expect(store.updatePopoverRequestCount == popoverCountBefore + 1)
+
+        // Repeating requestUpdateCheck keeps the current section intact and re-requests popover presentation.
         delegate.requestUpdateCheck()
-        #expect(store.navigation.section == "settings")
+        #expect(store.navigation.section == "today")
+        #expect(store.updatePopoverRequestCount == popoverCountBefore + 2)
 
         let deadline = ContinuousClock.now + .seconds(4)
         while store.settings.appUpdate.isChecking, ContinuousClock.now < deadline {
@@ -319,15 +318,17 @@ struct AppUpdateHostTests {
         delegate.menuNeedsUpdate(initialMenu)
         #expect(initialMenu.items.contains(where: { $0.title.hasPrefix("检查更新") && !$0.isEnabled }))
 
+        let popoverCountBeforeBlocked = store.updatePopoverRequestCount
         delegate.requestUpdateCheck()
         #expect(store.navigation.section == "today")
+        #expect(store.updatePopoverRequestCount == popoverCountBeforeBlocked)
         #expect(store.navigation.effectiveError != nil)
 
         store.send(.cancelQuit)
         store.clearError()
     }
 
-    @Test("Sidebar header stays single-line at 196pt with multi-digit SemVer and Settings places AppUpdateSettingsCard in top viewport")
+    @Test("Sidebar header stays single-line at 196pt with multi-digit SemVer and SettingsDoctorView renders cleanly")
     @MainActor
     func sidebarSingleLineGeometryAndSettingsTopCardPlacement() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

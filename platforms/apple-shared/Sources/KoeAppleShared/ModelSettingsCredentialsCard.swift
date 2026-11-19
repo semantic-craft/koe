@@ -42,25 +42,30 @@ struct ModelSettingsCredentialsCard: View {
                 }
 
                 DisclosureGroup("高级：自定义 OpenAI 兼容或本机 localhost 服务", isExpanded: $showAdvancedEndpoints) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("对话接口地址（支持 http://127.0.0.1）")
-                                .font(.system(size: AppFontSizes.xs))
-                                .foregroundStyle(AppColors.textSecondary)
-                            TextField("https://your-host/v1/chat/completions", text: $draft.customChatEndpoint)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: AppFontSizes.xs, design: .monospaced))
-                                .onSubmit { onSave() }
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("对话接口地址（支持 http://127.0.0.1）")
+                                    .font(.system(size: AppFontSizes.xs))
+                                    .foregroundStyle(AppColors.textSecondary)
+                                TextField("https://your-host/v1/chat/completions", text: $draft.customChatEndpoint)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                                    .onSubmit { onSave() }
+                            }
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("语音识别 WebSocket / HTTP 地址")
+                                    .font(.system(size: AppFontSizes.xs))
+                                    .foregroundStyle(AppColors.textSecondary)
+                                TextField("wss://your-host/api-ws/v1/inference", text: $draft.customAsrEndpoint)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                                    .onSubmit { onSave() }
+                            }
                         }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("语音识别 WebSocket / HTTP 地址")
-                                .font(.system(size: AppFontSizes.xs))
-                                .foregroundStyle(AppColors.textSecondary)
-                            TextField("wss://your-host/api-ws/v1/inference", text: $draft.customAsrEndpoint)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: AppFontSizes.xs, design: .monospaced))
-                                .onSubmit { onSave() }
-                        }
+                        Text("本机 http://127.0.0.1 服务免填密钥；远程自定义 HTTPS 服务复用上方已保存的 API Key。")
+                            .font(.system(size: AppFontSizes.xs))
+                            .foregroundStyle(AppColors.textMuted)
                     }
                     .padding(.top, 10)
                 }

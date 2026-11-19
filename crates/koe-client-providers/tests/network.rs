@@ -1412,3 +1412,103 @@ fn chat_requests_encode_provider_specific_thinking_controls() {
     assert!(seen[2].get("enable_thinking").is_none());
     assert!(seen[2].get("thinking").is_none());
 }
+
+#[test]
+fn qwen_filetrans_fails_fast_on_unknown_status_and_subtask_failure() {
+    use std::io::Write;
+    for (case_idx, poll_body, expected_substr) in [
+        (
+            0u64,
+            serde_json::json!({"output": {"task_status": "UNKNOWN"}}).to_string(),
+            "UNKNOWN",
+        ),
+        (
+            1u64,
+            serde_json::json!({
+                "output": {
+                    "task_status": "SUCCEEDED",
+                    "results": [{"subtask_status": "FAILED", "code": "InvalidAudioFormat"}]
+                }
+            })
+            .to_string(),
+            "InvalidAudioFormat",
+        ),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let ft_url = format!("{origin}/api/v1/services/audio/asr/transcription");
+        let origin_srv = origin.clone();
+        let srv = std::thread::spawn(move || {
+            let (mut s1, _) = listener.accept().unwrap();
+            let _ = read_http_request(&mut s1);
+            let pol = serde_json::json!({
+                "data": {
+                    "upload_host": format!("{origin_srv}/oss"),
+                    "oss_access_key_id": "ak",
+                    "signature": "sig",
+                    "policy": "pol",
+                    "upload_dir": "dir"
+                }
+            })
+            .to_string();
+            write!(
+                s1,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                pol.len(),
+                pol
+            )
+            .unwrap();
+
+            let (mut s2, _) = listener.accept().unwrap();
+            let _ = read_http_request(&mut s2);
+            write!(s2, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+
+            let (mut s3, _) = listener.accept().unwrap();
+            let _ = read_http_request(&mut s3);
+            let sub = serde_json::json!({"output": {"task_id": "task-err-1"}}).to_string();
+            write!(
+                s3,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                sub.len(),
+                sub
+            )
+            .unwrap();
+
+            let (mut s4, _) = listener.accept().unwrap();
+            let _ = read_http_request(&mut s4);
+            write!(
+                s4,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                poll_body.len(),
+                poll_body
+            )
+            .unwrap();
+        });
+
+        let mut pool = ProviderPool::new().unwrap();
+        pool.submit(
+            ProviderLane::Audio,
+            ProviderRequest {
+                operation_id: 400 + case_idx,
+                record_id: format!("rec-ft-err-{case_idx}"),
+                config: ProviderConfig::new(
+                    ft_url,
+                    "qwen-audio-3.1-asr-flash-filetrans".into(),
+                    "qwen-test-key".into(),
+                )
+                .with_asr_mode(koe_client_providers::AsrTransportMode::DashScopeFiletransHttp),
+                task: ProviderTask::TranscribePcm16 {
+                    pcm16: vec![0u8; 32_000],
+                },
+                timeout: Duration::from_secs(5),
+            },
+        )
+        .unwrap();
+        let err = wait_result(&mut pool).result.unwrap_err();
+        assert!(
+            err.contains(expected_substr),
+            "expected error containing {expected_substr}, got: {err}"
+        );
+        srv.join().unwrap();
+    }
+}

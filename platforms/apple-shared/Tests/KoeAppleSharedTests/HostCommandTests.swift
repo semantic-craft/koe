@@ -163,5 +163,18 @@ struct HostCommandTests {
         _ = SettingsDoctorView(store: store).body
         #expect(store.nativeError == nil)
         #expect(store.snapshot.error == nil)
+
+        var draft = ModelSettingsDraft()
+        draft.llmProvider = "custom"
+        draft.customLlmModel = ""
+        draft.customChatEndpoint = "http://127.0.0.1:11434/v1/chat/completions"
+        #expect(draft.resolvedLlmModelForSave.isEmpty)
+        draft.selectLlmProvider("deepseek")
+        #expect(draft.customChatEndpoint.isEmpty)
+        #expect(draft.effectiveChatEndpoint() == "https://api.deepseek.com/chat/completions")
+        #expect(draft.resolvedLlmModelForSave == "deepseek-flash")
+        draft.selectLlmProvider("qwen")
+        #expect(draft.effectiveChatEndpoint() == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        #expect(draft.resolvedLlmModelForSave == "qwen3.7-plus")
     }
 }

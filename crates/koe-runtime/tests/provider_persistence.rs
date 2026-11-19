@@ -875,3 +875,143 @@ fn non_realtime_deepseek_asr_defers_live_capture_and_transcribes_saved_audio() {
     assert!(transcribed, "deferred DeepSeek ASR must transcribe saved audio after capture ends");
     server.join().unwrap();
 }
+
+#[test]
+fn dual_key_retry_authorizes_both_slots_and_custom_provider_validation_is_strict() {
+    let root = Sandbox::new();
+    let vault = Adapter::default();
+    let mut runtime = KoeRuntime::open_with_credentials(&root.0, Box::new(vault.clone())).unwrap();
+
+    let saved = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "apiKey": "qwen-secret",
+            "deepseekApiKey": "deepseek-secret",
+            "asrProvider": "deepseek",
+            "asrModel": "",
+            "llmProvider": "deepseek",
+            "model": "deepseek-flash"
+        }),
+    );
+    assert!(saved["error"].is_null(), "{saved}");
+
+    // Switching back from DeepSeek ASR to Qwen ASR with empty asrModel defaults to streaming model
+    let back_to_qwen = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "asrProvider": "qwen",
+            "asrModel": "",
+            "llmProvider": "qwen",
+            "model": "qwen3.7-plus"
+        }),
+    );
+    assert!(back_to_qwen["error"].is_null(), "{back_to_qwen}");
+    assert_eq!(
+        back_to_qwen["provider"]["asrModel"],
+        "qwen-audio-3.1-asr-flash-streaming"
+    );
+
+    // Custom LLM with empty chatEndpoint must be rejected rather than falling back to DashScope
+    let bad_custom = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "llmProvider": "custom",
+            "model": "ollama-qwen",
+            "chatEndpoint": ""
+        }),
+    );
+    assert!(
+        bad_custom["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("对话接口地址")),
+        "{bad_custom}"
+    );
+
+    // Substring in path must NOT misclassify a custom host as DeepSeek
+    let custom_path_trick = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "model": "custom-model",
+            "chatEndpoint": "https://proxy.example.com/api.deepseek.com/chat/completions"
+        }),
+    );
+    assert!(custom_path_trick["error"].is_null(), "{custom_path_trick}");
+    assert_eq!(custom_path_trick["provider"]["llmProvider"], "custom");
+    drop(runtime);
+
+    // Reopen with locked vault -> both slots unavailable -> single retry(authorize: true) authorizes BOTH slots
+    vault.0.lock().unwrap().fail_read = true;
+    let mut locked = KoeRuntime::open_with_credentials(&root.0, Box::new(vault.clone())).unwrap();
+    let locked_snap = locked.snapshot(101);
+    assert_eq!(locked_snap["provider"]["credentialState"], "unavailable");
+    assert_eq!(
+        locked_snap["provider"]["deepseekCredentialState"],
+        "unavailable"
+    );
+
+    vault.0.lock().unwrap().fail_read = false;
+    let retried = send(
+        &mut locked,
+        json!({"type": "retry_provider_credentials", "authorize": true}),
+    );
+    assert!(retried["error"].is_null(), "{retried}");
+    assert_eq!(retried["provider"]["qwenConfigured"], true);
+    assert_eq!(retried["provider"]["deepseekConfigured"], true);
+    let authorized = vault.0.lock().unwrap().authorized.clone();
+    assert_eq!(
+        authorized.len(),
+        2,
+        "expected both Qwen and DeepSeek references to be authorized in one retry, got: {authorized:?}"
+    );
+}
+
+#[test]
+fn deepseek_only_queued_work_holds_keep_awake() {
+    let root = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&root.0).unwrap();
+    send(
+        &mut runtime,
+        json!({"type": "set_meeting_audio_policy", "policy": "cloud_allowed"}),
+    );
+    send(&mut runtime, json!({"type": "configure_speech", "engine": "cloud"}));
+    // Configure DeepSeek ONLY (Qwen key remains empty) with a non-listening loopback endpoint
+    // so queued auto_transcribe stays pending before poll_timers fires or holds keepAwake while queued.
+    let cfg = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "deepseekApiKey": "ds-only-key",
+            "asrProvider": "deepseek",
+            "asrEndpoint": "https://api.deepseek.com/v1/tools/asr",
+            "llmProvider": "deepseek",
+            "model": "deepseek-flash"
+        }),
+    );
+    assert!(cfg["error"].is_null(), "{cfg}");
+    assert_eq!(cfg["provider"]["qwenConfigured"], false);
+    assert_eq!(cfg["provider"]["deepseekConfigured"], true);
+
+    let started = send(&mut runtime, json!({"type": "start_microphone", "inputId": ""}));
+    let rec_id = started["microphone"]["recordId"].as_str().unwrap().to_owned();
+    let sess_id = started["microphone"]["sessionId"].as_str().unwrap().to_owned();
+    send(
+        &mut runtime,
+        json!({"type": "microphone_started", "recordId": rec_id, "sessionId": sess_id, "lane": "microphone", "sampleRate": 16000}),
+    );
+    let _ = runtime.ingest_microphone_pcm(&rec_id, &sess_id, "microphone", 0, &[800i16; 4000], None, 100);
+    send(&mut runtime, json!({"type": "stop_microphone"}));
+    // Immediately after microphone_stopped saves the audio, deferred_batch queues auto_transcribe
+    // before poll_timers submits it to the network pool. keepAwake MUST be true even though Qwen key is empty!
+    let after_stop = send(
+        &mut runtime,
+        json!({"type": "microphone_stopped", "recordId": rec_id, "sessionId": sess_id, "lane": "microphone", "sequence": 1}),
+    );
+    assert_eq!(
+        after_stop["lifecycle"]["keepAwake"], true,
+        "DeepSeek-only queued auto_transcribe must hold keepAwake: {after_stop}"
+    );
+}

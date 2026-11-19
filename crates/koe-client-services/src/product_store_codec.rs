@@ -139,28 +139,12 @@ impl From<ProviderDto> for ProviderConfiguration {
             .asr_provider
             .as_deref()
             .and_then(CloudAsrProvider::parse)
-            .unwrap_or_else(|| {
-                if p.asr_endpoint.contains("api.deepseek.com") {
-                    CloudAsrProvider::DeepSeek
-                } else {
-                    CloudAsrProvider::Qwen
-                }
-            });
+            .unwrap_or_else(|| ProviderConfiguration::infer_asr_provider(&p.asr_endpoint));
         let llm_provider = p
             .llm_provider
             .as_deref()
             .and_then(LlmProvider::parse)
-            .unwrap_or_else(|| {
-                if p.chat_endpoint.contains("api.deepseek.com") {
-                    LlmProvider::DeepSeek
-                } else if p.chat_endpoint.contains("dashscope.aliyuncs.com")
-                    || p.chat_endpoint.contains(".maas.aliyuncs.com")
-                {
-                    LlmProvider::Qwen
-                } else {
-                    LlmProvider::Custom
-                }
-            });
+            .unwrap_or_else(|| ProviderConfiguration::infer_llm_provider(&p.chat_endpoint));
         let asr_model = p.asr_model.unwrap_or_else(|| {
             if asr_provider == CloudAsrProvider::DeepSeek {
                 String::new()

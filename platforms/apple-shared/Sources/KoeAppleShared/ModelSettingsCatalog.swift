@@ -157,6 +157,22 @@ struct ModelSettingsDraft: Equatable {
         }
     }
 
+    var resolvedLlmModelForSave: String {
+        switch llmProvider {
+        case "qwen": qwenLlmModel.isEmpty ? "qwen3.7-plus" : qwenLlmModel
+        case "deepseek": deepseekLlmModel.isEmpty ? "deepseek-flash" : deepseekLlmModel
+        default: customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    mutating func selectLlmProvider(_ provider: String) {
+        guard llmProvider != provider else { return }
+        llmProvider = provider
+        if provider == "qwen" || provider == "deepseek" {
+            customChatEndpoint = ""
+        }
+    }
+
     func computedDefaultAsrEndpoint() -> String {
         if asrProvider == "deepseek" {
             return "https://api.deepseek.com/v1/tools/asr"

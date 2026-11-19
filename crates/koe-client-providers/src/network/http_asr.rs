@@ -204,31 +204,40 @@ async fn read_bounded_bytes(
     Ok(bytes)
 }
 
-fn validate_remote_http_url(raw: &str) -> Result<reqwest::Url, String> {
-    let url = reqwest::Url::parse(raw).map_err(|_| "语音服务返回的临时地址无效")?;
-    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
-        return Err("语音服务返回的临时地址无效".into());
-    }
-    let loopback = url.host_str().is_some_and(|host| {
+fn is_loopback_host(url: &reqwest::Url) -> bool {
+    url.host_str().is_some_and(|host| {
         host == "localhost"
             || host
                 .trim_matches(['[', ']'])
                 .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
-    });
-    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        return Err("语音服务返回了不安全的非加密地址".into());
-    }
-    Ok(url)
+    })
 }
 
-fn origin_of(endpoint: &str) -> Result<String, String> {
+fn validate_remote_http_url(raw: &str, allow_loopback_http: bool) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(raw).map_err(|_| "语音服务返回的临时地址无效")?;
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err("语音服务返回的临时地址无效".into());
+    }
+    let loopback = is_loopback_host(&url);
+    if url.scheme() == "https" && (!loopback || allow_loopback_http) {
+        return Ok(url);
+    }
+    if allow_loopback_http && url.scheme() == "http" && loopback {
+        return Ok(url);
+    }
+    Err("语音服务返回了不安全或受限的临时地址".into())
+}
+
+fn origin_and_loopback(endpoint: &str) -> Result<(String, bool), String> {
     let url = reqwest::Url::parse(endpoint).map_err(|_| "语音服务地址无效")?;
     let host = url.host_str().ok_or("语音服务地址无效")?;
-    Ok(match url.port() {
+    let origin = match url.port() {
         Some(port) => format!("{}://{host}:{port}", url.scheme()),
         None => format!("{}://{host}", url.scheme()),
-    })
+    };
+    let allow_loopback = url.scheme() == "http" && is_loopback_host(&url);
+    Ok((origin, allow_loopback))
 }
 
 fn format_speaker_id(value: Option<&Value>) -> Option<String> {
@@ -413,7 +422,15 @@ pub(super) async fn transcribe_qwen_filetrans(
     config: &ProviderConfig,
     pcm16: &[u8],
 ) -> Result<ProviderOutput, String> {
-    let origin = origin_of(&config.endpoint)?;
+    let (origin, allow_loopback_http) = origin_and_loopback(&config.endpoint)?;
+    if config.model.is_empty()
+        || !config
+            .model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err("Qwen 语音模型名称格式无效".into());
+    }
     let client = build_http_client()?;
 
     // Step 1: Request temporary OSS upload policy.
@@ -442,7 +459,7 @@ pub(super) async fn transcribe_qwen_filetrans(
         .get("upload_host")
         .and_then(Value::as_str)
         .ok_or("Qwen 上传凭据缺少 upload_host")?;
-    let _ = validate_remote_http_url(upload_host)?;
+    let validated_upload_host = validate_remote_http_url(upload_host, allow_loopback_http)?;
     let oss_access_key_id = data
         .get("oss_access_key_id")
         .and_then(Value::as_str)
@@ -490,7 +507,7 @@ pub(super) async fn transcribe_qwen_filetrans(
         &wav,
     );
     let upload_resp = client
-        .post(upload_host)
+        .post(validated_upload_host)
         .header(
             reqwest::header::CONTENT_TYPE,
             format!("multipart/form-data; boundary={boundary}"),
@@ -577,6 +594,22 @@ pub(super) async fn transcribe_qwen_filetrans(
             .and_then(Value::as_str)
         {
             Some("SUCCEEDED") => {
+                if let Some(sub_status) = poll_json
+                    .pointer("/output/results/0/subtask_status")
+                    .and_then(Value::as_str)
+                    .filter(|s| *s != "SUCCEEDED")
+                {
+                    let code = poll_json
+                        .pointer("/output/results/0/code")
+                        .and_then(Value::as_str)
+                        .unwrap_or(sub_status);
+                    let safe_code: String = code
+                        .chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .take(64)
+                        .collect();
+                    return Err(format!("Qwen 异步转写子任务失败（{safe_code}）；未自动重试"));
+                }
                 let url = [
                     "/output/result/transcription_url",
                     "/output/results/0/transcription_url",
@@ -589,10 +622,15 @@ pub(super) async fn transcribe_qwen_filetrans(
                 .ok_or("Qwen 异步转写已完成，但未返回结果链接")?;
                 break url.to_owned();
             }
-            Some("FAILED" | "CANCELED") => {
+            Some("FAILED" | "CANCELED" | "UNKNOWN") => {
                 let code = poll_json
                     .pointer("/output/code")
                     .and_then(Value::as_str)
+                    .or_else(|| {
+                        poll_json
+                            .pointer("/output/task_status")
+                            .and_then(Value::as_str)
+                    })
                     .unwrap_or("Failed");
                 let safe_code: String = code
                     .chars()
@@ -601,14 +639,25 @@ pub(super) async fn transcribe_qwen_filetrans(
                     .collect();
                 return Err(format!("Qwen 异步转写失败（{safe_code}）；未自动重试"));
             }
-            _ => {}
+            Some("PENDING" | "RUNNING") => {}
+            other => {
+                let safe_status: String = other
+                    .unwrap_or("Unknown")
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .take(32)
+                    .collect();
+                return Err(format!(
+                    "Qwen 异步转写返回异常状态（{safe_status}）；未自动重试"
+                ));
+            }
         }
     };
 
     // Step 5: Download final transcription JSON from OSS result URL (no Bearer header).
-    let _ = validate_remote_http_url(&transcription_url)?;
+    let validated_result_url = validate_remote_http_url(&transcription_url, allow_loopback_http)?;
     let dl_resp = client
-        .get(&transcription_url)
+        .get(validated_result_url)
         .send()
         .await
         .map_err(|_| "下载 Qwen 异步转写结果失败；未自动重试")?;
@@ -696,5 +745,13 @@ mod tests {
         assert_eq!(chunks[1].0, chunks[0].1);
         assert_eq!(chunks[1].1, 150_000);
         assert_eq!(chunks[0].2.len() + chunks[1].2.len(), pcm.len());
+    }
+
+    #[test]
+    fn remote_url_validator_blocks_loopback_when_endpoint_is_remote_https() {
+        assert!(validate_remote_http_url("https://oss.aliyuncs.com/path/result.json", false).is_ok());
+        assert!(validate_remote_http_url("http://127.0.0.1:8080/ssrf", false).is_err());
+        assert!(validate_remote_http_url("https://localhost/ssrf", false).is_err());
+        assert!(validate_remote_http_url("http://127.0.0.1:8080/mock", true).is_ok());
     }
 }

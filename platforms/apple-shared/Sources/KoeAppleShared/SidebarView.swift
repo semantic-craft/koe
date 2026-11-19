@@ -47,6 +47,11 @@ public struct SidebarView: View {
         .padding(12)
         .frame(width: 196)
         .background(AppColors.bgPanel)
+        .onChange(of: store.updatePopoverRequestCount) { _, newValue in
+            if newValue > 0 {
+                showUpdatePopover = true
+            }
+        }
     }
 
     private func brandHeader(_ sidebar: SidebarSlice) -> some View {

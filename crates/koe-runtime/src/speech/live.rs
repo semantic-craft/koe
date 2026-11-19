@@ -163,8 +163,10 @@ impl KoeRuntime {
                 }
             }
             if s.saved && s.terminal && s.deferred_batch {
-                self.auto_transcribe.insert(id.clone());
-                changed = true;
+                if recording_assets::audio_path(&self.root, id).is_ok_and(|p| p.exists()) {
+                    self.auto_transcribe.insert(id.clone());
+                    changed = true;
+                }
             } else if s.saved && s.terminal && s.success {
                 self.auto_summarize.insert(id.clone());
             }

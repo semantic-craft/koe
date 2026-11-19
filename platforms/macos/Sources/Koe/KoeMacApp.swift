@@ -343,9 +343,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             activeStore.send(.checkAppUpdate)
             return
         }
-        if activeStore.navigation.section != "settings" {
-            activeStore.send(.navigate(section: "settings"))
-        }
+        activeStore.requestUpdatePopoverPresentation()
         activeStore.send(.checkAppUpdate)
     }
     @objc public func checkForUpdatesFromMenu() {

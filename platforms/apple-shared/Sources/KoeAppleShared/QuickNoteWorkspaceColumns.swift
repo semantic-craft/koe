@@ -218,7 +218,7 @@ struct QuickNoteCardInspectorView: View {
                             .background(AppColors.bgPanel, in: RoundedRectangle(cornerRadius: AppRadii.control))
                         }
                     } else if card.gist == nil {
-                        Text(card.canSummarize ? "尚未生成 AI 理解，原文已完整保留。" : "在设置中配置文本服务后可生成 AI 理解。")
+                        Text(card.canSummarize ? "尚未生成 AI 理解，原文已完整保留。" : "在模型设置中配置文本服务后可生成 AI 理解。")
                             .font(.system(size: AppFontSizes.xs))
                             .foregroundStyle(AppColors.textMuted)
                     }

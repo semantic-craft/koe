@@ -148,7 +148,7 @@ impl KoeRuntime {
                                 self.save_credential_slot(
                                     configuration,
                                     CredentialSlot::Qwen,
-                                    key,
+                                    key.trim(),
                                 )?;
                                 None
                             }
@@ -203,20 +203,35 @@ impl KoeRuntime {
                 .chain(&configuration.pending_credentials)
                 .next()
                 .cloned();
-            let target = match (&configuration.credential, &configuration.deepseek_credential) {
-                (CredentialBinding::Saved(reference), _) if self.settings.unavailable => {
-                    Some(Some(reference.clone()))
+            let mut targets: Vec<Option<String>> = Vec::new();
+            if self.settings.unavailable {
+                if let CredentialBinding::Saved(reference) = &configuration.credential {
+                    targets.push(Some(reference.clone()));
                 }
-                (_, CredentialBinding::Saved(reference)) if self.settings.deepseek_unavailable => {
-                    Some(Some(reference.clone()))
+            }
+            if self.settings.deepseek_unavailable {
+                if let CredentialBinding::Saved(reference) = &configuration.deepseek_credential {
+                    targets.push(Some(reference.clone()));
                 }
-                _ if reclaimable.is_some() => Some(reclaimable.clone()),
-                (CredentialBinding::Saved(reference), _) => Some(Some(reference.clone())),
-                (_, CredentialBinding::Saved(reference)) => Some(Some(reference.clone())),
-                (CredentialBinding::Uninitialized, _) => Some(None),
-                (CredentialBinding::Cleared, _) => None,
-            };
-            if let Some(reference) = target {
+            }
+            if targets.is_empty() {
+                if let Some(ref rec) = reclaimable {
+                    targets.push(Some(rec.clone()));
+                } else {
+                    if let CredentialBinding::Saved(reference) = &configuration.credential {
+                        targets.push(Some(reference.clone()));
+                    }
+                    if let CredentialBinding::Saved(reference) = &configuration.deepseek_credential {
+                        targets.push(Some(reference.clone()));
+                    }
+                    if targets.is_empty()
+                        && matches!(configuration.credential, CredentialBinding::Uninitialized)
+                    {
+                        targets.push(None);
+                    }
+                }
+            }
+            for reference in targets {
                 if self.credentials.authorize(reference.as_deref()).is_err() {
                     if reference.is_none() || reference != reclaimable {
                         self.settings.key.clear();
@@ -251,8 +266,8 @@ impl KoeRuntime {
         let asr_model_explicit = params.asr_model.is_some();
         if let Some(raw_model) = params.asr_model {
             configuration.asr_model = raw_model.trim().into();
-        } else if asr_provider_explicit
-            && configuration.asr_provider == CloudAsrProvider::Qwen
+        }
+        if configuration.asr_provider == CloudAsrProvider::Qwen
             && configuration.asr_model.trim().is_empty()
         {
             configuration.asr_model = DEFAULT_ASR_MODEL.into();
@@ -277,7 +292,10 @@ impl KoeRuntime {
                     &configuration.qwen_workspace_id,
                 )
             } else {
-                if !asr_provider_explicit && trimmed.contains("api.deepseek.com") {
+                if !asr_provider_explicit
+                    && ProviderConfiguration::infer_asr_provider(trimmed)
+                        == CloudAsrProvider::DeepSeek
+                {
                     configuration.asr_provider = CloudAsrProvider::DeepSeek;
                 }
                 trimmed.into()
@@ -293,21 +311,20 @@ impl KoeRuntime {
         if let Some(endpoint) = params.chat_endpoint {
             let trimmed = endpoint.trim();
             configuration.chat_endpoint = if trimmed.is_empty() {
+                if configuration.llm_provider == LlmProvider::Custom {
+                    if llm_provider_explicit {
+                        return Err("使用自定义兼容服务时，请填写对话接口地址。".into());
+                    }
+                    configuration.llm_provider = LlmProvider::Qwen;
+                }
                 ProviderConfiguration::default_chat_endpoint(
                     configuration.llm_provider,
                     &configuration.qwen_workspace_id,
                 )
             } else {
                 if !llm_provider_explicit {
-                    if trimmed.contains("api.deepseek.com") {
-                        configuration.llm_provider = LlmProvider::DeepSeek;
-                    } else if trimmed.contains("dashscope.aliyuncs.com")
-                        || trimmed.contains(".maas.aliyuncs.com")
-                    {
-                        configuration.llm_provider = LlmProvider::Qwen;
-                    } else {
-                        configuration.llm_provider = LlmProvider::Custom;
-                    }
+                    configuration.llm_provider =
+                        ProviderConfiguration::infer_llm_provider(trimmed);
                 }
                 trimmed.into()
             };

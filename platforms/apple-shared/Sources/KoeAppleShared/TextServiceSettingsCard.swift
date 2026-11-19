@@ -14,7 +14,10 @@ struct TextServiceSettingsCard: View {
                         .font(.system(size: AppFontSizes.md, weight: .medium))
                     KoeBadge(provider.configured ? "已就绪" : "未配置", tint: provider.configured ? AppColors.success : AppColors.textMuted)
                     Spacer()
-                    Picker("LLM 服务商", selection: $draft.llmProvider) {
+                    Picker("LLM 服务商", selection: Binding(
+                        get: { draft.llmProvider },
+                        set: { draft.selectLlmProvider($0) }
+                    )) {
                         Text("Qwen（阿里云百炼）").tag("qwen")
                         Text("DeepSeek（官方）").tag("deepseek")
                         Text("自定义兼容").tag("custom")
@@ -41,14 +44,25 @@ struct TextServiceSettingsCard: View {
                         }
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("自定义模型名称（Model ID）")
-                            .font(.system(size: AppFontSizes.xs))
-                            .foregroundStyle(AppColors.textSecondary)
-                        TextField("例如：qwen3.8-27b 或本机 Ollama 模型名", text: $draft.customLlmModel)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: AppFontSizes.xs, design: .monospaced))
-                            .onSubmit { onSave() }
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("自定义模型名称（Model ID）")
+                                .font(.system(size: AppFontSizes.xs))
+                                .foregroundStyle(AppColors.textSecondary)
+                            TextField("例如：qwen3.8-27b 或本机 Ollama 模型名", text: $draft.customLlmModel)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                                .onSubmit { onSave() }
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("对话接口地址（支持 http://127.0.0.1）")
+                                .font(.system(size: AppFontSizes.xs))
+                                .foregroundStyle(AppColors.textSecondary)
+                            TextField("https://your-host/v1/chat/completions", text: $draft.customChatEndpoint)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                                .onSubmit { onSave() }
+                        }
                     }
                 }
 

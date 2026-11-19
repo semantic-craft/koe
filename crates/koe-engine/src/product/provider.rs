@@ -240,6 +240,34 @@ impl ProviderConfiguration {
         }
     }
 
+    /// Infers the cloud ASR provider from an endpoint's authority host.
+    #[must_use]
+    pub fn infer_asr_provider(endpoint: &str) -> CloudAsrProvider {
+        match endpoint_host(endpoint) {
+            Some(host) if host.eq_ignore_ascii_case("api.deepseek.com") => {
+                CloudAsrProvider::DeepSeek
+            }
+            _ => CloudAsrProvider::Qwen,
+        }
+    }
+
+    /// Infers the LLM provider from an endpoint's authority host.
+    #[must_use]
+    pub fn infer_llm_provider(endpoint: &str) -> LlmProvider {
+        match endpoint_host(endpoint) {
+            Some(host) if host.eq_ignore_ascii_case("api.deepseek.com") => LlmProvider::DeepSeek,
+            Some(host)
+                if host.eq_ignore_ascii_case("dashscope.aliyuncs.com")
+                    || host
+                        .to_ascii_lowercase()
+                        .ends_with(".maas.aliyuncs.com") =>
+            {
+                LlmProvider::Qwen
+            }
+            _ => LlmProvider::Custom,
+        }
+    }
+
     /// Whether the configured cloud ASR model supports real-time WebSocket streaming captions.
     #[must_use]
     pub fn is_realtime_cloud_asr(&self) -> bool {
@@ -301,6 +329,19 @@ pub fn valid_reference(value: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || c == b'-')
 }
+fn endpoint_host(endpoint: &str) -> Option<&str> {
+    let trimmed = endpoint.trim();
+    let (_, rest) = trimmed.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host_port = authority.rsplit('@').next()?;
+    if host_port.starts_with('[') {
+        host_port.split(']').next().map(|h| h.trim_start_matches('['))
+    } else {
+        host_port.split(':').next()
+    }
+    .filter(|h| !h.is_empty())
+}
+
 fn safe_endpoint(value: &str, schemes: &[&str]) -> bool {
     value.len() <= 2048
         && !value.chars().any(|c| c.is_whitespace() || c.is_control())
@@ -324,5 +365,44 @@ impl ProductWorkspace {
             self.changed();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_inference_matches_authority_host_only() {
+        assert_eq!(
+            ProviderConfiguration::infer_asr_provider("https://api.deepseek.com/v1/tools/asr"),
+            CloudAsrProvider::DeepSeek
+        );
+        assert_eq!(
+            ProviderConfiguration::infer_asr_provider("https://evil.example/api.deepseek.com/asr"),
+            CloudAsrProvider::Qwen
+        );
+        assert_eq!(
+            ProviderConfiguration::infer_llm_provider("https://api.deepseek.com/chat/completions"),
+            LlmProvider::DeepSeek
+        );
+        assert_eq!(
+            ProviderConfiguration::infer_llm_provider(
+                "https://ws-bj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+            ),
+            LlmProvider::Qwen
+        );
+        assert_eq!(
+            ProviderConfiguration::infer_llm_provider(
+                "https://evil.example/api.deepseek.com/chat/completions"
+            ),
+            LlmProvider::Custom
+        );
+        assert_eq!(
+            ProviderConfiguration::infer_llm_provider(
+                "https://evil.example/dashscope.aliyuncs.com/chat/completions"
+            ),
+            LlmProvider::Custom
+        );
     }
 }
