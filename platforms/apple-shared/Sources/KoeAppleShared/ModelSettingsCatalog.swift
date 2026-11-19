@@ -60,11 +60,18 @@ enum ModelSettingsCatalog {
 
     static let qwenLlmModels: [LlmModelOption] = [
         LlmModelOption(
-            id: "qwen3.7-plus",
-            primaryBadge: "均衡推荐",
+            id: "qwen3.8-flash",
+            primaryBadge: "默认推荐",
             primaryBadgeRecommended: true,
             metaBadges: ["1M / 128K"],
-            description: "百炼官方主推均衡档，替代旧版 qwen-plus，兼顾纪要质量、速度与成本。"
+            description: "最新 Flash 系列，响应最快、单价最低，兼顾实时纪要、高频随心闪记与问答体验。"
+        ),
+        LlmModelOption(
+            id: "qwen3.7-plus",
+            primaryBadge: "均衡档",
+            primaryBadgeRecommended: false,
+            metaBadges: ["1M / 128K"],
+            description: "百炼官方均衡档，替代旧版 qwen-plus，兼顾纪要质量与成本。"
         ),
         LlmModelOption(
             id: "qwen4-max",
@@ -72,13 +79,6 @@ enum ModelSettingsCatalog {
             primaryBadgeRecommended: false,
             metaBadges: ["1M / 262K"],
             description: "通义千问新一代旗舰模型，适合复杂会议纪要、多记录综合问答与长文梳理。"
-        ),
-        LlmModelOption(
-            id: "qwen3.8-flash",
-            primaryBadge: "极速低成本",
-            primaryBadgeRecommended: false,
-            metaBadges: ["1M / 128K"],
-            description: "最新 Flash 系列，响应最快、单价最低，适合高频随心闪记与实时草稿。"
         )
     ]
 
@@ -118,7 +118,7 @@ struct ModelSettingsDraft: Equatable {
     var asrProvider = "qwen"
     var qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
     var llmProvider = "qwen"
-    var qwenLlmModel = "qwen3.7-plus"
+    var qwenLlmModel = "qwen3.8-flash"
     var deepseekLlmModel = "deepseek-flash"
     var customLlmModel = ""
     var enableThinking = false
@@ -137,7 +137,7 @@ struct ModelSettingsDraft: Equatable {
         } else if provider.llmProvider == "custom" {
             customLlmModel = provider.model
         } else {
-            qwenLlmModel = provider.model.isEmpty ? "qwen3.7-plus" : provider.model
+            qwenLlmModel = provider.model.isEmpty ? "qwen3.8-flash" : provider.model
         }
         enableThinking = provider.enableThinking
 
@@ -159,7 +159,7 @@ struct ModelSettingsDraft: Equatable {
 
     var resolvedLlmModelForSave: String {
         switch llmProvider {
-        case "qwen": qwenLlmModel.isEmpty ? "qwen3.7-plus" : qwenLlmModel
+        case "qwen": qwenLlmModel.isEmpty ? "qwen3.8-flash" : qwenLlmModel
         case "deepseek": deepseekLlmModel.isEmpty ? "deepseek-flash" : deepseekLlmModel
         default: customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -220,7 +220,7 @@ struct ModelSettingsDraft: Equatable {
             asrProvider = "qwen"
             qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
             llmProvider = "qwen"
-            qwenLlmModel = "qwen3.7-plus"
+            qwenLlmModel = "qwen3.8-flash"
         }
     }
 

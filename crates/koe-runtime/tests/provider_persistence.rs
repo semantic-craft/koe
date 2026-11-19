@@ -697,7 +697,7 @@ fn dual_provider_credentials_and_hybrid_qwen_deepseek_config_persist_independent
 
     // Default model is latest Qwen 3.7 Plus (not legacy qwen-plus)
     let initial = runtime.snapshot(100);
-    assert_eq!(initial["provider"]["model"], "qwen3.7-plus");
+    assert_eq!(initial["provider"]["model"], "qwen3.8-flash");
     assert_eq!(initial["provider"]["asrModel"], "qwen-audio-3.1-asr-flash-streaming");
     assert_eq!(initial["provider"]["asrProvider"], "qwen");
     assert_eq!(initial["provider"]["llmProvider"], "qwen");

@@ -18,7 +18,7 @@ pub const DEFAULT_DEEPSEEK_ASR_URL: &str = "https://api.deepseek.com/v1/tools/as
 /// Default real-time streaming ASR model identifier.
 pub const DEFAULT_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
 /// Default Qwen text generation and summarization model identifier.
-pub const DEFAULT_TEXT_MODEL: &str = "qwen3.7-plus";
+pub const DEFAULT_TEXT_MODEL: &str = "qwen3.8-flash";
 /// Default DeepSeek text generation and summarization model identifier.
 pub const DEFAULT_DEEPSEEK_TEXT_MODEL: &str = "deepseek-flash";
 /// Qwen non-realtime synchronous ASR model identifier (<= 5 min, diarization).

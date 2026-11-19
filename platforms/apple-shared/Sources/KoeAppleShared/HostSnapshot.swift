@@ -283,7 +283,7 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
         asrProvider: "qwen",
         asrModel: "qwen-audio-3.1-asr-flash-streaming",
         llmProvider: "qwen",
-        model: "qwen3.7-plus",
+        model: "qwen3.8-flash",
         enableThinking: false,
         qwenWorkspaceId: "",
         asrEndpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
