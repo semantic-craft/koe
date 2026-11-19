@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-19T03:20:46.480761Z</p>
-<p>Main: <code>main: 6cb47c642be6d60c8da48a587fbc14f150d457ca</code></p>
+<p>Observed: 2026-11-19T04:41:40.301491Z</p>
+<p>Main: <code>main: 170d6f4a1032556649493aa3ad52b7d0a61bead0</code></p>
 <section id="mode-workspaces-definition"><h2>三模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>三种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -301,10 +301,11 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/755">pull 755: 2.4.0（构建 13）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（f87a1ec）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/releases/v2.4.0.md">file docs/releases/v2.4.0.md: 2.4.0 发行说明与验收边界。</a></li>
 </ul><p>Next: 本机 /Applications/Koe.app 已替换为 2.4.0（构建 13）并通过自动验收；继续推进后续迭代。</p></article>
-<article id="model-settings-and-recording-management"><h3>模型设置重构、独立录音管理与录音豆状态弹层</h3><span class="badge">unverified</span><p>已将原设置拆分为「模型设置」（支持阿里云百炼 Qwen 与 DeepSeek 官方双钥匙串独立凭证、快捷组合与跨服务商混搭；ASR 覆盖 Qwen-Audio 3.1 四款最新模型含说话人分离及 DeepSeek /v1/tools/asr 超 120s 静音切段拼接；LLM 升级为 qwen3.7-plus / qwen4-max / qwen3.8-flash 与 deepseek-flash / deepseek-v4-pro 并支持深度思考开关）、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，版本检查收口至侧栏顶部版本胶囊弹层；7 个 Qwen 最新模型已完成北京 DashScope 实网实测，本机公证版 /Applications/Koe.app（v2.5.0 构建 14）已完成替换安装并实机确认 Qwen 钥匙串静默继承、录音豆双电量自动重连（100%/100%）与本机 139 条音频目录统计，剩余 DeepSeek 线上实网、GUI 巡检与 D3200 -filetrans 验收继续按 #757 推进。</p><ul>
+<article id="model-settings-and-recording-management"><h3>模型设置重构、独立录音管理与录音豆状态弹层</h3><span class="badge">unverified</span><p>已将原设置拆分为「模型设置」、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，并将版本检查收口至侧栏顶部版本胶囊弹层；#763 进一步收口模型分工——文本处理默认采用 DeepSeek 4.1 Flash（deepseek-flash）并由 DeepSeek（+ 自定义兼容）承担，Qwen 专注主力 ASR（Qwen-Audio 3.1 四款模型含实时流式与说话人分离），同时保留 DeepSeek 次选 ASR（超 120s 自动静音切片），旧 Qwen LLM 工作区自动无损迁移至 DeepSeek 并保留 Qwen ASR 与业务空间 ID。本地全量门禁（55 条 Python 契约测试、94 文件 UI 原则 0 违规、Rust/Swift 全量测试）与远端 CI 均通过；真机升级迁移、DeepSeek 实网与物理 D3200 验收继续按 #757 推进。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/758">pull 758: 重构模型设置（Qwen 最新版与 DeepSeek 官方 ASR/LLM）、独立录音管理页、侧栏底栏录音豆状态弹层与版本胶囊更新弹层，已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（92fa0d6）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/763">pull 763: 收口模型分工：默认文本模型切换为 DeepSeek 4.1 Flash（deepseek-flash）、Qwen 仅保留主力 ASR、保留 DeepSeek 次选 ASR，并补齐旧工作区自动迁移、双槽凭据隔离与 run-with-secrets.py 转发，已通过 CI 并 squash 合入 main（170d6f4）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/757">issue 757: 签名版 Koe.app 窗口巡检、双钥匙串继承、DeepSeek 实网调用与物理 D3200 离线文件 -filetrans 异步转写真机验收工单。</a></li>
-</ul><p>Next: 按 #757 完成最小窗口 GUI 巡检、模型设置内一键切换至 qwen3.7-plus 或配置 DeepSeek 实网调用，以及物理 D3200 离线文件 -filetrans 异步转写验收。</p></article>
+</ul><p>Next: 按 #757 安装包含 #763 的新签名版并验证从 v2.5.0 自动迁移至 DeepSeek 4.1 Flash、DeepSeek 官方实网调用（deepseek-flash / deepseek-v4-pro / /v1/tools/asr）、最小窗口 GUI 巡检及物理 D3200 离线文件 -filetrans 异步转写。</p></article>
 <article id="private-release-250"><h3>Koe 2.5.0 私有发行包与本机公证升级</h3><span class="badge">done</span><p>2026-11-19 已在私有仓库发布经 xw-notary 完成 Apple 公证（提交 5acc5043-828a-452d-b539-776d29ade97c Accepted）并装订票据的 v2.5.0（构建 14，tag 指向 6cb47c6）发行包，提供 arm64 zip（sha256 b8d9bf3683d166eff55a9fe0eedc240b8406045623caaca7ad18c3c120929625，7993883 bytes）、SHA256SUMS.txt 与无秘密验收回执；解压包及替换安装的 /Applications/Koe.app 均已通过 codesign、xcrun stapler validate、spctl（source=Notarized Developer ID）、--verify-self 与 --smoke-test，并已启动实机验证 2.5.0 (14) 凭据继承与录音豆重连。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.5.0">release v2.5.0: 私有 GitHub Release v2.5.0（6cb47c6）已上传经 xw-notary 公证（5acc5043-828a-452d-b539-776d29ade97c Accepted）的 Koe-2.5.0-macos-arm64.zip、SHA256SUMS.txt 与 Koe-2.5.0-release-receipt.json。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/760">pull 760: 2.5.0（构建 14）发版准备 PR 已通过本地 ./scripts/check 与远端 CI 并 squash 合并进 main（6cb47c6）。</a></li>

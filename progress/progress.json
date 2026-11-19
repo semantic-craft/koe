@@ -312,10 +312,10 @@
         "number": 757,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-19T01:50:49Z"
+        "updated_at": "2026-11-19T04:35:12Z"
       }
     ],
-    "main": "6cb47c642be6d60c8da48a587fbc14f150d457ca",
+    "main": "170d6f4a1032556649493aa3ad52b7d0a61bead0",
     "open_pulls": [],
     "pulls": [
       {
@@ -925,6 +925,30 @@
         "merged": true,
         "number": 760,
         "state": "closed"
+      },
+      {
+        "base": "6cb47c642be6d60c8da48a587fbc14f150d457ca",
+        "head": "3a74486deaae34555c0b4d4b5880566124304ad8",
+        "merge_commit": "c122546505648edc402e89451aa000d0d0b1bff2",
+        "merged": true,
+        "number": 761,
+        "state": "closed"
+      },
+      {
+        "base": "c122546505648edc402e89451aa000d0d0b1bff2",
+        "head": "24c7badb12f08ed3b01c34546740bc2a7a5722a5",
+        "merge_commit": "da10100c1d9fdbf94bbdb657b7d153b849965ac0",
+        "merged": true,
+        "number": 762,
+        "state": "closed"
+      },
+      {
+        "base": "da10100c1d9fdbf94bbdb657b7d153b849965ac0",
+        "head": "a2c990fd80eafbe8080a7b8a2c2f34ae980769c1",
+        "merge_commit": "170d6f4a1032556649493aa3ad52b7d0a61bead0",
+        "merged": true,
+        "number": 763,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -973,7 +997,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-19T03:20:46.480761Z",
+  "observed_at": "2026-11-19T04:41:40.301491Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2421,15 +2445,20 @@
               "ref": 758
             },
             {
+              "kind": "pull",
+              "note": "收口模型分工：默认文本模型切换为 DeepSeek 4.1 Flash（deepseek-flash）、Qwen 仅保留主力 ASR、保留 DeepSeek 次选 ASR，并补齐旧工作区自动迁移、双槽凭据隔离与 run-with-secrets.py 转发，已通过 CI 并 squash 合入 main（170d6f4）。",
+              "ref": 763
+            },
+            {
               "kind": "issue",
               "note": "签名版 Koe.app 窗口巡检、双钥匙串继承、DeepSeek 实网调用与物理 D3200 离线文件 -filetrans 异步转写真机验收工单。",
               "ref": 757
             }
           ],
           "id": "model-settings-and-recording-management",
-          "next": "按 #757 完成最小窗口 GUI 巡检、模型设置内一键切换至 qwen3.7-plus 或配置 DeepSeek 实网调用，以及物理 D3200 离线文件 -filetrans 异步转写验收。",
+          "next": "按 #757 安装包含 #763 的新签名版并验证从 v2.5.0 自动迁移至 DeepSeek 4.1 Flash、DeepSeek 官方实网调用（deepseek-flash / deepseek-v4-pro / /v1/tools/asr）、最小窗口 GUI 巡检及物理 D3200 离线文件 -filetrans 异步转写。",
           "status": "unverified",
-          "summary": "已将原设置拆分为「模型设置」（支持阿里云百炼 Qwen 与 DeepSeek 官方双钥匙串独立凭证、快捷组合与跨服务商混搭；ASR 覆盖 Qwen-Audio 3.1 四款最新模型含说话人分离及 DeepSeek /v1/tools/asr 超 120s 静音切段拼接；LLM 升级为 qwen3.7-plus / qwen4-max / qwen3.8-flash 与 deepseek-flash / deepseek-v4-pro 并支持深度思考开关）、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，版本检查收口至侧栏顶部版本胶囊弹层；7 个 Qwen 最新模型已完成北京 DashScope 实网实测，本机公证版 /Applications/Koe.app（v2.5.0 构建 14）已完成替换安装并实机确认 Qwen 钥匙串静默继承、录音豆双电量自动重连（100%/100%）与本机 139 条音频目录统计，剩余 DeepSeek 线上实网、GUI 巡检与 D3200 -filetrans 验收继续按 #757 推进。",
+          "summary": "已将原设置拆分为「模型设置」、独立顶级页「录音管理」与侧栏底栏录音豆常驻状态弹层，并将版本检查收口至侧栏顶部版本胶囊弹层；#763 进一步收口模型分工——文本处理默认采用 DeepSeek 4.1 Flash（deepseek-flash）并由 DeepSeek（+ 自定义兼容）承担，Qwen 专注主力 ASR（Qwen-Audio 3.1 四款模型含实时流式与说话人分离），同时保留 DeepSeek 次选 ASR（超 120s 自动静音切片），旧 Qwen LLM 工作区自动无损迁移至 DeepSeek 并保留 Qwen ASR 与业务空间 ID。本地全量门禁（55 条 Python 契约测试、94 文件 UI 原则 0 违规、Rust/Swift 全量测试）与远端 CI 均通过；真机升级迁移、DeepSeek 实网与物理 D3200 验收继续按 #757 推进。",
           "title": "模型设置重构、独立录音管理与录音豆状态弹层"
         },
         {
@@ -2612,7 +2641,10 @@
       756,
       758,
       759,
-      760
+      760,
+      761,
+      762,
+      763
     ]
   }
 }
