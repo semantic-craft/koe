@@ -324,10 +324,10 @@
         "number": 777,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-20T04:17:48Z"
+        "updated_at": "2026-11-20T15:04:03Z"
       }
     ],
-    "main": "6c139adf3683b88f984de20dbaaf7d9131acc300",
+    "main": "ea1e9aaebd726203e2388a36e9f7d7c5dc662ed9",
     "open_pulls": [],
     "pulls": [
       {
@@ -1049,6 +1049,54 @@
         "merged": true,
         "number": 778,
         "state": "closed"
+      },
+      {
+        "base": "6c139adf3683b88f984de20dbaaf7d9131acc300",
+        "head": "cd89e4b654a20ace3dc892ceb03f9ba562102218",
+        "merge_commit": "cebd38b5c0b5e7f34b5c96a2cf8011a6acee5047",
+        "merged": true,
+        "number": 779,
+        "state": "closed"
+      },
+      {
+        "base": "cebd38b5c0b5e7f34b5c96a2cf8011a6acee5047",
+        "head": "ab90ce2f675f243f6b61bdf5ebb32b3cc8ff8815",
+        "merge_commit": "1acd6275c1098d71bb3192d327a281e9f05cd4dc",
+        "merged": true,
+        "number": 780,
+        "state": "closed"
+      },
+      {
+        "base": "1acd6275c1098d71bb3192d327a281e9f05cd4dc",
+        "head": "342cc37fabe73ca9bfd71f6b65d8041112545094",
+        "merge_commit": "2a15f7457454e4494c4358b29aa25634ef8381c0",
+        "merged": true,
+        "number": 781,
+        "state": "closed"
+      },
+      {
+        "base": "2a15f7457454e4494c4358b29aa25634ef8381c0",
+        "head": "08843c687a708dc0e4c6a201c49dee6f02b09259",
+        "merge_commit": "a820e4add3bb2d7fc8664d668f739b0e6e65f3e1",
+        "merged": true,
+        "number": 782,
+        "state": "closed"
+      },
+      {
+        "base": "a820e4add3bb2d7fc8664d668f739b0e6e65f3e1",
+        "head": "49fa2c1d42186ecf1ed2d2360c60f775ff165773",
+        "merge_commit": "554087f802a1d41d22dcd1336a0b23abff4de9fc",
+        "merged": true,
+        "number": 783,
+        "state": "closed"
+      },
+      {
+        "base": "554087f802a1d41d22dcd1336a0b23abff4de9fc",
+        "head": "683a2d260b1c79323b3277e48c8b395f0a667e0e",
+        "merge_commit": "ea1e9aaebd726203e2388a36e9f7d7c5dc662ed9",
+        "merged": true,
+        "number": 784,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -1104,7 +1152,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-20T09:37:28.655029Z",
+  "observed_at": "2026-11-20T15:11:18.849349Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2790,10 +2838,79 @@
             }
           ],
           "id": "android-compose-skeleton",
-          "next": "优先推进 Android 系统与硬件适配器（定时轮询循环与 KoeCaptureForegroundService、AudioRecord 与 AudioFocus、真实回放、D3200 BLE GATT、SAF 导入导出、设置编辑表单），并按 #777 完成物理 Android 15/16 真机验收。",
-          "status": "in_progress",
-          "summary": "PR #778（6c139ad）已合并主线，完成 Android Gradle 8.11.1 与 Kotlin Jetpack Compose M3 4-Tab 骨架。工程配置 compileSdk 36、minSdk 29、关闭 jniLibs 压缩打包（APK 内未压缩 16 KB 对齐）、严格 NewApi/InlinedApi Release Lint 以及 github/play 双渠道。本次统一 KoeNativeBridge.java 为单一原件，新增零 Compose 依赖的 com.semanticcraft.koe.core 19 切片 StateFlow 状态层与 AndroidCredentials（Keystore AES-256-GCM）、15 份 Compose 视图，并在 verify-ui-principles.py 接入 Kotlin 门禁。本地自动化与模拟器冒烟均已通过。testGithubDebugUnitTest 12/12（含 Robolectric）与 Release Lint 全绿，APK 校验确认 3 个 arm64-v8a .so 均为 ZIP_STORED 且 16 KB 对齐，无头 koe-test-api35 跑通 smoke.sh（活体 Rust 创建 AndroidSmokeNote、fixture 85% 录音豆与 [S1] 弹层、fail-probe 四件取证与真实 host_intent_trace）。尚未实现 KoeCaptureForegroundService、D3200 BLE GATT、AudioRecord 与 AudioFocus、真实回放引擎、SAF 导入导出与设置编辑表单，也未完成物理 Android 15/16 16 KB 页大小与 Release Keystore 验收（#777）及发行。",
+          "next": "Phase 2 骨架已合并，后续原生宿主适配层已由 android-native-adapters 承接，物理 Android 15/16 16 KB 页大小与 Release Keystore 真机验收继续由 #777 追踪。",
+          "status": "done",
+          "summary": "PR #778（6c139ad）已合并主线，完成 Android Gradle 8.11.1 与 Kotlin Jetpack Compose M3 4-Tab 骨架。工程配置 compileSdk 36、minSdk 29、关闭 jniLibs 压缩打包（APK 内未压缩 16 KB 对齐）、严格 NewApi/InlinedApi Release Lint 以及 github/play 双渠道。本次统一 KoeNativeBridge.java 为单一原件，新增零 Compose 依赖的 com.semanticcraft.koe.core 19 切片 StateFlow 状态层与 AndroidCredentials（Keystore AES-256-GCM）、15 份 Compose 视图，并在 verify-ui-principles.py 接入 Kotlin 门禁。本地自动化与模拟器冒烟均已通过。testGithubDebugUnitTest 12/12（含 Robolectric）与 Release Lint 全绿，APK 校验确认 3 个 arm64-v8a .so 均为 ZIP_STORED 且 16 KB 对齐，无头 koe-test-api35 跑通 smoke.sh（活体 Rust 创建 AndroidSmokeNote、fixture 85% 录音豆与 [S1] 弹层、fail-probe 四件取证与真实 host_intent_trace）。本阶段仅含 Gradle/Compose 骨架与模拟器冒烟，后续采集、回放、D3200 BLE GATT、SAF 与设置适配层已转入 android-native-adapters 追踪，物理 Android 15/16 16 KB 页大小与 Release Keystore 验收继续由 #777 追踪。",
           "title": "Android Gradle Compose M3 骨架与模拟器冒烟（Phase 2）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash 1acd627 已合并，落地 4 Hz AndroidHostCoordinator、HostBridgeActions 与可编辑模型/凭据设置页。",
+              "ref": 780
+            },
+            {
+              "kind": "pull",
+              "note": "squash 2a15f74 已合并，落地 AudioRecord 单调时钟采集、AudioFocus、KoeCaptureForegroundService 与 Rust capture_asset.rs Android SELinux 原子写回退修复。",
+              "ref": 781
+            },
+            {
+              "kind": "pull",
+              "note": "squash a820e4a 已合并，落地分段 TimelineWavReader、AudioTrack 流式回放及后台播完或失败即时回调释放 AudioFocus。",
+              "ref": 782
+            },
+            {
+              "kind": "pull",
+              "note": "squash 554087f 已合并，落地 Soundcore Work（D3200）BLE GATT 适配层（单在途写/300 ms 节流/5 s 超时恢复、停录帧串行排空、API 29-36 权限分桶、DeviceSheet 扫描入口与 connect_guide 对齐）。",
+              "ref": 783
+            },
+            {
+              "kind": "pull",
+              "note": "squash ea1e9aa 已合并，落地 SAF content:// 导入导出，108/108 单测、Release Lint、koe-test-api35 smoke.sh 与托管 macos-26 CI 全绿。",
+              "ref": 784
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单，追踪物理 Android 15/16 与 API 29-30 硬件验证（实体 D3200 BLE、真麦克风与扬声器、真实 DocumentsUI 与 Release Keystore）。",
+              "ref": 777
+            },
+            {
+              "kind": "file",
+              "note": "4 Hz 运行时轮询协调器与宿主桥接动作分发实现。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/platform/AndroidHostCoordinator.kt"
+            },
+            {
+              "kind": "file",
+              "note": "AudioRecord 单调时钟采集、AudioFocus 失焦暂停与前台保活协调器。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/platform/capture/AndroidCaptureCoordinator.kt"
+            },
+            {
+              "kind": "file",
+              "note": "分段 TimelineWavReader、AudioTrack 流式回放及后台播完或失败释焦协调器。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/platform/playback/AndroidPlaybackCoordinator.kt"
+            },
+            {
+              "kind": "file",
+              "note": "D3200 BLE GATT 状态机、单在途写队列与 API 29-36 权限防护协调器。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/platform/ble/AndroidBleCoordinator.kt"
+            },
+            {
+              "kind": "file",
+              "note": "SAF content:// 音频与文本导入（256 MiB 上限与源文档 mtime 保留）、单条/当日/目录批量 Markdown 导出及进程重建恢复。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/platform/files/AndroidFileActions.kt"
+            },
+            {
+              "kind": "file",
+              "note": "Android SELinux 拒绝 hard_link 时的原子复制回退保存实现。",
+              "ref": "crates/koe-client-services/src/capture_asset.rs"
+            }
+          ],
+          "id": "android-native-adapters",
+          "next": "按 #777 完成物理 Android 真机与实体 D3200 验收，并推进 Release 签名分发或转向 iOS Phase 3 硬件适配。",
+          "status": "in_progress",
+          "summary": "PR #780 至 #784 已全部合并主线，完成 Android Phase 3A–3E 原生宿主适配层，并在无头模拟器通过端到端冒烟，物理真机硬件验收与签名发行尚未完成。PR #780（1acd627）落地 4 Hz AndroidHostCoordinator、HostBridgeActions 与可编辑模型/凭据设置页。PR #781（2a15f74）落地 AudioRecord 单调时钟采集、AudioFocus、KoeCaptureForegroundService 及 Rust capture_asset.rs Android SELinux 原子写回退修复。PR #782（a820e4a）落地分段 TimelineWavReader、AudioTrack 流式回放及后台播完或失败即时回调释放 AudioFocus。PR #783（554087f）落地 Soundcore Work（D3200）BLE GATT 适配层，包含单在途写、300 ms 节流、5 s 超时恢复、停录帧串行排空、API 29-36 权限分桶、DeviceSheet 扫描入口与 connect_guide 对齐。PR #784（ea1e9aa）落地 SAF content:// 导入导出，支持 256 MiB 上限与源文档 mtime 保留、单条/当日/目录批量 Markdown 导出以及旋转与进程重建 savedInstanceState 恢复。已实测验证包含 21 个测试套件共 108/108 项 JVM/Robolectric 单测、严格 NewApi/InlinedApi Release Lint 零警告、verify-ui-principles.py 169 个文件零违规、无头 koe-test-api35 smoke.sh（live/fixture/fail-probe）通过，以及本机全量 ./scripts/check 与托管 macos-26 CI 全绿。尚未完成物理 Android 15/16 与 API 29-30 真机硬件验收（#777，涵盖实体 D3200 BLE、真麦克风与扬声器、真实 DocumentsUI 与 Release Keystore），也未完成 Release 签名分发。",
+          "title": "Android 原生宿主适配层（Phase 3A–3E：采集、回放、BLE GATT、SAF 与设置）"
         }
       ],
       "title": "移动端原生宿主（iOS 与 Android）"
@@ -2810,9 +2927,9 @@
             }
           ],
           "id": "later-platforms",
-          "next": "先完成移动端硬件适配器与真机验收（#775、#777），再推进跨端直传互通、屏幕采集、Google 写回与 ACP。",
+          "next": "先完成 Android 物理真机验收（#777）、iOS 硬件适配器与真机验收（#775）及移动端签名发行，再推进跨端直传互通、屏幕采集、Google 写回与 ACP。",
           "status": "planned",
-          "summary": "iOS 与 Android 的 Phase 0 至 Phase 2 跨端基础与原生界面骨架已转入「移动端原生宿主（iOS 与 Android）」分组单独追踪，移动端硬件适配器与真机发行仍未完成。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。",
+          "summary": "iOS 与 Android 的 Phase 0 至 Phase 2 跨端基础与原生界面骨架，以及 Android Phase 3A–3E 原生宿主适配层已转入「移动端原生宿主（iOS 与 Android）」分组单独追踪。Android 物理真机验收（#777）、iOS Phase 3 硬件适配器与真机验收（#775）以及移动端签名发行仍未完成。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。",
           "title": "移动端与尚未接入能力"
         }
       ],
@@ -2967,7 +3084,13 @@
       773,
       774,
       776,
-      778
+      778,
+      779,
+      780,
+      781,
+      782,
+      783,
+      784
     ]
   },
   "visibility": "PUBLIC"
