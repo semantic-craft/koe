@@ -42,6 +42,7 @@ class HostSessionStore(
     var nativeError: String? = null
         private set
     var onSnapshotChanged: ((HostSnapshot) -> Unit)? = null
+    var onTraceUpdated: (() -> Unit)? = null
 
     private val _platform = MutableStateFlow(HostPlatformSnapshot.androidDefault)
     val platform: StateFlow<HostPlatformSnapshot> = _platform.asStateFlow()
@@ -148,6 +149,7 @@ class HostSessionStore(
                 setNativeErrorLocked("无法发送这次操作，请重试。")
                 recordTraceLocked(kind = "command", name = command.commandType)
             }
+            onTraceUpdated?.invoke()
             return
         }
         dispatchEncodedJson(json, traceKind = "command", commandType = command.commandType, nowEpochSec = nowEpochSec)
@@ -161,12 +163,31 @@ class HostSessionStore(
                 setNativeErrorLocked("无法发送这次操作，请重试。")
                 recordTraceLocked(kind = "event", name = event.eventType)
             }
+            onTraceUpdated?.invoke()
             return
         }
         dispatchEncodedJson(json, traceKind = "event", commandType = event.eventType, nowEpochSec = nowEpochSec)
     }
 
+    val canReleaseToPhone: Boolean
+        get() = today.value.picker?.canReleaseToPhone ?: (device.value.transferPhase != "pulling_offline")
+
+    fun toggleModeSession(card: ModePickerCardSnapshot) {
+        if (card.isSessionActive) {
+            send(HostCommand.CaptureActionCommand(action = CaptureAction.END))
+        } else {
+            CaptureMode.fromRaw(card.mode)?.let { mode ->
+                send(HostCommand.StartCaptureMode(mode = mode, stayOnPage = true))
+            }
+        }
+    }
+
+    fun performCaptureAction(action: CaptureAction) {
+        send(HostCommand.CaptureActionCommand(action = action))
+    }
+
     fun refreshSnapshot(nowEpochSec: Long = 0L) {
+        var traced = false
         synchronized(stateLock) {
             if (handle == 0L) return
             try {
@@ -179,7 +200,11 @@ class HostSessionStore(
                 applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false)
             } finally {
                 recordTraceLocked(kind = "snapshot", name = "snapshot")
+                traced = true
             }
+        }
+        if (traced) {
+            onTraceUpdated?.invoke()
         }
     }
 
@@ -295,13 +320,15 @@ class HostSessionStore(
 
     fun loadDebugSnapshotFixtureJson(json: String): Boolean {
         if (!allowDebugFixture) return false
-        synchronized(stateLock) {
+        val applied = synchronized(stateLock) {
             try {
-                return applySnapshotJsonLocked(json, projectedNowSec = 0L, resetGate = true)
+                applySnapshotJsonLocked(json, projectedNowSec = 0L, resetGate = true)
             } finally {
                 recordTraceLocked(kind = "fixture", name = "fixture")
             }
         }
+        onTraceUpdated?.invoke()
+        return applied
     }
 
     internal fun applySnapshotJson(json: String, projectedNowSec: Long = 0L): Boolean =
@@ -310,6 +337,7 @@ class HostSessionStore(
         }
 
     private fun dispatchEncodedJson(json: String, traceKind: String, commandType: String, nowEpochSec: Long) {
+        var traced = false
         synchronized(stateLock) {
             if (handle == 0L) return
             try {
@@ -326,7 +354,11 @@ class HostSessionStore(
                 applySnapshotJsonLocked(response, projectedNowSec = effectiveNow, resetGate = false)
             } finally {
                 recordTraceLocked(kind = traceKind, name = commandType)
+                traced = true
             }
+        }
+        if (traced) {
+            onTraceUpdated?.invoke()
         }
     }
 

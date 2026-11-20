@@ -58,7 +58,7 @@ android {
         }
     }
 
-    sourceSets.getByName("main").jniLibs.srcDirs("../../../target/android/jniLibs")
+    sourceSets.getByName("main").jniLibs.srcDirs("../../../../target/android/jniLibs")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

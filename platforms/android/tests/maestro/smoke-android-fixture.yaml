@@ -1,0 +1,29 @@
+appId: com.semanticcraft.koe
+---
+- extendedWaitUntil:
+    visible: ".*85%.*"
+    timeout: 15000
+- assertVisible:
+    id: "active-capture-bar"
+- tapOn:
+    id: "device-status-pill"
+- extendedWaitUntil:
+    visible: "Soundcore Work"
+    timeout: 10000
+- assertVisible: ".*72%.*"
+- assertVisible: "让出控制权"
+- tapOn:
+    id: "device-sheet-close"
+- extendedWaitUntil:
+    notVisible: "让出控制权"
+    timeout: 5000
+- tapOn: "问 AI"
+- extendedWaitUntil:
+    visible: "\\[S1\\]"
+    timeout: 10000
+- tapOn:
+    id: "ask-source-chip-1"
+- extendedWaitUntil:
+    visible: "原文来源"
+    timeout: 10000
+- takeScreenshot: final_screen
