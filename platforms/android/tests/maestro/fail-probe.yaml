@@ -1,0 +1,6 @@
+appId: com.android.settings
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "__KOE_INTENTIONAL_FAILURE_PROBE_NEVER_PRESENT__"
+    timeout: 2000

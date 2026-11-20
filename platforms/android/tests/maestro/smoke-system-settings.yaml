@@ -1,0 +1,7 @@
+appId: com.android.settings
+---
+- launchApp
+- waitForAnimationToEnd
+- assertVisible:
+    text: ".*(Network & internet|Connected devices|Apps|Battery|Storage|Display|Settings).*"
+- takeScreenshot: settings_home
