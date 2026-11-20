@@ -13,6 +13,7 @@ appId: com.semanticcraft.koe
     element:
       id: "mode-switch-notes"
     direction: DOWN
+    centerElement: true
     timeout: 10000
 - tapOn:
     id: "mode-switch-notes"
@@ -94,6 +95,7 @@ appId: com.semanticcraft.koe
     element:
       id: "settings-meeting-audio-switch"
     direction: DOWN
+    centerElement: true
     timeout: 15000
 - tapOn:
     id: "settings-meeting-audio-switch"
@@ -101,6 +103,7 @@ appId: com.semanticcraft.koe
     element:
       id: "settings-save-button"
     direction: DOWN
+    centerElement: true
     timeout: 15000
 - tapOn:
     id: "settings-save-button"
