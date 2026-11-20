@@ -8,32 +8,6 @@ import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
 import com.semanticcraft.koe.platform.AndroidHostAdapter
 import java.util.UUID
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-
-internal class CoroutineDelayScheduler(
-    dispatcher: CoroutineDispatcher = Dispatchers.IO,
-) {
-    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-
-    fun schedule(delayMs: Long, action: () -> Unit): AutoCloseable {
-        val job = scope.launch {
-            delay(delayMs.coerceAtLeast(1L))
-            try {
-                action()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-            }
-        }
-        return AutoCloseable { job.cancel() }
-    }
-}
 
 class AndroidBleCoordinator(
     private val transport: AndroidBleTransport,
@@ -43,6 +17,28 @@ class AndroidBleCoordinator(
     private val scheduleDelayed: (Long, () -> Unit) -> AutoCloseable = CoroutineDelayScheduler()::schedule,
     private val onForegroundRequirementChanged: (Boolean) -> Unit = {},
 ) : AndroidHostAdapter, BleTransportListener {
+    private enum class WriteAction { IGNORE, FINISH_TEARDOWN, PUMP_TEARDOWN, FLUSH, FAIL }
+
+    private class DisconnectState(
+        val store: HostSessionStore?,
+        val wasTeardown: Boolean,
+        val wasScanOnly: Boolean,
+        val shouldEmitDisconnected: Boolean,
+        val previousConnId: String,
+        val previousName: String?,
+        val timers: Pair<AutoCloseable?, AutoCloseable?>,
+    )
+
+    private class SyncState(
+        val store: HostSessionStore?,
+        val teardownInProgress: Boolean,
+        val wasAutoConnectDisabled: Boolean,
+        val hasActiveLink: Boolean,
+        val shouldAutoScan: Boolean,
+        val stopFrames: List<ByteArray>,
+        val mtu: Int,
+    )
+
     private val lock = Any()
     private val outboundQueue = BleOutboundQueue()
     private var boundStore: HostSessionStore? = null
@@ -52,10 +48,13 @@ class AndroidBleCoordinator(
     private var payloadMtu: Int = DEFAULT_PAYLOAD_MTU
     private var isScanRequested: Boolean = false
     private var reportedReady: Boolean = false
+    private var teardownPending: Boolean = false
+    private var teardownEpoch: Long = 0L
     private var permissionRequestInFlight: Boolean = false
     private var lastObservedAutoConnect: Boolean? = null
     private var lastForegroundRequired: Boolean = false
     private var scheduledPump: AutoCloseable? = null
+    private var teardownDeadline: AutoCloseable? = null
     private var pumping: Boolean = false
     private var repumpRequested: Boolean = false
 
@@ -82,15 +81,13 @@ class AndroidBleCoordinator(
 
     override fun onSessionUnbound() {
         val (stopFrames, mtu) = synchronized(lock) {
-            val store = boundStore
-            val frames = if (reportedReady && store != null) decodeStopFrames(store.device.value) else emptyList()
+            val frames = decodeReadyStopFramesLocked(boundStore)
             boundStore = null
             lastObservedAutoConnect = null
             permissionRequestInFlight = false
             frames to payloadMtu
         }
-        writeImmediateFrames(stopFrames, mtu)
-        teardownLocalBleLink()
+        beginTeardown(stopFrames, mtu)
         emitForegroundRequirement(false)
     }
 
@@ -127,22 +124,14 @@ class AndroidBleCoordinator(
     fun disconnect() {
         val (store, stopFrames, mtu) = synchronized(lock) {
             val current = boundStore
-            val frames = if (reportedReady && current != null) {
-                decodeStopFrames(current.device.value)
-            } else {
-                emptyList()
-            }
-            Triple(current, frames, payloadMtu)
+            Triple(current, decodeReadyStopFramesLocked(current), payloadMtu)
         }
-        writeImmediateFrames(stopFrames, mtu)
-        teardownLocalBleLink()
+        beginTeardown(stopFrames, mtu)
         store?.send(HostAdapterEvent.DeviceDisconnect)
     }
 
     fun flushOutboundFrames() {
-        val store = synchronized(lock) {
-            if (reportedReady) boundStore else null
-        } ?: return
+        val store = synchronized(lock) { if (reportedReady) boundStore else null } ?: return
         val frames = store.drainOutboundBleFrames()
         if (frames.isNotEmpty()) {
             synchronized(lock) {
@@ -172,7 +161,7 @@ class AndroidBleCoordinator(
     override fun onLinkReady(address: String, displayName: String, payloadMtu: Int) {
         val readyContext = synchronized(lock) {
             val store = boundStore ?: return
-            if (activeAddress != address || reportedReady) return
+            if (activeAddress != address || reportedReady || teardownPending) return
             if (!store.device.value.autoConnect) {
                 Triple<HostSessionStore, String, String?>(store, "", null)
             } else {
@@ -187,57 +176,58 @@ class AndroidBleCoordinator(
             return
         }
         addressStore.write(address)
-        readyContext.first.send(
-            HostAdapterEvent.DeviceEvent("ready", readyContext.second, readyContext.third),
-        )
+        readyContext.first.send(HostAdapterEvent.DeviceEvent("ready", readyContext.second, readyContext.third))
         flushOutboundFrames()
     }
 
     override fun onWriteCompleted(success: Boolean) {
-        val active = synchronized(lock) {
-            if (!reportedReady) {
-                false
-            } else {
-                outboundQueue.markWriteCompleted()
-                true
+        val action = synchronized(lock) {
+            when {
+                teardownPending -> {
+                    outboundQueue.markWriteCompleted()
+                    if (!success || outboundQueue.isEmpty) WriteAction.FINISH_TEARDOWN else WriteAction.PUMP_TEARDOWN
+                }
+                reportedReady -> {
+                    outboundQueue.markWriteCompleted()
+                    if (success) WriteAction.FLUSH else WriteAction.FAIL
+                }
+                else -> WriteAction.IGNORE
             }
         }
-        if (!active) return
-        if (!success) {
-            transport.disconnect()
-            onDisconnected(ERROR_WRITE_FAILED)
-            return
+        when (action) {
+            WriteAction.IGNORE -> Unit
+            WriteAction.FINISH_TEARDOWN -> teardownLocalBleLink()
+            WriteAction.PUMP_TEARDOWN -> pumpOutboundQueue()
+            WriteAction.FLUSH -> flushOutboundFrames()
+            WriteAction.FAIL -> {
+                transport.disconnect()
+                onDisconnected(ERROR_WRITE_FAILED)
+            }
         }
-        flushOutboundFrames()
     }
 
     override fun onNotifyBytes(bytes: ByteArray) {
-        val store = synchronized(lock) {
-            if (reportedReady) boundStore else null
-        } ?: return
+        val store = synchronized(lock) { if (reportedReady) boundStore else null } ?: return
         store.ingestBleChunk(bytes)
         flushOutboundFrames()
     }
 
     override fun onDisconnected(errorMessage: String?) {
-        val timerToCancel: AutoCloseable?
-        val store: HostSessionStore?
-        val shouldEmitDisconnected: Boolean
-        val previousConnId: String
-        val previousName: String?
-        synchronized(lock) {
-            store = boundStore
-            shouldEmitDisconnected = (activeAddress != null || reportedReady) && connectionId.isNotEmpty()
-            previousConnId = connectionId
-            previousName = discoveredName
-            timerToCancel = resetLinkStateLocked()
+        val state = synchronized(lock) {
+            val wasTeardown = teardownPending
+            val wasScanOnly = !wasTeardown && activeAddress == null && !reportedReady && isScanRequested
+            val emitDisconnected = !wasTeardown && (activeAddress != null || reportedReady) && connectionId.isNotEmpty()
+            DisconnectState(boundStore, wasTeardown, wasScanOnly, emitDisconnected, connectionId, discoveredName, resetLinkStateLocked())
         }
-        timerToCancel?.close()
-        if (shouldEmitDisconnected) {
-            store?.send(HostAdapterEvent.DeviceEvent("disconnected", previousConnId, previousName))
+        state.timers.first?.close()
+        state.timers.second?.close()
+        if (state.shouldEmitDisconnected) {
+            state.store?.send(HostAdapterEvent.DeviceEvent("disconnected", state.previousConnId, state.previousName))
+        } else if (state.wasScanOnly) {
+            state.store?.send(HostAdapterEvent.DeviceDisconnect)
         }
-        if (errorMessage != null) {
-            store?.reportNativeError(errorMessage)
+        if (!state.wasTeardown && errorMessage != null) {
+            state.store?.reportNativeError(errorMessage)
         }
     }
 
@@ -246,54 +236,36 @@ class AndroidBleCoordinator(
             (device.recording || device.transferPhase == "pulling_offline" || device.busy)
         emitForegroundRequirement(foregroundRequired)
 
-        val store: HostSessionStore?
-        val wasAutoConnectDisabled: Boolean
-        val hasActiveLink: Boolean
-        val shouldAutoScan: Boolean
-        val stopFrames: List<ByteArray>
-        val mtu: Int
-        synchronized(lock) {
-            store = boundStore
-            wasAutoConnectDisabled = (lastObservedAutoConnect == false)
+        val state = synchronized(lock) {
+            val wasAutoConnectDisabled = (lastObservedAutoConnect == false)
             lastObservedAutoConnect = device.autoConnect
-            hasActiveLink = reportedReady || isScanRequested || activeAddress != null
-            stopFrames = if (!device.autoConnect && reportedReady) {
-                decodeStopFrames(device)
-            } else {
-                emptyList()
-            }
-            mtu = payloadMtu
-            shouldAutoScan = device.autoConnect &&
-                !device.connected &&
-                device.phase == "disconnected" &&
-                wasAutoConnectDisabled &&
-                !hasActiveLink &&
-                !permissionRequestInFlight
+            val hasActiveLink = reportedReady || isScanRequested || activeAddress != null
+            val stopFrames = if (!device.autoConnect && reportedReady) decodeStopFrames(device) else emptyList()
+            val shouldAutoScan = !teardownPending && device.autoConnect && !device.connected &&
+                device.phase == "disconnected" && wasAutoConnectDisabled && !hasActiveLink && !permissionRequestInFlight
+            SyncState(boundStore, teardownPending, wasAutoConnectDisabled, hasActiveLink, shouldAutoScan, stopFrames, payloadMtu)
         }
 
+        if (state.teardownInProgress) {
+            if (!device.autoConnect) addressStore.clear()
+            return
+        }
         if (!device.autoConnect) {
             addressStore.clear()
-            if (!wasAutoConnectDisabled && hasActiveLink) {
-                writeImmediateFrames(stopFrames, mtu)
-                teardownLocalBleLink()
-                if (device.phase != "disconnected") {
-                    store?.send(HostAdapterEvent.DeviceDisconnect)
-                }
-            } else if (!device.connected && device.phase == "disconnected" && hasActiveLink) {
-                writeImmediateFrames(stopFrames, mtu)
-                teardownLocalBleLink()
+            if (!state.wasAutoConnectDisabled && state.hasActiveLink) {
+                beginTeardown(state.stopFrames, state.mtu)
+                if (device.phase != "disconnected") state.store?.send(HostAdapterEvent.DeviceDisconnect)
+            } else if (!device.connected && device.phase == "disconnected" && state.hasActiveLink) {
+                beginTeardown(state.stopFrames, state.mtu)
             }
             return
         }
-
         if (!device.connected && device.phase == "disconnected") {
             if (synchronized(lock) { reportedReady }) {
                 teardownLocalBleLink()
                 return
             }
-            if (shouldAutoScan) {
-                requestScan()
-            }
+            if (state.shouldAutoScan) requestScan()
         }
     }
 
@@ -314,7 +286,7 @@ class AndroidBleCoordinator(
             BleAdapterState.UNAUTHORIZED -> ERROR_UNAUTHORIZED
         }
         if (adapterError != null) {
-            if (synchronized(lock) { isScanRequested || activeAddress != null || reportedReady }) {
+            if (synchronized(lock) { isScanRequested || activeAddress != null || reportedReady || teardownPending }) {
                 teardownLocalBleLink()
             }
             targetStore.reportNativeError(adapterError)
@@ -325,13 +297,8 @@ class AndroidBleCoordinator(
             flushOutboundFrames()
             return
         }
-        if (synchronized(lock) { isScanRequested && activeAddress == null }) {
-            return
-        }
-        val hadStaleLink = synchronized(lock) { activeAddress != null }
-        if (hadStaleLink) {
-            teardownLocalBleLink()
-        }
+        if (synchronized(lock) { isScanRequested && activeAddress == null }) return
+        if (synchronized(lock) { activeAddress != null || teardownPending }) teardownLocalBleLink()
         val scanConnectionId = UUID.randomUUID().toString()
         synchronized(lock) {
             if (boundStore !== targetStore) return
@@ -346,6 +313,50 @@ class AndroidBleCoordinator(
         transport.startScan(addressStore.read())
     }
 
+    private fun beginTeardown(stopFrames: List<ByteArray>, mtu: Int) {
+        if (stopFrames.isEmpty()) {
+            if (synchronized(lock) { teardownPending }) return
+            teardownLocalBleLink()
+            return
+        }
+        val (shouldStart, epoch, previousDeadline) = synchronized(lock) {
+            if (!reportedReady && !teardownPending) {
+                Triple(false, 0L, null)
+            } else {
+                reportedReady = false
+                isScanRequested = false
+                teardownPending = true
+                teardownEpoch += 1L
+                outboundQueue.replacePendingWithFragmented(stopFrames, mtu)
+                val prev = teardownDeadline
+                teardownDeadline = null
+                Triple(true, teardownEpoch, prev)
+            }
+        }
+        if (!shouldStart) {
+            teardownLocalBleLink()
+            return
+        }
+        previousDeadline?.close()
+        transport.stopScan()
+        val deadline = scheduleDelayed(TEARDOWN_WRITE_TIMEOUT_MS) {
+            if (synchronized(lock) { teardownPending && teardownEpoch == epoch }) teardownLocalBleLink()
+        }
+        val stored = synchronized(lock) {
+            if (teardownPending && teardownEpoch == epoch && teardownDeadline == null) {
+                teardownDeadline = deadline
+                true
+            } else {
+                false
+            }
+        }
+        if (!stored) {
+            deadline.close()
+            return
+        }
+        pumpOutboundQueue()
+    }
+
     private fun pumpOutboundQueue() {
         synchronized(lock) {
             if (pumping) {
@@ -356,6 +367,7 @@ class AndroidBleCoordinator(
         }
         try {
             while (true) {
+                var finishTeardown = false
                 val nextChunk: ByteArray?
                 val scheduleDelayMs: Long?
                 val timerToCancel: AutoCloseable?
@@ -363,38 +375,37 @@ class AndroidBleCoordinator(
                     repumpRequested = false
                     timerToCancel = scheduledPump
                     scheduledPump = null
-                    if (!reportedReady) {
-                        nextChunk = null
-                        scheduleDelayMs = null
-                    } else {
-                        val now = clockMs()
-                        val popped = outboundQueue.popReady(now)
-                        if (popped != null) {
-                            nextChunk = popped
-                            scheduleDelayMs = null
-                        } else {
+                    when {
+                        !reportedReady && !teardownPending -> {
                             nextChunk = null
-                            scheduleDelayMs = outboundQueue.delayUntilNextReadyMs(now)
+                            scheduleDelayMs = null
+                        }
+                        teardownPending && outboundQueue.isEmpty && !outboundQueue.hasInFlight -> {
+                            nextChunk = null
+                            scheduleDelayMs = null
+                            finishTeardown = true
+                        }
+                        else -> {
+                            val now = clockMs()
+                            nextChunk = outboundQueue.popReady(now)
+                            scheduleDelayMs = if (nextChunk == null) outboundQueue.delayUntilNextReadyMs(now) else null
                         }
                     }
                 }
                 timerToCancel?.close()
-                if (nextChunk != null) {
+                if (finishTeardown) {
+                    teardownLocalBleLink()
+                } else if (nextChunk != null) {
                     val accepted = transport.writeCharacteristic(nextChunk)
                     synchronized(lock) {
-                        if (!accepted && reportedReady) {
-                            outboundQueue.requeueFront(nextChunk)
-                        }
-                        if (reportedReady && !outboundQueue.isEmpty) {
-                            repumpRequested = true
-                        }
+                        val active = reportedReady || teardownPending
+                        if (!accepted && active) outboundQueue.requeueFront(nextChunk)
+                        if (active && !outboundQueue.isEmpty) repumpRequested = true
                     }
                 } else if (scheduleDelayMs != null) {
-                    val handle = scheduleDelayed(scheduleDelayMs.coerceAtLeast(1L)) {
-                        pumpOutboundQueue()
-                    }
+                    val handle = scheduleDelayed(scheduleDelayMs.coerceAtLeast(1L)) { pumpOutboundQueue() }
                     val obsolete = synchronized(lock) {
-                        if (reportedReady && scheduledPump == null && !outboundQueue.isEmpty) {
+                        if ((reportedReady || teardownPending) && scheduledPump == null && !outboundQueue.isEmpty) {
                             scheduledPump = handle
                             false
                         } else {
@@ -404,12 +415,7 @@ class AndroidBleCoordinator(
                     if (obsolete) handle.close()
                 }
                 val again = synchronized(lock) {
-                    if (repumpRequested) {
-                        true
-                    } else {
-                        pumping = false
-                        false
-                    }
+                    if (repumpRequested) true else { pumping = false; false }
                 }
                 if (!again) return
             }
@@ -420,15 +426,17 @@ class AndroidBleCoordinator(
     }
 
     private fun teardownLocalBleLink() {
-        val timerToCancel = synchronized(lock) { resetLinkStateLocked() }
-        timerToCancel?.close()
+        val (pumpTimer, deadlineTimer) = synchronized(lock) { resetLinkStateLocked() }
+        pumpTimer?.close()
+        deadlineTimer?.close()
         transport.stopScan()
         transport.disconnect()
     }
 
-    private fun resetLinkStateLocked(): AutoCloseable? {
-        val timer = scheduledPump
+    private fun resetLinkStateLocked(): Pair<AutoCloseable?, AutoCloseable?> {
+        val timers = scheduledPump to teardownDeadline
         scheduledPump = null
+        teardownDeadline = null
         outboundQueue.reset()
         activeAddress = null
         discoveredName = null
@@ -436,24 +444,15 @@ class AndroidBleCoordinator(
         payloadMtu = DEFAULT_PAYLOAD_MTU
         isScanRequested = false
         reportedReady = false
-        return timer
+        teardownPending = false
+        return timers
     }
+
+    private fun decodeReadyStopFramesLocked(store: HostSessionStore?): List<ByteArray> =
+        if (reportedReady && store != null) decodeStopFrames(store.device.value) else emptyList()
 
     private fun decodeStopFrames(device: DeviceSnapshot): List<ByteArray> =
         device.teardownStopFramesHex.mapNotNull(BleHex::decode).filter { it.isNotEmpty() }
-
-    private fun writeImmediateFrames(frames: List<ByteArray>, mtu: Int) {
-        if (frames.isEmpty()) return
-        val limit = mtu.coerceAtLeast(1)
-        for (frame in frames) {
-            var offset = 0
-            while (offset < frame.size) {
-                val end = minOf(offset + limit, frame.size)
-                transport.writeCharacteristic(frame.copyOfRange(offset, end))
-                offset = end
-            }
-        }
-    }
 
     private fun emitForegroundRequirement(required: Boolean) {
         val changed = synchronized(lock) {
@@ -470,6 +469,7 @@ class AndroidBleCoordinator(
     }
 
     companion object {
+        const val TEARDOWN_WRITE_TIMEOUT_MS = 1_500L
         const val ERROR_UNAUTHORIZED = "请在系统设置中允许 Koe 使用蓝牙。"
         const val ERROR_POWERED_OFF = "蓝牙已关闭，请在系统设置中打开。"
         const val ERROR_UNSUPPORTED = "这台设备不支持蓝牙连接。"

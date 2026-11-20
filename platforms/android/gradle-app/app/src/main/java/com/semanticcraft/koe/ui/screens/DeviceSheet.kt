@@ -244,7 +244,7 @@ fun DeviceSheet(
                                 title = guide.primaryLabel,
                                 isPrimary = true,
                                 onClick = {
-                                    if (guide.mode == "connect") {
+                                    if (guide.mode == "connect_guide") {
                                         store.bridgeActions.requestBleScan()
                                     } else {
                                         store.send(HostCommand.DeviceOnboardingNext)

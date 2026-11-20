@@ -381,6 +381,10 @@ class AndroidBleCoordinatorTest {
         assertNull(h.addressStore.read())
         assertEquals(1, h.transport.writtenChunks.size)
         assertArrayEquals(BleHex.decode(stopHex), h.transport.writtenChunks[0])
+        assertEquals(0, h.transport.disconnectCount)
+
+        h.transport.activeListener!!.onWriteCompleted(true)
+        assertEquals(1, h.transport.disconnectCount)
         val writeIdx = h.transport.callLog.indexOfFirst { it.startsWith("write:") }
         val disconnectIdx = h.transport.callLog.indexOf("disconnect")
         assertTrue(writeIdx >= 0 && disconnectIdx > writeIdx)

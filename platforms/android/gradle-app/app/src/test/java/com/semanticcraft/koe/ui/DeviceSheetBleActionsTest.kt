@@ -134,11 +134,11 @@ class DeviceSheetBleActionsTest {
     @Test
     fun connectGuidePrimaryButtonRequestsBleScanInsteadOfOnboardingNext() {
         val connectGuide = DeviceGuideSnapshot(
-            mode = "connect",
-            step = 1,
+            mode = "connect_guide",
+            step = 0,
             totalSteps = 2,
-            title = "连接录音豆",
-            subtitle = "短按充电仓按钮开启广播",
+            title = "连接 Soundcore Work",
+            subtitle = "将麦克风放入充电仓，短按充电仓下方按钮完成连接",
             primaryLabel = "开始扫描录音豆",
         )
         val bridge = RecordingBridgeClient(

@@ -155,6 +155,9 @@ class BleOutboundQueue(
     val isEmpty: Boolean
         get() = pendingFrames.isEmpty()
 
+    val hasInFlight: Boolean
+        get() = inFlightSinceMs != null
+
     fun enqueueFragmented(frames: List<ByteArray>, maxChunkBytes: Int) {
         val limit = maxChunkBytes.coerceAtLeast(1)
         for (frame in frames) {
@@ -166,6 +169,11 @@ class BleOutboundQueue(
                 offset = end
             }
         }
+    }
+
+    fun replacePendingWithFragmented(frames: List<ByteArray>, maxChunkBytes: Int) {
+        pendingFrames.clear()
+        enqueueFragmented(frames, maxChunkBytes)
     }
 
     fun popReady(nowMs: Long): ByteArray? {

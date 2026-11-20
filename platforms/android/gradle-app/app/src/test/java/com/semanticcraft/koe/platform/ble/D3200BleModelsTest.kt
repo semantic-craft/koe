@@ -193,5 +193,33 @@ class D3200BleModelsTest {
         assertNull(queue.popReady(7_000L))
         assertNull(queue.lastWriteMs)
         assertNull(queue.inFlightSinceMs)
+        assertFalse(queue.hasInFlight)
+    }
+
+    @Test
+    fun replacePendingWithFragmentedDropsQueuedNormalFramesWhilePreservingInFlightAndSpacing() {
+        val queue = BleOutboundQueue(spacingMs = 300L, inFlightTimeoutMs = 5_000L)
+        queue.enqueueFragmented(listOf(byteArrayOf(1, 2), byteArrayOf(3, 4)), maxChunkBytes = 20)
+        assertFalse(queue.hasInFlight)
+
+        val first = queue.popReady(1_000L)
+        assertArrayEquals(byteArrayOf(1, 2), first)
+        assertTrue(queue.hasInFlight)
+
+        val stopFrame = byteArrayOf(10, 11, 12, 13, 14)
+        queue.replacePendingWithFragmented(listOf(stopFrame), maxChunkBytes = 3)
+        assertTrue(queue.hasInFlight)
+        assertEquals(1_000L, queue.inFlightSinceMs)
+        assertEquals(1_000L, queue.lastWriteMs)
+        assertNull(queue.popReady(1_100L))
+
+        queue.markWriteCompleted()
+        assertFalse(queue.hasInFlight)
+        assertNull(queue.popReady(1_299L))
+
+        assertArrayEquals(byteArrayOf(10, 11, 12), queue.popReady(1_300L))
+        queue.markWriteCompleted()
+        assertArrayEquals(byteArrayOf(13, 14), queue.popReady(1_600L))
+        assertTrue(queue.isEmpty)
     }
 }
