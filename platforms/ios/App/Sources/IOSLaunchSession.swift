@@ -36,12 +36,14 @@ final class IOSLaunchSession {
 
     let store: HostSessionStore
     let coordinator: IOSHostCoordinator
+    private let inputMonitor: IOSAudioInputMonitor
     private let traceURLs: [URL]
 
     init(
         bridgeActions: HostBridgeActions,
         arguments: [String] = ProcessInfo.processInfo.arguments,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        source: MicrophoneSource? = nil
     ) {
         let config = IOSLaunchConfig.parse(arguments: arguments, environment: environment)
         let credentials = NativeCredentialsiOS(
@@ -56,7 +58,8 @@ final class IOSLaunchSession {
         }
         traceURLs = outputs
         store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials)
-        coordinator = IOSHostCoordinator(store: store, actions: bridgeActions)
+        coordinator = IOSHostCoordinator(store: store, actions: bridgeActions, source: source)
+        inputMonitor = IOSAudioInputMonitor(store: store)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.6.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "15"
@@ -72,6 +75,7 @@ final class IOSLaunchSession {
             )
         )
 
+        inputMonitor.start()
         #if DEBUG
         if let fixturePath = config.snapshotFixturePath {
             loadDebugFixture(at: fixturePath)
@@ -112,6 +116,7 @@ final class IOSLaunchSession {
     }
 
     func shutdown() {
+        inputMonitor.stop()
         coordinator.shutdown()
         store.onTraceRecorded = nil
         store.shutdown()

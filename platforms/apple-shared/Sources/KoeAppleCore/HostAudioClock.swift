@@ -1,9 +1,9 @@
 import Darwin
 
-struct HostAudioClock {
-    static func nowNanoseconds() throws -> UInt64 { try nanoseconds(mach_absolute_time()) }
+public enum HostAudioClock {
+    public static func nowNanoseconds() throws -> UInt64 { try nanoseconds(mach_absolute_time()) }
 
-    static func nanoseconds(_ ticks: UInt64) throws -> UInt64 {
+    public static func nanoseconds(_ ticks: UInt64) throws -> UInt64 {
         var timebase = mach_timebase_info_data_t()
         guard mach_timebase_info(&timebase) == KERN_SUCCESS else {
             throw CaptureError("无法读取音频采样时钟。")

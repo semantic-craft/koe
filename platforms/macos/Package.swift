@@ -38,6 +38,7 @@ let package = Package(
             name: "KoeMacHostTests",
             dependencies: [
                 "Koe",
+                .product(name: "KoeAppleCore", package: "apple-shared"),
                 .product(name: "KoeAppleShared", package: "apple-shared"),
             ],
             path: "Tests/KoeMacHostTests",

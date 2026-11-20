@@ -58,7 +58,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private let playback: NativePlayback
     private let audioInputMonitor: CoreAudioInputMonitor
     private let defaultInputsProvider: () -> [MicrophoneInput]
-    private let capture = NativeCapture()
+    private let capture = NativeCapture(source: NativeAudioSource(), systemSource: NativeSystemAudioSource())
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore

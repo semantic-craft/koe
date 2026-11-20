@@ -1,15 +1,6 @@
 import CoreAudio
 import Foundation
-
-/// Host adapter for the optional system audio lane. Tests inject deterministic fakes so they never
-/// touch Core Audio taps or macOS permission prompts.
-protocol SystemAudioSource: AnyObject {
-    func authorize(shouldAbort: @escaping @Sendable () -> Bool,
-                   _ completion: @escaping @Sendable (SystemAudioAuthResult) -> Void)
-    func start(expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
-               failed: @escaping (String) -> Void) throws -> UInt32
-    func stop()
-}
+import KoeAppleShared
 
 enum SystemAudioHAL {
     static func check(_ status: OSStatus, _ message: String) throws {

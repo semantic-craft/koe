@@ -2,23 +2,8 @@ import AudioToolbox
 import CoreAudio
 import CoreGraphics
 import Foundation
+import KoeAppleShared
 import os
-
-/// Result of the public-API system audio authorization canary.
-enum SystemAudioAuthResult: Equatable, Sendable {
-    case authorized
-    case denied(String)
-    case unavailable(String)
-    case cancelled
-
-    var failureMessage: String? {
-        switch self {
-        case .authorized: nil
-        case .denied(let message), .unavailable(let message): message
-        case .cancelled: "已取消系统音频授权检测。"
-        }
-    }
-}
 
 protocol SystemAudioAuthorizer: Sendable {
     func authorize(shouldAbort: @escaping @Sendable () -> Bool) async -> SystemAudioAuthResult

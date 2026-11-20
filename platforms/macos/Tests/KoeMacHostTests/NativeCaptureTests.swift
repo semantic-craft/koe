@@ -1,5 +1,6 @@
 import XCTest
 @testable import Koe
+@testable import KoeAppleCore
 
 final class NativeCaptureTests: XCTestCase {
     func testStoppedProducerKeepsAcceptedTailUntilAcknowledged() {
@@ -45,8 +46,6 @@ final class NativeCaptureTests: XCTestCase {
         XCTAssertEqual(box.peek()?.sequence, 22)
     }
 }
-
-import KoeAppleShared
 
 final class FakeMicrophone: MicrophoneSource, @unchecked Sendable {
     var permission: (@Sendable (Bool) -> Void)?
