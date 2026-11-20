@@ -41,7 +41,7 @@ class KoeCaptureForegroundService : Service() {
         val paused = intent?.getBooleanExtra(EXTRA_PAUSED, false) ?: false
         val modeTitle = intent?.getStringExtra(EXTRA_MODE_TITLE)
         val fgsFlags = intent?.getIntExtra(EXTRA_FGS_TYPES, FGS_FLAG_MICROPHONE) ?: FGS_FLAG_MICROPHONE
-        val notification = buildNotification(paused = paused, modeTitle = modeTitle)
+        val notification = buildNotification(paused = paused, modeTitle = modeTitle, fgsFlags = fgsFlags)
         startForegroundCompat(notification, fgsFlags)
         return START_NOT_STICKY
     }
@@ -61,7 +61,7 @@ class KoeCaptureForegroundService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(paused: Boolean, modeTitle: String?): Notification {
+    private fun buildNotification(paused: Boolean, modeTitle: String?, fgsFlags: Int): Notification {
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -71,35 +71,41 @@ class KoeCaptureForegroundService : Service() {
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val toggleAction = if (paused) {
-            Notification.Action.Builder(
-                null,
-                "继续",
-                servicePendingIntent(ACTION_RESUME, REQ_TOGGLE),
-            ).build()
-        } else {
-            Notification.Action.Builder(
-                null,
-                "暂停",
-                servicePendingIntent(ACTION_PAUSE, REQ_TOGGLE),
-            ).build()
+        val hasMicrophone = (fgsFlags and FGS_FLAG_MICROPHONE) != 0
+        val contentText = when {
+            !hasMicrophone -> "正在同步录音豆"
+            paused -> "已暂停"
+            else -> "正在后台录音"
         }
-        val endAction = Notification.Action.Builder(
-            null,
-            "结束",
-            servicePendingIntent(ACTION_END, REQ_END),
-        ).build()
-
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(modeTitle?.takeIf { it.isNotBlank() } ?: "Koe 录音")
-            .setContentText(if (paused) "已暂停" else "正在后台录音")
+            .setContentText(contentText)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openPending)
-            .addAction(toggleAction)
-            .addAction(endAction)
-            .build()
+        if (hasMicrophone) {
+            val toggleAction = if (paused) {
+                Notification.Action.Builder(
+                    null,
+                    "继续",
+                    servicePendingIntent(ACTION_RESUME, REQ_TOGGLE),
+                ).build()
+            } else {
+                Notification.Action.Builder(
+                    null,
+                    "暂停",
+                    servicePendingIntent(ACTION_PAUSE, REQ_TOGGLE),
+                ).build()
+            }
+            val endAction = Notification.Action.Builder(
+                null,
+                "结束",
+                servicePendingIntent(ACTION_END, REQ_END),
+            ).build()
+            builder.addAction(toggleAction).addAction(endAction)
+        }
+        return builder.build()
     }
 
     private fun servicePendingIntent(action: String, requestCode: Int): PendingIntent {

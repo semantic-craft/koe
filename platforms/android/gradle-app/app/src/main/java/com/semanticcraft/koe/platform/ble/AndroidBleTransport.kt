@@ -178,17 +178,15 @@ class SystemAndroidBleTransport(
             transportListener?.onDisconnected(ERR_CONNECT_FAILED)
             return
         }
-        val gatt = try {
-            device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } catch (_: SecurityException) {
-            transportListener?.onDisconnected(ERR_UNAUTHORIZED)
-            return
-        }
-        if (gatt == null) {
-            transportListener?.onDisconnected(ERR_CONNECT_FAILED)
-            return
-        }
-        synchronized(lock) {
+        val error = synchronized(lock) {
+            val gatt = try {
+                device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } catch (_: SecurityException) {
+                return@synchronized ERR_UNAUTHORIZED
+            }
+            if (gatt == null) {
+                return@synchronized ERR_CONNECT_FAILED
+            }
             activeGatt = gatt
             activeAddress = address
             activeDisplayName = displayName
@@ -196,6 +194,10 @@ class SystemAndroidBleTransport(
             payloadMtu = DEFAULT_PAYLOAD_MTU
             servicesDiscoveryStarted = false
             linkReadyReported = false
+            null
+        }
+        if (error != null) {
+            transportListener?.onDisconnected(error)
         }
     }
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.BluetoothSearching
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Refresh
@@ -242,7 +243,13 @@ fun DeviceSheet(
                             KoePrimaryButton(
                                 title = guide.primaryLabel,
                                 isPrimary = true,
-                                onClick = { store.send(HostCommand.DeviceOnboardingNext) },
+                                onClick = {
+                                    if (guide.mode == "connect") {
+                                        store.bridgeActions.requestBleScan()
+                                    } else {
+                                        store.send(HostCommand.DeviceOnboardingNext)
+                                    }
+                                },
                             )
                         }
                     }
@@ -332,22 +339,44 @@ fun DeviceSheet(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                KoePrimaryButton(
-                    title = "刷新状态",
-                    icon = Icons.Outlined.Refresh,
-                    isPrimary = false,
-                    enabled = !device.busy,
-                    onClick = {
-                        store.send(HostCommand.DeviceRefresh)
-                        store.bridgeActions.flushBleOutbound()
-                    },
-                )
-                KoePrimaryButton(
-                    title = "连接引导",
-                    icon = Icons.AutoMirrored.Outlined.HelpOutline,
-                    isPrimary = false,
-                    onClick = { store.send(HostCommand.DeviceOpenGuide) },
-                )
+                if (device.connected) {
+                    KoePrimaryButton(
+                        title = "刷新状态",
+                        icon = Icons.Outlined.Refresh,
+                        isPrimary = false,
+                        enabled = !device.busy,
+                        onClick = {
+                            store.send(HostCommand.DeviceRefresh)
+                            store.bridgeActions.flushBleOutbound()
+                        },
+                    )
+                    KoePrimaryButton(
+                        title = "连接引导",
+                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                        isPrimary = false,
+                        onClick = { store.send(HostCommand.DeviceOpenGuide) },
+                    )
+                } else {
+                    KoePrimaryButton(
+                        title = "连接录音豆",
+                        icon = Icons.AutoMirrored.Outlined.BluetoothSearching,
+                        isPrimary = true,
+                        enabled = !device.busy,
+                        modifier = Modifier.testTag("device-connect-button"),
+                        onClick = {
+                            store.send(HostCommand.DeviceOpenGuide)
+                            store.bridgeActions.requestBleScan()
+                        },
+                    )
+                    KoePrimaryButton(
+                        title = "重新扫描",
+                        icon = Icons.Outlined.Refresh,
+                        isPrimary = false,
+                        enabled = !device.busy,
+                        modifier = Modifier.testTag("device-rescan-button"),
+                        onClick = { store.bridgeActions.requestBleScan() },
+                    )
+                }
             }
         }
     }

@@ -68,7 +68,16 @@ class AndroidBleCoordinator(
             boundStore = store
             lastObservedAutoConnect = null
         }
-        syncWithRuntimeDevice(store.device.value)
+        val device = store.device.value
+        syncWithRuntimeDevice(device)
+        if (device.autoConnect &&
+            !device.connected &&
+            device.phase == "disconnected" &&
+            addressStore.read() != null &&
+            transport.adapterState() == BleAdapterState.SUPPORTED_READY
+        ) {
+            requestScan()
+        }
     }
 
     override fun onSessionUnbound() {
