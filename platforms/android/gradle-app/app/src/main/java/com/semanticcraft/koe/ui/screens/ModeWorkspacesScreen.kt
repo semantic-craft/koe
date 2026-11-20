@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -218,6 +219,20 @@ private fun AllDayWorkspaceContent(
                         color = colors.textMuted,
                         fontSize = KoeFontSizes.xs,
                     )
+                    if (workspace.selectedDate.isNotBlank()) {
+                        KoePrimaryButton(
+                            title = "导出当日",
+                            isPrimary = false,
+                            onClick = {
+                                store.bridgeActions.requestExportWorkspace(
+                                    null,
+                                    workspace.selectedDate,
+                                    "Koe-${workspace.selectedDate}.md",
+                                )
+                            },
+                            modifier = Modifier.testTag("all-day-export-button"),
+                        )
+                    }
                 }
             }
         }

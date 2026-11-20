@@ -1,6 +1,7 @@
 package com.semanticcraft.koe.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Subject
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -32,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -313,7 +316,12 @@ private fun DetailHeaderCard(
                 fontSize = KoeFontSizes.xs,
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (detail.canRetranscribe) {
                     KoePrimaryButton(
                         title = "重新转写",
@@ -325,6 +333,12 @@ private fun DetailHeaderCard(
                     title = "整理纪要",
                     isPrimary = false,
                     onClick = { store.send(HostCommand.Summarize(detail.id)) },
+                )
+                KoePrimaryButton(
+                    title = "导出",
+                    isPrimary = false,
+                    onClick = { store.bridgeActions.requestExportWorkspace(detail.id, null, "${detail.title}.md") },
+                    modifier = Modifier.testTag("detail-export-button"),
                 )
                 KoePrimaryButton(
                     title = if (detail.archived) "取消归档" else "归档",

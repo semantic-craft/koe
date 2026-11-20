@@ -19,6 +19,7 @@ import com.semanticcraft.koe.platform.capture.AndroidPermissionCoordinator
 import com.semanticcraft.koe.platform.capture.CaptureForegroundState
 import com.semanticcraft.koe.platform.capture.KoeCaptureForegroundService
 import com.semanticcraft.koe.platform.capture.SystemAudioFocusController
+import com.semanticcraft.koe.platform.files.AndroidFileActions
 import com.semanticcraft.koe.platform.playback.AndroidAudioTrackSink
 import com.semanticcraft.koe.platform.playback.AndroidPlaybackCoordinator
 import java.io.File
@@ -63,6 +64,9 @@ class KoeApplication : Application() {
             },
         )
     }
+    val fileActions: AndroidFileActions by lazy {
+        AndroidFileActions(this)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -70,6 +74,7 @@ class KoeApplication : Application() {
         hostCoordinator.registerAdapter(captureCoordinator)
         hostCoordinator.registerAdapter(playbackCoordinator)
         hostCoordinator.registerAdapter(bleCoordinator)
+        hostCoordinator.registerAdapter(fileActions)
     }
 
     private fun updateCaptureForegroundState(state: CaptureForegroundState) {
@@ -194,6 +199,11 @@ class KoeApplication : Application() {
                     requestBleScan = { bleCoordinator.requestScan() },
                     flushBleOutbound = { bleCoordinator.flushOutboundFrames() },
                     resumeMicrophone = { captureCoordinator.resume() },
+                    requestImportFile = { fileActions.requestImportFile() },
+                    requestExportWorkspace = { recordId, date, suggestedFilename ->
+                        fileActions.requestExportWorkspace(recordId, date, suggestedFilename)
+                    },
+                    requestExportRecords = { recordIds -> fileActions.requestExportRecords(recordIds) },
                 ),
             )
         }
