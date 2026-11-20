@@ -167,20 +167,46 @@ fun RecordsScreen(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
                     text = "共 ${filteredRecords.size} 条记录",
                     color = colors.textMuted,
                     fontSize = KoeFontSizes.xs,
+                    maxLines = 1,
                 )
-                KoePrimaryButton(
-                    title = if (navigation.trashCount > 0) "回收站 (${navigation.trashCount})" else "回收站",
-                    icon = Icons.Outlined.DeleteOutline,
-                    isPrimary = false,
-                    onClick = { showTrashSheet = true },
-                    modifier = Modifier.testTag("records-trash-button"),
-                )
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        KoePrimaryButton(
+                            title = "导入",
+                            isPrimary = false,
+                            onClick = { store.bridgeActions.requestImportFile() },
+                            modifier = Modifier.testTag("records-import-button"),
+                        )
+                        if (filteredRecords.isNotEmpty()) {
+                            KoePrimaryButton(
+                                title = "导出",
+                                isPrimary = false,
+                                onClick = { store.bridgeActions.requestExportRecords(filteredRecords.map { it.id }) },
+                                modifier = Modifier.testTag("records-export-batch-button"),
+                            )
+                        }
+                        KoePrimaryButton(
+                            title = if (navigation.trashCount > 0) "回收站 (${navigation.trashCount})" else "回收站",
+                            icon = Icons.Outlined.DeleteOutline,
+                            isPrimary = false,
+                            onClick = { showTrashSheet = true },
+                            modifier = Modifier.testTag("records-trash-button"),
+                        )
+                    }
+                }
             }
         }
 
