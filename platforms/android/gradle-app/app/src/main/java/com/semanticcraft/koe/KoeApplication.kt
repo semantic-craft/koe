@@ -4,14 +4,21 @@ import android.app.Application
 import android.content.Intent
 import com.semanticcraft.koe.core.AndroidCredentials
 import com.semanticcraft.koe.core.HostAdapterEvent
+import com.semanticcraft.koe.core.HostBridgeActions
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.JniHostBridgeClient
+import com.semanticcraft.koe.platform.AndroidHostCoordinator
 import java.io.File
 import java.nio.charset.StandardCharsets
 
 class KoeApplication : Application() {
     private val sessionLock = Any()
     private var currentStore: HostSessionStore? = null
+    val hostCoordinator = AndroidHostCoordinator()
+
+    fun setForegroundActive(active: Boolean) {
+        hostCoordinator.setForegroundActive(active)
+    }
 
     fun applyLaunchIntent(intent: Intent?): HostSessionStore {
         val debugWorkspace = if (BuildConfig.DEBUG) {
@@ -28,6 +35,7 @@ class KoeApplication : Application() {
         val workspaceDir = resolveSafeWorkspaceDir(filesDir, debugWorkspace)
         val traceFile = File(filesDir, TRACE_FILE_NAME)
 
+        var newlyCreated = false
         val store = synchronized(sessionLock) {
             val existing = currentStore
             if (existing != null && existing.workspacePath == workspaceDir.absolutePath) {
@@ -64,8 +72,13 @@ class KoeApplication : Application() {
                     ),
                 )
                 currentStore = created
+                newlyCreated = true
                 created
             }
+        }
+
+        if (newlyCreated) {
+            hostCoordinator.bind(store, HostBridgeActions())
         }
 
         if (BuildConfig.DEBUG && !debugFixture.isNullOrBlank()) {
@@ -90,6 +103,7 @@ class KoeApplication : Application() {
     }
 
     override fun onTerminate() {
+        hostCoordinator.shutdown()
         synchronized(sessionLock) {
             currentStore?.shutdown()
             currentStore = null

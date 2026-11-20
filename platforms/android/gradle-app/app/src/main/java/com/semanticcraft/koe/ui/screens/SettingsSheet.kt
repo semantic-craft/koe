@@ -2,12 +2,19 @@ package com.semanticcraft.koe.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -16,15 +23,42 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.BuildConfig
+import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.ModelSettingsDraft
+import com.semanticcraft.koe.core.ProviderSnapshot
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
+import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoeInfoTip
 import com.semanticcraft.koe.ui.components.KoeModalSheet
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
+private data class ProviderModelSyncKey(
+    val asrProvider: String,
+    val asrModel: String,
+    val llmProvider: String,
+    val model: String,
+    val enableThinking: Boolean,
+    val qwenWorkspaceId: String,
+    val asrEndpoint: String,
+    val chatEndpoint: String,
+)
+
+private fun ProviderSnapshot.modelSyncKey(): ProviderModelSyncKey = ProviderModelSyncKey(
+    asrProvider = asrProvider,
+    asrModel = asrModel,
+    llmProvider = llmProvider,
+    model = model,
+    enableThinking = enableThinking,
+    qwenWorkspaceId = qwenWorkspaceId,
+    asrEndpoint = asrEndpoint,
+    chatEndpoint = chatEndpoint,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsSheet(
     store: HostSessionStore,
@@ -32,9 +66,45 @@ fun SettingsSheet(
 ) {
     val platform by store.platform.collectAsStateWithLifecycle()
     val settings by store.settings.collectAsStateWithLifecycle()
+    val navigation by store.navigation.collectAsStateWithLifecycle()
     val provider = settings.provider
     val speech = settings.speech
     val colors = KoeTheme.colors
+
+    var draft by remember { mutableStateOf(ModelSettingsDraft.from(provider)) }
+    val modelSyncKey = provider.modelSyncKey()
+    var lastSyncedKey by remember { mutableStateOf(modelSyncKey) }
+    var showSavedNotice by remember { mutableStateOf(false) }
+
+    LaunchedEffect(modelSyncKey) {
+        if (modelSyncKey != lastSyncedKey) {
+            draft = draft.syncWith(provider)
+            lastSyncedKey = modelSyncKey
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            draft = draft.clearingApiKeyInputs()
+        }
+    }
+
+    fun updateDraft(next: ModelSettingsDraft) {
+        draft = next
+        showSavedNotice = false
+    }
+
+    fun saveSettings() {
+        store.send(draft.toConfigureProviderCommand())
+        if (store.navigation.value.effectiveError == null) {
+            draft = draft.clearingApiKeyInputs()
+            showSavedNotice = true
+        } else {
+            showSavedNotice = false
+        }
+    }
+
+    val matchedPreset = draft.matchedPreset(speech.engine)
 
     KoeModalSheet(onDismissRequest = onDismiss) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -114,7 +184,7 @@ fun SettingsSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "模型与转写服务",
+                            text = "快捷组合",
                             color = colors.textPrimary,
                             fontSize = KoeFontSizes.md,
                             fontWeight = FontWeight.SemiBold,
@@ -125,36 +195,88 @@ fun SettingsSheet(
                             tint = if (provider.configured) colors.success else colors.textMuted,
                         )
                     }
-
-                    SettingsKeyValueRow("语音识别提供方", "${provider.asrProvider}  |  ${provider.asrModel}")
-                    SettingsKeyValueRow("摘要对话提供方", "${provider.llmProvider}  |  ${provider.model}")
-                    SettingsKeyValueRow("Qwen 凭据状态", credentialStateLabel(provider.credentialState))
-                    SettingsKeyValueRow("DeepSeek 凭据状态", credentialStateLabel(provider.deepseekCredentialState))
-                    SettingsKeyValueRow(
-                        "凭据存储模式",
-                        if (provider.isolated) "调试隔离存储" else "Android Keystore",
-                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        KoeFilterChip(
+                            label = "混合主力",
+                            selected = matchedPreset == "hybrid",
+                            onClick = {
+                                if (speech.engine != "cloud") {
+                                    store.send(HostCommand.ConfigureSpeech("cloud"))
+                                }
+                                updateDraft(draft.applyPreset("hybrid"))
+                            },
+                            modifier = Modifier.testTag("settings-preset-hybrid"),
+                        )
+                        KoeFilterChip(
+                            label = "纯 DeepSeek",
+                            selected = matchedPreset == "deepseek-full",
+                            onClick = {
+                                if (speech.engine != "cloud") {
+                                    store.send(HostCommand.ConfigureSpeech("cloud"))
+                                }
+                                updateDraft(draft.applyPreset("deepseek-full"))
+                            },
+                            modifier = Modifier.testTag("settings-preset-deepseek-full"),
+                        )
+                    }
                 }
             }
 
+            SettingsCredentialsCard(
+                provider = provider,
+                draft = draft,
+                onDraftChange = ::updateDraft,
+                onClearCredential = { slot -> store.send(HostCommand.ClearProviderCredential(slot)) },
+                onRetryCredentials = { store.send(HostCommand.RetryProviderCredentials(authorize = true)) },
+                onSave = ::saveSettings,
+            )
+
+            SettingsAsrCard(
+                platform = platform,
+                speech = speech,
+                provider = provider,
+                draft = draft,
+                onConfigureSpeech = { engine -> store.send(HostCommand.ConfigureSpeech(engine)) },
+                onDraftChange = ::updateDraft,
+                onSetMeetingAudioPolicy = { policy -> store.send(HostCommand.SetMeetingAudioPolicy(policy)) },
+            )
+
+            SettingsLlmCard(
+                provider = provider,
+                draft = draft,
+                onDraftChange = ::updateDraft,
+                onSave = ::saveSettings,
+            )
+
             KoeCard {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "本机语音识别",
-                        color = colors.textPrimary,
-                        fontSize = KoeFontSizes.md,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    SettingsKeyValueRow("当前引擎", speech.engine)
-                    SettingsKeyValueRow("本机状态", speech.appleState)
-                    val message = speech.appleMessage
-                    if (!message.isNullOrBlank()) {
+                    navigation.effectiveError?.let { errorMessage ->
                         Text(
-                            text = message,
-                            color = colors.textMuted,
+                            text = errorMessage,
+                            color = colors.danger,
                             fontSize = KoeFontSizes.xs,
+                            fontWeight = FontWeight.Medium,
                         )
                     }
+                    if (showSavedNotice && navigation.effectiveError == null) {
+                        Text(
+                            text = "已保存模型配置",
+                            color = colors.success,
+                            fontSize = KoeFontSizes.xs,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    KoePrimaryButton(
+                        title = "保存模型配置",
+                        isPrimary = true,
+                        onClick = ::saveSettings,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings-save-button"),
+                    )
                 }
             }
         }
@@ -184,11 +306,3 @@ private fun SettingsKeyValueRow(label: String, value: String) {
         )
     }
 }
-
-private fun credentialStateLabel(raw: String): String =
-    when (raw) {
-        "ready" -> "已就绪"
-        "reopen_required" -> "需要重新授权"
-        "unavailable" -> "暂不可用"
-        else -> "未设置"
-    }

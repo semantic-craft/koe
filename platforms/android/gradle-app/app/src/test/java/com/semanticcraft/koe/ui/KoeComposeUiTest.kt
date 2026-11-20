@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import com.semanticcraft.koe.KoeApplication
@@ -30,6 +31,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -70,27 +72,65 @@ class KoeComposeUiTest {
             val obj = HostJson.json.parseToJsonElement(commandJson) as JsonObject
             dispatchedCommands.add(obj)
             val cmdType = obj["type"]?.jsonPrimitive?.content
-            if (cmdType == "create_note") {
-                val title = obj["title"]?.jsonPrimitive?.content.orEmpty()
-                val text = obj["text"]?.jsonPrimitive?.content.orEmpty()
-                val nextId = "rec-note-${currentSnapshot.records.size + 1}"
-                val created = RecordSnapshot(
-                    id = nextId,
-                    title = title,
-                    createdAtEpochSec = 1763596800L,
-                    durationMs = 0L,
-                    source = "文本输入",
-                    status = "已保存",
-                    segmentCount = 1,
-                    preview = text,
-                    mode = "quick_note",
-                )
-                currentSnapshot = currentSnapshot.copy(
-                    generation = currentSnapshot.generation + 1L,
-                    records = listOf(created) + currentSnapshot.records,
-                )
-            } else {
-                currentSnapshot = currentSnapshot.copy(generation = currentSnapshot.generation + 1L)
+            currentSnapshot = when (cmdType) {
+                "create_note" -> {
+                    val title = obj["title"]?.jsonPrimitive?.content.orEmpty()
+                    val text = obj["text"]?.jsonPrimitive?.content.orEmpty()
+                    val nextId = "rec-note-${currentSnapshot.records.size + 1}"
+                    val created = RecordSnapshot(
+                        id = nextId,
+                        title = title,
+                        createdAtEpochSec = 1763596800L,
+                        durationMs = 0L,
+                        source = "文本输入",
+                        status = "已保存",
+                        segmentCount = 1,
+                        preview = text,
+                        mode = "quick_note",
+                    )
+                    currentSnapshot.copy(
+                        generation = currentSnapshot.generation + 1L,
+                        records = listOf(created) + currentSnapshot.records,
+                    )
+                }
+                "set_meeting_audio_policy" -> {
+                    val policy = obj["policy"]?.jsonPrimitive?.content ?: "local_only"
+                    currentSnapshot.copy(
+                        generation = currentSnapshot.generation + 1L,
+                        provider = currentSnapshot.provider.copy(meetingAudioPolicy = policy),
+                    )
+                }
+                "configure_speech" -> {
+                    val engine = obj["engine"]?.jsonPrimitive?.content ?: currentSnapshot.speech.engine
+                    currentSnapshot.copy(
+                        generation = currentSnapshot.generation + 1L,
+                        speech = currentSnapshot.speech.copy(engine = engine),
+                    )
+                }
+                "configure_provider" -> {
+                    val prev = currentSnapshot.provider
+                    val hasQwen = obj["apiKey"]?.jsonPrimitive?.content?.isNotBlank() == true
+                    val hasDeepSeek = obj["deepseekApiKey"]?.jsonPrimitive?.content?.isNotBlank() == true
+                    val nextQwenConfigured = prev.qwenConfigured || hasQwen
+                    val nextDeepSeekConfigured = prev.deepseekConfigured || hasDeepSeek
+                    currentSnapshot.copy(
+                        generation = currentSnapshot.generation + 1L,
+                        provider = prev.copy(
+                            configured = nextQwenConfigured || nextDeepSeekConfigured,
+                            qwenConfigured = nextQwenConfigured,
+                            deepseekConfigured = nextDeepSeekConfigured,
+                            asrProvider = obj["asrProvider"]?.jsonPrimitive?.content ?: prev.asrProvider,
+                            asrModel = obj["asrModel"]?.jsonPrimitive?.content ?: prev.asrModel,
+                            llmProvider = obj["llmProvider"]?.jsonPrimitive?.content ?: prev.llmProvider,
+                            model = obj["model"]?.jsonPrimitive?.content ?: prev.model,
+                            enableThinking = obj["enableThinking"]?.jsonPrimitive?.boolean ?: prev.enableThinking,
+                            qwenWorkspaceId = obj["qwenWorkspaceId"]?.jsonPrimitive?.content ?: prev.qwenWorkspaceId,
+                            asrEndpoint = obj["asrEndpoint"]?.jsonPrimitive?.content ?: prev.asrEndpoint,
+                            chatEndpoint = obj["chatEndpoint"]?.jsonPrimitive?.content ?: prev.chatEndpoint,
+                        ),
+                    )
+                }
+                else -> currentSnapshot.copy(generation = currentSnapshot.generation + 1L)
             }
             return HostJson.json.encodeToString(HostSnapshot.serializer(), currentSnapshot)
         }
@@ -237,5 +277,79 @@ class KoeComposeUiTest {
         } finally {
             baseDir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun editableSettingsDispatchesPolicyAndProviderWithoutLeakingSecretToTrace() {
+        val bridge = FakeUiBridgeClient()
+        val store = HostSessionStore(
+            workspacePath = "/tmp/koe-ui-settings",
+            bridge = bridge,
+            allowDebugFixture = false,
+        )
+
+        composeRule.setContent {
+            KoeTheme {
+                KoeRootScreen(store = store)
+            }
+        }
+
+        val secretKey = "sk-ds-robolectric-secret-98765"
+
+        composeRule.onNodeWithTag("settings-button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Android").assertIsDisplayed()
+        composeRule.onNodeWithText("github").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("settings-meeting-audio-switch")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        val policyCmd = bridge.dispatchedCommands.firstOrNull {
+            it["type"]?.jsonPrimitive?.content == "set_meeting_audio_policy"
+        }
+        assertTrue("expected set_meeting_audio_policy command", policyCmd != null)
+        assertEquals("cloud_allowed", policyCmd!!["policy"]?.jsonPrimitive?.content)
+
+        composeRule.onNodeWithTag("settings-llm-option-deepseek-v4-pro")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("settings-thinking-switch")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("settings-deepseek-key-input")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        composeRule.onNodeWithTag("settings-deepseek-key-input")
+            .performTextInput(secretKey)
+        composeRule.onNodeWithTag("settings-save-button")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("已保存模型配置").assertIsDisplayed()
+
+        val providerCmd = bridge.dispatchedCommands.lastOrNull {
+            it["type"]?.jsonPrimitive?.content == "configure_provider"
+        }
+        assertTrue("expected configure_provider command", providerCmd != null)
+        assertEquals("deepseek-v4-pro", providerCmd!!["model"]?.jsonPrimitive?.content)
+        assertEquals(true, providerCmd["enableThinking"]?.jsonPrimitive?.boolean)
+        assertEquals(secretKey, providerCmd["deepseekApiKey"]?.jsonPrimitive?.content)
+
+        composeRule.onNodeWithTag("settings-save-button")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        val secondProviderCmd = bridge.dispatchedCommands.lastOrNull {
+            it["type"]?.jsonPrimitive?.content == "configure_provider"
+        }
+        assertTrue("expected second configure_provider command", secondProviderCmd != null)
+        assertFalse("typed API key must clear after save", secondProviderCmd!!.containsKey("deepseekApiKey"))
+
+        val traceJson = store.exportTraceJson()
+        assertTrue(traceJson.contains("configure_provider"))
+        assertFalse("trace must not contain API secret", traceJson.contains(secretKey))
     }
 }

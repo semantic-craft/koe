@@ -29,6 +29,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as KoeApplication).hostCoordinator.setForegroundActive(true)
+    }
+
+    override fun onStop() {
+        (application as KoeApplication).hostCoordinator.setForegroundActive(false)
+        super.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
