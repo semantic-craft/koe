@@ -11,6 +11,11 @@ PORT="5580"
 REUSE_SERIAL=""
 SELF_CHECK=0
 FLOW_PATH=""
+APK_PATH=""
+APP_PACKAGE=""
+APP_ACTIVITY=""
+FIXTURE_PATH=""
+LAUNCH_APP=0
 EXPECT_FAILURE=0
 KEEP_ARTIFACTS=0
 ARTIFACTS_DIR=""
@@ -40,6 +45,11 @@ Options:
   --reuse-serial <serial>   Attach to a running emulator-NNNN verified to be ^koe-test-api[0-9]+$
   --self-check              Verify boot properties and run smoke-system-settings.yaml
   --flow <path.yaml>        Run the specified Maestro YAML flow
+  --apk <path.apk>          Install the specified APK via adb install -r before running the flow
+  --app-package <pkg>       Target Android package name for app launch and host_intent_trace capture
+  --app-activity <comp>     Launch component (default: <pkg>/.MainActivity when --app-package is set)
+  --fixture <path.json>     Stage DEBUG snapshot fixture JSON into app files/koe-active-fixture.json
+  --launch-app              Force-stop, clear trace, and am start -W -S the app with isolated workspace
   --expect-failure          Exit 0 only if the flow fails AND all 4 forensics artifacts are valid
   --keep-artifacts          Keep the 4-artifact bundle even when the flow passes
   --artifacts-dir <dir>     Output directory (default: <repo>/target/verify-artifacts/<run-id>)
@@ -86,6 +96,29 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die_usage "--flow requires a value"
       FLOW_PATH="$2"
       shift
+      ;;
+    --apk)
+      [[ $# -ge 2 ]] || die_usage "--apk requires a value"
+      APK_PATH="$2"
+      shift
+      ;;
+    --app-package)
+      [[ $# -ge 2 ]] || die_usage "--app-package requires a value"
+      APP_PACKAGE="$2"
+      shift
+      ;;
+    --app-activity)
+      [[ $# -ge 2 ]] || die_usage "--app-activity requires a value"
+      APP_ACTIVITY="$2"
+      shift
+      ;;
+    --fixture)
+      [[ $# -ge 2 ]] || die_usage "--fixture requires a value"
+      FIXTURE_PATH="$2"
+      shift
+      ;;
+    --launch-app)
+      LAUNCH_APP=1
       ;;
     --expect-failure)
       EXPECT_FAILURE=1
@@ -143,6 +176,32 @@ fi
 
 [[ -f "$FLOW_PATH" ]] || die "Maestro flow not found: $FLOW_PATH"
 FLOW_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$FLOW_PATH")"
+
+if [[ -n "$APK_PATH" ]]; then
+  [[ -f "$APK_PATH" ]] || die "APK not found: $APK_PATH"
+  APK_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$APK_PATH")"
+fi
+
+if [[ -n "$FIXTURE_PATH" ]]; then
+  [[ -f "$FIXTURE_PATH" ]] || die "snapshot fixture not found: $FIXTURE_PATH"
+  FIXTURE_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$FIXTURE_PATH")"
+  [[ "$LAUNCH_APP" -eq 1 ]] || die_usage "--fixture requires --launch-app"
+fi
+
+if [[ "$LAUNCH_APP" -eq 1 && -z "$APP_PACKAGE" ]]; then
+  die_usage "--launch-app requires --app-package <pkg>"
+fi
+
+if [[ -n "$APP_PACKAGE" ]]; then
+  [[ "$APP_PACKAGE" =~ ^[A-Za-z0-9._]+$ ]] || die "invalid --app-package value: $APP_PACKAGE"
+  if [[ -z "$APP_ACTIVITY" ]]; then
+    APP_ACTIVITY="${APP_PACKAGE}/.MainActivity"
+  fi
+fi
+
+if [[ -n "$APP_ACTIVITY" ]]; then
+  [[ "$APP_ACTIVITY" =~ ^[A-Za-z0-9._/$]+$ ]] || die "invalid --app-activity value: $APP_ACTIVITY"
+fi
 
 valid_java_home() {
   local dir="$1"
@@ -380,7 +439,7 @@ else
     die "emulator serial $SERIAL is already running; choose another --port or use --reuse-serial $SERIAL"
   fi
 
-  TEMP_EMU_LOG="$(mktemp "${TMPDIR:-/tmp}/koe-emulator-${PORT}.XXXXXX.log")"
+  TEMP_EMU_LOG="$(mktemp "${TMPDIR:-/tmp}/koe-emulator-${PORT}.log.XXXXXX")"
   # os.setsid() places the emulator and its child processes in a dedicated process group for clean teardown.
   python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
     "$EMULATOR_BIN" -avd "$AVD_NAME" -port "$PORT" \
@@ -439,6 +498,41 @@ if ! start_ts_raw="$("$ADB_BIN" -s "$SERIAL" shell "date '+%Y-%m-%d %H:%M:%S.000
 fi
 START_TS="$(printf '%s\n' "$start_ts_raw" | tr -d '\r' | sed -n '1p')"
 [[ -n "$START_TS" ]] || die "failed to capture device timestamp from $SERIAL"
+
+if [[ -n "$APK_PATH" ]]; then
+  "$ADB_BIN" -s "$SERIAL" install -r "$APK_PATH" >/dev/null
+fi
+
+if [[ "$LAUNCH_APP" -eq 1 ]]; then
+  WORKSPACE_REL="verify-workspaces/${RUN_ID}"
+  "$ADB_BIN" -s "$SERIAL" shell "am force-stop $APP_PACKAGE" >/dev/null 2>&1 || true
+  "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE rm -f files/koe-trace.json files/koe-active-fixture.json" >/dev/null 2>&1 || true
+
+  AM_START_CMD="am start -W -S -n $APP_ACTIVITY --es koe_workspace $WORKSPACE_REL"
+  if [[ -n "$FIXTURE_PATH" ]]; then
+    REMOTE_TMP_FIXTURE="/data/local/tmp/koe-fixture-${RUN_ID}.json"
+    "$ADB_BIN" -s "$SERIAL" push "$FIXTURE_PATH" "$REMOTE_TMP_FIXTURE" >/dev/null
+    "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE sh -c 'mkdir -p files && cat > files/koe-active-fixture.json' < $REMOTE_TMP_FIXTURE"
+    "$ADB_BIN" -s "$SERIAL" shell "rm -f $REMOTE_TMP_FIXTURE" >/dev/null 2>&1 || true
+    AM_START_CMD="$AM_START_CMD --es koe_snapshot_fixture koe-active-fixture.json"
+  fi
+
+  "$ADB_BIN" -s "$SERIAL" shell "$AM_START_CMD" >/dev/null
+
+  trace_wait_timeout="${KOE_TRACE_WAIT_TIMEOUT:-10}"
+  trace_poll_interval="${KOE_TRACE_POLL_INTERVAL:-0.2}"
+  trace_deadline=$(( $(date +%s) + trace_wait_timeout ))
+  while true; do
+    if "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE sh -c 'test -s files/koe-trace.json'" >/dev/null 2>&1; then
+      break
+    fi
+    if [[ $(date +%s) -ge $trace_deadline ]]; then
+      printf 'warning: %s did not produce files/koe-trace.json within %ds\n' "$APP_PACKAGE" "$trace_wait_timeout" >&2
+      break
+    fi
+    interruptible_sleep "$trace_poll_interval"
+  done
+fi
 
 read -r STARTED_AT START_EPOCH < <(python3 -c 'import datetime, time; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), f"{time.time():.6f}")')
 
@@ -520,10 +614,17 @@ collect_forensics() {
     cp "$TEMP_EMU_LOG" "$dir/emulator.log" 2>/dev/null || true
   fi
 
+  local host_trace_raw=""
+  if [[ -n "$APP_PACKAGE" ]]; then
+    host_trace_raw="$dir/.host-trace.raw.json"
+    rm -f "$host_trace_raw"
+    "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE cat files/koe-trace.json" 2>/dev/null | tr -d '\r' > "$host_trace_raw" || true
+  fi
+
   python3 - "$dir/trace.json" \
     "$RUN_ID" "$AVD_NAME" "$SERIAL" "$API_LEVEL" "$ABI" "$FLOW_PATH" \
     "$STARTED_AT" "$FINISHED_AT" "$DURATION_SEC" "$FLOW_EXIT_CODE" "$OUTCOME" \
-    "$dir/screen.png" "$dir/window_hierarchy.xml" "$dir/logcat.txt" "$MAESTRO_DEBUG_DIR" <<'PY'
+    "$dir/screen.png" "$dir/window_hierarchy.xml" "$dir/logcat.txt" "$MAESTRO_DEBUG_DIR" "$host_trace_raw" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -545,7 +646,19 @@ import sys
     hierarchy_path,
     logcat_path,
     maestro_debug_dir,
-) = sys.argv[1:17]
+    host_trace_raw_path,
+) = sys.argv[1:18]
+
+host_intent_trace = None
+if host_trace_raw_path:
+    raw_file = Path(host_trace_raw_path)
+    if raw_file.is_file() and raw_file.stat().st_size > 0:
+        try:
+            parsed = json.loads(raw_file.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                host_intent_trace = parsed
+        except Exception:
+            host_intent_trace = None
 
 payload = {
     "run_id": run_id,
@@ -565,10 +678,13 @@ payload = {
         "logcat": logcat_path,
         "maestro_debug_dir": maestro_debug_dir,
     },
-    "host_intent_trace": None,
+    "host_intent_trace": host_intent_trace,
 }
 Path(trace_path).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
+  if [[ -n "$host_trace_raw" && -f "$host_trace_raw" ]]; then
+    rm -f "$host_trace_raw" || true
+  fi
 }
 
 validate_forensics_bundle() {

@@ -160,7 +160,7 @@ fi
 "$JDK_HOME/bin/javac" \
   -Xlint:all -Werror \
   -d "$CLASSES_DIR" \
-  "$SCRIPT_DIR/com/semanticcraft/koe/bridge/KoeNativeBridge.java" \
+  "$REPO_ROOT/platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/bridge/KoeNativeBridge.java" \
   "$SCRIPT_DIR/KoeJniHostTest.java"
 
 "$JDK_HOME/bin/java" \

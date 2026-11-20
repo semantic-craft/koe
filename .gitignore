@@ -9,6 +9,12 @@ platforms/**/.build/
 platforms/ios/*.xcodeproj/
 platforms/ios/.build/
 
+# Android / Gradle (keep gradle/wrapper/gradle-wrapper.jar tracked)
+platforms/android/gradle-app/.gradle/
+platforms/android/gradle-app/build/
+platforms/android/gradle-app/*/build/
+platforms/android/gradle-app/local.properties
+
 # Python
 __pycache__/
 *.pyc
