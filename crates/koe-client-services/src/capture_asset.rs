@@ -83,7 +83,7 @@ impl CaptureAsset {
             .map_err(|e| format!("未完成录音格式无效：{e:?}"))?;
         let duration = wave.duration_ms();
         if !target.exists() {
-            fs::hard_link(&staging, &target).map_err(io_error)?;
+            publish_staging_file(&staging, &target).map_err(io_error)?;
         }
         File::open(&target)
             .and_then(|f| f.sync_all())
@@ -119,10 +119,12 @@ impl CaptureAsset {
             self.file.write_all(&header).map_err(io_error)?;
             self.file.set_len(44 + u64::from(size)).map_err(io_error)?;
             self.file.sync_all().map_err(io_error)?;
-            fs::hard_link(&self.staging, &self.target).map_err(io_error)?;
+            publish_staging_file(&self.staging, &self.target).map_err(io_error)?;
             self.published = true;
         }
-        self.file.sync_all().map_err(io_error)?;
+        File::open(&self.target)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
         File::open(self.target.parent().ok_or("无效音频目录")?)
             .and_then(|f| f.sync_all())
             .map_err(io_error)?;
@@ -144,6 +146,51 @@ impl CaptureAsset {
         let _ = fs::remove_file(&self.staging);
     }
 }
+fn publish_staging_file(staging: &Path, target: &Path) -> std::io::Result<()> {
+    publish_staging_with(staging, target, |src, dst| fs::hard_link(src, dst))
+}
+
+fn publish_staging_with<F>(staging: &Path, target: &Path, link_fn: F) -> std::io::Result<()>
+where
+    F: FnOnce(&Path, &Path) -> std::io::Result<()>,
+{
+    match link_fn(staging, target) {
+        Ok(()) => Ok(()),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+            ) =>
+        {
+            if fs::symlink_metadata(target).is_ok() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "target audio already exists",
+                ));
+            }
+            let tmp_path = target.with_extension("publish-tmp");
+            let _ = fs::remove_file(&tmp_path);
+            let result = (|| -> std::io::Result<()> {
+                let mut src = File::open(staging)?;
+                let mut tmp = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_path)?;
+                std::io::copy(&mut src, &mut tmp)?;
+                tmp.sync_all()?;
+                drop(tmp);
+                fs::rename(&tmp_path, target)?;
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(&tmp_path);
+            }
+            result
+        }
+        Err(err) => Err(err),
+    }
+}
+
 fn io_error(e: std::io::Error) -> String {
     format!("麦克风录音保存失败：{e}")
 }
@@ -165,5 +212,62 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert_eq!(after, original);
         assert_eq!(result.unwrap(), AppendOutcome::CapacityReached);
+    }
+
+    #[test]
+    fn publish_staging_falls_back_to_atomic_copy_on_permission_denied() {
+        let root = std::env::temp_dir().join(format!(
+            "koe-publish-fallback-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let staging = root.join("sample.capture");
+        let target = root.join("sample.wav");
+        let payload = b"RIFF-test-audio-payload";
+        fs::write(&staging, payload).unwrap();
+
+        publish_staging_with(&staging, &target, |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), payload);
+        assert!(staging.exists());
+        assert!(!target.with_extension("publish-tmp").exists());
+
+        fs::write(&staging, b"different-bytes").unwrap();
+        let dup = publish_staging_with(&staging, &target, |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+        assert_eq!(dup.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&target).unwrap(), payload);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn publish_staging_cleans_up_temp_file_on_missing_source() {
+        let root = std::env::temp_dir().join(format!(
+            "koe-publish-missing-src-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let staging = root.join("missing.capture");
+        let target = root.join("missing.wav");
+        let stale_tmp = target.with_extension("publish-tmp");
+        fs::write(&stale_tmp, b"stale").unwrap();
+
+        let err = publish_staging_with(&staging, &target, |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(!target.exists());
+        assert!(!stale_tmp.exists());
+
+        fs::remove_dir_all(&root).unwrap();
     }
 }

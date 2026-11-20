@@ -15,6 +15,7 @@ APK_PATH=""
 APP_PACKAGE=""
 APP_ACTIVITY=""
 FIXTURE_PATH=""
+GRANT_PERMISSIONS=()
 LAUNCH_APP=0
 EXPECT_FAILURE=0
 KEEP_ARTIFACTS=0
@@ -48,6 +49,7 @@ Options:
   --apk <path.apk>          Install the specified APK via adb install -r before running the flow
   --app-package <pkg>       Target Android package name for app launch and host_intent_trace capture
   --app-activity <comp>     Launch component (default: <pkg>/.MainActivity when --app-package is set)
+  --grant-permission <perm> Grant runtime permission via adb shell pm grant before launch (repeatable)
   --fixture <path.json>     Stage DEBUG snapshot fixture JSON into app files/koe-active-fixture.json
   --launch-app              Force-stop, clear trace, and am start -W -S the app with isolated workspace
   --expect-failure          Exit 0 only if the flow fails AND all 4 forensics artifacts are valid
@@ -110,6 +112,11 @@ while [[ $# -gt 0 ]]; do
     --app-activity)
       [[ $# -ge 2 ]] || die_usage "--app-activity requires a value"
       APP_ACTIVITY="$2"
+      shift
+      ;;
+    --grant-permission)
+      [[ $# -ge 2 ]] || die_usage "--grant-permission requires a value"
+      GRANT_PERMISSIONS+=("$2")
       shift
       ;;
     --fixture)
@@ -190,6 +197,13 @@ fi
 
 if [[ "$LAUNCH_APP" -eq 1 && -z "$APP_PACKAGE" ]]; then
   die_usage "--launch-app requires --app-package <pkg>"
+fi
+
+if [[ ${#GRANT_PERMISSIONS[@]} -gt 0 ]]; then
+  [[ -n "$APP_PACKAGE" ]] || die_usage "--grant-permission requires --app-package <pkg>"
+  for perm in "${GRANT_PERMISSIONS[@]}"; do
+    [[ "$perm" =~ ^[A-Za-z0-9_.]+$ ]] || die "invalid --grant-permission value: $perm"
+  done
 fi
 
 if [[ -n "$APP_PACKAGE" ]]; then
@@ -501,6 +515,12 @@ START_TS="$(printf '%s\n' "$start_ts_raw" | tr -d '\r' | sed -n '1p')"
 
 if [[ -n "$APK_PATH" ]]; then
   "$ADB_BIN" -s "$SERIAL" install -r "$APK_PATH" >/dev/null
+fi
+
+if [[ ${#GRANT_PERMISSIONS[@]} -gt 0 ]]; then
+  for perm in "${GRANT_PERMISSIONS[@]}"; do
+    "$ADB_BIN" -s "$SERIAL" shell pm grant "$APP_PACKAGE" "$perm" >/dev/null 2>&1 || true
+  done
 fi
 
 if [[ "$LAUNCH_APP" -eq 1 ]]; then

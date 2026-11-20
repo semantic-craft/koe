@@ -138,6 +138,9 @@ if rest and rest[0] == 'shell':
     if tokens[:2] == ['am', 'force-stop']:
         sys.exit(0)
 
+    if len(tokens) == 4 and tokens[:2] == ['pm', 'grant']:
+        sys.exit(0)
+
     if tokens[:2] == ['am', 'start']:
         trace_payload = os.environ.get('FAKE_HOST_TRACE_JSON', '')
         if trace_payload:
@@ -551,6 +554,9 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
         self.assertIn('com.semanticcraft.koe', live_call)
         self.assertTrue(any(arg.endswith('smoke-android-live.yaml') for arg in live_call))
         self.assertNotIn('--fixture', live_call)
+        self.assertIn('--grant-permission', live_call)
+        self.assertIn('android.permission.RECORD_AUDIO', live_call)
+        self.assertIn('android.permission.POST_NOTIFICATIONS', live_call)
 
         self.assertIn('--launch-app', fixture_call)
         self.assertIn('--fixture', fixture_call)
@@ -558,6 +564,96 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
 
         self.assertIn('--expect-failure', fail_call)
         self.assertTrue(any(arg.endswith('fail-probe-android.yaml') for arg in fail_call))
+
+    def test_verify_emulator_grants_permissions_and_rejects_invalid_values(self):
+        artifacts_dir = self.root / 'grant-artifacts'
+        res = subprocess.run(
+            [
+                str(VERIFY_SCRIPT),
+                '--reuse-serial', 'emulator-5580',
+                '--apk', str(self.fake_apk),
+                '--app-package', 'com.semanticcraft.koe',
+                '--grant-permission', 'android.permission.RECORD_AUDIO',
+                '--grant-permission', 'android.permission.POST_NOTIFICATIONS',
+                '--launch-app',
+                '--flow', str(self.fake_flow),
+                '--artifacts-dir', str(artifacts_dir),
+            ],
+            cwd=ROOT,
+            env=self.verify_env(FAKE_MAESTRO_EXIT='0'),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+        calls = self.read_calls()
+        install_idx = next(
+            (i for i, c in enumerate(calls) if c[0] == 'adb' and 'install' in c and '-r' in c),
+            None,
+        )
+        grant_record_idx = next(
+            (
+                i
+                for i, c in enumerate(calls)
+                if c[0] == 'adb'
+                and 'shell' in c
+                and 'pm grant com.semanticcraft.koe android.permission.RECORD_AUDIO' in ' '.join(c)
+            ),
+            None,
+        )
+        grant_notif_idx = next(
+            (
+                i
+                for i, c in enumerate(calls)
+                if c[0] == 'adb'
+                and 'shell' in c
+                and 'pm grant com.semanticcraft.koe android.permission.POST_NOTIFICATIONS' in ' '.join(c)
+            ),
+            None,
+        )
+        am_start_idx = next(
+            (i for i, c in enumerate(calls) if c[0] == 'adb' and 'shell' in c and 'am start -W -S' in ' '.join(c)),
+            None,
+        )
+        self.assertIsNotNone(install_idx)
+        self.assertIsNotNone(grant_record_idx, f'expected RECORD_AUDIO pm grant in {calls}')
+        self.assertIsNotNone(grant_notif_idx, f'expected POST_NOTIFICATIONS pm grant in {calls}')
+        self.assertIsNotNone(am_start_idx)
+        self.assertLess(install_idx, grant_record_idx)
+        self.assertLess(grant_record_idx, am_start_idx)
+        self.assertLess(grant_notif_idx, am_start_idx)
+
+        bad_perm = subprocess.run(
+            [
+                str(VERIFY_SCRIPT),
+                '--reuse-serial', 'emulator-5580',
+                '--app-package', 'com.semanticcraft.koe',
+                '--grant-permission', 'android.permission.RECORD_AUDIO;rm -rf /',
+                '--flow', str(self.fake_flow),
+            ],
+            cwd=ROOT,
+            env=self.verify_env(),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertNotEqual(bad_perm.returncode, 0)
+
+        missing_pkg = subprocess.run(
+            [
+                str(VERIFY_SCRIPT),
+                '--reuse-serial', 'emulator-5580',
+                '--grant-permission', 'android.permission.RECORD_AUDIO',
+                '--flow', str(self.fake_flow),
+            ],
+            cwd=ROOT,
+            env=self.verify_env(),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(missing_pkg.returncode, 2)
 
 
 if __name__ == '__main__':

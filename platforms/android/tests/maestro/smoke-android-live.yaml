@@ -9,9 +9,49 @@ appId: com.semanticcraft.koe
 - tapOn:
     id: "quick-note-submit"
 - waitForAnimationToEnd
+- scrollUntilVisible:
+    element:
+      id: "mode-switch-notes"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "mode-switch-notes"
+- extendedWaitUntil:
+    visible:
+      id: "active-capture-bar"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: ".*正在记录.*"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: ".*00:0[1-9].*"
+    timeout: 10000
+- tapOn:
+    id: "capture-action-pause"
+- extendedWaitUntil:
+    visible: ".*已暂停.*"
+    timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: "capture-action-resume"
+    timeout: 10000
+- tapOn:
+    id: "capture-action-resume"
+- extendedWaitUntil:
+    visible: ".*正在记录.*"
+    timeout: 10000
+- tapOn:
+    id: "capture-action-end"
+- extendedWaitUntil:
+    notVisible:
+      id: "active-capture-bar"
+    timeout: 10000
 - tapOn: "记录"
 - extendedWaitUntil:
     visible: "AndroidSmokeNote"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Android 麦克风录音"
     timeout: 10000
 - tapOn: "行动"
 - extendedWaitUntil:
