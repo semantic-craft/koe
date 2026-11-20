@@ -191,6 +191,8 @@ if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
 fi
 
 "$VERIFY_BIN" "${common_args[@]}" "${keep_args[@]}" \
+  --grant-permission android.permission.RECORD_AUDIO \
+  --grant-permission android.permission.POST_NOTIFICATIONS \
   --flow "$LIVE_FLOW" \
   --artifacts-dir "$ARTIFACTS_DIR/live"
 

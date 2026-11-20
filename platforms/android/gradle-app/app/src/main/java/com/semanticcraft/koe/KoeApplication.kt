@@ -3,11 +3,18 @@ package com.semanticcraft.koe
 import android.app.Application
 import android.content.Intent
 import com.semanticcraft.koe.core.AndroidCredentials
+import com.semanticcraft.koe.core.CaptureAction
 import com.semanticcraft.koe.core.HostAdapterEvent
 import com.semanticcraft.koe.core.HostBridgeActions
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.JniHostBridgeClient
 import com.semanticcraft.koe.platform.AndroidHostCoordinator
+import com.semanticcraft.koe.platform.capture.AndroidAudioInputMonitor
+import com.semanticcraft.koe.platform.capture.AndroidAudioRecordSource
+import com.semanticcraft.koe.platform.capture.AndroidCaptureCoordinator
+import com.semanticcraft.koe.platform.capture.AndroidPermissionCoordinator
+import com.semanticcraft.koe.platform.capture.KoeCaptureForegroundService
+import com.semanticcraft.koe.platform.capture.SystemAudioFocusController
 import java.io.File
 import java.nio.charset.StandardCharsets
 
@@ -15,9 +22,35 @@ class KoeApplication : Application() {
     private val sessionLock = Any()
     private var currentStore: HostSessionStore? = null
     val hostCoordinator = AndroidHostCoordinator()
+    val permissionCoordinator: AndroidPermissionCoordinator by lazy {
+        AndroidPermissionCoordinator(this)
+    }
+    val audioInputMonitor: AndroidAudioInputMonitor by lazy {
+        AndroidAudioInputMonitor(this)
+    }
+    val captureCoordinator: AndroidCaptureCoordinator by lazy {
+        AndroidCaptureCoordinator(
+            source = AndroidAudioRecordSource(this, permissionCoordinator),
+            focusController = SystemAudioFocusController(this),
+            onForegroundStateChanged = { state ->
+                KoeCaptureForegroundService.sync(this, state)
+            },
+        )
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        hostCoordinator.registerAdapter(audioInputMonitor)
+        hostCoordinator.registerAdapter(captureCoordinator)
+    }
 
     fun setForegroundActive(active: Boolean) {
         hostCoordinator.setForegroundActive(active)
+    }
+
+    fun performNotificationCaptureAction(action: CaptureAction) {
+        val store = synchronized(sessionLock) { currentStore } ?: return
+        store.performCaptureAction(action)
     }
 
     fun applyLaunchIntent(intent: Intent?): HostSessionStore {
@@ -78,7 +111,12 @@ class KoeApplication : Application() {
         }
 
         if (newlyCreated) {
-            hostCoordinator.bind(store, HostBridgeActions())
+            hostCoordinator.bind(
+                store,
+                HostBridgeActions(
+                    resumeMicrophone = { captureCoordinator.resume() },
+                ),
+            )
         }
 
         if (BuildConfig.DEBUG && !debugFixture.isNullOrBlank()) {

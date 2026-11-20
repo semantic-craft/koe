@@ -310,9 +310,11 @@ private fun ModePickerCard(
                             uncheckedThumbColor = colors.textMuted,
                             uncheckedTrackColor = colors.bgSubtle,
                         ),
-                        modifier = Modifier.semantics {
-                            contentDescription = "${card.title}录音开关"
-                        },
+                        modifier = Modifier
+                            .testTag("mode-switch-${card.id}")
+                            .semantics {
+                                contentDescription = "${card.title}录音开关"
+                            },
                     )
                     Text(
                         text = if (card.isSessionActive) "录音中" else "待机",

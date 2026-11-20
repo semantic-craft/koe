@@ -87,6 +87,7 @@ fun AndroidActiveCaptureBar(
                         title = captureActionTitle(action),
                         isPrimary = action == CaptureAction.END,
                         onClick = { store.performCaptureAction(action) },
+                        modifier = Modifier.testTag("capture-action-${action.name.lowercase()}"),
                     )
                 }
             }
