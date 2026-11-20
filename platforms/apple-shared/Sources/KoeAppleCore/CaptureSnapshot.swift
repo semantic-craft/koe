@@ -170,3 +170,19 @@ public struct ActiveCaptureSnapshot: Codable, Equatable, Sendable {
     public let error: String?
     public let level: Double?
 }
+
+extension HostSessionStore {
+    public func startCapture(_ mode: CaptureMode, stayOnPage: Bool = false) {
+        send(.startCaptureMode(mode: mode, stayOnPage: stayOnPage))
+        bridgeActions.flushBleOutbound()
+    }
+
+    public func performCaptureAction(_ action: CaptureAction) {
+        if action == .resume {
+            bridgeActions.resumeMicrophone()
+        } else {
+            send(.captureAction(action: action))
+            bridgeActions.flushBleOutbound()
+        }
+    }
+}

@@ -1,11 +1,5 @@
 import SwiftUI
 
-public struct LiveCaptionSnapshot: Codable, Equatable, Sendable {
-    public let recordId: String
-    public let text: String
-    public let status: String
-}
-
 struct LiveCaptionBar: View {
     let store: HostSessionStore
 

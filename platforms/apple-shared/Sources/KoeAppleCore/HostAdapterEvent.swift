@@ -39,7 +39,16 @@ public struct HostAudioInputDescriptor: Encodable, Equatable, Sendable {
 
 public enum HostAdapterEvent: Encodable, Equatable, Sendable {
     case syncAudioInputs(inputs: [HostAudioInputDescriptor])
-    case syncAppMetadata(version: String, build: String, updateEndpoint: String? = nil)
+    case syncAppMetadata(
+        version: String,
+        build: String,
+        updateEndpoint: String? = nil,
+        platform: String? = nil,
+        hostDisplayName: String? = nil,
+        supportsSystemAudio: Bool? = nil,
+        supportsSelfUpdate: Bool? = nil,
+        nativeSpeechLabel: String? = nil
+    )
     case microphonePrepared(recordId: String, sessionId: String, epoch: UInt64, clockNs: UInt64)
     case resumeMicrophone(clockNs: UInt64)
     case microphoneStarted(recordId: String, sessionId: String, lane: String, sampleRate: UInt32)
@@ -57,6 +66,7 @@ public enum HostAdapterEvent: Encodable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case type, inputs, version, build, updateEndpoint
+        case platform, hostDisplayName, supportsSystemAudio, supportsSelfUpdate, nativeSpeechLabel
         case recordId, sessionId, epoch, clockNs, lane, sampleRate, sequence
         case message, state, operationId, text, startMs, endMs, isFinal
         case event, connectionId, deviceName
@@ -89,10 +99,18 @@ public enum HostAdapterEvent: Encodable, Equatable, Sendable {
         switch self {
         case let .syncAudioInputs(inputs):
             try c.encode(inputs, forKey: .inputs)
-        case let .syncAppMetadata(version, build, updateEndpoint):
+        case let .syncAppMetadata(
+            version, build, updateEndpoint,
+            platform, hostDisplayName, supportsSystemAudio, supportsSelfUpdate, nativeSpeechLabel
+        ):
             try c.encode(version, forKey: .version)
             try c.encode(build, forKey: .build)
             try c.encodeIfPresent(updateEndpoint, forKey: .updateEndpoint)
+            try c.encodeIfPresent(platform, forKey: .platform)
+            try c.encodeIfPresent(hostDisplayName, forKey: .hostDisplayName)
+            try c.encodeIfPresent(supportsSystemAudio, forKey: .supportsSystemAudio)
+            try c.encodeIfPresent(supportsSelfUpdate, forKey: .supportsSelfUpdate)
+            try c.encodeIfPresent(nativeSpeechLabel, forKey: .nativeSpeechLabel)
         case let .microphonePrepared(recordId, sessionId, epoch, clockNs):
             try c.encode(recordId, forKey: .recordId)
             try c.encode(sessionId, forKey: .sessionId)

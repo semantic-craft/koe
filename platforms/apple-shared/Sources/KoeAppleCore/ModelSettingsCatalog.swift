@@ -1,25 +1,57 @@
 import Foundation
 
-struct QwenAsrModelOption: Identifiable, Equatable {
-    let id: String
-    let note: String
-    let badge: String?
-    let isRealtime: Bool
-    let endpointLabel: String
-    let path: String
-    let nonRealtimeWarning: String?
+public struct QwenAsrModelOption: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let note: String
+    public let badge: String?
+    public let isRealtime: Bool
+    public let endpointLabel: String
+    public let path: String
+    public let nonRealtimeWarning: String?
+
+    public init(
+        id: String,
+        note: String,
+        badge: String?,
+        isRealtime: Bool,
+        endpointLabel: String,
+        path: String,
+        nonRealtimeWarning: String?
+    ) {
+        self.id = id
+        self.note = note
+        self.badge = badge
+        self.isRealtime = isRealtime
+        self.endpointLabel = endpointLabel
+        self.path = path
+        self.nonRealtimeWarning = nonRealtimeWarning
+    }
 }
 
-struct LlmModelOption: Identifiable, Equatable {
-    let id: String
-    let primaryBadge: String
-    let primaryBadgeRecommended: Bool
-    let metaBadges: [String]
-    let description: String
+public struct LlmModelOption: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let primaryBadge: String
+    public let primaryBadgeRecommended: Bool
+    public let metaBadges: [String]
+    public let description: String
+
+    public init(
+        id: String,
+        primaryBadge: String,
+        primaryBadgeRecommended: Bool,
+        metaBadges: [String],
+        description: String
+    ) {
+        self.id = id
+        self.primaryBadge = primaryBadge
+        self.primaryBadgeRecommended = primaryBadgeRecommended
+        self.metaBadges = metaBadges
+        self.description = description
+    }
 }
 
-enum ModelSettingsCatalog {
-    static let qwenAsrModels: [QwenAsrModelOption] = [
+public enum ModelSettingsCatalog {
+    public static let qwenAsrModels: [QwenAsrModelOption] = [
         QwenAsrModelOption(
             id: "qwen-audio-3.1-asr-flash-streaming",
             note: "WebSocket 实时流式 | 会议/字幕/长录音 | 中间结果与时间戳",
@@ -58,7 +90,7 @@ enum ModelSettingsCatalog {
         )
     ]
 
-    static let deepseekLlmModels: [LlmModelOption] = [
+    public static let deepseekLlmModels: [LlmModelOption] = [
         LlmModelOption(
             id: "deepseek-flash",
             primaryBadge: "默认推荐",
@@ -75,30 +107,32 @@ enum ModelSettingsCatalog {
         )
     ]
 
-    static func qwenHost(workspaceId: String) -> String {
+    public static func qwenHost(workspaceId: String) -> String {
         let cleaned = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "dashscope.aliyuncs.com" : "\(cleaned).cn-beijing.maas.aliyuncs.com"
     }
 
-    static func qwenAsrOption(for id: String) -> QwenAsrModelOption {
+    public static func qwenAsrOption(for id: String) -> QwenAsrModelOption {
         qwenAsrModels.first(where: { $0.id == id }) ?? qwenAsrModels[0]
     }
 }
 
-struct ModelSettingsDraft: Equatable {
-    var qwenApiKey = ""
-    var deepseekApiKey = ""
-    var qwenWorkspaceId = ""
-    var customChatEndpoint = ""
-    var customAsrEndpoint = ""
-    var asrProvider = "qwen"
-    var qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
-    var llmProvider = "deepseek"
-    var deepseekLlmModel = "deepseek-flash"
-    var customLlmModel = ""
-    var enableThinking = false
+public struct ModelSettingsDraft: Equatable, Sendable {
+    public var qwenApiKey = ""
+    public var deepseekApiKey = ""
+    public var qwenWorkspaceId = ""
+    public var customChatEndpoint = ""
+    public var customAsrEndpoint = ""
+    public var asrProvider = "qwen"
+    public var qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
+    public var llmProvider = "deepseek"
+    public var deepseekLlmModel = "deepseek-flash"
+    public var customLlmModel = ""
+    public var enableThinking = false
 
-    mutating func sync(from provider: ProviderSnapshot) {
+    public init() {}
+
+    public mutating func sync(from provider: ProviderSnapshot) {
         qwenWorkspaceId = provider.qwenWorkspaceId
         asrProvider = provider.asrProvider == "deepseek" ? "deepseek" : "qwen"
         if ModelSettingsCatalog.qwenAsrModels.contains(where: { $0.id == provider.asrModel }) {
@@ -123,21 +157,21 @@ struct ModelSettingsDraft: Equatable {
         customAsrEndpoint = provider.asrEndpoint != defaultAsr ? provider.asrEndpoint : ""
     }
 
-    var activeLlmModel: String {
+    public var activeLlmModel: String {
         switch llmProvider {
         case "custom": customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         default: deepseekLlmModel
         }
     }
 
-    var resolvedLlmModelForSave: String {
+    public var resolvedLlmModelForSave: String {
         switch llmProvider {
         case "custom": customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         default: deepseekLlmModel.isEmpty ? "deepseek-flash" : deepseekLlmModel
         }
     }
 
-    mutating func selectLlmProvider(_ provider: String) {
+    public mutating func selectLlmProvider(_ provider: String) {
         let normalized = provider == "custom" ? "custom" : "deepseek"
         guard llmProvider != normalized else { return }
         llmProvider = normalized
@@ -146,7 +180,7 @@ struct ModelSettingsDraft: Equatable {
         }
     }
 
-    func computedDefaultAsrEndpoint() -> String {
+    public func computedDefaultAsrEndpoint() -> String {
         if asrProvider == "deepseek" {
             return "https://api.deepseek.com/v1/tools/asr"
         }
@@ -155,16 +189,16 @@ struct ModelSettingsDraft: Equatable {
         return (meta.isRealtime ? "wss://" : "https://") + host + meta.path
     }
 
-    func effectiveAsrEndpoint() -> String {
+    public func effectiveAsrEndpoint() -> String {
         let custom = customAsrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         return custom.isEmpty ? computedDefaultAsrEndpoint() : custom
     }
 
-    func computedDefaultChatEndpoint() -> String {
+    public func computedDefaultChatEndpoint() -> String {
         "https://api.deepseek.com/chat/completions"
     }
 
-    func effectiveChatEndpoint() -> String {
+    public func effectiveChatEndpoint() -> String {
         let custom = customChatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         if llmProvider == "custom" {
             return custom
@@ -172,7 +206,7 @@ struct ModelSettingsDraft: Equatable {
         return custom.isEmpty ? computedDefaultChatEndpoint() : custom
     }
 
-    mutating func applyPreset(_ preset: String) {
+    public mutating func applyPreset(_ preset: String) {
         customAsrEndpoint = ""
         customChatEndpoint = ""
         switch preset {
@@ -188,7 +222,7 @@ struct ModelSettingsDraft: Equatable {
         }
     }
 
-    func matchedPreset(speechEngine: String) -> String? {
+    public func matchedPreset(speechEngine: String) -> String? {
         guard speechEngine == "cloud" else { return nil }
         if asrProvider == "qwen" && qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming" && llmProvider == "deepseek" {
             return "hybrid"

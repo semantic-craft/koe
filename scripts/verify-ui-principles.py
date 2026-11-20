@@ -32,6 +32,95 @@ HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
     "LiveMinutesCoverageSlotView.swift": "liveMinutesCoverage",
 }
 
+IOS_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
+    "IOSPlayerBarView.swift": "playback",
+    "IOSActiveCaptureBar.swift": "activeCapture",
+    "IOSLiveCaptionBar.swift": "liveCaption",
+    "IOSLiveMinutesCoverageSlotView.swift": "liveMinutesCoverage",
+}
+
+
+def strip_swift_comments_and_strings(text: str) -> str:
+    out: list[str] = []
+    idx = 0
+    n = len(text)
+    in_string = False
+    in_multiline_string = False
+    escaped = False
+    block_depth = 0
+    in_line_comment = False
+
+    while idx < n:
+        ch = text[idx]
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append("\n")
+            else:
+                out.append(" ")
+            idx += 1
+            continue
+        if block_depth > 0:
+            if text.startswith("/*", idx):
+                block_depth += 1
+                out.append("  ")
+                idx += 2
+            elif text.startswith("*/", idx):
+                block_depth -= 1
+                out.append("  ")
+                idx += 2
+            else:
+                out.append("\n" if ch == "\n" else " ")
+                idx += 1
+            continue
+        if in_multiline_string:
+            if escaped:
+                escaped = False
+                out.append("\n" if ch == "\n" else " ")
+                idx += 1
+            elif ch == "\\":
+                escaped = True
+                out.append(" ")
+                idx += 1
+            elif text.startswith('"""', idx):
+                in_multiline_string = False
+                out.append("   ")
+                idx += 3
+            else:
+                out.append("\n" if ch == "\n" else " ")
+                idx += 1
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            out.append("\n" if ch == "\n" else " ")
+            idx += 1
+            continue
+        if text.startswith("//", idx):
+            in_line_comment = True
+            out.append("  ")
+            idx += 2
+        elif text.startswith("/*", idx):
+            block_depth = 1
+            out.append("  ")
+            idx += 2
+        elif text.startswith('"""', idx):
+            in_multiline_string = True
+            out.append("   ")
+            idx += 3
+        elif ch == '"':
+            in_string = True
+            out.append(" ")
+            idx += 1
+        else:
+            out.append(ch)
+            idx += 1
+    return "".join(out)
+
 
 def strip_swift_comments(text: str) -> str:
     out: list[str] = []
@@ -478,7 +567,40 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
             )
 
         norm_path = "/" + path_str.replace("\\", "/").lstrip("/")
-        if "/platforms/apple-shared/Sources/KoeAppleShared/" in norm_path:
+        if "/platforms/apple-shared/Sources/KoeAppleCore/" in norm_path:
+            code_only = strip_swift_comments_and_strings(text)
+            forbidden_imports = sorted(
+                set(
+                    re.findall(
+                        r"\bimport\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(AppKit|SwiftUI|UIKit)\b",
+                        code_only,
+                    )
+                )
+            )
+            if forbidden_imports:
+                violations.append(
+                    f"Architecture violation: {path_str} imports forbidden UI framework(s) {forbidden_imports} inside platform-neutral KoeAppleCore"
+                )
+            filename = Path(norm_path).name
+            if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
+                if re.search(r"\bstore\??\.snapshot\b", comment_stripped):
+                    violations.append(
+                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                    )
+                hf_props = sorted(
+                    set(
+                        re.findall(
+                            r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
+                            comment_stripped,
+                        )
+                    )
+                )
+                if hf_props:
+                    disallowed = [f"store.{p}" for p in hf_props]
+                    violations.append(
+                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
+                    )
+        elif "/platforms/apple-shared/Sources/KoeAppleShared/" in norm_path:
             filename = Path(norm_path).name
             if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
                 if re.search(r"\bstore\.snapshot\b", comment_stripped):
@@ -523,6 +645,28 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 if hf_hits:
                     violations.append(
                         f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {hf_hits} outside designated leaf views"
+                    )
+        elif "/platforms/ios/App/Sources/" in norm_path:
+            swiftui_blocks = "\n".join(extract_swiftui_type_blocks(comment_stripped))
+            if swiftui_blocks and re.search(r"\bstore\??\.snapshot\b", swiftui_blocks):
+                violations.append(
+                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                )
+            if swiftui_blocks:
+                filename = Path(norm_path).name
+                allowed_prop = IOS_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename)
+                hf_props = sorted(
+                    set(
+                        re.findall(
+                            r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
+                            swiftui_blocks,
+                        )
+                    )
+                )
+                disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
+                if disallowed:
+                    violations.append(
+                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
                     )
 
     return {

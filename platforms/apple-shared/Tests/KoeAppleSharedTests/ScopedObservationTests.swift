@@ -2,6 +2,7 @@ import CKoeHostApi
 import Foundation
 import Observation
 import Testing
+@testable import KoeAppleCore
 @testable import KoeAppleShared
 
 private final class ObservationCounter: @unchecked Sendable {

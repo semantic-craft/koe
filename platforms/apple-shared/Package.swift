@@ -5,6 +5,14 @@ import PackageDescription
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let repoRoot = packageDir.deletingLastPathComponent().deletingLastPathComponent().path
 
+let hostApiLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
+    .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
+    .linkedLibrary("koe_host_api"),
+    .linkedLibrary("c++"),
+    .linkedFramework("Accelerate"),
+]
+
 let package = Package(
     name: "KoeAppleShared",
     platforms: [
@@ -12,6 +20,10 @@ let package = Package(
         .iOS(.v17),
     ],
     products: [
+        .library(
+            name: "KoeAppleCore",
+            targets: ["KoeAppleCore"]
+        ),
         .library(
             name: "KoeAppleShared",
             targets: ["KoeAppleShared"]
@@ -24,21 +36,26 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(
-            name: "KoeAppleShared",
+            name: "KoeAppleCore",
             dependencies: ["CKoeHostApi"],
+            path: "Sources/KoeAppleCore"
+        ),
+        .target(
+            name: "KoeAppleShared",
+            dependencies: ["KoeAppleCore"],
             path: "Sources/KoeAppleShared"
         ),
         .testTarget(
+            name: "KoeAppleCoreTests",
+            dependencies: ["KoeAppleCore", "CKoeHostApi"],
+            path: "Tests/KoeAppleCoreTests",
+            linkerSettings: hostApiLinkerSettings
+        ),
+        .testTarget(
             name: "KoeAppleSharedTests",
-            dependencies: ["KoeAppleShared"],
+            dependencies: ["KoeAppleShared", "KoeAppleCore", "CKoeHostApi"],
             path: "Tests/KoeAppleSharedTests",
-            linkerSettings: [
-                .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
-                .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
-                .linkedLibrary("koe_host_api"),
-                .linkedLibrary("c++"),
-                .linkedFramework("Accelerate"),
-            ]
+            linkerSettings: hostApiLinkerSettings
         ),
     ]
 )

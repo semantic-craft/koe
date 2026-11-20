@@ -1,21 +1,5 @@
 import SwiftUI
 
-extension HostSessionStore {
-    public func startCapture(_ mode: CaptureMode, stayOnPage: Bool = false) {
-        send(.startCaptureMode(mode: mode, stayOnPage: stayOnPage))
-        bridgeActions.flushBleOutbound()
-    }
-
-    public func performCaptureAction(_ action: CaptureAction) {
-        if action == .resume {
-            bridgeActions.resumeMicrophone()
-        } else {
-            send(.captureAction(action: action))
-            bridgeActions.flushBleOutbound()
-        }
-    }
-}
-
 struct ActiveCaptureBar: View {
     let store: HostSessionStore
     var isLiveMinutesSection: Bool = false

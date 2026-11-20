@@ -36,7 +36,9 @@ public final class HostSessionStore {
     @ObservationIgnored public var bridgeActions = HostBridgeActions()
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
     @ObservationIgnored private let credentials: HostCredentials?
+    @ObservationIgnored private var traceBuffer = HostTraceRingBuffer(capacity: 20)
 
+    public private(set) var platform: HostPlatformSnapshot = .macosDefault
     public private(set) var navigation: NavigationChromeSlice = .empty
     public private(set) var sidebar: SidebarSlice = .empty
     public private(set) var today: TodaySlice = .empty
@@ -116,6 +118,10 @@ public final class HostSessionStore {
         send(.clearError)
     }
 
+    public var recentTraceEntries: [HostTraceEntry] { traceBuffer.entries }
+
+    public func exportTraceJSON() -> String { traceBuffer.exportJSON() }
+
     public func requestUpdatePopoverPresentation() {
         updatePopoverRequestCount &+= 1
     }
@@ -124,9 +130,10 @@ public final class HostSessionStore {
         guard handle != 0 else { return }
         do {
             let data = try Self.encoder.encode(command)
-            dispatchEncodedJSON(data, commandType: command.commandType, nowEpochSec: nowEpochSec)
+            dispatchEncodedJSON(data, traceKind: "command", commandType: command.commandType, nowEpochSec: nowEpochSec)
         } catch {
             nativeError = "无法发送这次操作，请重试。"
+            recordTrace(kind: "command", name: command.commandType)
         }
     }
 
@@ -134,16 +141,18 @@ public final class HostSessionStore {
         guard handle != 0 else { return }
         do {
             let data = try Self.encoder.encode(event)
-            dispatchEncodedJSON(data, commandType: event.eventType, nowEpochSec: nowEpochSec)
+            dispatchEncodedJSON(data, traceKind: "event", commandType: event.eventType, nowEpochSec: nowEpochSec)
         } catch {
             nativeError = "无法发送这次操作，请重试。"
+            recordTrace(kind: "event", name: event.eventType)
         }
     }
 
-    private func dispatchEncodedJSON(_ data: Data, commandType: String?, nowEpochSec: UInt64) {
+    private func dispatchEncodedJSON(_ data: Data, traceKind: String, commandType: String, nowEpochSec: UInt64) {
+        defer { recordTrace(kind: traceKind, name: commandType) }
         let preservesNativeError = commandType == "sync_audio_inputs"
             || commandType == "sync_app_metadata"
-            || commandType?.hasPrefix("local_asr_") == true
+            || commandType.hasPrefix("local_asr_")
         if !preservesNativeError, nativeError != nil {
             nativeError = nil
         }
@@ -163,6 +172,7 @@ public final class HostSessionStore {
 
     public func refreshSnapshot(nowEpochSec: UInt64 = 0) {
         guard handle != 0 else { return }
+        defer { recordTrace(kind: "snapshot", name: "snapshot") }
         let effectiveNow = nowEpochSec > 0 ? nowEpochSec : UInt64(Date().timeIntervalSince1970)
         guard let pointer = koe_host_session_snapshot_json(handle, effectiveNow) else {
             nativeError = "无法读取工作区状态。"
@@ -316,6 +326,36 @@ public final class HostSessionStore {
         return Data(bytes: ptr, count: owned.len)
     }
 
+#if DEBUG
+    @discardableResult
+    public func loadDebugSnapshotFixtureJSON(_ json: String) -> Bool {
+        defer { recordTrace(kind: "fixture", name: "fixture") }
+        do {
+            let decoded = try Self.decoder.decode(HostSnapshot.self, from: Data(json.utf8))
+            guard decoded.version == 2 else {
+                nativeError = "数据引擎返回了不兼容的版本。"
+                return false
+            }
+            if nativeError != nil { nativeError = nil }
+            requestGate = ViewRequestGeneration()
+            _ = requestGate.acceptRustGeneration(decoded.generation)
+            if decoded != snapshot {
+                snapshot = decoded
+                if isUISlicesActive {
+                    reconcileSlices()
+                } else {
+                    hasDeferredSliceReconcile = true
+                }
+                onSnapshotChanged?(decoded)
+            }
+            return true
+        } catch {
+            nativeError = "无法读取数据引擎的回应，请重新打开应用。"
+            return false
+        }
+    }
+#endif
+
     func applySnapshotJSON(_ json: String, projectedNowSec: UInt64 = 0) {
         do {
             let decoded = try Self.decoder.decode(HostSnapshot.self, from: Data(json.utf8))
@@ -341,6 +381,20 @@ public final class HostSessionStore {
         }
     }
 
+    private func recordTrace(kind: String, name: String) {
+        let timestampEpochMs = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
+        traceBuffer.append(
+            HostTraceEntry(
+                kind: kind,
+                name: name,
+                generation: snapshot.generation,
+                section: snapshot.section,
+                hasError: (nativeError ?? snapshot.error) != nil,
+                timestampEpochMs: timestampEpochMs
+            )
+        )
+    }
+
     private func syncNavigationErrorSlice() {
         if isUISlicesActive {
             let nextNav = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
@@ -352,6 +406,7 @@ public final class HostSessionStore {
 
     public func reconcileMenuSlicesIfNeeded() {
         guard hasDeferredSliceReconcile else { return }
+        if platform != snapshot.platform { platform = snapshot.platform }
         let nextNavigation = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
         if navigation != nextNavigation { navigation = nextNavigation }
         let nextToday = TodaySlice(snapshot: snapshot)
@@ -363,6 +418,7 @@ public final class HostSessionStore {
 
     private func reconcileSlices() {
         hasDeferredSliceReconcile = false
+        if platform != snapshot.platform { platform = snapshot.platform }
         let nextNavigation = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
         if navigation != nextNavigation { navigation = nextNavigation }
         let nextSidebar = SidebarSlice(snapshot: snapshot)
