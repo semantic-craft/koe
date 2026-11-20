@@ -9,6 +9,8 @@ struct KoeiOSApp: App {
     var body: some Scene {
         WindowGroup {
             IOSRootTabView(store: session.store)
+                .modifier(IOSFileExportPresentation(actions: session.fileActions))
+                .environment(session.fileActions)
                 .onChange(of: scenePhase, initial: true) { _, nextPhase in
                     session.coordinator.setScenePhase(nextPhase)
                 }

@@ -132,13 +132,20 @@ public final class HostSessionStore {
     }
 
     public func send(_ command: HostCommand, nowEpochSec: UInt64 = 0) {
-        guard handle != 0 else { return }
+        _ = sendReturningError(command, nowEpochSec: nowEpochSec)
+    }
+
+    /// Returns the error from this command even if a snapshot observer updates the UI's error.
+    public func sendReturningError(_ command: HostCommand, nowEpochSec: UInt64 = 0) -> String? {
+        guard handle != 0 else { return "工作区未打开。" }
         do {
             let data = try Self.encoder.encode(command)
-            dispatchEncodedJSON(data, traceKind: "command", commandType: command.commandType, nowEpochSec: nowEpochSec)
+            return dispatchEncodedJSON(data, traceKind: "command", commandType: command.commandType, nowEpochSec: nowEpochSec)
         } catch {
-            nativeError = "无法发送这次操作，请重试。"
+            let message = "无法发送这次操作，请重试。"
+            nativeError = message
             recordTrace(kind: "command", name: command.commandType)
+            return message
         }
     }
 
@@ -153,7 +160,8 @@ public final class HostSessionStore {
         }
     }
 
-    private func dispatchEncodedJSON(_ data: Data, traceKind: String, commandType: String, nowEpochSec: UInt64) {
+    @discardableResult
+    private func dispatchEncodedJSON(_ data: Data, traceKind: String, commandType: String, nowEpochSec: UInt64) -> String? {
         defer { recordTrace(kind: traceKind, name: commandType) }
         let preservesNativeError = commandType == "sync_audio_inputs"
             || commandType == "sync_app_metadata"
@@ -161,7 +169,7 @@ public final class HostSessionStore {
         if !preservesNativeError, nativeError != nil {
             nativeError = nil
         }
-        guard let command = String(data: data, encoding: .utf8) else { return }
+        let command = String(decoding: data, as: UTF8.self)
         let effectiveNow = nowEpochSec > 0 ? nowEpochSec : UInt64(Date().timeIntervalSince1970)
         let result: String? = command.withCString { ptr in
             guard let response = koe_host_session_dispatch_json(handle, ptr, effectiveNow) else { return nil }
@@ -170,9 +178,9 @@ public final class HostSessionStore {
         }
         guard let result else {
             nativeError = "操作未能完成，请重试。工作区数据仍然保留。"
-            return
+            return nativeError
         }
-        applySnapshotJSON(result, projectedNowSec: effectiveNow)
+        return applySnapshotJSON(result, projectedNowSec: effectiveNow)
     }
 
     public func refreshSnapshot(nowEpochSec: UInt64 = 0) {
@@ -361,14 +369,15 @@ public final class HostSessionStore {
     }
 #endif
 
-    func applySnapshotJSON(_ json: String, projectedNowSec: UInt64 = 0) {
+    @discardableResult
+    func applySnapshotJSON(_ json: String, projectedNowSec: UInt64 = 0) -> String? {
         do {
             let decoded = try Self.decoder.decode(HostSnapshot.self, from: Data(json.utf8))
             guard decoded.version == 2 else {
                 nativeError = "数据引擎返回了不兼容的版本。"
-                return
+                return nativeError
             }
-            guard requestGate.acceptRustGeneration(decoded.generation) else { return }
+            guard requestGate.acceptRustGeneration(decoded.generation) else { return decoded.error }
             if projectedNowSec > 0 {
                 lastProjectedNowSec = projectedNowSec
             }
@@ -381,8 +390,10 @@ public final class HostSessionStore {
                 }
                 onSnapshotChanged?(decoded)
             }
+            return decoded.error
         } catch {
             nativeError = "无法读取数据引擎的回应，请重新打开应用。"
+            return nativeError
         }
     }
 

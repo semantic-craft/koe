@@ -19,6 +19,7 @@ struct IOSModeWorkspacesView: View {
     let store: HostSessionStore
     let route: IOSModeWorkspaceRoute
     let onSelectRecord: (String) -> Void
+    @Environment(IOSFileActions.self) private var files
 
     @State private var quickNoteFilter: QuickNoteFilterSelection = .all
 
@@ -144,6 +145,10 @@ struct IOSModeWorkspacesView: View {
                         .font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(IOSColors.textMuted)
                         .monospacedDigit()
+                    IOSPrimaryButton("导出当日 Markdown", systemImage: "square.and.arrow.up", isPrimary: false) {
+                        files.exportWorkspace(.forAllDay(date: workspace.selectedDate))
+                    }
+                    .accessibilityIdentifier("all-day-export-markdown")
                 }
             }
 
