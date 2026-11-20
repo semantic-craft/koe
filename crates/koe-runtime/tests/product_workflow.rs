@@ -161,6 +161,23 @@ fn failed_save_is_visible_and_does_not_publish_uncommitted_record() {
 }
 
 #[test]
+fn only_the_current_scan_can_report_adapter_loss() {
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+    let mut event = |kind, id| {
+        command(
+            &mut runtime,
+            json!({"type":"device_event","event":kind,"connectionId":id}),
+        )["device"]["phase"].clone()
+    };
+    assert_eq!(event("scanning", "first"), "scanning");
+    assert_eq!(event("scanning", "retry"), "scanning");
+    assert_eq!(event("disconnected", "first"), "scanning");
+    assert_eq!(event("ready", "retry"), "scanning");
+    assert_eq!(event("disconnected", "retry"), "disconnected");
+}
+
+#[test]
 fn gatt_ready_generates_handshake_and_stale_disconnect_is_ignored() {
     let dir = Sandbox::new();
     let mut runtime = dir.open();

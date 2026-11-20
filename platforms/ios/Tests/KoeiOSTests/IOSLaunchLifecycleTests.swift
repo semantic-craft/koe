@@ -15,7 +15,7 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         let source = TestMicrophone()
         source.permission = nil
         let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: ["Koe", "-koe-workspace", root.path],
-                                       environment: [:], source: source)
+                                       environment: [:], source: source, allowsCoreBluetooth: false)
         defer { session.shutdown() }
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
 
@@ -64,7 +64,7 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: [
             "Koe", "-koe-workspace", root.appendingPathComponent("workspace").path,
             "-koe-trace-output", output.path,
-        ], environment: [:])
+        ], environment: [:], allowsCoreBluetooth: false)
         defer { session.shutdown() }
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
         await withCheckedContinuation { continuation in
@@ -91,7 +91,7 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: [
             "Koe", "-koe-workspace", root.appendingPathComponent("workspace").path,
             "-koe-trace-output", root.path,
-        ], environment: [:])
+        ], environment: [:], allowsCoreBluetooth: false)
         defer { session.shutdown() }
 
         XCTAssertTrue(session.store.nativeError?.contains("追踪") == true)

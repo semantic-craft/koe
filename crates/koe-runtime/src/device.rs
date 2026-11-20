@@ -200,7 +200,7 @@ impl DeviceRuntime {
             "scanning" => {
                 self.explicitly_disconnected = false;
                 if !self.is_connected() {
-                    self.connection = None;
+                    self.connection = Some(connection.to_owned());
                     self.outbound.clear();
                     self.handshake_retry_ms = 0;
                     self.handshake_retried = false;
@@ -215,7 +215,10 @@ impl DeviceRuntime {
                 self.handshake_retried = false;
                 self.session.on_connecting();
             }
-            "ready" if self.connection.as_deref() == Some(connection) => {
+            "ready"
+                if self.connection.as_deref() == Some(connection)
+                    && self.session.connection_phase != ConnectionPhaseTag::Scanning =>
+            {
                 self.explicitly_disconnected = false;
                 let mut private_key = [0u8; 32];
                 File::open("/dev/urandom")

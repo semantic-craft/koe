@@ -1,0 +1,28 @@
+appId: com.semanticcraft.koe.ios
+---
+- extendedWaitUntil:
+    visible:
+      id: "device-status-pill"
+    timeout: 15000
+- tapOn:
+    id: "device-status-pill"
+- tapOn: "连接引导"
+- tapOn: "重新扫描"
+- assertVisible: "重新扫描"
+- assertVisible: "未连接"
+- takeScreenshot: connect_guide_after_scan
+- tapOn:
+    id: "device-sheet-close"
+- assertVisible: "这台设备不支持蓝牙连接。"
+- tapOn: "知道了"
+- tapOn:
+    id: "device-status-pill"
+- tapOn: "关闭引导"
+- tapOn: "扫描录音豆"
+- assertVisible: "未连接"
+- assertNotVisible: "重新扫描"
+- takeScreenshot: disconnected_after_scan
+- tapOn:
+    id: "device-sheet-close"
+- assertVisible: "这台设备不支持蓝牙连接。"
+- takeScreenshot: simulator_bluetooth_error

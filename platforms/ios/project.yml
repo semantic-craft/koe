@@ -71,5 +71,7 @@ schemes:
         KoeiOSApp: all
         KoeiOSTests: [test]
     test:
+      environmentVariables:
+        KOE_DISABLE_CORE_BLUETOOTH: "1"
       targets:
         - KoeiOSTests

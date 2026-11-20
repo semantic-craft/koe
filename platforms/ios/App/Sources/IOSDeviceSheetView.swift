@@ -5,9 +5,10 @@ struct IOSDeviceSheetView: View {
     let store: HostSessionStore
     @Environment(\.dismiss) private var dismiss
 
+    private var isReleased: Bool { store.today.beanControlState == "released" }
+
     var body: some View {
         let device = store.device
-        let isReleased = store.today.beanControlState == "released"
 
         IOSContentHuggingSheet(minHeight: 340, maxHeight: 680) {
             VStack(alignment: .leading, spacing: 14) {
@@ -33,6 +34,8 @@ struct IOSDeviceSheetView: View {
                 Text(device.statusDetail)
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(IOSColors.textSecondary)
+
+                disconnectedScanButton
 
                 LazyVGrid(
                     columns: [
@@ -107,7 +110,9 @@ struct IOSDeviceSheetView: View {
                     IOSCard {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("连接引导  \(guide.step)/\(guide.totalSteps)")
+                                Text(guide.mode == "onboarding"
+                                    ? "连接引导  \(guide.step + 1) / \(max(guide.totalSteps, 1))"
+                                    : "连接引导")
                                     .font(.system(size: AppFontSizes.xs, weight: .semibold))
                                     .foregroundStyle(IOSColors.textMuted)
                                 Spacer()
@@ -121,9 +126,7 @@ struct IOSDeviceSheetView: View {
                             Text(guide.subtitle)
                                 .font(.system(size: AppFontSizes.xs))
                                 .foregroundStyle(IOSColors.textSecondary)
-                            IOSPrimaryButton(guide.primaryLabel, isPrimary: true) {
-                                store.send(.deviceOnboardingNext)
-                            }
+                            guidePrimaryButton(guide)
                         }
                     }
                 }
@@ -188,6 +191,24 @@ struct IOSDeviceSheetView: View {
                 }
             }
             .padding(20)
+        }
+    }
+
+    var disconnectedScanButton: IOSPrimaryButton? {
+        guard !store.device.connected, !isReleased else { return nil }
+        return IOSPrimaryButton("扫描录音豆", systemImage: "antenna.radiowaves.left.and.right") {
+            store.bridgeActions.requestBleScan()
+        }
+    }
+
+    func guidePrimaryButton(_ guide: DeviceGuideSnapshot) -> IOSPrimaryButton? {
+        switch guide.mode {
+        case "connect_guide":
+            return IOSPrimaryButton(guide.primaryLabel) { store.bridgeActions.requestBleScan() }
+        case "onboarding":
+            return IOSPrimaryButton(guide.primaryLabel) { store.send(.deviceOnboardingNext) }
+        default:
+            return nil
         }
     }
 

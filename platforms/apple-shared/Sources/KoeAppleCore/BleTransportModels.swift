@@ -1,6 +1,5 @@
 import CoreBluetooth
 import Foundation
-import KoeAppleShared
 
 public struct BleAdvertisementCandidate: Equatable, Sendable {
     public let displayName: String
@@ -108,6 +107,8 @@ public struct BleOutboundQueue: Sendable {
         guard let last = lastWriteDate else { return 0 }
         return max(0, spacingSeconds - now.timeIntervalSince(last))
     }
+
+    mutating func discardPending() { pendingFrames.removeAll() }
 
     public mutating func reset() {
         pendingFrames.removeAll()

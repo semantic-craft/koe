@@ -325,6 +325,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         timer = nil
         audioInputMonitor.stop()
         playback.stop()
+        bluetoothBridge.shutdown()
         lifecycle.shutdown()
         localTranscription.shutdown()
         store?.shutdown()
@@ -429,11 +430,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         store?.send(.deviceOpenGuide)
     }
     func handleBleScanRequest() {
-        store?.reconcileMenuSlicesIfNeeded()
-        if store?.device.autoConnect == false {
-            store?.send(.setBleAutoConnect(enabled: true))
-        }
-        bluetoothBridge.startScanningIfPoweredOn()
+        bluetoothBridge.requestScan()
     }
     @objc private func scanFromMenu() {
         prepareManualScan()

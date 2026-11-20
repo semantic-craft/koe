@@ -8,6 +8,7 @@ final class IOSHostCoordinator {
     private let store: HostSessionStore
     private let capture: NativeCapture
     private let playback: NativePlayback
+    let bluetoothBridge: BluetoothBridge
     private var interruptionObserver: NSObjectProtocol?
     private var scenePhase: ScenePhase = .background
     private var timer: Timer?
@@ -15,8 +16,10 @@ final class IOSHostCoordinator {
 
     init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
          audioSession: IOSAudioSession = IOSAudioSession(),
+         allowsCoreBluetooth: Bool = true,
          nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
         self.store = store
+        bluetoothBridge = BluetoothBridge(store: store)
         let microphone = source ?? IOSAudioSource(audioSession: audioSession) { [weak store] message in
             Task { @MainActor in store?.reportNativeError(message) }
         }
@@ -36,7 +39,15 @@ final class IOSHostCoordinator {
         }
         store.bridgeActions = actions
         store.bridgeActions.resumeMicrophone = { [weak capture] in capture?.resume() }
-        store.onSnapshotChanged = { [weak self] _ in self?.updatePolling() }
+        store.bridgeActions.requestBleScan = { [weak bluetoothBridge] in bluetoothBridge?.requestScan() }
+        store.bridgeActions.flushBleOutbound = { [weak bluetoothBridge] in bluetoothBridge?.flushOutboundFrames() }
+        store.onSnapshotChanged = { [weak self] snapshot in
+            guard let self else { return }
+            bluetoothBridge.syncWithRuntimeDevice(snapshot.device)
+            bluetoothBridge.flushOutboundFrames()
+            updatePolling()
+        }
+        bluetoothBridge.activateHost(allowsCoreBluetooth: allowsCoreBluetooth)
         updatePolling()
     }
 
@@ -80,6 +91,7 @@ final class IOSHostCoordinator {
         timer?.invalidate()
         timer = nil
         store.onSnapshotChanged = nil
+        bluetoothBridge.shutdown()
         if let interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)
             self.interruptionObserver = nil
