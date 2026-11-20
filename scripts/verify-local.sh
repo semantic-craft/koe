@@ -34,6 +34,7 @@ python3 scripts/test_install_macos.py
 python3 scripts/test_release_macos.py
 python3 scripts/test_ci.py
 python3 scripts/test_android_harness.py
+python3 scripts/test_android_native_scripts.py
 python3 scripts/test_run_with_secrets.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
@@ -67,6 +68,15 @@ if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && 
   cargo build --release --package koe-host-api ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
   swift test --package-path "$root/platforms/apple-shared"
   swift test --package-path "$root/platforms/macos"
+fi
+
+if [[ -x "$root/platforms/android/tests/jni/test-jni-host.sh" ]]; then
+  note "native jni host: platforms/android/tests/jni"
+  if "$root/platforms/android/tests/jni/test-jni-host.sh" --check-jdk >/dev/null 2>&1; then
+    "$root/platforms/android/tests/jni/test-jni-host.sh"
+  else
+    echo "skip: JDK 17+ not detected; install openjdk@17 or set JAVA_HOME to run desktop JVM JNI tests."
+  fi
 fi
 
 echo "verify-local (full): all gates passed."
