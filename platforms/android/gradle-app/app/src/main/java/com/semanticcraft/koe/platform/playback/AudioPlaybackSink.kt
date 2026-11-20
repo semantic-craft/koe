@@ -24,11 +24,15 @@ interface AudioPlaybackSink : AutoCloseable {
 }
 
 fun interface AudioPlaybackSinkFactory {
-    fun open(plan: PlaybackAssetSnapshot): AudioPlaybackSink
+    fun open(
+        plan: PlaybackAssetSnapshot,
+        onStateChanged: () -> Unit,
+    ): AudioPlaybackSink
 }
 
 class AndroidAudioTrackSink(
     private val reader: TimelineWavReader,
+    private val onStateChanged: () -> Unit = {},
 ) : AudioPlaybackSink {
     private val sampleRate = reader.sampleRate
     private val channelCount = reader.channelCount
@@ -139,22 +143,29 @@ class AndroidAudioTrackSink(
 
     override fun play() {
         val threadToStart: Thread?
+        var newlyCompleted = false
         synchronized(stateLock) {
             if (closed || failure != null || playingDesired) return
             if (baseFrame >= totalFrames) {
+                newlyCompleted = !completed
                 completed = true
-                return
-            }
-            playingDesired = true
-            completed = false
-            resetClockLocked()
-            epoch += 1L
-            threadToStart = if (workerThread == null) {
-                Thread(::runPlaybackLoop, "koe-audio-playback").also { workerThread = it }
+                threadToStart = null
             } else {
-                null
+                playingDesired = true
+                completed = false
+                resetClockLocked()
+                epoch += 1L
+                threadToStart = if (workerThread == null) {
+                    Thread(::runPlaybackLoop, "koe-audio-playback").also { workerThread = it }
+                } else {
+                    null
+                }
+                stateLock.notifyAll()
             }
-            stateLock.notifyAll()
+        }
+        if (newlyCompleted) {
+            onStateChanged()
+            return
         }
         threadToStart?.start()
     }
@@ -190,8 +201,8 @@ class AndroidAudioTrackSink(
             pauseAndFlushTrack()
             runCatching { track.stop() }
         }
-        threadToJoin?.interrupt()
         if (threadToJoin != null && threadToJoin !== Thread.currentThread()) {
+            threadToJoin.interrupt()
             try {
                 threadToJoin.join(CLOSE_JOIN_TIMEOUT_MS)
             } catch (_: InterruptedException) {
@@ -270,20 +281,27 @@ class AndroidAudioTrackSink(
     }
 
     private fun startTrackForEpoch(localEpoch: Long): Long? {
-        synchronized(trackControlLock) {
+        var failureError: Throwable? = null
+        val baseline = synchronized(trackControlLock) {
             val active = synchronized(stateLock) { !closed && playingDesired && epoch == localEpoch }
             if (!active) return null
-            return try {
+            try {
                 pauseAndFlushTrack()
-                val baseline = readPlaybackHeadFrames() ?: 0L
+                val head = readPlaybackHeadFrames() ?: 0L
                 track.play()
                 startedEpoch = localEpoch
-                baseline
+                head
             } catch (error: Throwable) {
-                recordFailure(localEpoch, error)
+                failureError = error
                 null
             }
         }
+        val error = failureError
+        if (error != null) {
+            recordFailure(localEpoch, error)
+            return null
+        }
+        return baseline
     }
 
     private fun streamEpoch(localEpoch: Long, pcmBuffer: ShortArray) {
@@ -360,12 +378,13 @@ class AndroidAudioTrackSink(
             if (!active) return
             runCatching { track.stop() }
         }
-        synchronized(stateLock) {
+        val didComplete = synchronized(stateLock) {
+            var reachedEnd = false
             while (!closed && playingDesired && epoch == localEpoch) {
                 val written = writtenFramesSinceBase
                 if (written <= 0L) {
-                    finishCompletedLocked()
-                    return
+                    reachedEnd = finishCompletedLocked()
+                    break
                 }
                 val nowNs = SystemClock.elapsedRealtimeNanos()
                 val playedDelta = computeDeltaFramesLocked(nowNs)
@@ -374,33 +393,40 @@ class AndroidAudioTrackSink(
                 val drained = playedDelta >= written ||
                     (headMoved && elapsedNs >= expectedNs + DRAIN_GRACE_NS)
                 if (drained) {
-                    finishCompletedLocked()
-                    return
+                    reachedEnd = finishCompletedLocked()
+                    break
                 }
                 try {
                     stateLock.wait(DRAIN_POLL_MS)
                 } catch (_: InterruptedException) {
-                    return
+                    break
                 }
             }
+            reachedEnd
+        }
+        if (didComplete) {
+            onStateChanged()
         }
     }
 
-    private fun finishCompletedLocked() {
+    private fun finishCompletedLocked(): Boolean {
+        val newlyCompleted = !completed
         baseFrame = totalFrames
         pendingSeekFrame = totalFrames
         resetClockLocked()
         playingDesired = false
         completed = true
+        return newlyCompleted
     }
 
     private fun recordFailure(localEpoch: Long, error: Throwable) {
         synchronized(stateLock) {
-            if (closed || epoch != localEpoch || !playingDesired) return
+            if (closed || epoch != localEpoch || !playingDesired || failure != null) return
             failure = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
             playingDesired = false
             stateLock.notifyAll()
         }
+        onStateChanged()
     }
 
     private fun updateHardwareHeadLocked(): Long? {
@@ -453,8 +479,8 @@ class AndroidAudioTrackSink(
         private const val DRAIN_POLL_MS = 20L
         private const val CLOSE_JOIN_TIMEOUT_MS = 2_000L
 
-        val Factory: AudioPlaybackSinkFactory = AudioPlaybackSinkFactory { plan ->
-            AndroidAudioTrackSink(TimelineWavReader(plan))
+        val Factory: AudioPlaybackSinkFactory = AudioPlaybackSinkFactory { plan, onStateChanged ->
+            AndroidAudioTrackSink(TimelineWavReader(plan), onStateChanged)
         }
     }
 }

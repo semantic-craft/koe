@@ -27,6 +27,7 @@ class AndroidPlaybackCoordinator(
     private var boundStore: HostSessionStore? = null
     private var applying = false
     private var reapplyRequested = false
+    private var activeSinkToken: Any? = null
 
     private var loaded: LoadedAsset? = null
     private var failedAttempt: FailedAttempt? = null
@@ -57,6 +58,14 @@ class AndroidPlaybackCoordinator(
 
     override fun onTick(elapsedMs: Long) {
         synchronized(lock) { reapplyRequested = true }
+        driveLoop()
+    }
+
+    private fun notifySinkStateChanged(sinkToken: Any) {
+        synchronized(lock) {
+            if (activeSinkToken !== sinkToken) return
+            reapplyRequested = true
+        }
         driveLoop()
     }
 
@@ -110,8 +119,9 @@ class AndroidPlaybackCoordinator(
         val currentLoaded = loaded
         if (currentLoaded == null || currentLoaded.recordId != recordId || currentLoaded.plan != plan) {
             stopLoadedAndFocus()
+            val sinkToken = Any()
             val opened = try {
-                sinkFactory.open(plan)
+                sinkFactory.open(plan) { notifySinkStateChanged(sinkToken) }
             } catch (_: Throwable) {
                 fail(store, recordId, plan, desired.requestId, desired.positionMs)
                 return
@@ -122,6 +132,7 @@ class AndroidPlaybackCoordinator(
                 synchronized(lock) { reapplyRequested = true }
                 return
             }
+            synchronized(lock) { activeSinkToken = sinkToken }
             loaded = LoadedAsset(recordId, plan, opened)
         }
 
@@ -238,6 +249,7 @@ class AndroidPlaybackCoordinator(
     }
 
     private fun closeLoadedSink() {
+        synchronized(lock) { activeSinkToken = null }
         val active = loaded
         loaded = null
         appliedRequestId = null

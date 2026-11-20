@@ -59,6 +59,7 @@ class AndroidPlaybackCoordinatorTest {
     private class FakeAudioPlaybackSink(
         val plan: PlaybackAssetSnapshot,
         override val durationMs: Long = (plan.durationNs / 1_000_000L).coerceAtLeast(1_000L),
+        private val onStateChanged: () -> Unit = {},
     ) : AudioPlaybackSink {
         override var currentPositionMs: Long = 0L
         override var isPlaying: Boolean = false
@@ -69,6 +70,10 @@ class AndroidPlaybackCoordinatorTest {
         var playCount = 0
         var pauseCount = 0
         var closed = false
+
+        fun notifyStateChanged() {
+            onStateChanged()
+        }
 
         override fun seekToMs(positionMs: Long) {
             seekHistory.add(positionMs)
@@ -295,10 +300,10 @@ class AndroidPlaybackCoordinatorTest {
         val openedSinks = mutableListOf<FakeAudioPlaybackSink>()
         lateinit var harness: Harness
         val playbackCoordinator = AndroidPlaybackCoordinator(
-            sinkFactory = AudioPlaybackSinkFactory { plan ->
+            sinkFactory = AudioPlaybackSinkFactory { plan, onStateChanged ->
                 harness.openAttempts += 1
                 harness.openError?.let { throw it }
-                FakeAudioPlaybackSink(plan).also { openedSinks.add(it) }
+                FakeAudioPlaybackSink(plan, onStateChanged = onStateChanged).also { openedSinks.add(it) }
             },
             focusController = focus,
         )
@@ -506,5 +511,68 @@ class AndroidPlaybackCoordinatorTest {
         h.hostCoordinator.shutdown()
         assertTrue(lastSink.closed)
         assertEquals(abandonsBeforeShutdown + 1, h.focus.abandonCount)
+    }
+
+    @Test
+    fun backgroundCompletionWithoutTicksReportsEndedAndAbandonsFocus() {
+        val h = createHarness()
+
+        h.store.send(HostCommand.SelectRecord("rec-1"))
+        h.store.send(HostCommand.Playback(isPlaying = true))
+        val sink = h.openedSinks.single()
+        assertTrue(sink.isPlaying)
+        assertEquals(1, h.focus.requestCount)
+        assertEquals(0, h.focus.abandonCount)
+
+        h.hostCoordinator.setForegroundActive(false)
+        sink.currentPositionMs = 2_000L
+        sink.isPlaying = false
+        sink.isCompleted = true
+        sink.notifyStateChanged()
+
+        assertFalse(sink.isPlaying)
+        assertEquals(1, h.focus.abandonCount)
+        assertFalse(h.store.playback.value.isPlaying)
+        assertEquals(2_000L, h.store.playback.value.positionMs)
+        assertEquals(1, h.bridge.progressReports.size)
+        assertFalse(h.bridge.progressReports.last().isPlaying)
+        assertEquals(2_000L, h.bridge.progressReports.last().positionMs)
+    }
+
+    @Test
+    fun backgroundFailureWithoutTicksReportsErrorAndAbandonsFocus() {
+        val h = createHarness()
+
+        h.store.send(HostCommand.SelectRecord("rec-1"))
+        h.store.send(HostCommand.Playback(isPlaying = true))
+        val sink = h.openedSinks.single()
+        assertTrue(sink.isPlaying)
+        assertEquals(1, h.focus.requestCount)
+
+        h.hostCoordinator.setForegroundActive(false)
+        sink.isPlaying = false
+        sink.failureMessage = "AudioTrack write error -32"
+        sink.notifyStateChanged()
+
+        assertTrue(sink.closed)
+        assertEquals(1, h.focus.abandonCount)
+        assertFalse(h.store.playback.value.isPlaying)
+        assertEquals(1, h.bridge.progressReports.size)
+        assertFalse(h.bridge.progressReports.last().isPlaying)
+        assertEquals(AndroidPlaybackCoordinator.PLAYBACK_ERROR_MESSAGE, h.store.nativeError)
+
+        h.store.send(HostCommand.SelectRecord("rec-2"))
+        h.store.send(HostCommand.Playback(isPlaying = true))
+        val activeSink = h.openedSinks.last()
+        assertTrue(activeSink.isPlaying)
+        val reportsBeforeStale = h.bridge.progressReports.size
+
+        sink.notifyStateChanged()
+
+        assertTrue(activeSink.isPlaying)
+        assertEquals(1, h.focus.abandonCount)
+        assertEquals(2, h.openAttempts)
+        assertEquals(reportsBeforeStale, h.bridge.progressReports.size)
+        assertNull(h.store.nativeError)
     }
 }
