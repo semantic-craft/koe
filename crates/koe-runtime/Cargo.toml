@@ -7,9 +7,13 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["offline-speech"]
+offline-speech = ["koe-client-providers/offline-speech"]
+
 [dependencies]
 koe-client-base = { path = "../koe-client-base" }
-koe-client-providers = { path = "../koe-client-providers" }
+koe-client-providers = { path = "../koe-client-providers", default-features = false }
 koe-client-services = { path = "../koe-client-services" }
 koe-engine = { path = "../koe-engine" }
 koe-opus = { path = "../koe-opus" }

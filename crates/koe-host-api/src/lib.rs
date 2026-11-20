@@ -4,12 +4,13 @@
 
 mod credentials;
 mod guard;
+#[cfg(feature = "local-bridge")]
 mod local_bridge;
 
 pub use credentials::KoeCredentialCallback;
 pub use guard::HostSessionGuard;
 pub(crate) use guard::{
-    guarded, lock_sessions, now, read_string, register_session, string, with_session,
+    guarded, lock_sessions, now, read_string, register_session, remove_session, string, with_session,
 };
 use koe_runtime::{KoeRuntime, PcmIngestStatus};
 use std::{
@@ -158,16 +159,7 @@ pub unsafe extern "C" fn koe_host_session_create_with_credentials(
 /// Closes a session and cancels its outstanding network work.
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_destroy(handle: u64) -> bool {
-    guarded(|| {
-        let (removed_entry, removed_bridge) = {
-            let mut table = lock_sessions();
-            (table.entries.remove(&handle), table.bridges.remove(&handle))
-        };
-        drop(removed_bridge);
-        let existed = removed_entry.is_some();
-        drop(removed_entry);
-        existed
-    })
+    guarded(|| remove_session(handle))
 }
 
 /// Returns a session's current generation, or zero for an invalid handle.

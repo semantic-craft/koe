@@ -1,9 +1,11 @@
+#[cfg(feature = "local-bridge")]
+use crate::local_bridge;
 use crate::{
     KoeOwnedBytes, KoePcmReceipt, KoePlaybackReceipt, koe_host_bytes_free,
     koe_host_session_create, koe_host_session_destroy, koe_host_session_dispatch_json,
     koe_host_session_drain_ble_tx, koe_host_session_drain_local_asr,
     koe_host_session_ingest_ble, koe_host_session_ingest_pcm, koe_host_session_poll_timers,
-    koe_host_session_report_playback_progress, koe_host_session_snapshot_json, local_bridge,
+    koe_host_session_report_playback_progress, koe_host_session_snapshot_json,
 };
 use koe_runtime::KoeRuntime;
 use std::{
@@ -51,6 +53,7 @@ pub(crate) struct SessionEntry {
 pub(crate) struct Sessions {
     next: u64,
     pub(crate) entries: BTreeMap<u64, SessionEntry>,
+    #[cfg(feature = "local-bridge")]
     pub(crate) bridges: BTreeMap<u64, local_bridge::BridgeServer>,
 }
 
@@ -80,6 +83,7 @@ pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
         table.entries.insert(id, SessionEntry { runtime });
         id
     };
+    #[cfg(feature = "local-bridge")]
     if let Some(bridge) = local_bridge::BridgeServer::start(handle, workspace) {
         let mut orphan_bridge = Some(bridge);
         let mut table = lock_sessions();
@@ -91,7 +95,24 @@ pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
         drop(table);
         drop(orphan_bridge);
     }
+    #[cfg(not(feature = "local-bridge"))]
+    let _ = workspace;
     handle
+}
+
+pub(crate) fn remove_session(handle: u64) -> bool {
+    #[cfg(feature = "local-bridge")]
+    let (removed_entry, removed_bridge) = {
+        let mut table = lock_sessions();
+        (table.entries.remove(&handle), table.bridges.remove(&handle))
+    };
+    #[cfg(feature = "local-bridge")]
+    drop(removed_bridge);
+    #[cfg(not(feature = "local-bridge"))]
+    let removed_entry = lock_sessions().entries.remove(&handle);
+    let existed = removed_entry.is_some();
+    drop(removed_entry);
+    existed
 }
 
 unsafe fn take_owned_string(pointer: *mut c_char) -> Option<String> {

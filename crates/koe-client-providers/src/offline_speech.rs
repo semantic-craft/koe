@@ -1,8 +1,53 @@
 //! Downloadable speech models and in-process, 16 kHz mono PCM16 transcription.
 
+#[cfg(feature = "offline-speech")]
 mod artifacts;
+#[cfg(feature = "offline-speech")]
 mod worker;
+#[cfg(feature = "offline-speech")]
 pub use worker::OfflineSpeechWorker;
+
+#[cfg(not(feature = "offline-speech"))]
+mod stub {
+    use std::path::PathBuf;
+
+    use super::OfflineSpeechEvent;
+
+    const OFFLINE_SPEECH_UNAVAILABLE: &str = "当前平台构建未启用端侧离线语音模型";
+
+    /// Placeholder offline speech worker when compiled without the `offline-speech` feature.
+    pub struct OfflineSpeechWorker {
+        _private: (),
+    }
+
+    impl OfflineSpeechWorker {
+        /// Reports that the embedded offline speech backend is unavailable in this build.
+        pub fn new(_root: PathBuf) -> Result<Self, String> {
+            Err(OFFLINE_SPEECH_UNAVAILABLE.to_string())
+        }
+
+        /// Rejects model preparation when the offline speech backend is disabled.
+        pub fn prepare(&self, _model_id: &str) -> Result<(), String> {
+            Err(OFFLINE_SPEECH_UNAVAILABLE.to_string())
+        }
+
+        /// Rejects transcription when the offline speech backend is disabled.
+        pub fn transcribe(&self, _operation_id: u64, _pcm16: Vec<i16>) -> Result<(), String> {
+            Err(OFFLINE_SPEECH_UNAVAILABLE.to_string())
+        }
+
+        /// No-op cancellation when the offline speech backend is disabled.
+        pub fn cancel(&self) {}
+
+        /// Always returns no events when the offline speech backend is disabled.
+        #[must_use]
+        pub fn poll(&self) -> Vec<OfflineSpeechEvent> {
+            Vec::new()
+        }
+    }
+}
+#[cfg(not(feature = "offline-speech"))]
+pub use stub::OfflineSpeechWorker;
 
 /// A pinned, downloadable speech model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

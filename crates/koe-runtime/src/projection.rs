@@ -53,7 +53,7 @@ impl KoeRuntime {
             "title": record.title,
             "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
             "durationMs": duration_ms,
-            "source": origin(record.origin),
+            "source": self.origin_label(record.origin),
             "mode": record.mode.as_str(),
             "project": record.project,
             "runId": record.all_day.as_ref().map(|s| &s.run_id),
@@ -227,7 +227,7 @@ impl KoeRuntime {
                     "title": record.title,
                     "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
                     "durationMs": record.aggregate.duration_ms,
-                    "source": origin(record.origin),
+                    "source": self.origin_label(record.origin),
                     "segmentCount": record.aggregate.spine.len(),
                     "preview": preview,
                     "trashedAtMs": trashed_at_ms,
@@ -264,7 +264,7 @@ impl KoeRuntime {
             microphone.as_ref(),
             &capture_selection,
         );
-        json!({"speech":self.speech_json(),"lifecycle": self.lifecycle_json(),
+        json!({"platform":self.platform.to_json(),"speech":self.speech_json(),"lifecycle": self.lifecycle_json(),
             "activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
             "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.selection.location.page,
             "canGoBack":!self.selection.back.is_empty(),"selectedRecordId":self.selection.location.record,"focusSegmentId":self.selection.location.segment,
@@ -352,10 +352,20 @@ impl KoeRuntime {
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
         json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":duration_ms,"source":origin(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
+            "durationMs":duration_ms,"source":self.origin_label(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
             "minutesStale":record.is_minutes_stale(),"canEditTranscript":self.can_edit_record(&aggregate.recording_id),
             "captureLanes":capture_lanes,"summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
+    }
+
+    pub(crate) fn origin_label(&self, source: RecordOrigin) -> String {
+        match source {
+            RecordOrigin::Microphone => self.platform.mic_label(),
+            RecordOrigin::Bean => "录音豆".into(),
+            RecordOrigin::ImportedAudio => "导入音频".into(),
+            RecordOrigin::ImportedText => "导入文字".into(),
+            RecordOrigin::Note => "随手记".into(),
+        }
     }
 
     pub(super) fn live_bean_capture_progress(&self) -> (Option<&str>, u64) {
@@ -427,16 +437,6 @@ pub(crate) fn origin_slug(source: RecordOrigin) -> &'static str {
         RecordOrigin::ImportedAudio => "imported_audio",
         RecordOrigin::ImportedText => "imported_text",
         RecordOrigin::Note => "note",
-    }
-}
-
-pub(crate) fn origin(source: RecordOrigin) -> &'static str {
-    match source {
-        RecordOrigin::Microphone => "Mac 麦克风",
-        RecordOrigin::Bean => "录音豆",
-        RecordOrigin::ImportedAudio => "导入音频",
-        RecordOrigin::ImportedText => "导入文字",
-        RecordOrigin::Note => "随手记",
     }
 }
 

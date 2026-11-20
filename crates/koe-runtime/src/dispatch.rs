@@ -36,7 +36,23 @@ impl KoeRuntime {
                 version,
                 build,
                 update_endpoint,
-            } => self.sync_app_metadata(&version, &build, update_endpoint.as_deref())?,
+                platform,
+                host_display_name,
+                supports_system_audio,
+                supports_self_update,
+                native_speech_label,
+            } => self.sync_app_metadata(
+                &version,
+                &build,
+                update_endpoint.as_deref(),
+                crate::platform::PlatformMetadataPatch {
+                    platform: platform.as_deref(),
+                    host_display_name: host_display_name.as_deref(),
+                    supports_system_audio,
+                    supports_self_update,
+                    native_speech_label: native_speech_label.as_deref(),
+                },
+            )?,
             AdapterEvent::MicrophonePrepared {
                 record_id,
                 session_id,
@@ -380,7 +396,7 @@ impl KoeRuntime {
                 if let Some(reason) = self.release_to_phone_block_reason() {
                     return Err(reason.into());
                 }
-                if self.bean_control_owner() != mode_workspaces::BeanControlOwner::Phone {
+                if self.bean_control_owner() != mode_workspaces::BeanControlOwner::Released {
                     self.commit(|w| {
                         w.set_ble_auto_connect(false);
                         Ok(())

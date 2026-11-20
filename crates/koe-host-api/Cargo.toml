@@ -9,10 +9,15 @@ description = "Versioned C ABI and session lifecycle table for Koe native SwiftU
 
 [lib]
 name = "koe_host_api"
-crate-type = ["rlib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["local-bridge", "offline-speech"]
+local-bridge = []
+offline-speech = ["koe-runtime/offline-speech"]
 
 [dependencies]
-koe-runtime = { path = "../koe-runtime" }
+koe-runtime = { path = "../koe-runtime", default-features = false }
 libc = "0.2"
 serde_json = "1"
 

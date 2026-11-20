@@ -214,6 +214,16 @@ impl KoeRuntime {
             {
                 actions.push(CaptureAction::End);
             }
+            let mic_fallback_label;
+            let source_label = if run.is_some_and(|r| r.source == "microphone") {
+                mic_fallback_label = self.platform.mic_label();
+                mic_fallback_label.as_str()
+            } else {
+                self.device
+                    .device_name
+                    .as_deref()
+                    .unwrap_or("Soundcore Work")
+            };
             return json!(ActiveCapture {
                 mode,
                 phase: if self.device.awaiting_stop
@@ -227,14 +237,7 @@ impl KoeRuntime {
                 } else {
                     "recording"
                 },
-                source_label: if run.is_some_and(|r| r.source == "microphone") {
-                    "Mac 麦克风"
-                } else {
-                    self.device
-                        .device_name
-                        .as_deref()
-                        .unwrap_or("Soundcore Work")
-                },
+                source_label,
                 duration_ms: live_duration_ms,
                 actions,
                 error: self.drain_error.as_deref(),
