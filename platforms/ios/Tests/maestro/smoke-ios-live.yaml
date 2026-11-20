@@ -24,6 +24,27 @@ appId: com.semanticcraft.koe.ios
 - tapOn:
     id: "settings-button"
 - extendedWaitUntil:
-    visible: "iPhone"
+    visible: ".*iPhone.*"
     timeout: 10000
+- takeScreenshot: settings_top
+- scrollUntilVisible:
+    element:
+      id: "settings-llm-model"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn:
+    id: "settings-llm-model"
+- tapOn: "deepseek-v4-pro"
+- tapOn:
+    id: "settings-save-button"
+- tapOn:
+    id: "settings-button"
+- scrollUntilVisible:
+    element:
+      id: "settings-llm-model"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- assertVisible: ".*deepseek-v4-pro.*"
 - takeScreenshot: final_screen

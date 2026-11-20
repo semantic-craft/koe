@@ -33,6 +33,7 @@ public final class HostSessionStore {
     @ObservationIgnored public private(set) var handle: UInt64 = 0
     @ObservationIgnored public let workspacePath: String
     @ObservationIgnored public var onSnapshotChanged: ((HostSnapshot) -> Void)?
+    @ObservationIgnored public var onTraceRecorded: (() -> Void)?
     @ObservationIgnored public var bridgeActions = HostBridgeActions()
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
     @ObservationIgnored private let credentials: HostCredentials?
@@ -393,6 +394,7 @@ public final class HostSessionStore {
                 timestampEpochMs: timestampEpochMs
             )
         )
+        onTraceRecorded?()
     }
 
     private func syncNavigationErrorSlice() {

@@ -157,6 +157,25 @@ public struct ModelSettingsDraft: Equatable, Sendable {
         customAsrEndpoint = provider.asrEndpoint != defaultAsr ? provider.asrEndpoint : ""
     }
 
+    public var configureProviderCommand: HostCommand {
+        let trimmedQwen = qwenApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDeepseek = deepseekApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let asrEndpoint = customAsrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chatEndpoint = customChatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .configureProvider(
+            apiKey: trimmedQwen.isEmpty ? nil : qwenApiKey,
+            deepseekApiKey: trimmedDeepseek.isEmpty ? nil : deepseekApiKey,
+            asrProvider: asrProvider,
+            asrModel: asrProvider == "deepseek" ? "" : qwenAsrModel,
+            llmProvider: llmProvider,
+            model: resolvedLlmModelForSave,
+            enableThinking: enableThinking,
+            qwenWorkspaceId: qwenWorkspaceId.trimmingCharacters(in: .whitespacesAndNewlines),
+            asrEndpoint: asrEndpoint,
+            chatEndpoint: chatEndpoint
+        )
+    }
+
     public var activeLlmModel: String {
         switch llmProvider {
         case "custom": customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -130,6 +130,8 @@ if len(sub) >= 2 and sub[0] in ('boot', 'bootstatus', 'shutdown', 'install', 'te
         ])
         (docs_dir / 'koe-trace.json').write_text(trace_content + '\\n', encoding='utf-8')
         for idx, arg in enumerate(sub):
+            if arg == '-koe-workspace':
+                (container_dir / 'launched-workspace').write_text(sub[idx + 1], encoding='utf-8')
             if arg == '-koe-trace-output' and idx + 1 < len(sub):
                 target = Path(sub[idx + 1])
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -200,6 +202,10 @@ container_dir = os.environ.get('FAKE_APP_CONTAINER')
 if container_dir:
     docs_dir = Path(container_dir) / 'Documents'
     docs_dir.mkdir(parents=True, exist_ok=True)
+    if Path(args[-1]).name == 'smoke-ios-live.yaml':
+        workspace_dir = Path((Path(container_dir) / 'launched-workspace').read_text(encoding='utf-8'))
+        (workspace_dir / 'product-workspace.json').write_text(
+            json.dumps({'provider': {'model': 'deepseek-v4-pro'}}), encoding='utf-8')
     trace_file = docs_dir / 'koe-trace.json'
     if not trace_file.exists():
         trace_file.write_text(json.dumps([
