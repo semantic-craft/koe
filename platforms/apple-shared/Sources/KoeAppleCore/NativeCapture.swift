@@ -1,10 +1,10 @@
 import Foundation
-import KoeAppleShared
+import OSLog
 
 /// Native producer for the Rust capture session: one independent run per lane ("microphone" and the
 /// optional "system"), each with its own bounded mailbox, sequence, fence and terminal barrier.
 @MainActor
-final class NativeCapture {
+public final class NativeCapture {
     private final class LaneRun {
         let identity: CaptureIdentity
         let mailbox: MicrophoneMailbox
@@ -36,9 +36,10 @@ final class NativeCapture {
     }
     static let microphoneDenied = "未获得麦克风权限，请在系统设置中允许 Koe 使用麦克风。"
 
-    weak var store: HostSessionStore?
+    public weak var store: HostSessionStore?
     private let source: MicrophoneSource
-    private let systemSource: SystemAudioSource
+    private let systemSource: SystemAudioSource?
+    private let logger: Logger
     private let nowNanoseconds: () throws -> UInt64
     private var session: CaptureSession?
     private var runs: [String: LaneRun] = [:]
@@ -48,9 +49,10 @@ final class NativeCapture {
     private var permissionResults: [String: SystemAudioAuthResult] = [:]
     private var applying = false
 
-    init(source: MicrophoneSource = NativeAudioSource(),
-         systemSource: SystemAudioSource = NativeSystemAudioSource(),
-         nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
+    public init(source: MicrophoneSource, systemSource: SystemAudioSource? = nil,
+                logger: Logger = Logger(subsystem: "com.semanticcraft.koe", category: "capture"),
+                nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
+        self.logger = logger
         self.source = source
         self.systemSource = systemSource
         self.nowNanoseconds = nowNanoseconds
@@ -58,17 +60,17 @@ final class NativeCapture {
 
     private var orderedRuns: [LaneRun] { runs.keys.sorted().compactMap { runs[$0] } }
 
-    func resume() {
-        guard let current = store?.snapshot.microphone, current.phase == "paused",
+    public func resume() {
+        guard let current = store?.microphone, current.phase == "paused",
               pendingPermission == nil, session == CaptureSession(current) else { return }
         requestPermissions(for: current, resuming: true)
     }
 
-    func apply() {
+    public func apply() {
         guard !applying, let store else { return }
         applying = true
         defer { applying = false }
-        guard let current = store.snapshot.microphone else {
+        guard let current = store.microphone else {
             stopAll()
             runs = [:]
             session = nil
@@ -87,7 +89,7 @@ final class NativeCapture {
             if current.phase == "starting" { requestPermissions(for: current, resuming: false) }
         }
         orderedRuns.forEach(reportFailure)
-        if ["pausing", "stopping", "cancelling", "saving"].contains(store.snapshot.microphone?.phase ?? "") {
+        if ["pausing", "stopping", "cancelling", "saving"].contains(store.microphone?.phase ?? "") {
             pendingPermission = nil
             stopAll()
             orderedRuns.forEach(reportFailure)
@@ -98,7 +100,7 @@ final class NativeCapture {
             return
         }
         store.refreshSnapshotIfNeeded(minGeneration: maxIngestGeneration)
-        if ["pausing", "stopping", "cancelling", "saving"].contains(store.snapshot.microphone?.phase ?? "") {
+        if ["pausing", "stopping", "cancelling", "saving"].contains(store.microphone?.phase ?? "") {
             pendingPermission = nil
             stopAll()
             orderedRuns.forEach(reportFailure)
@@ -137,11 +139,11 @@ final class NativeCapture {
                 run.mailbox.acknowledge(block.sequence)
             } else {
                 store.refreshSnapshotIfNeeded(minGeneration: maxIngestGeneration)
-                guard let latest = store.snapshot.microphone, CaptureSession(latest) == session,
+                guard let latest = store.microphone, CaptureSession(latest) == session,
                       let lane = latest.lanes[run.lane] else { return .awaitingSessionSync }
                 stop(run)
                 if lane.error != nil { return .awaitingSessionSync }
-                run.mailbox.fail(store.snapshot.error ?? "音频块未被接纳，已停止并保留此前收到的音频。")
+                run.mailbox.fail(store.runtimeError ?? "音频块未被接纳，已停止并保留此前收到的音频。")
                 reportFailure(run)
                 run.mailbox.discardUnaccepted(nextSequence: lane.nextSequence)
                 break
@@ -152,12 +154,12 @@ final class NativeCapture {
 
     /// Terminal barrier per lane: paused/stopped carries the final sequence once callbacks are fenced.
     private func finish(_ run: LaneRun) {
-        guard run.fenced, run.mailbox.peek() == nil, let latest = store?.snapshot.microphone,
+        guard run.fenced, run.mailbox.peek() == nil, let latest = store?.microphone,
               CaptureSession(latest) == session, let lane = latest.lanes[run.lane], !lane.stopped else { return }
         if run.failureSent || ["stopping", "cancelling", "saving"].contains(latest.phase) {
             guard !run.stoppedSent else { return }
             run.stoppedSent = true
-            store?.send(.microphoneStopped(
+            send(.microphoneStopped(
                 recordId: run.identity.recordId,
                 sessionId: run.identity.sessionId,
                 lane: run.lane,
@@ -166,7 +168,7 @@ final class NativeCapture {
             ))
         } else if latest.phase == "pausing", !run.pausedSent {
             run.pausedSent = true
-            store?.send(.microphonePaused(
+            send(.microphonePaused(
                 recordId: run.identity.recordId,
                 sessionId: run.identity.sessionId,
                 lane: run.lane,
@@ -190,8 +192,13 @@ final class NativeCapture {
         }
         if lanes.contains("system") {
             let abort = request.abort
-            systemSource.authorize(shouldAbort: { abort.isSet }) { [weak self] result in
+            let completion: @Sendable (SystemAudioAuthResult) -> Void = { [weak self] result in
                 Task { @MainActor in self?.permission("system", result, request: request) }
+            }
+            if let systemSource {
+                systemSource.authorize(shouldAbort: { abort.isSet }, completion)
+            } else {
+                completion(.unavailable("当前平台不支持录制系统音频。"))
             }
         }
     }
@@ -201,7 +208,7 @@ final class NativeCapture {
         permissionResults[lane] = result
         guard request.lanes.allSatisfy({ permissionResults[$0] != nil }) else { return }
         let results = permissionResults
-        guard let current = store?.snapshot.microphone, CaptureSession(current) == request.session,
+        guard let current = store?.microphone, CaptureSession(current) == request.session,
               current.phase == (request.resuming ? "paused" : "starting") else { return }
         pendingPermission = nil
         applying = true
@@ -216,21 +223,21 @@ final class NativeCapture {
         do {
             let clock = try nowNanoseconds()
             if request.resuming {
-                store?.send(.resumeMicrophone(clockNs: clock))
+                send(.resumeMicrophone(clockNs: clock))
             } else {
-                store?.send(.microphonePrepared(
+                send(.microphonePrepared(
                     recordId: request.session.recordId,
                     sessionId: request.session.sessionId,
                     epoch: request.session.epoch,
                     clockNs: clock
                 ))
             }
-            guard let prepared = store?.snapshot.microphone,
+            guard let prepared = store?.microphone,
                   prepared.recordId == request.session.recordId, prepared.sessionId == request.session.sessionId,
                   prepared.epoch == request.session.epoch + (request.resuming ? 1 : 0),
                   prepared.clockNs == clock,
                   prepared.phase == (request.resuming ? "recording" : "starting") else {
-                for lane in request.lanes { runs[lane]?.mailbox.fail(store?.snapshot.error ?? "无法确认音频采样时钟。") }
+                for lane in request.lanes { runs[lane]?.mailbox.fail(store?.runtimeError ?? "无法确认音频采样时钟。") }
                 return
             }
             if request.resuming {
@@ -258,22 +265,26 @@ final class NativeCapture {
         let system = run.lane == "system"
         let label = system ? "系统音频" : "麦克风"
         do {
-            let rate = system
-                ? try systemSource.start(expectedSampleRate: expectedRate,
+            let rate: UInt32
+            if system {
+                guard let systemSource else { throw CaptureError("当前平台不支持录制系统音频。") }
+                rate = try systemSource.start(expectedSampleRate: expectedRate,
                     receive: { mailbox.append($0) }, failed: { mailbox.fail($0) })
-                : try source.start(inputID: snapshot.inputId, expectedSampleRate: expectedRate,
+            } else {
+                rate = try source.start(inputID: snapshot.inputId, expectedSampleRate: expectedRate,
                     receive: { mailbox.append($0) }, failed: { mailbox.fail($0) })
+            }
             guard expectedRate == nil || expectedRate == rate else {
                 throw CaptureError("\(label)采样率发生变化，已保留此前收到的音频。")
             }
-            store?.send(.microphoneStarted(
+            send(.microphoneStarted(
                 recordId: run.identity.recordId,
                 sessionId: run.identity.sessionId,
                 lane: run.lane,
                 sampleRate: rate
             ))
-            guard let lane = store?.snapshot.microphone?.lanes[run.lane], lane.started, lane.error == nil else {
-                mailbox.fail(store?.snapshot.error ?? "无法创建\(label)音频文件。")
+            guard let lane = store?.microphone?.lanes[run.lane], lane.started, lane.error == nil else {
+                mailbox.fail(store?.runtimeError ?? "无法创建\(label)音频文件。")
                 return
             }
         } catch {
@@ -283,11 +294,29 @@ final class NativeCapture {
         }
     }
 
+    private func send(_ event: HostAdapterEvent) {
+        logger.info("Capture event \(event.eventType, privacy: .public)")
+        store?.send(event)
+    }
+
+    public func shutdown() {
+        if let store, let microphone = store.microphone, microphone.phase != "saving" {
+            store.performCaptureAction(.end)
+            apply()
+        }
+        pendingPermission = nil
+        stopAll()
+        source.stop()
+        runs.removeAll()
+        session = nil
+        store = nil
+    }
+
     private func stopAll() { orderedRuns.forEach(stop) }
 
     private func stop(_ run: LaneRun) {
         guard !run.fenced else { return }
-        if run.lane == "system" { systemSource.stop() } else { source.stop() }
+        if run.lane == "system" { systemSource?.stop() } else { source.stop() }
         run.mailbox.close()
         run.fenced = true
     }
@@ -295,9 +324,10 @@ final class NativeCapture {
     /// A failed lane is fenced and reported; Rust keeps the session alive while another lane records.
     private func reportFailure(_ run: LaneRun) {
         guard let error = run.mailbox.error, !run.failureSent else { return }
+        logger.error("Capture failure on \(run.lane, privacy: .public): \(error, privacy: .public)")
         run.failureSent = true
         stop(run)
-        store?.send(.microphoneFailed(
+        send(.microphoneFailed(
             recordId: run.identity.recordId,
             sessionId: run.identity.sessionId,
             lane: run.lane,

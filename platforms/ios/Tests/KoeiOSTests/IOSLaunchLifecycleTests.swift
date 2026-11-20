@@ -12,7 +12,10 @@ final class IOSLaunchLifecycleTests: XCTestCase {
 
     func testPendingCaptureKeepsScreenAwakeAndServicesExpiredTrash() async throws {
         let root = directory
-        let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: ["Koe", "-koe-workspace", root.path], environment: [:])
+        let source = TestMicrophone()
+        source.permission = nil
+        let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: ["Koe", "-koe-workspace", root.path],
+                                       environment: [:], source: source)
         defer { session.shutdown() }
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
 

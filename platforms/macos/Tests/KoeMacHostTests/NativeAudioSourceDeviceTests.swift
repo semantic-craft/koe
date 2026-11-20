@@ -1,4 +1,5 @@
 import Foundation
+import KoeAppleShared
 import XCTest
 @testable import Koe
 

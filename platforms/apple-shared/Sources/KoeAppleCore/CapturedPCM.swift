@@ -1,10 +1,50 @@
+import AVFAudio
 import Foundation
-import KoeAppleShared
 import os
 
-struct CapturedPCM: Sendable {
-    let samples: [Int16]
-    let capturedStartNs: UInt64
+public struct CapturedPCM: Sendable {
+    public let samples: [Int16]
+    public let capturedStartNs: UInt64
+
+    public init(samples: [Int16], capturedStartNs: UInt64) {
+        self.samples = samples
+        self.capturedStartNs = capturedStartNs
+    }
+
+    public static func sampleRate(for format: AVAudioFormat, expectedSampleRate: UInt32?) throws -> UInt32 {
+        guard format.sampleRate >= 8_000, format.sampleRate <= 96_000,
+              format.sampleRate.rounded() == format.sampleRate, format.channelCount > 0,
+              format.commonFormat == .pcmFormatFloat32, !format.isInterleaved else {
+            throw CaptureError("麦克风没有可用的 PCM 输入格式。")
+        }
+        let rate = UInt32(format.sampleRate)
+        guard expectedSampleRate == nil || expectedSampleRate == rate else {
+            throw CaptureError("麦克风采样率发生变化，已保留此前收到的音频。")
+        }
+        return rate
+    }
+
+    public static func capture(_ buffer: AVAudioPCMBuffer, when: AVAudioTime,
+                               expectedSampleRate: UInt32) throws -> CapturedPCM {
+        guard when.isHostTimeValid else { throw CaptureError("音频缺少有效采样时钟。") }
+        guard buffer.format.sampleRate == Double(expectedSampleRate),
+              buffer.format.channelCount > 0, buffer.format.commonFormat == .pcmFormatFloat32,
+              !buffer.format.isInterleaved, let channels = buffer.floatChannelData else {
+            throw CaptureError("麦克风输入格式已改变。")
+        }
+        let count = Int(buffer.frameLength)
+        guard count > 0, count <= 8192 else { throw CaptureError("麦克风音频块超过接收上限。") }
+        let channelCount = Int(buffer.format.channelCount)
+        let samples = [Int16](unsafeUninitializedCapacity: count) { output, initializedCount in
+            for frame in 0..<count {
+                var value: Float = 0
+                for channel in 0..<channelCount { value += channels[channel][frame] / Float(channelCount) }
+                output[frame] = value.isFinite ? Int16(max(-1, min(1, value)) * 32767) : 0
+            }
+            initializedCount = count
+        }
+        return CapturedPCM(samples: samples, capturedStartNs: try HostAudioClock.nanoseconds(when.hostTime))
+    }
 }
 
 /// Binds every lane callback to one Rust capture session epoch.
@@ -32,7 +72,7 @@ struct CaptureIdentity: Equatable, Sendable {
     }
 }
 
-protocol MicrophoneSource: AnyObject {
+public protocol MicrophoneSource: AnyObject {
     func requestPermission(_ completion: @escaping @Sendable (Bool) -> Void)
     func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
                failed: @escaping @Sendable (String) -> Void) throws -> UInt32
@@ -120,4 +160,10 @@ final class MicrophoneMailbox: @unchecked Sendable {
 
     var error: String? { state.withLock(\.failure) }
     var finalSequence: UInt64 { state.withLock(\.sequence) }
+}
+
+public struct CaptureError: LocalizedError {
+    private let message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
 }

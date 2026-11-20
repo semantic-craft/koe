@@ -5,13 +5,22 @@ import UIKit
 @MainActor
 final class IOSHostCoordinator {
     private let store: HostSessionStore
+    private let capture: NativeCapture
     private var scenePhase: ScenePhase = .background
     private var timer: Timer?
     private var lastTick: TimeInterval = 0
 
-    init(store: HostSessionStore, actions: HostBridgeActions) {
+    init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
+         nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
         self.store = store
+        let microphone = source ?? IOSAudioSource { [weak store] message in
+            Task { @MainActor in store?.reportNativeError(message) }
+        }
+        capture = NativeCapture(source: microphone, logger: IOSAudioSource.logger,
+                                nowNanoseconds: nowNanoseconds)
+        capture.store = store
         store.bridgeActions = actions
+        store.bridgeActions.resumeMicrophone = { [weak capture] in capture?.resume() }
         store.onSnapshotChanged = { [weak self] _ in self?.updatePolling() }
         updatePolling()
     }
@@ -42,6 +51,7 @@ final class IOSHostCoordinator {
                 let elapsed = UInt64(max(0, now - self.lastTick) * 1000)
                 self.lastTick = now
                 self.store.pollTimers(elapsedMs: elapsed)
+                self.capture.apply()
                 self.store.bridgeActions.flushBleOutbound()
             }
         }
@@ -53,6 +63,7 @@ final class IOSHostCoordinator {
         timer?.invalidate()
         timer = nil
         store.onSnapshotChanged = nil
+        capture.shutdown()
         store.bridgeActions = HostBridgeActions()
         UIApplication.shared.isIdleTimerDisabled = false
     }
