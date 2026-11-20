@@ -76,6 +76,36 @@ public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, createdAtEpochSec, durationMs, source, status, segmentCount, preview, archived, runId, ordinal, mode, project
     }
+
+    public init(
+        id: String,
+        title: String,
+        createdAtEpochSec: UInt64,
+        durationMs: UInt64,
+        source: String,
+        status: String,
+        segmentCount: Int,
+        preview: String,
+        archived: Bool,
+        runId: String? = nil,
+        ordinal: UInt64? = nil,
+        mode: String? = nil,
+        project: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.createdAtEpochSec = createdAtEpochSec
+        self.durationMs = durationMs
+        self.source = source
+        self.status = status
+        self.segmentCount = segmentCount
+        self.preview = preview
+        self.archived = archived
+        self.runId = runId
+        self.ordinal = ordinal
+        self.mode = mode
+        self.project = project
+    }
 }
 
 extension RecordSnapshot {
@@ -103,6 +133,12 @@ public struct SummarySnapshot: Codable, Equatable, Identifiable, Sendable {
     public let sources: [SourceSnapshot]
 
     public var id: String { "\(title)\u{1F}\(text)" }
+
+    public init(title: String, text: String, sources: [SourceSnapshot]) {
+        self.title = title
+        self.text = text
+        self.sources = sources
+    }
 }
 
 public struct SummarySectionItem: Identifiable, Equatable, Sendable {
@@ -256,95 +292,6 @@ public struct AskSnapshot: Codable, Equatable, Sendable {
     public let messages: [AskMessageSnapshot]
 }
 
-public struct ProviderSnapshot: Codable, Equatable, Sendable {
-    public let meetingAudioPolicy: String
-    public let meetingAudioStatus: String?
-    public let meetingAudioPolicyError: String?
-    public let configured: Bool
-    public let qwenConfigured: Bool
-    public let deepseekConfigured: Bool
-    public let asrConfigured: Bool
-    public let asrIsRealtime: Bool
-    public let asrProvider: String
-    public let asrModel: String
-    public let llmProvider: String
-    public let model: String
-    public let enableThinking: Bool
-    public let qwenWorkspaceId: String
-    public let asrEndpoint: String
-    public let chatEndpoint: String
-    public let credentialState: String
-    public let deepseekCredentialState: String
-    public let isolated: Bool
-
-    private enum CodingKeys: String, CodingKey {
-        case configured, qwenConfigured, deepseekConfigured, asrConfigured, asrIsRealtime
-        case asrProvider, asrModel, llmProvider, model, enableThinking, qwenWorkspaceId
-        case asrEndpoint, chatEndpoint, credentialState, deepseekCredentialState, isolated
-        case meetingAudioPolicy, meetingAudioStatus, meetingAudioPolicyError
-    }
-
-    static let empty = ProviderSnapshot(
-        meetingAudioPolicy: "local_only",
-        meetingAudioStatus: nil,
-        meetingAudioPolicyError: nil,
-        configured: false,
-        qwenConfigured: false,
-        deepseekConfigured: false,
-        asrConfigured: false,
-        asrIsRealtime: true,
-        asrProvider: "qwen",
-        asrModel: "qwen-audio-3.1-asr-flash-streaming",
-        llmProvider: "deepseek",
-        model: "deepseek-flash",
-        enableThinking: false,
-        qwenWorkspaceId: "",
-        asrEndpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-        chatEndpoint: "https://api.deepseek.com/chat/completions",
-        credentialState: "missing",
-        deepseekCredentialState: "missing",
-        isolated: true
-    )
-}
-
-extension ProviderSnapshot {
-    public init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        meetingAudioPolicy = try values.decodeIfPresent(String.self, forKey: .meetingAudioPolicy) ?? "local_only"
-        meetingAudioStatus = try values.decodeIfPresent(String.self, forKey: .meetingAudioStatus)
-        meetingAudioPolicyError = try values.decodeIfPresent(String.self, forKey: .meetingAudioPolicyError)
-        let configured = try values.decode(Bool.self, forKey: .configured)
-        self.configured = configured
-        qwenConfigured = try values.decodeIfPresent(Bool.self, forKey: .qwenConfigured) ?? configured
-        deepseekConfigured = try values.decodeIfPresent(Bool.self, forKey: .deepseekConfigured) ?? false
-        asrConfigured = try values.decodeIfPresent(Bool.self, forKey: .asrConfigured) ?? qwenConfigured
-        asrIsRealtime = try values.decodeIfPresent(Bool.self, forKey: .asrIsRealtime) ?? true
-        asrProvider = try values.decodeIfPresent(String.self, forKey: .asrProvider) ?? "qwen"
-        asrModel = try values.decodeIfPresent(String.self, forKey: .asrModel) ?? "qwen-audio-3.1-asr-flash-streaming"
-        llmProvider = try values.decodeIfPresent(String.self, forKey: .llmProvider) ?? "deepseek"
-        model = try values.decode(String.self, forKey: .model)
-        enableThinking = try values.decodeIfPresent(Bool.self, forKey: .enableThinking) ?? false
-        qwenWorkspaceId = try values.decodeIfPresent(String.self, forKey: .qwenWorkspaceId) ?? ""
-        asrEndpoint = try values.decodeIfPresent(String.self, forKey: .asrEndpoint) ?? ""
-        chatEndpoint = try values.decodeIfPresent(String.self, forKey: .chatEndpoint) ?? ""
-        credentialState = try values.decodeIfPresent(String.self, forKey: .credentialState) ?? (configured ? "ready" : "missing")
-        deepseekCredentialState = try values.decodeIfPresent(String.self, forKey: .deepseekCredentialState) ?? "missing"
-        isolated = try values.decodeIfPresent(Bool.self, forKey: .isolated) ?? true
-    }
-}
-
-public struct LifecycleSnapshot: Codable, Equatable, Sendable {
-    public let keepAwake: Bool
-    public let quitPhase: String
-    public let message: String?
-
-    public init(keepAwake: Bool, quitPhase: String, message: String? = nil) {
-        self.keepAwake = keepAwake
-        self.quitPhase = quitPhase
-        self.message = message
-    }
-}
-
 public struct CaptureLaneSnapshot: Codable, Equatable, Sendable {
     public let nextSequence: UInt64
     public let sampleRate: UInt32?
@@ -409,6 +356,7 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
 }
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
+    public var platform: HostPlatformSnapshot = .macosDefault
     public var speech: SpeechSnapshot = .empty
     public var appUpdate: AppUpdateSnapshot = .empty
     public var liveCaption: LiveCaptionSnapshot? = nil
@@ -437,7 +385,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
-        case liveCaption, speech, appUpdate
+        case platform, liveCaption, speech, appUpdate
         case activeCapture, workspaces
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records
@@ -468,6 +416,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
 extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        platform = try c.decodeIfPresent(HostPlatformSnapshot.self, forKey: .platform) ?? .macosDefault
         speech = try c.decodeIfPresent(SpeechSnapshot.self, forKey: .speech) ?? .empty
         appUpdate = try c.decodeIfPresent(AppUpdateSnapshot.self, forKey: .appUpdate) ?? .empty
         liveCaption = try c.decodeIfPresent(LiveCaptionSnapshot.self, forKey: .liveCaption)

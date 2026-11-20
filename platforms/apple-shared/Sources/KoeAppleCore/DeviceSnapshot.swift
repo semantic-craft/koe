@@ -86,7 +86,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         case autoConnect, teardownStopFramesHex
     }
 
-    static let empty = DeviceSnapshot(
+    public static let empty = DeviceSnapshot(
         phase: "disconnected",
         state: "未连接",
         statusDetail: "将麦克风放入充电仓，短按下方按钮开启广播",

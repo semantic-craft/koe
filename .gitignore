@@ -6,6 +6,8 @@
 .buildlog/
 .swiftpm/
 platforms/**/.build/
+platforms/ios/*.xcodeproj/
+platforms/ios/.build/
 
 # Python
 __pycache__/

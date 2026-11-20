@@ -765,6 +765,210 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         )
         self.assertEqual(res_ok["violations"], [])
 
+    def test_enforces_koe_apple_core_ui_framework_and_slice_boundaries(self) -> None:
+        for framework in ("AppKit", "SwiftUI", "UIKit"):
+            for snippet in (
+                f"import Foundation\nimport {framework}\npublic struct CoreModel {{}}\n",
+                f"@_exported import {framework}\npublic struct CoreModel {{}}\n",
+                f"import struct {framework}.Color\npublic struct CoreModel {{}}\n",
+            ):
+                res = verifier.check_ui_file(
+                    "platforms/apple-shared/Sources/KoeAppleCore/CoreModel.swift",
+                    snippet,
+                    strict_scale=True,
+                )
+                self.assertTrue(
+                    any(framework in v and "KoeAppleCore" in v for v in res["violations"]),
+                    (framework, snippet, res["violations"]),
+                )
+
+        comment_and_string_imports = '''
+        import Foundation
+        // import SwiftUI
+        /* import AppKit
+           /* import UIKit */ */
+        public enum DocStrings {
+            static let single = "import SwiftUI and import AppKit"
+            static let multi = """
+            import UIKit
+            import SwiftUI
+            """
+        }
+        '''
+        res_safe = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleCore/DocStrings.swift",
+            comment_and_string_imports,
+            strict_scale=True,
+        )
+        self.assertEqual(res_safe["violations"], [], res_safe["violations"])
+
+        core_snapshot_leak = """
+        import Foundation
+        struct CoreHelper {
+            func section(_ store: HostSessionStore) -> String { store.snapshot.section }
+        }
+        """
+        res_core_snap = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleCore/CoreHelper.swift",
+            core_snapshot_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_core_snap["violations"]),
+            res_core_snap["violations"],
+        )
+
+        for prop in ("playback", "activeCapture", "liveCaption", "liveMinutesCoverage"):
+            core_hf_leak = f"""
+            import Foundation
+            struct CoreHelper {{
+                func check(_ store: HostSessionStore) {{ let _ = store.{prop} }}
+            }}
+            """
+            res_core_hf = verifier.check_ui_file(
+                "platforms/apple-shared/Sources/KoeAppleCore/CoreHelper.swift",
+                core_hf_leak,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("4 Hz high-frequency slice(s)" in v for v in res_core_hf["violations"]),
+                (prop, res_core_hf["violations"]),
+            )
+
+        for allowed_core in ("HostSessionStore.swift", "HostSessionSlices.swift"):
+            res_allowed = verifier.check_ui_file(
+                f"platforms/apple-shared/Sources/KoeAppleCore/{allowed_core}",
+                core_snapshot_leak,
+                strict_scale=True,
+            )
+            self.assertEqual(res_allowed["violations"], [], (allowed_core, res_allowed["violations"]))
+
+    def test_enforces_ios_app_scoped_observation_and_leaf_slice_ownership(self) -> None:
+        ios_snapshot_view = """
+        import SwiftUI
+        struct IOSTodayView: View {
+            let store: HostSessionStore
+            var body: some View {
+                Text(store.snapshot.section).font(.system(size: AppFontSizes.sm))
+            }
+        }
+        """
+        res_ios_snap = verifier.check_ui_file(
+            "platforms/ios/App/Sources/IOSTodayView.swift",
+            ios_snapshot_view,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_ios_snap["violations"]),
+            res_ios_snap["violations"],
+        )
+
+        ios_app_leak = """
+        import SwiftUI
+        struct KoeIOSApp: App {
+            let store: HostSessionStore
+            var body: some Scene {
+                let _ = store.snapshot.section
+                let _ = store.playback
+                WindowGroup { EmptyView() }
+            }
+        }
+        """
+        res_ios_app = verifier.check_ui_file(
+            "platforms/ios/App/Sources/KoeIOSApp.swift",
+            ios_app_leak,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("reads store.snapshot directly" in v for v in res_ios_app["violations"]),
+            res_ios_app["violations"],
+        )
+        self.assertTrue(
+            any("4 Hz high-frequency slice(s)" in v for v in res_ios_app["violations"]),
+            res_ios_app["violations"],
+        )
+
+        ios_adapter_ok = """
+        import Foundation
+        final class IOSNativeCapture {
+            var store: HostSessionStore?
+            func apply() {
+                let _ = store?.snapshot.microphone
+            }
+        }
+        """
+        res_ios_adapter = verifier.check_ui_file(
+            "platforms/ios/App/Sources/IOSNativeCapture.swift",
+            ios_adapter_ok,
+            strict_scale=True,
+        )
+        self.assertEqual(res_ios_adapter["violations"], [], res_ios_adapter["violations"])
+
+        for prop in ("playback", "activeCapture", "liveCaption", "liveMinutesCoverage"):
+            bad_ios_page = f"""
+            import SwiftUI
+            struct IOSWorkspaceView: View {{
+                let store: HostSessionStore
+                var body: some View {{
+                    let _ = store.{prop}
+                    Text("工作区").font(.system(size: AppFontSizes.sm))
+                }}
+            }}
+            """
+            res_bad_page = verifier.check_ui_file(
+                "platforms/ios/App/Sources/IOSWorkspaceView.swift",
+                bad_ios_page,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("4 Hz high-frequency slice(s)" in v for v in res_bad_page["violations"]),
+                (prop, res_bad_page["violations"]),
+            )
+
+        for leaf_file, prop in (
+            ("IOSPlayerBarView.swift", "playback"),
+            ("IOSActiveCaptureBar.swift", "activeCapture"),
+            ("IOSLiveCaptionBar.swift", "liveCaption"),
+            ("IOSLiveMinutesCoverageSlotView.swift", "liveMinutesCoverage"),
+        ):
+            compliant_ios_leaf = f"""
+            import SwiftUI
+            struct IOSLeafView: View {{
+                let store: HostSessionStore
+                var body: some View {{
+                    let _ = store.{prop}
+                    Text("叶子组件").font(.system(size: AppFontSizes.xs))
+                }}
+            }}
+            """
+            res_leaf = verifier.check_ui_file(
+                f"platforms/ios/App/Sources/{leaf_file}",
+                compliant_ios_leaf,
+                strict_scale=True,
+            )
+            self.assertEqual(res_leaf["violations"], [], (leaf_file, res_leaf["violations"]))
+
+        ios_cross_leaf = """
+        import SwiftUI
+        struct IOSPlayerBarView: View {
+            let store: HostSessionStore
+            var body: some View {
+                let _ = store.playback
+                let _ = store.activeCapture
+                Text("播放").font(.system(size: AppFontSizes.xs))
+            }
+        }
+        """
+        res_ios_cross = verifier.check_ui_file(
+            "platforms/ios/App/Sources/IOSPlayerBarView.swift",
+            ios_cross_leaf,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("4 Hz high-frequency slice(s)" in v for v in res_ios_cross["violations"]),
+            res_ios_cross["violations"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

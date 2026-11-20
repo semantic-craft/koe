@@ -173,6 +173,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
     public let beanBadge: String
     public let beanBadgeTone: String
     public let beanControlOwner: String
+    public let beanControlState: String
     public let guidanceText: String
     public let canSwitchToBean: Bool
     public let canConnectBean: Bool
@@ -180,7 +181,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
     public let cards: [ModePickerCardSnapshot]
 
     private enum CodingKeys: String, CodingKey {
-        case sourceLabel, sourceBadge, beanBadge, beanBadgeTone, beanControlOwner, guidanceText
+        case sourceLabel, sourceBadge, beanBadge, beanBadgeTone, beanControlOwner, beanControlState, guidanceText
         case canSwitchToBean, canConnectBean, canReleaseToPhone, cards
     }
 
@@ -190,6 +191,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         beanBadge: String = "录音豆 未连接",
         beanBadgeTone: String = "muted",
         beanControlOwner: String = "mac",
+        beanControlState: String? = nil,
         guidanceText: String = "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。",
         canSwitchToBean: Bool = false,
         canConnectBean: Bool = true,
@@ -201,6 +203,7 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         self.beanBadge = beanBadge
         self.beanBadgeTone = beanBadgeTone
         self.beanControlOwner = beanControlOwner
+        self.beanControlState = beanControlState ?? (beanControlOwner == "phone" ? "released" : "this_device")
         self.guidanceText = guidanceText
         self.canSwitchToBean = canSwitchToBean
         self.canConnectBean = canConnectBean
@@ -214,7 +217,10 @@ public struct ModePickerSnapshot: Codable, Equatable, Sendable {
         sourceBadge = try c.decode(String.self, forKey: .sourceBadge)
         beanBadge = try c.decodeIfPresent(String.self, forKey: .beanBadge) ?? "录音豆 未连接"
         beanBadgeTone = try c.decodeIfPresent(String.self, forKey: .beanBadgeTone) ?? "muted"
-        beanControlOwner = try c.decodeIfPresent(String.self, forKey: .beanControlOwner) ?? "mac"
+        let owner = try c.decodeIfPresent(String.self, forKey: .beanControlOwner) ?? "mac"
+        beanControlOwner = owner
+        beanControlState = try c.decodeIfPresent(String.self, forKey: .beanControlState)
+            ?? (owner == "phone" ? "released" : "this_device")
         guidanceText = try c.decodeIfPresent(String.self, forKey: .guidanceText)
             ?? "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
         canSwitchToBean = try c.decodeIfPresent(Bool.self, forKey: .canSwitchToBean) ?? false
@@ -278,6 +284,11 @@ public struct QuickNoteProjectCountSnapshot: Codable, Equatable, Identifiable, S
     public var id: String { name }
     public let name: String
     public let count: Int
+
+    public init(name: String, count: Int) {
+        self.name = name
+        self.count = count
+    }
 }
 
 public struct QuickNoteTopicSnapshot: Codable, Equatable, Identifiable, Sendable {

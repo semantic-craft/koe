@@ -60,6 +60,7 @@ public struct SidebarSlice: Equatable, Sendable {
     public let appBuild: String
     public let hasAvailableUpdate: Bool
     public let beanControlOwner: String
+    public let beanControlState: String
     public let deviceName: String
     public let deviceConnected: Bool
     public let devicePhase: String
@@ -82,7 +83,10 @@ public struct SidebarSlice: Equatable, Sendable {
         appVersion = snapshot.appUpdate.currentVersion
         appBuild = snapshot.appUpdate.currentBuild
         hasAvailableUpdate = snapshot.appUpdate.isUpdateAvailable
-        beanControlOwner = snapshot.workspaces?.picker.beanControlOwner ?? "mac"
+        let owner = snapshot.workspaces?.picker.beanControlOwner ?? "mac"
+        beanControlOwner = owner
+        beanControlState = snapshot.workspaces?.picker.beanControlState
+            ?? (owner == "phone" ? "released" : "this_device")
         deviceName = snapshot.device.deviceName
         deviceConnected = snapshot.device.connected
         devicePhase = snapshot.device.phase
@@ -94,6 +98,7 @@ public struct SidebarSlice: Equatable, Sendable {
 
 public struct TodaySlice: Equatable, Sendable {
     public let picker: ModePickerSnapshot?
+    public let beanControlState: String
     public let recordCount: Int
     public let proposedActionCount: Int
     public let deviceConnected: Bool
@@ -105,6 +110,9 @@ public struct TodaySlice: Equatable, Sendable {
 
     public init(snapshot: HostSnapshot) {
         picker = snapshot.workspaces?.picker
+        let owner = snapshot.workspaces?.picker.beanControlOwner ?? "mac"
+        beanControlState = snapshot.workspaces?.picker.beanControlState
+            ?? (owner == "phone" ? "released" : "this_device")
         recordCount = snapshot.records.count
         proposedActionCount = snapshot.tasks.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
             + snapshot.memories.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }

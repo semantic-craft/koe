@@ -20,3 +20,15 @@ public struct SpeechSnapshot: Codable, Equatable, Sendable {
         engine: "apple_speech", modelId: nil, models: [], appleState: "unavailable", appleMessage: nil
     )
 }
+
+public struct LiveCaptionSnapshot: Codable, Equatable, Sendable {
+    public let recordId: String
+    public let text: String
+    public let status: String
+
+    public init(recordId: String, text: String, status: String) {
+        self.recordId = recordId
+        self.text = text
+        self.status = status
+    }
+}

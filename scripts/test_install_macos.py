@@ -241,7 +241,7 @@ class InstallMacosScriptTest(unittest.TestCase):
         engine_toml = (REPO_ROOT / "crates" / "koe-engine" / "Cargo.toml").read_text(encoding="utf-8")
         engine_ver_rs = (REPO_ROOT / "crates" / "koe-engine" / "src" / "version.rs").read_text(encoding="utf-8")
         swift_snap = (
-            REPO_ROOT / "platforms" / "apple-shared" / "Sources" / "KoeAppleShared" / "AppUpdateSnapshot.swift"
+            REPO_ROOT / "platforms" / "apple-shared" / "Sources" / "KoeAppleCore" / "AppUpdateSnapshot.swift"
         ).read_text(encoding="utf-8")
 
         ws_ver = re.search(r'^version\s*=\s*"([^"]+)"', cargo_toml, re.M)

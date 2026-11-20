@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import KoeAppleCore
 @testable import KoeAppleShared
 
 @Suite("Native product contract")

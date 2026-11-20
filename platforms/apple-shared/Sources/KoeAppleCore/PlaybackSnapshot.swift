@@ -74,6 +74,7 @@ extension HostSnapshot {
         isPlaying: Bool
     ) -> HostSnapshot {
         HostSnapshot(
+            platform: platform,
             speech: speech,
             appUpdate: appUpdate,
             liveCaption: liveCaption,
