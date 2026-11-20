@@ -43,7 +43,8 @@ final class IOSLaunchSession {
         bridgeActions: HostBridgeActions,
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        source: MicrophoneSource? = nil
+        source: MicrophoneSource? = nil,
+        allowsCoreBluetooth: Bool = true
     ) {
         let config = IOSLaunchConfig.parse(arguments: arguments, environment: environment)
         let credentials = NativeCredentialsiOS(
@@ -58,7 +59,13 @@ final class IOSLaunchSession {
         }
         traceURLs = outputs
         store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials)
-        coordinator = IOSHostCoordinator(store: store, actions: bridgeActions, source: source)
+        #if DEBUG
+        let useRadio = allowsCoreBluetooth && config.snapshotFixturePath == nil && environment["KOE_DISABLE_CORE_BLUETOOTH"] != "1"
+        #else
+        let useRadio = allowsCoreBluetooth
+        #endif
+        coordinator = IOSHostCoordinator(store: store, actions: bridgeActions, source: source,
+                                         allowsCoreBluetooth: useRadio)
         inputMonitor = IOSAudioInputMonitor(store: store)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.6.0"

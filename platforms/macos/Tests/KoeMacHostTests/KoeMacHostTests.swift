@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import Foundation
+@testable import KoeAppleCore
 import KoeAppleShared
 import Testing
 @testable import Koe

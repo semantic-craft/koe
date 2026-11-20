@@ -124,7 +124,7 @@ final class KoeiOSHostTests: XCTestCase {
                 "-koe-snapshot-fixture", fixtureURL.path,
                 "-koe-trace-output", traceURL.path,
             ],
-            environment: [:]
+            environment: [:], allowsCoreBluetooth: false
         )
         defer { session.shutdown() }
 

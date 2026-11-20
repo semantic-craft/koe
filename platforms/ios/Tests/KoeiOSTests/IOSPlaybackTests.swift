@@ -15,7 +15,8 @@ final class IOSPlaybackTests: XCTestCase {
         let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
         let source = TestMicrophone()
         let host = IOSHostCoordinator(store: store, actions: HostBridgeActions(), source: source,
-                                      audioSession: audioSession, nowNanoseconds: { source.clockNs })
+                                      audioSession: audioSession, allowsCoreBluetooth: false,
+                                      nowNanoseconds: { source.clockNs })
         defer { host.shutdown(); store.shutdown() }
         store.send(.importFile(path: wav.path))
         XCTAssertEqual(store.snapshot.detail?.durationMs, 4000)

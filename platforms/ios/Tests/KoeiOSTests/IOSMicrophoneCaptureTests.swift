@@ -40,7 +40,7 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
         let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
         let source = TestMicrophone()
         let coordinator = IOSHostCoordinator(store: store, actions: HostBridgeActions(),
-                                             source: source, nowNanoseconds: { source.clockNs })
+                                             source: source, allowsCoreBluetooth: false, nowNanoseconds: { source.clockNs })
         coordinator.setScenePhase(.active)
         defer { coordinator.shutdown(); store.shutdown() }
         try await body(store, source, root)

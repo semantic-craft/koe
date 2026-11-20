@@ -1,4 +1,5 @@
 import Foundation
+@testable import KoeAppleCore
 import KoeAppleShared
 import Testing
 @testable import Koe
