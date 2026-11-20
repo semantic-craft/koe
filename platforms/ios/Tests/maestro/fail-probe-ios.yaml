@@ -1,0 +1,5 @@
+appId: com.semanticcraft.koe.ios
+---
+- extendedWaitUntil:
+    visible: "KOE_INTENTIONAL_FAIL_PROBE_DO_NOT_EXIST"
+    timeout: 2000

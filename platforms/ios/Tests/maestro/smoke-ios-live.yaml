@@ -1,0 +1,29 @@
+appId: com.semanticcraft.koe.ios
+---
+- extendedWaitUntil:
+    visible: "模式选择"
+    timeout: 15000
+- tapOn:
+    id: "quick-note-input"
+- inputText: "SimulatorSmokeNote"
+- tapOn:
+    id: "quick-note-submit"
+- waitForAnimationToEnd
+- tapOn: "记录"
+- extendedWaitUntil:
+    visible: "SimulatorSmokeNote"
+    timeout: 10000
+- tapOn: "行动"
+- extendedWaitUntil:
+    visible: "待办"
+    timeout: 5000
+- tapOn: "问 AI"
+- extendedWaitUntil:
+    visible: "全部记录"
+    timeout: 5000
+- tapOn:
+    id: "settings-button"
+- extendedWaitUntil:
+    visible: "iPhone"
+    timeout: 10000
+- takeScreenshot: final_screen
