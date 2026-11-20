@@ -122,6 +122,59 @@ final class IOSFileActionsTests: XCTestCase {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    func testBluetoothErrorDoesNotMaskFileCommandResult() async throws {
+        let f = try fixture()
+        defer { f.store.shutdown() }
+        let bluetoothError = "蓝牙已关闭"
+        for title in ["旧提示", "回调提示"] {
+            if title == "回调提示" {
+                f.store.onSnapshotChanged = { [weak store = f.store] _ in
+                    store?.reportNativeError(bluetoothError)
+                }
+            }
+            let source = f.source.appendingPathComponent("\(title).txt")
+            try Data(title.utf8).write(to: source)
+            f.store.reportNativeError(bluetoothError)
+            await f.files.importFile(source)
+            let record = try XCTUnwrap(f.store.records.first { $0.title == title })
+            XCTAssertFalse(f.store.nativeError?.contains("导入失败") == true)
+            f.store.reportNativeError(bluetoothError)
+            f.files.exportRecord(record.id)
+            let url = try XCTUnwrap(f.files.exportURLs.first, title)
+            XCTAssertTrue(try readExport(url, in: f.staging).contains(title))
+            f.files.finishExport()
+            try assertClean(f.staging)
+        }
+        f.files.exportRecord("missing-record")
+        XCTAssertTrue(f.store.nativeError?.contains("记录不存在") == true)
+        try assertClean(f.staging)
+    }
+
+    func testWorkspaceExportProducesVisibleNamesForDotAndInvalidTitles() throws {
+        let f = try fixture()
+        defer { f.store.shutdown() }
+        f.store.send(.createNote(title: "导出", text: "原文"))
+        let record = try XCTUnwrap(f.store.records.first)
+        for (name, expected) in [("..md", "Koe 记录.md"), ("/:\\\0.md", "Koe 记录.md"),
+                                 ("...笔\0记.md", "笔-记.md")] {
+            f.files.exportWorkspace(.init(recordId: record.id, suggestedFilename: name))
+            let url = try XCTUnwrap(f.files.exportURLs.first)
+            XCTAssertEqual(url.lastPathComponent, expected)
+            XCTAssertTrue(try readExport(url, in: f.staging).contains("原文"))
+            f.files.finishExport()
+        }
+    }
+
+    func testEmptyBatchLeavesPriorFeedbackAndStagingUntouched() throws {
+        let f = try fixture()
+        defer { f.store.shutdown() }
+        f.store.reportNativeError("蓝牙已关闭")
+        f.files.exportRecords([])
+        XCTAssertEqual(f.store.nativeError, "蓝牙已关闭")
+        XCTAssertTrue(f.files.exportURLs.isEmpty)
+        try assertClean(f.staging)
+    }
+
     func testRecordExportSanitizesTitlePreservesMarkdownAndReleasesStaging() throws {
         let f = try fixture()
         defer { f.store.shutdown() }

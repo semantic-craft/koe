@@ -35,7 +35,11 @@ final class IOSFileActions {
         do {
             let directory = try makeDirectory()
             defer { remove(directory) }
-            let copy = try await Self.stageImport(url, in: directory)
+            let copy: URL = try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(with: Result { try Self.stageImport(url, in: directory) })
+                }
+            }
             try dispatch(.importFile(path: copy.path))
             Self.logger.info("导入文件完成")
         } catch {
@@ -53,22 +57,25 @@ final class IOSFileActions {
     }
 
     func exportRecord(_ id: String) {
-        let title = store.records.first { $0.id == id }?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        exportWorkspace(WorkspaceExportRequest(recordId: id, suggestedFilename: "\(title.isEmpty ? "Koe 记录" : title).md"))
+        let title = store.records.first { $0.id == id }?.title ?? ""
+        exportWorkspace(WorkspaceExportRequest(recordId: id, suggestedFilename: "\(title).md"))
     }
 
     func exportWorkspace(_ request: WorkspaceExportRequest) {
         prepareExport { directory in
             let name = request.suggestedFilename
-                .replacingOccurrences(of: "/", with: "-")
-                .replacingOccurrences(of: ":", with: "-")
-                .replacingOccurrences(of: "\\", with: "-")
             guard name.lowercased().hasSuffix(".md") else { throw FileActionError("导出文件名无效。") }
-            return request.command(path: directory.appendingPathComponent(name).path)
+            let padding = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "."))
+            let invalid = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+            let stem = String(name.dropLast(3)).trimmingCharacters(in: padding)
+            let safeStem = stem.trimmingCharacters(in: invalid.union(padding)).isEmpty
+                ? "Koe 记录" : stem.components(separatedBy: invalid).joined(separator: "-")
+            return request.command(path: directory.appendingPathComponent("\(safeStem).md").path)
         }
     }
 
     func exportRecords(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
         prepareExport { .exportRecordsMarkdown(recordIds: ids, directory: $0.path) }
     }
 
@@ -110,8 +117,7 @@ final class IOSFileActions {
     }
 
     private func dispatch(_ command: HostCommand) throws {
-        store.send(command)
-        if let message = store.nativeError ?? store.snapshot.error { throw FileActionError(message) }
+        if let message = store.sendReturningError(command) { throw FileActionError(message) }
     }
 
     private func report(_ operation: String, _ error: Error) {
@@ -119,7 +125,7 @@ final class IOSFileActions {
         store.reportNativeError("\(operation)：\(error.localizedDescription)")
     }
 
-    private nonisolated static func stageImport(_ source: URL, in directory: URL) async throws -> URL {
+    private nonisolated static func stageImport(_ source: URL, in directory: URL) throws -> URL {
         let name = source.lastPathComponent
         guard source.isFileURL, !source.pathComponents.contains(".."),
               !name.contains("/"), !name.contains("\\"), !name.contains("\0") else {
@@ -157,18 +163,30 @@ final class IOSFileActions {
         if let size = values.fileSize, size > limit { throw tooLarge }
         guard let modified = values.contentModificationDate else { throw FileActionError("无法读取源文件修改时间。") }
 
-        let input = try FileHandle(forReadingFrom: source)
         let fm = FileManager.default
         guard fm.createFile(atPath: destination.path, contents: nil) else { throw FileActionError("无法创建暂存文件。") }
-        let output = try FileHandle(forWritingTo: destination)
-        var total = 0
-        while let chunk = try input.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            total += chunk.count
-            guard total <= limit else { throw tooLarge }
-            try output.write(contentsOf: chunk)
+        try withOpenHandle(FileHandle(forReadingFrom: source)) { input in
+            try withOpenHandle(FileHandle(forWritingTo: destination)) { output in
+                var total = 0
+                while let chunk = try input.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    total += chunk.count
+                    guard total <= limit else { throw tooLarge }
+                    try output.write(contentsOf: chunk)
+                }
+            }
         }
-        try output.close()
-        try input.close()
         try fm.setAttributes([.modificationDate: modified], ofItemAtPath: destination.path)
+    }
+
+    private nonisolated static func withOpenHandle(_ handle: FileHandle, perform: (FileHandle) throws -> Void) throws {
+        let operation = Result { try perform(handle) }
+        do { try handle.close() }
+        catch {
+            if case .failure(let original) = operation {
+                throw FileActionError("\(original.localizedDescription)（关闭文件失败：\(error.localizedDescription)）")
+            }
+            throw error
+        }
+        try operation.get()
     }
 }
