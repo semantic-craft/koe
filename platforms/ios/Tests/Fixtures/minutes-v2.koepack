@@ -1,0 +1,29 @@
+KOEPACK1
+940
+{
+  "format": "koe-material-pack",
+  "version": 2,
+  "exportedAt": "2026-01-02T12:00:00Z",
+  "material": {
+    "contentHash": "54370a7178413ef4ee81e569935f80e855235d517443e8f349de9feea66f9868",
+    "title": "归档会议"
+  },
+  "audio": {
+    "included": false
+  },
+  "minutes": {
+    "current": {
+      "text": "{\"schemaVersion\": 2, \"title\": \"归档会议\", \"overview\": \"概览\", \"topics\": [{\"text\": \"议题\", \"sources\": [\"S1\"], \"summary\": \"摘要\", \"points\": [{\"text\": \"要点\", \"sources\": [\"S1\"]}]}], \"terms\": [], \"decisions\": [], \"actions\": [], \"questions\": []}",
+      "sourceHash": "54370a7178413ef4ee81e569935f80e855235d517443e8f349de9feea66f9868",
+      "model": "fixture",
+      "instruction": "整理纪要",
+      "sources": [
+        "资料包原文"
+      ],
+      "createdAt": "2026-01-02T12:00:00Z",
+      "templateVersion": 1,
+      "isDraft": false
+    },
+    "history": []
+  }
+}

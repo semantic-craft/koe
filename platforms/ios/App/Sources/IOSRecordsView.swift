@@ -1,19 +1,25 @@
 import KoeAppleCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct IOSRecordsView: View {
     let store: HostSessionStore
     let onSelectRecord: (String) -> Void
+    @Environment(IOSFileActions.self) private var files
 
     @State private var searchQuery = ""
     @State private var filterCategory: RecordFilterCategory = .all
     @State private var showingTrashSheet = false
+    @State private var importing = false
+    @State private var selecting = false
+    @State private var selectedIDs: Set<String> = []
 
     var body: some View {
         let filteredRecords = store.records.filter {
             $0.matches(filter: filterCategory, query: searchQuery)
         }
         let trashCount = store.navigation.trashCount
+        let selectedRecords = store.records.map(\.id).filter(selectedIDs.contains)
 
         VStack(spacing: 0) {
             VStack(spacing: 10) {
@@ -86,49 +92,87 @@ struct IOSRecordsView: View {
                 }
                 .background(IOSColors.bgPanel)
             } else {
-                List {
+                List(selection: selecting ? $selectedIDs : nil) {
                     ForEach(filteredRecords) { record in
-                        Button {
-                            onSelectRecord(record.id)
-                        } label: {
-                            recordRow(record)
-                                .contentShape(Rectangle())
+                        Group {
+                            if selecting {
+                                recordRow(record)
+                                    .contentShape(Rectangle())
+                                    .tag(record.id)
+                            } else {
+                                Button {
+                                    onSelectRecord(record.id)
+                                } label: {
+                                    recordRow(record)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        store.send(.trashRecord(recordId: record.id))
+                                    } label: {
+                                        Label("移入回收站", systemImage: "trash")
+                                    }
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("records-row-\(record.id)")
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                store.send(.trashRecord(recordId: record.id))
-                            } label: {
-                                Label("移入回收站", systemImage: "trash")
-                            }
-                        }
                     }
                 }
+                .environment(\.editMode, .constant(selecting ? .active : .inactive))
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .background(IOSColors.bgPanel)
             }
         }
-        .navigationTitle("记录")
+        .navigationTitle(selecting ? "已选 \(selectedRecords.count)" : "记录")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    showingTrashSheet = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "trash")
-                        Text(trashCount > 0 ? "回收站 (\(trashCount))" : "回收站")
+            ToolbarItemGroup(placement: .topBarLeading) {
+                if selecting {
+                    Button("取消") {
+                        selectedIDs.removeAll()
+                        selecting = false
                     }
-                    .font(.system(size: AppFontSizes.xs, weight: .medium))
-                    .foregroundStyle(IOSColors.textSecondary)
-                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("records-cancel-selection")
+                    Button("导出所选记录", systemImage: "square.and.arrow.up") {
+                        files.exportRecords(selectedRecords)
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(selectedRecords.isEmpty)
+                    .accessibilityIdentifier("records-export-button")
+                } else {
+                    Button("导入", systemImage: "square.and.arrow.down") {
+                        importing = true
+                    }
+                    .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("records-import-button")
+                    Menu {
+                        Button("选择记录", systemImage: "checkmark.circle") { selecting = true }
+                            .disabled(store.records.isEmpty)
+                            .accessibilityIdentifier("records-select-button")
+                        Button(trashCount > 0 ? "回收站 (\(trashCount))" : "回收站", systemImage: "trash") {
+                            showingTrashSheet = true
+                        }
+                        .accessibilityIdentifier("records-trash-button")
+                    } label: {
+                        Label("更多记录操作", systemImage: "ellipsis.circle")
+                    }
+                    .accessibilityIdentifier("records-menu")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("records-trash-button")
+            }
+        }
+        .fileImporter(
+            isPresented: $importing,
+            allowedContentTypes: [.wav, .plainText, UTType(filenameExtension: "md") ?? .text,
+                                  UTType(filenameExtension: "koepack") ?? .data]
+        ) { result in
+            switch result {
+            case .success(let url): Task { await files.importFile(url) }
+            case .failure(let error): files.pickerFailed(error)
             }
         }
         .sheet(isPresented: $showingTrashSheet) {

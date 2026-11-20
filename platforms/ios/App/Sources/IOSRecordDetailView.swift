@@ -12,6 +12,7 @@ private enum IOSRecordDetailTab: String, CaseIterable, Identifiable {
 struct IOSRecordDetailView: View {
     let store: HostSessionStore
     let recordId: String
+    @Environment(IOSFileActions.self) private var files
 
     @State private var selectedTab: IOSRecordDetailTab = .summary
 
@@ -108,6 +109,10 @@ struct IOSRecordDetailView: View {
                         store.send(.setRecordArchived(recordId: detail.id, archived: !detail.archived))
                     }
                 }
+                IOSPrimaryButton("导出 Markdown", systemImage: "square.and.arrow.up", isPrimary: false) {
+                    files.exportRecord(detail.id)
+                }
+                .accessibilityIdentifier("record-export-markdown")
             }
         }
     }

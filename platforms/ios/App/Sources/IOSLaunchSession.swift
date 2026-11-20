@@ -35,6 +35,7 @@ final class IOSLaunchSession {
     private static let logger = Logger(subsystem: "com.semanticcraft.koe.ios", category: "host")
 
     let store: HostSessionStore
+    let fileActions: IOSFileActions
     let coordinator: IOSHostCoordinator
     private let inputMonitor: IOSAudioInputMonitor
     private let traceURLs: [URL]
@@ -59,6 +60,7 @@ final class IOSLaunchSession {
         }
         traceURLs = outputs
         store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials)
+        fileActions = IOSFileActions(store: store)
         #if DEBUG
         let useRadio = allowsCoreBluetooth && config.snapshotFixturePath == nil && environment["KOE_DISABLE_CORE_BLUETOOTH"] != "1"
         #else
