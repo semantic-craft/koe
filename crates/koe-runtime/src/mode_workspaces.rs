@@ -4,7 +4,8 @@ use crate::{
     command::CaptureMode,
     live_minutes::{SourceView, TranscriptLine},
     microphone::{MicrophoneStatus, Phase},
-    projection::{local_date, origin, status},
+    platform::HostPlatformKind,
+    projection::{local_date, status},
 };
 use chrono::NaiveDate;
 use koe_client_base::write_atomic;
@@ -16,8 +17,8 @@ pub(super) const QUICK_NOTE_MCP_READ_NOTE: &str =
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BeanControlOwner {
-    Mac,
-    Phone,
+    ThisDevice,
+    Released,
 }
 
 struct ModePickerCounts {
@@ -300,9 +301,9 @@ impl KoeRuntime {
                 ConnectionPhaseTag::Disconnected
             )
         {
-            BeanControlOwner::Phone
+            BeanControlOwner::Released
         } else {
-            BeanControlOwner::Mac
+            BeanControlOwner::ThisDevice
         }
     }
 
@@ -398,8 +399,13 @@ impl KoeRuntime {
         let owner = self.bean_control_owner();
         let can_release_to_phone = self.can_release_to_phone();
 
-        let (bean_badge, bean_badge_tone) = if owner == BeanControlOwner::Phone {
-            ("已让出给手机", "muted")
+        let is_macos = self.platform.kind == HostPlatformKind::Macos;
+        let (bean_badge, bean_badge_tone) = if owner == BeanControlOwner::Released {
+            if is_macos {
+                ("已让出给手机", "muted")
+            } else {
+                ("已释放蓝牙控制", "muted")
+            }
         } else if !self.device.is_connected() {
             match self.device.session.connection_phase {
                 ConnectionPhaseTag::Scanning => ("录音豆 查找中", "warning"),
@@ -425,24 +431,61 @@ impl KoeRuntime {
             && capture_selection.source != "bean";
         let can_connect_bean = can_control && !self.device.is_connected();
 
-        let guidance_text = if is_pulling_offline {
-            "正在从录音豆拉取离线录音，请等待完成后再切回手机，避免传输中断。"
-        } else if owner == BeanControlOwner::Phone {
-            "已释放 Mac 蓝牙占用，可在 iPhone 飞书妙记连接。若未搜到，将录音豆放入充电仓短按下方按钮。"
+        let guidance_text: String = if is_pulling_offline {
+            if is_macos {
+                "正在从录音豆拉取离线录音，请等待完成后再切回手机，避免传输中断。".into()
+            } else {
+                "正在从录音豆拉取离线录音，请等待完成后再释放蓝牙控制，避免传输中断。".into()
+            }
+        } else if owner == BeanControlOwner::Released {
+            if is_macos {
+                "已释放 Mac 蓝牙占用，可在 iPhone 飞书妙记连接。若未搜到，将录音豆放入充电仓短按下方按钮。".into()
+            } else {
+                format!(
+                    "已释放 {} 蓝牙占用，可在其他设备连接录音豆。若未搜到，将录音豆放入充电仓短按下方按钮。",
+                    self.platform.host_display_name
+                )
+            }
         } else if capture_selection.source == "bean" {
             if !self.device.is_connected() {
-                "请先将录音豆放入充电仓长按 2 秒连接，或切换为电脑麦克风后再选模式。"
+                if is_macos {
+                    "请先将录音豆放入充电仓长按 2 秒连接，或切换为电脑麦克风后再选模式。".into()
+                } else {
+                    format!(
+                        "请先将录音豆放入充电仓长按 2 秒连接，或切换为 {} 后再选模式。",
+                        self.platform.mic_label()
+                    )
+                }
             } else if device_busy {
-                "录音豆正在同步或录音，完成后可开启下方模式，或单按侧键录闪记。"
+                "录音豆正在同步或录音，完成后可开启下方模式，或单按侧键录闪记。".into()
             } else {
-                "录音豆已就绪，可直接打开下方模式开关，或单按豆子侧键录闪记。"
+                "录音豆已就绪，可直接打开下方模式开关，或单按豆子侧键录闪记。".into()
             }
         } else if self.device.is_connected() && device_busy {
-            "录音豆正在同步或录音，当前暂用电脑麦克风，完成后自动恢复。"
+            if is_macos {
+                "录音豆正在同步或录音，当前暂用电脑麦克风，完成后自动恢复。".into()
+            } else {
+                format!(
+                    "录音豆正在同步或录音，当前暂用 {}，完成后自动恢复。",
+                    self.platform.mic_label()
+                )
+            }
         } else if self.device.is_connected() {
-            "当前使用电脑麦克风，如需用录音豆收音可点右侧切换为录音豆。"
+            if is_macos {
+                "当前使用电脑麦克风，如需用录音豆收音可点右侧切换为录音豆。".into()
+            } else {
+                format!(
+                    "当前使用 {}，如需用录音豆收音可点右侧切换为录音豆。",
+                    self.platform.mic_label()
+                )
+            }
+        } else if is_macos {
+            "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。".into()
         } else {
-            "当前使用电脑麦克风，也可将录音豆放入充电仓按键连接后再选模式。"
+            format!(
+                "当前使用 {}，也可将录音豆放入充电仓按键连接后再选模式。",
+                self.platform.mic_label()
+            )
         };
 
         let cards = json!([
@@ -506,8 +549,12 @@ impl KoeRuntime {
             "beanBadge": bean_badge,
             "beanBadgeTone": bean_badge_tone,
             "beanControlOwner": match owner {
-                BeanControlOwner::Mac => "mac",
-                BeanControlOwner::Phone => "phone",
+                BeanControlOwner::ThisDevice => "mac",
+                BeanControlOwner::Released => "phone",
+            },
+            "beanControlState": match owner {
+                BeanControlOwner::ThisDevice => "this_device",
+                BeanControlOwner::Released => "released",
             },
             "guidanceText": guidance_text,
             "canSwitchToBean": can_switch_to_bean,
@@ -656,7 +703,7 @@ impl KoeRuntime {
                     "title": record.title,
                     "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
                     "durationMs": duration_ms,
-                    "source": origin(record.origin),
+                    "source": self.origin_label(record.origin),
                     "status": status(record),
                     "archived": record.is_archived(),
                     "project": record.project,

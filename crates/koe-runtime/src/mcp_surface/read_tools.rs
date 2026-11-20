@@ -175,7 +175,7 @@ impl KoeRuntime {
                             "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
                             "durationMs": record.aggregate.duration_ms,
                             "origin": projection::origin_slug(record.origin),
-                            "source": projection::origin(record.origin),
+                            "source": self.origin_label(record.origin),
                             "status": projection::status(record),
                             "segmentCount": record.aggregate.spine.len(),
                             "preview": preview,

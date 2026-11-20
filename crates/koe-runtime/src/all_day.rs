@@ -27,7 +27,7 @@ impl KoeRuntime {
             "bean" => {
                 self.start_device_recording(now)?;
             }
-            _ => return Err("请选择 Mac 麦克风或录音豆".into()),
+            _ => return Err(format!("请选择 {}或录音豆", self.platform.mic_label())),
         }
         let id = format!("day-{now}-{}", self.workspace().revision() + 1);
         self.all_day.run = Some(AllDayRun {

@@ -164,7 +164,9 @@ impl KoeRuntime {
         version: &str,
         build: &str,
         update_endpoint: Option<&str>,
+        platform_patch: crate::platform::PlatformMetadataPatch<'_>,
     ) -> Result<(), String> {
+        let next_platform = self.platform.apply_patch(platform_patch)?;
         if let Some(endpoint) = update_endpoint {
             let trimmed = endpoint.trim();
             validate_update_endpoint(trimmed)?;
@@ -175,6 +177,14 @@ impl KoeRuntime {
                 self.app_update.endpoint = trimmed.to_owned();
                 self.clear_app_update_notice();
             }
+        }
+        self.platform = next_platform;
+        if !self.platform.supports_system_audio {
+            self.capture_studio.include_system_audio = false;
+        }
+        if !self.platform.supports_self_update {
+            self.cancel_app_update_check();
+            self.app_update.last_remote = None;
         }
         let parsed_version = parse_bundle_version_or_current(version);
         let valid_build = validate_build_number(build)
@@ -194,6 +204,19 @@ impl KoeRuntime {
     }
 
     pub(crate) fn check_app_update(&mut self, now: u64) -> Result<(), String> {
+        let eff_now = if now > 0 { now } else { self.last_now_sec };
+        let checked_at = (eff_now > 0).then_some(eff_now);
+        if !self.platform.supports_self_update {
+            self.cancel_app_update_check();
+            self.app_update.last_remote = None;
+            self.clear_app_update_notice();
+            self.app_update.outcome = AppUpdateOutcome::Unavailable {
+                message: "当前分发渠道不提供应用内更新".into(),
+                release_url: KOE_GITHUB_RELEASES_URL.to_owned(),
+                checked_at_epoch_sec: checked_at,
+            };
+            return Ok(());
+        }
         if self.app_update.pending_operation_id.is_some() {
             return Ok(());
         }
@@ -209,8 +232,6 @@ impl KoeRuntime {
             },
             timeout: UPDATE_CHECK_TIMEOUT,
         };
-        let eff_now = if now > 0 { now } else { self.last_now_sec };
-        let checked_at = (eff_now > 0).then_some(eff_now);
         match self.provider.submit(ProviderLane::Update, request) {
             Ok(()) => {
                 self.app_update.pending_operation_id = Some(operation_id);

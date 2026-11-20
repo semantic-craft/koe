@@ -49,7 +49,7 @@ pub(super) struct MicrophoneStatus<'a> {
     pub phase: &'static str,
     pub duration_ms: u64,
     pub input_label: String,
-    input_badge: &'static str,
+    input_badge: String,
     pub interruption: Option<&'a str>,
 }
 
@@ -115,6 +115,9 @@ impl KoeRuntime {
         clock_ns: Option<u64>,
         now: u64,
     ) -> Result<(), String> {
+        if include_system && !self.platform.supports_system_audio {
+            return Err("当前平台不支持录制系统音频".into());
+        }
         if self.microphone.is_some() {
             return Err("请先结束当前录音并完成保存".into());
         }
@@ -455,10 +458,11 @@ impl KoeRuntime {
         if written {
             if self.workspace().record(&id).is_none() {
                 let group = self.all_day_group("microphone");
+                let record_title = self.platform.mic_recording_label();
                 self.commit(|w| {
                     w.insert_record(
                         id.clone(),
-                        "Mac 麦克风录音".into(),
+                        record_title,
                         RecordOrigin::Microphone,
                         0,
                         created,
@@ -677,14 +681,15 @@ impl KoeRuntime {
             let partial = outcomes.iter().any(|l| l.interruption.is_some());
             let group = self.all_day_group("microphone");
             let mic_mode = m.mode;
+            let record_title = if m.lanes.len() > 1 {
+                self.platform.dual_recording_label()
+            } else {
+                self.platform.mic_recording_label()
+            };
             self.commit(|w| {
                 w.insert_record(
                     m.current_record_id.clone(),
-                    if m.lanes.len() > 1 {
-                        "Mac 双路录音".into()
-                    } else {
-                        "Mac 麦克风录音".into()
-                    },
+                    record_title,
                     RecordOrigin::Microphone,
                     0,
                     m.segment_started_at.unwrap_or(m.created_at),
@@ -798,9 +803,9 @@ impl KoeRuntime {
             .unwrap_or(0);
         let (input_label, input_badge) = if m.input_id.is_empty() {
             if let Some(def) = self.capture_studio.inputs.iter().find(|i| i.is_default) {
-                (def.name.clone(), def.transport.badge())
+                (def.name.clone(), def.transport.badge(&self.platform))
             } else {
-                ("系统默认麦克风".to_string(), "系统默认")
+                ("系统默认麦克风".to_string(), "系统默认".to_string())
             }
         } else if let Some(found) = self
             .capture_studio
@@ -808,9 +813,9 @@ impl KoeRuntime {
             .iter()
             .find(|i| i.id == m.input_id)
         {
-            (found.name.clone(), found.transport.badge())
+            (found.name.clone(), found.transport.badge(&self.platform))
         } else {
-            ("Mac 麦克风".to_string(), "音频输入")
+            (self.platform.mic_label(), "音频输入".to_string())
         };
         Some(MicrophoneStatus {
             phase: match m.phase {

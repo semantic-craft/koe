@@ -14,12 +14,12 @@ pub(crate) enum AudioInputTransport {
 }
 
 impl AudioInputTransport {
-    pub(crate) fn badge(&self) -> &'static str {
+    pub(crate) fn badge(&self, platform: &crate::platform::HostPlatformProfile) -> String {
         match self {
-            Self::Bluetooth => "Mac 蓝牙",
-            Self::Usb => "USB 外接",
-            Self::BuiltIn => "本机内置",
-            Self::External => "音频输入",
+            Self::Bluetooth => platform.bluetooth_label(),
+            Self::Usb => "USB 外接".into(),
+            Self::BuiltIn => "本机内置".into(),
+            Self::External => "音频输入".into(),
         }
     }
 }
@@ -55,7 +55,7 @@ pub(super) struct CaptureSelection {
     pub source: String,
     pub input_id: String,
     pub label: String,
-    pub badge: &'static str,
+    pub badge: String,
     mode: &'static str,
     pub(super) active_source: Option<String>,
     pub can_start: bool,
@@ -157,6 +157,9 @@ impl KoeRuntime {
     }
 
     pub(super) fn set_capture_system_audio(&mut self, enabled: bool) -> Result<(), String> {
+        if enabled && !self.platform.supports_system_audio {
+            return Err("当前平台不支持录制系统音频".into());
+        }
         if self.microphone.is_some() || self.is_bean_meeting_recording() {
             return Err("正在录音中，请先停止当前录音再切换系统音频".into());
         }
@@ -193,9 +196,14 @@ impl KoeRuntime {
             && !device_busy
             && !self.device.session.is_offline_pull_suspended();
 
-        let resolve_auto = || -> (String, String, String, &'static str) {
+        let resolve_auto = || -> (String, String, String, String) {
             if bean_ready {
-                ("bean".into(), String::new(), device_name.clone(), "录音豆")
+                (
+                    "bean".into(),
+                    String::new(),
+                    device_name.clone(),
+                    "录音豆".into(),
+                )
             } else if let Some(bt) = inputs
                 .iter()
                 .find(|i| i.transport == AudioInputTransport::Bluetooth && i.is_default)
@@ -209,7 +217,7 @@ impl KoeRuntime {
                     format!("input:{}", bt.id),
                     bt.id.clone(),
                     bt.name.clone(),
-                    "Mac 蓝牙",
+                    self.platform.bluetooth_label(),
                 )
             } else if let Some(def) = inputs
                 .iter()
@@ -220,14 +228,14 @@ impl KoeRuntime {
                     format!("input:{}", def.id),
                     def.id.clone(),
                     def.name.clone(),
-                    def.transport.badge(),
+                    def.transport.badge(&self.platform),
                 )
             } else {
                 (
                     "system_default".into(),
                     String::new(),
                     "系统默认麦克风".into(),
-                    "系统默认",
+                    "系统默认".into(),
                 )
             }
         };
@@ -238,7 +246,7 @@ impl KoeRuntime {
                     "bean".to_string(),
                     String::new(),
                     device_name,
-                    "录音豆",
+                    "录音豆".to_string(),
                     "active",
                 )
             } else if let Some(m) = &self.microphone {
@@ -248,7 +256,7 @@ impl KoeRuntime {
                             "system_default".into(),
                             String::new(),
                             def.name.clone(),
-                            def.transport.badge(),
+                            def.transport.badge(&self.platform),
                             "active",
                         )
                     } else {
@@ -256,7 +264,7 @@ impl KoeRuntime {
                             "system_default".into(),
                             String::new(),
                             "系统默认麦克风".into(),
-                            "系统默认",
+                            "系统默认".into(),
                             "active",
                         )
                     }
@@ -265,15 +273,15 @@ impl KoeRuntime {
                         format!("input:{}", found.id),
                         found.id.clone(),
                         found.name.clone(),
-                        found.transport.badge(),
+                        found.transport.badge(&self.platform),
                         "active",
                     )
                 } else {
                     (
                         format!("input:{}", m.input_id),
                         m.input_id.clone(),
-                        "Mac 麦克风".into(),
-                        "音频输入",
+                        self.platform.mic_label(),
+                        "音频输入".into(),
                         "active",
                     )
                 }
@@ -287,7 +295,7 @@ impl KoeRuntime {
                         "bean".into(),
                         String::new(),
                         device_name,
-                        "录音豆",
+                        "录音豆".into(),
                         "manual",
                     ),
                     CaptureSourcePreference::SystemDefault => {
@@ -296,7 +304,7 @@ impl KoeRuntime {
                                 "system_default".into(),
                                 String::new(),
                                 def.name.clone(),
-                                def.transport.badge(),
+                                def.transport.badge(&self.platform),
                                 "manual",
                             )
                         } else {
@@ -304,7 +312,7 @@ impl KoeRuntime {
                                 "system_default".into(),
                                 String::new(),
                                 "系统默认麦克风".into(),
-                                "系统默认",
+                                "系统默认".into(),
                                 "manual",
                             )
                         }
@@ -315,7 +323,7 @@ impl KoeRuntime {
                                 format!("input:{}", found.id),
                                 found.id.clone(),
                                 found.name.clone(),
-                                found.transport.badge(),
+                                found.transport.badge(&self.platform),
                                 "manual",
                             )
                         } else {
@@ -355,7 +363,7 @@ impl KoeRuntime {
                     "sourceKey": format!("input:{}", input.id),
                     "name": input.name,
                     "transport": input.transport,
-                    "badge": input.transport.badge(),
+                    "badge": input.transport.badge(&self.platform),
                     "isDefault": input.is_default,
                 })
             })
@@ -389,8 +397,8 @@ impl KoeRuntime {
             "selectionMode": selection.mode,
             "activeSource": selection.active_source,
             "canStart": selection.can_start,
-            "includeSystemAudio": self.capture_studio.include_system_audio,
-            "canIncludeSystemAudio": selection.source != "bean",
+            "includeSystemAudio": self.platform.supports_system_audio && self.capture_studio.include_system_audio,
+            "canIncludeSystemAudio": self.platform.supports_system_audio && selection.source != "bean",
             "inputs": inputs_json,
             "audioStorage": {
                 "path": audio_dir.to_string_lossy(),

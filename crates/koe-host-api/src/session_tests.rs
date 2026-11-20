@@ -615,3 +615,60 @@ fn binary_drains_transfer_non_empty_ble_frames_and_local_asr_effects() {
     assert_eq!(raw_asr[0], 1);
     assert!(session.drain_local_asr_binary().is_empty());
 }
+
+#[cfg(all(not(feature = "local-bridge"), not(feature = "offline-speech")))]
+#[test]
+fn no_default_features_session_dispatches_and_reports_offline_speech_unavailable() {
+    let ws = TempWorkspace::new("no-default-features");
+    let session = HostSessionGuard::open(&ws.0).expect("open no-default-features session");
+    let now = 1_800_004_000u64;
+
+    assert!(
+        !ws.0.join("koe.sock").exists(),
+        "local bridge socket must not be created when local-bridge feature is disabled"
+    );
+
+    let synced = send_json(
+        &session,
+        json!({
+            "type": "sync_app_metadata",
+            "version": "2.9.0",
+            "build": "401",
+            "platform": "android"
+        }),
+        now,
+    );
+    assert!(synced["error"].is_null());
+    assert_eq!(synced["platform"]["id"], "android");
+    assert_eq!(synced["capture"]["canIncludeSystemAudio"], false);
+    assert_eq!(
+        synced["workspaces"]["picker"]["beanControlState"],
+        "this_device"
+    );
+
+    let note = send_json(
+        &session,
+        json!({
+            "type": "create_note",
+            "title": "Mobile Smoke",
+            "text": "hello mobile",
+            "stayOnPage": true
+        }),
+        now + 1,
+    );
+    assert!(note["error"].is_null());
+    assert_eq!(note["records"].as_array().unwrap().len(), 1);
+
+    let prepare = send_json(
+        &session,
+        json!({
+            "type": "prepare_speech_model",
+            "modelId": "sensevoice-small"
+        }),
+        now + 2,
+    );
+    assert_eq!(
+        prepare["error"],
+        "当前平台构建未启用端侧离线语音模型"
+    );
+}

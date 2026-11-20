@@ -4,7 +4,7 @@ use crate::{
     command::CaptureMode,
     live_minutes::TranscriptLine,
     microphone::{MicrophoneStatus, Phase},
-    projection::{origin, status},
+    projection::status,
 };
 
 impl KoeRuntime {
@@ -55,7 +55,7 @@ impl KoeRuntime {
                     "title": r.title,
                     "createdAtEpochSec": r.aggregate.created_at_epoch_sec,
                     "durationMs": duration_ms,
-                    "source": origin(r.origin),
+                    "source": self.origin_label(r.origin),
                     "status": status(r),
                     "segmentCount": r.aggregate.spine.len(),
                     "decisionCount": r.aggregate.minutes.as_ref().map_or(0, |m| m.decisions.len()),
@@ -126,7 +126,7 @@ impl KoeRuntime {
                     .unwrap_or_else(|| "Soundcore Work".into())
             }
         } else if let Some(r) = selected_record {
-            origin(r.origin).to_owned()
+            self.origin_label(r.origin)
         } else {
             capture_selection.label.clone()
         };

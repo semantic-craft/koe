@@ -36,6 +36,7 @@ mod mode_workspaces_all_day;
 mod mode_workspaces_live_minutes;
 #[cfg(test)]
 mod navigation_tests;
+mod platform;
 mod playback;
 mod processing;
 mod projection;
@@ -138,6 +139,7 @@ pub struct KoeRuntime {
     selection: selection::WorkspaceSelection,
     device: DeviceRuntime,
     provider: ProviderPool,
+    platform: platform::HostPlatformProfile,
     app_update: app_update::AppUpdateState,
     settings: ProviderSettings,
     credentials: Box<dyn credentials::CredentialStore>,
@@ -185,6 +187,7 @@ impl KoeRuntime {
             selection: Default::default(),
             device: DeviceRuntime::default(),
             provider: ProviderPool::new()?,
+            platform: platform::HostPlatformProfile::default(),
             app_update: Default::default(),
             settings: ProviderSettings::default(),
             credentials,
@@ -452,6 +455,7 @@ impl KoeRuntime {
 
     pub(crate) fn release_to_phone_block_reason(&self) -> Option<&'static str> {
         use koe_engine::session::TransferPhaseTag;
+        let is_macos = self.platform.kind == platform::HostPlatformKind::Macos;
         if self.is_quitting() || self.store.requires_reopen() {
             return Some("当前状态暂不可释放录音豆蓝牙控制权");
         }
@@ -460,7 +464,11 @@ impl KoeRuntime {
             TransferPhaseTag::PullingOffline
         ) || self.device.session.is_offline_pull_suspended()
         {
-            return Some("正在从录音豆拉取离线录音，请等待完成后再切回手机");
+            return Some(if is_macos {
+                "正在从录音豆拉取离线录音，请等待完成后再切回手机"
+            } else {
+                "正在从录音豆拉取离线录音，请等待完成后再释放蓝牙控制"
+            });
         }
         if self.is_bean_meeting_recording()
             || self.device.session.device_recording_active
@@ -472,7 +480,11 @@ impl KoeRuntime {
                 .is_some_and(|run| run.source == "bean")
             || self.device.session.pending_realtime_subscribe
         {
-            return Some("录音豆正在录音，请先停止当前录音再切回手机");
+            return Some(if is_macos {
+                "录音豆正在录音，请先停止当前录音再切回手机"
+            } else {
+                "录音豆正在录音，请先停止当前录音再释放蓝牙控制"
+            });
         }
         None
     }

@@ -347,6 +347,16 @@ pub(crate) enum AdapterEvent {
         build: String,
         #[serde(default)]
         update_endpoint: Option<String>,
+        #[serde(default)]
+        platform: Option<String>,
+        #[serde(default)]
+        host_display_name: Option<String>,
+        #[serde(default)]
+        supports_system_audio: Option<bool>,
+        #[serde(default)]
+        supports_self_update: Option<bool>,
+        #[serde(default)]
+        native_speech_label: Option<String>,
     },
     MicrophonePrepared {
         record_id: String,
