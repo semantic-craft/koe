@@ -52,7 +52,7 @@ final class IOSAudioInputMonitor {
 
     private nonisolated static func availableInputs() throws -> [HostAudioInputDescriptor] {
         let session = AVAudioSession.sharedInstance()
-        try IOSAudioSource.configure(session)
+        try IOSAudioSession.configure(session)
         let current = session.currentRoute.inputs.first?.uid
         return (session.availableInputs ?? []).map { port in
             HostAudioInputDescriptor(id: port.uid, name: port.portName,

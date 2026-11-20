@@ -1,9 +1,8 @@
 import AVFoundation
-import KoeAppleShared
 
 @MainActor
-enum NativePlaybackItem {
-    static func make(_ plan: PlaybackAssetSnapshot) async throws -> AVPlayerItem {
+public enum NativePlaybackItem {
+    public static func make(_ plan: PlaybackAssetSnapshot) async throws -> AVPlayerItem {
         let source = AVURLAsset(url: URL(fileURLWithPath: plan.audioPath))
         guard !plan.segments.isEmpty || plan.durationNs > 0 else { return AVPlayerItem(asset: source) }
         guard let input = try await source.loadTracks(withMediaType: .audio).first else {

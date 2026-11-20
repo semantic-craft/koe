@@ -1,3 +1,4 @@
+import AVFoundation
 import KoeAppleCore
 import SwiftUI
 import UIKit
@@ -6,19 +7,33 @@ import UIKit
 final class IOSHostCoordinator {
     private let store: HostSessionStore
     private let capture: NativeCapture
+    private let playback: NativePlayback
+    private var interruptionObserver: NSObjectProtocol?
     private var scenePhase: ScenePhase = .background
     private var timer: Timer?
     private var lastTick: TimeInterval = 0
 
     init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
+         audioSession: IOSAudioSession = IOSAudioSession(),
          nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
         self.store = store
-        let microphone = source ?? IOSAudioSource { [weak store] message in
+        let microphone = source ?? IOSAudioSource(audioSession: audioSession) { [weak store] message in
             Task { @MainActor in store?.reportNativeError(message) }
         }
         capture = NativeCapture(source: microphone, logger: IOSAudioSource.logger,
                                 nowNanoseconds: nowNanoseconds)
         capture.store = store
+        playback = NativePlayback(logger: IOSAudioSession.playbackLogger, setSessionActive: {
+            try audioSession.setActive($0, for: .playback)
+        })
+        playback.store = store
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main
+        ) { [weak playback] notification in
+            guard notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ==
+                AVAudioSession.InterruptionType.began.rawValue else { return }
+            MainActor.assumeIsolated { playback?.interrupt() }
+        }
         store.bridgeActions = actions
         store.bridgeActions.resumeMicrophone = { [weak capture] in capture?.resume() }
         store.onSnapshotChanged = { [weak self] _ in self?.updatePolling() }
@@ -28,6 +43,7 @@ final class IOSHostCoordinator {
     func setScenePhase(_ phase: ScenePhase) {
         scenePhase = phase
         store.setUISlicesActive(phase == .active)
+        playback.tick()
         updatePolling()
     }
 
@@ -52,6 +68,7 @@ final class IOSHostCoordinator {
                 self.lastTick = now
                 self.store.pollTimers(elapsedMs: elapsed)
                 self.capture.apply()
+                self.playback.tick()
                 self.store.bridgeActions.flushBleOutbound()
             }
         }
@@ -63,10 +80,18 @@ final class IOSHostCoordinator {
         timer?.invalidate()
         timer = nil
         store.onSnapshotChanged = nil
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
+            self.interruptionObserver = nil
+        }
+        playback.stop()
         capture.shutdown()
         store.bridgeActions = HostBridgeActions()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+    }
 }
