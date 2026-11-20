@@ -20,6 +20,7 @@ public final class HostSessionStore {
     private static let decoder = JSONDecoder()
 
     @ObservationIgnored public private(set) var snapshot: HostSnapshot = .empty
+    @ObservationIgnored var playbackRequest: PlaybackSnapshot { snapshot.playback }
     @ObservationIgnored var microphone: MicrophoneSnapshot? { snapshot.microphone }
     @ObservationIgnored var runtimeError: String? { snapshot.error }
     @ObservationIgnored public var lifecycle: LifecycleSnapshot? { snapshot.lifecycle }

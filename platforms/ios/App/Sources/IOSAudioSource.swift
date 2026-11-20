@@ -5,22 +5,15 @@ import os
 final class IOSAudioSource: MicrophoneSource {
     static let logger = Logger(subsystem: "com.semanticcraft.koe.ios", category: "capture")
     private let session = AVAudioSession.sharedInstance()
+    private let audioSession: IOSAudioSession
     private let reportError: (String) -> Void
-    private var active = false
     private var engine: AVAudioEngine?
     private var fence: AudioCallbackFence?
     private var routeObserver: IOSCaptureRouteObserver?
 
-    init(reportError: @escaping (String) -> Void) {
+    init(audioSession: IOSAudioSession, reportError: @escaping (String) -> Void) {
+        self.audioSession = audioSession
         self.reportError = reportError
-    }
-
-    static func configure(_ session: AVAudioSession) throws {
-        let options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP]
-        if session.category != .playAndRecord || session.mode != .default ||
-            !session.categoryOptions.isSuperset(of: options) {
-            try session.setCategory(.playAndRecord, mode: .default, options: options)
-        }
     }
 
     func requestPermission(_ completion: @escaping @Sendable (Bool) -> Void) {
@@ -29,9 +22,7 @@ final class IOSAudioSource: MicrophoneSource {
 
     func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
                failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
-        try Self.configure(session)
-        try session.setActive(true)
-        active = true
+        try audioSession.setActive(true, for: .microphone)
         do {
             let preferred = session.availableInputs?.first { $0.uid == inputID }
             guard inputID.isEmpty || preferred != nil else {
@@ -78,10 +69,8 @@ final class IOSAudioSource: MicrophoneSource {
         engine?.inputNode.removeTap(onBus: 0)
         engine = nil
         fence = nil
-        guard active else { return }
         do {
-            try session.setActive(false, options: .notifyOthersOnDeactivation)
-            active = false
+            try audioSession.setActive(false, for: .microphone)
         } catch {
             let message = "停用麦克风音频会话失败：\(error.localizedDescription)"
             Self.logger.error("\(message, privacy: .public)")

@@ -1,0 +1,182 @@
+import AVFoundation
+import KoeAppleCore
+import XCTest
+@testable import KoeiOSApp
+
+@MainActor
+final class IOSPlaybackTests: XCTestCase {
+    private func fixture(audioSession: IOSAudioSession = IOSAudioSession(),
+                         _ body: (HostSessionStore, IOSHostCoordinator, TestMicrophone) async throws -> Void) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try FileManager.default.removeItem(at: root) }
+        let wav = root.appendingPathComponent("playback.wav")
+        try writeTone(to: wav)
+        let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
+        let source = TestMicrophone()
+        let host = IOSHostCoordinator(store: store, actions: HostBridgeActions(), source: source,
+                                      audioSession: audioSession, nowNanoseconds: { source.clockNs })
+        defer { host.shutdown(); store.shutdown() }
+        store.send(.importFile(path: wav.path))
+        XCTAssertEqual(store.snapshot.detail?.durationMs, 4000)
+        host.setScenePhase(.active)
+        try await body(store, host, source)
+    }
+
+    private func writeTone(to url: URL) throws {
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000,
+                                                 channels: 1, interleaved: true))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings,
+                                   commonFormat: .pcmFormatInt16, interleaved: true)
+        let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64_000))
+        pcm.frameLength = pcm.frameCapacity
+        let samples = try XCTUnwrap(pcm.int16ChannelData?.pointee)
+        for frame in 0..<Int(pcm.frameLength) {
+            samples[frame] = Int16(1000 * sin(Double(frame) * 2 * .pi * 440 / 16_000))
+        }
+        try file.write(from: pcm)
+    }
+
+    private func until(_ message: String, file: StaticString = #filePath, line: UInt = #line,
+                       _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(4)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        _ = try XCTUnwrap(condition() ? true : nil, message, file: file, line: line)
+    }
+
+    private func play(_ store: HostSessionStore) async throws {
+        store.send(.playback(isPlaying: true))
+        try await until("AVPlayer must advance the Rust playback position") {
+            store.snapshot.playback.positionMs > 0 && store.snapshot.playback.isPlaying
+        }
+    }
+
+    private func seekItem(_ store: HostSessionStore, to position: UInt64) async throws -> AVPlayerItem {
+        var item: AVPlayerItem?
+        let center = NotificationCenter.default
+        let token = center.addObserver(forName: .AVPlayerItemTimeJumped, object: nil, queue: .main) { note in
+            MainActor.assumeIsolated { item = note.object as? AVPlayerItem }
+        }
+        defer { center.removeObserver(token) }
+        store.send(.seek(positionMs: position))
+        try await until("AVPlayerItem must complete the requested seek") {
+            guard let item else { return false }
+            return abs(item.currentTime().seconds - Double(position) / 1000) < 0.15
+        }
+        return try XCTUnwrap(item)
+    }
+
+    private func enterBackground(_ host: IOSHostCoordinator, store: HostSessionStore) {
+        XCTAssertTrue(store.snapshot.playback.isPlaying)
+        XCTAssertEqual(store.snapshot.lifecycle?.keepAwake, false)
+        host.setScenePhase(.background)
+        XCTAssertFalse(store.isUISlicesActive)
+    }
+
+    func testSeekPauseResumeAndFinishWhileForegroundTimerIsStopped() async throws {
+        var sessionActive = false
+        let session = IOSAudioSession { sessionActive = $0 }
+        try await fixture(audioSession: session) { store, host, _ in
+            try await play(store)
+            XCTAssertTrue(sessionActive)
+            let item = try await seekItem(store, to: 2500)
+            try await until("playback must advance after seeking") { store.snapshot.playback.positionMs > 2600 }
+            store.send(.playback(isPlaying: false))
+            try await until("pause must stop the native timebase") { item.timebase?.rate == 0 && !sessionActive }
+            store.send(.playback(isPlaying: true))
+            try await until("resume must restart the native timebase") { item.timebase?.rate == 1 && sessionActive }
+            enterBackground(host, store: store)
+            try await until("EOF must publish the final position with foreground polling disabled") {
+                !store.snapshot.playback.isPlaying && store.snapshot.playback.positionMs == 4000
+            }
+            XCTAssertFalse(sessionActive)
+            XCTAssertNil(store.nativeError)
+        }
+    }
+
+    func testFailedItemPublishesErrorWithForegroundTimerStopped() async throws {
+        var sessionActive = false
+        let session = IOSAudioSession { sessionActive = $0 }
+        try await fixture(audioSession: session) { store, host, _ in
+            try await play(store)
+            XCTAssertTrue(sessionActive)
+            let item = try await seekItem(store, to: 800)
+            try await until("playback must advance after seeking") { store.snapshot.playback.positionMs > 900 }
+            enterBackground(host, store: store)
+            let error = NSError(domain: "IOSPlaybackTests", code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "Audio decoding failed"])
+            NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: item,
+                                            userInfo: [AVPlayerItemFailedToPlayToEndTimeErrorKey: error])
+            try await until("failure notification must stop Rust playback and surface the native error") {
+                !store.snapshot.playback.isPlaying && store.nativeError?.contains(error.localizedDescription) == true
+            }
+            XCTAssertFalse(sessionActive)
+        }
+    }
+
+    func testInterruptionPausesWithoutForegroundPolling() async throws {
+        var sessionActive = false
+        let session = IOSAudioSession { sessionActive = $0 }
+        try await fixture(audioSession: session) { store, host, _ in
+            try await play(store)
+            XCTAssertTrue(sessionActive)
+            enterBackground(host, store: store)
+            NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
+                AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
+            ])
+            try await until("interruption must stop playback before EOF") {
+                !store.snapshot.playback.isPlaying && store.snapshot.playback.positionMs < 4000
+            }
+            XCTAssertFalse(sessionActive)
+        }
+    }
+
+    func testMissingAssetStopsPlaybackAndSurfacesError() async throws {
+        try await fixture { store, _, _ in
+            let path = try XCTUnwrap(store.snapshot.playback.asset?.audioPath)
+            store.send(.playback(isPlaying: true))
+            try FileManager.default.removeItem(atPath: path)
+            try await until("missing WAV must stop Rust playback and surface the native error") {
+                !store.snapshot.playback.isPlaying && store.nativeError != nil
+            }
+        }
+    }
+
+    func testCorruptAssetStopsPlaybackAndSurfacesError() async throws {
+        try await fixture { store, _, _ in
+            let path = try XCTUnwrap(store.snapshot.playback.asset?.audioPath)
+            try Data("corrupt".utf8).write(to: URL(fileURLWithPath: path))
+            store.send(.playback(isPlaying: true))
+            try await until("invalid WAV must stop Rust playback and surface the native error") {
+                !store.snapshot.playback.isPlaying && store.nativeError != nil
+            }
+        }
+    }
+
+    func testFinishingPlaybackWhileRecordingKeepsCaptureReceivingPCM() async throws {
+        var sessionActive = false
+        let session = IOSAudioSession { active in sessionActive = active }
+        try await fixture(audioSession: session) { store, _, source in
+            let id = try XCTUnwrap(store.snapshot.playback.recordId)
+            store.send(.startMicrophone(inputId: "phone"))
+            try await until("microphone should be actively recording") { store.snapshot.microphone?.phase == "recording" }
+            try session.setActive(true, for: .microphone)
+            store.send(.selectRecord(recordId: id))
+            try await play(store)
+            store.send(.seek(positionMs: 3400))
+            try await until("EOF should settle playback during capture") {
+                !store.snapshot.playback.isPlaying && store.snapshot.playback.positionMs == 4000
+            }
+            XCTAssertTrue(sessionActive, "Playback EOF must preserve the microphone’s audio session")
+            let write = try XCTUnwrap(source.receive)
+            write(CapturedPCM(samples: [123], capturedStartNs: source.clockNs))
+            try await until("capture should ingest PCM after EOF") { store.snapshot.microphone?.nextSequence == 1 }
+            store.send(.stopMicrophone)
+            try await until("recording must finalize") { store.snapshot.microphone == nil }
+            try session.setActive(false, for: .microphone)
+            XCTAssertFalse(sessionActive, "Stopping the last audio source must release the session")
+        }
+    }
+}
