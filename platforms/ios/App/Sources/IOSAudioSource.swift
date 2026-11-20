@@ -16,9 +16,10 @@ final class IOSAudioSource: MicrophoneSource {
     }
 
     static func configure(_ session: AVAudioSession) throws {
+        let options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP]
         if session.category != .playAndRecord || session.mode != .default ||
-            !session.categoryOptions.contains(.allowBluetoothHFP) {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
+            !session.categoryOptions.isSuperset(of: options) {
+            try session.setCategory(.playAndRecord, mode: .default, options: options)
         }
     }
 
@@ -99,12 +100,14 @@ final class IOSCaptureRouteObserver {
          currentInputUID: @escaping @Sendable () -> String?, failed: @escaping @Sendable (String) -> Void) {
         self.center = center
         end = { [listening] message in
-            listening.withLock { active in
-                guard active else { return }
+            let shouldEnd = listening.withLock { active in
+                guard active else { return false }
                 active = false
-                fence.closeAndWait()
-                failed(message)
+                return true
             }
+            guard shouldEnd else { return }
+            fence.closeAndWait()
+            failed(message)
         }
         let session = AVAudioSession.sharedInstance()
         tokens.append(center.addObserver(forName: AVAudioSession.interruptionNotification,
