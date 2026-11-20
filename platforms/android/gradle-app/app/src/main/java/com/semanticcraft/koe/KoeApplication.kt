@@ -15,6 +15,8 @@ import com.semanticcraft.koe.platform.capture.AndroidCaptureCoordinator
 import com.semanticcraft.koe.platform.capture.AndroidPermissionCoordinator
 import com.semanticcraft.koe.platform.capture.KoeCaptureForegroundService
 import com.semanticcraft.koe.platform.capture.SystemAudioFocusController
+import com.semanticcraft.koe.platform.playback.AndroidAudioTrackSink
+import com.semanticcraft.koe.platform.playback.AndroidPlaybackCoordinator
 import java.io.File
 import java.nio.charset.StandardCharsets
 
@@ -37,11 +39,18 @@ class KoeApplication : Application() {
             },
         )
     }
+    val playbackCoordinator: AndroidPlaybackCoordinator by lazy {
+        AndroidPlaybackCoordinator(
+            sinkFactory = AndroidAudioTrackSink.Factory,
+            focusController = SystemAudioFocusController(this),
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
         hostCoordinator.registerAdapter(audioInputMonitor)
         hostCoordinator.registerAdapter(captureCoordinator)
+        hostCoordinator.registerAdapter(playbackCoordinator)
     }
 
     fun setForegroundActive(active: Boolean) {

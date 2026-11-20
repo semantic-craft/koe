@@ -75,6 +75,7 @@ fun AndroidPlayerBar(
                     onClick = { store.send(HostCommand.Playback(isPlaying = !playback.isPlaying)) },
                     modifier = Modifier
                         .size(36.dp)
+                        .testTag("player-toggle-button")
                         .semantics {
                             contentDescription = if (playback.isPlaying) "暂停播放" else "开始播放"
                         },
@@ -107,6 +108,7 @@ fun AndroidPlayerBar(
                         text = "${TimeLabel.duration(playback.positionMs)} / ${TimeLabel.duration(nav.detailDurationMs)}",
                         color = colors.textMuted,
                         fontSize = KoeFontSizes.xs,
+                        modifier = Modifier.testTag("player-position-label"),
                     )
                 }
 

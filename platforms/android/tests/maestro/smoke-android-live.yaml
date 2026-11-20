@@ -53,6 +53,29 @@ appId: com.semanticcraft.koe
 - extendedWaitUntil:
     visible: "Android 麦克风录音"
     timeout: 10000
+- tapOn: "Android 麦克风录音"
+- extendedWaitUntil:
+    visible:
+      id: "android-player-bar"
+    timeout: 10000
+- assertVisible:
+    id: "player-toggle-button"
+- assertVisible:
+    id: "player-position-label"
+- tapOn:
+    id: "player-toggle-button"
+- extendedWaitUntil:
+    visible: "00:0[1-9] / .*"
+    timeout: 10000
+- assertNotVisible: "无法播放这段音频"
+- extendedWaitUntil:
+    visible: "开始播放"
+    timeout: 15000
+- assertNotVisible: "无法播放这段音频"
+- tapOn: "返回"
+- extendedWaitUntil:
+    visible: "AndroidSmokeNote"
+    timeout: 10000
 - tapOn: "行动"
 - extendedWaitUntil:
     visible: "待办"
