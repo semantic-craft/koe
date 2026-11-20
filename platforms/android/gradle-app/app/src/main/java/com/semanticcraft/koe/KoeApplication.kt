@@ -9,10 +9,14 @@ import com.semanticcraft.koe.core.HostBridgeActions
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.JniHostBridgeClient
 import com.semanticcraft.koe.platform.AndroidHostCoordinator
+import com.semanticcraft.koe.platform.ble.AndroidBleCoordinator
+import com.semanticcraft.koe.platform.ble.SharedPreferencesBleAddressStore
+import com.semanticcraft.koe.platform.ble.SystemAndroidBleTransport
 import com.semanticcraft.koe.platform.capture.AndroidAudioInputMonitor
 import com.semanticcraft.koe.platform.capture.AndroidAudioRecordSource
 import com.semanticcraft.koe.platform.capture.AndroidCaptureCoordinator
 import com.semanticcraft.koe.platform.capture.AndroidPermissionCoordinator
+import com.semanticcraft.koe.platform.capture.CaptureForegroundState
 import com.semanticcraft.koe.platform.capture.KoeCaptureForegroundService
 import com.semanticcraft.koe.platform.capture.SystemAudioFocusController
 import com.semanticcraft.koe.platform.playback.AndroidAudioTrackSink
@@ -22,7 +26,11 @@ import java.nio.charset.StandardCharsets
 
 class KoeApplication : Application() {
     private val sessionLock = Any()
+    private val foregroundLock = Any()
     private var currentStore: HostSessionStore? = null
+    private var captureForegroundState = CaptureForegroundState(active = false, paused = false, modeTitle = null)
+    private var bleForegroundActive = false
+    private var lastSyncedForeground: Pair<CaptureForegroundState, Int>? = null
     val hostCoordinator = AndroidHostCoordinator()
     val permissionCoordinator: AndroidPermissionCoordinator by lazy {
         AndroidPermissionCoordinator(this)
@@ -35,7 +43,7 @@ class KoeApplication : Application() {
             source = AndroidAudioRecordSource(this, permissionCoordinator),
             focusController = SystemAudioFocusController(this),
             onForegroundStateChanged = { state ->
-                KoeCaptureForegroundService.sync(this, state)
+                updateCaptureForegroundState(state)
             },
         )
     }
@@ -45,12 +53,72 @@ class KoeApplication : Application() {
             focusController = SystemAudioFocusController(this),
         )
     }
+    val bleCoordinator: AndroidBleCoordinator by lazy {
+        AndroidBleCoordinator(
+            transport = SystemAndroidBleTransport(this, permissionCoordinator::hasBlePermissions),
+            addressStore = SharedPreferencesBleAddressStore(this),
+            requestBlePermission = permissionCoordinator::requestBlePermissions,
+            onForegroundRequirementChanged = { required ->
+                updateBleForegroundRequirement(required)
+            },
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
         hostCoordinator.registerAdapter(audioInputMonitor)
         hostCoordinator.registerAdapter(captureCoordinator)
         hostCoordinator.registerAdapter(playbackCoordinator)
+        hostCoordinator.registerAdapter(bleCoordinator)
+    }
+
+    private fun updateCaptureForegroundState(state: CaptureForegroundState) {
+        synchronized(foregroundLock) {
+            captureForegroundState = state
+        }
+        syncForegroundService()
+    }
+
+    private fun updateBleForegroundRequirement(required: Boolean) {
+        synchronized(foregroundLock) {
+            bleForegroundActive = required
+        }
+        syncForegroundService()
+    }
+
+    private fun syncForegroundService() {
+        val (captureState, bleRequired) = synchronized(foregroundLock) {
+            captureForegroundState to bleForegroundActive
+        }
+        val effectiveBle = bleRequired && permissionCoordinator.hasBlePermissions()
+        var fgsFlags = 0
+        if (captureState.active) {
+            fgsFlags = fgsFlags or KoeCaptureForegroundService.FGS_FLAG_MICROPHONE
+        }
+        if (effectiveBle) {
+            fgsFlags = fgsFlags or KoeCaptureForegroundService.FGS_FLAG_CONNECTED_DEVICE
+        }
+        val combinedState = when {
+            captureState.active -> captureState
+            effectiveBle -> CaptureForegroundState(
+                active = true,
+                paused = false,
+                modeTitle = "Soundcore Work",
+            )
+            else -> CaptureForegroundState(active = false, paused = false, modeTitle = null)
+        }
+        val target = combinedState to fgsFlags
+        val changed = synchronized(foregroundLock) {
+            if (lastSyncedForeground == target) {
+                false
+            } else {
+                lastSyncedForeground = target
+                true
+            }
+        }
+        if (changed) {
+            KoeCaptureForegroundService.sync(this, combinedState, fgsFlags)
+        }
     }
 
     fun setForegroundActive(active: Boolean) {
@@ -123,6 +191,8 @@ class KoeApplication : Application() {
             hostCoordinator.bind(
                 store,
                 HostBridgeActions(
+                    requestBleScan = { bleCoordinator.requestScan() },
+                    flushBleOutbound = { bleCoordinator.flushOutboundFrames() },
                     resumeMicrophone = { captureCoordinator.resume() },
                 ),
             )

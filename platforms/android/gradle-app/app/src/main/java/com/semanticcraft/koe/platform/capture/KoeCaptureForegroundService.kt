@@ -119,9 +119,7 @@ class KoeCaptureForegroundService : Service() {
                 if ((fgsFlags and FGS_FLAG_MICROPHONE) != 0) {
                     types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 }
-                if ((fgsFlags and FGS_FLAG_CONNECTED_DEVICE) != 0 &&
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-                ) {
+                if ((fgsFlags and FGS_FLAG_CONNECTED_DEVICE) != 0) {
                     types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 }
                 if (types == 0) {

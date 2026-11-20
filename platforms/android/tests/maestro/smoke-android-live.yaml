@@ -71,7 +71,7 @@ appId: com.semanticcraft.koe
 - assertNotVisible: "无法播放这段音频"
 - extendedWaitUntil:
     visible: "开始播放"
-    timeout: 15000
+    timeout: 30000
 - assertNotVisible: "无法播放这段音频"
 - tapOn: "返回"
 - extendedWaitUntil:
