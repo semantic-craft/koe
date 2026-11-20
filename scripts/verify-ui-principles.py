@@ -39,6 +39,87 @@ IOS_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
     "IOSLiveMinutesCoverageSlotView.swift": "liveMinutesCoverage",
 }
 
+ANDROID_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
+    "AndroidPlayerBar.kt": "playback",
+    "AndroidActiveCaptureBar.kt": "activeCapture",
+    "AndroidLiveCaptionBar.kt": "liveCaption",
+    "AndroidLiveMinutesCoverageSlot.kt": "liveMinutesCoverage",
+}
+
+
+def strip_kotlin_comments_and_strings(text: str) -> str:
+    out: list[str] = []
+    idx = 0
+    n = len(text)
+    in_string = False
+    in_raw_string = False
+    escaped = False
+    block_depth = 0
+    in_line_comment = False
+
+    while idx < n:
+        ch = text[idx]
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append("\n")
+            else:
+                out.append(" ")
+            idx += 1
+            continue
+        if block_depth > 0:
+            if text.startswith("/*", idx):
+                block_depth += 1
+                out.append("  ")
+                idx += 2
+            elif text.startswith("*/", idx):
+                block_depth -= 1
+                out.append("  ")
+                idx += 2
+            else:
+                out.append("\n" if ch == "\n" else " ")
+                idx += 1
+            continue
+        if in_raw_string:
+            if text.startswith('"""', idx):
+                in_raw_string = False
+                out.append("   ")
+                idx += 3
+            else:
+                out.append("\n" if ch == "\n" else " ")
+                idx += 1
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            out.append("\n" if ch == "\n" else " ")
+            idx += 1
+            continue
+        if text.startswith("//", idx):
+            in_line_comment = True
+            out.append("  ")
+            idx += 2
+        elif text.startswith("/*", idx):
+            block_depth = 1
+            out.append("  ")
+            idx += 2
+        elif text.startswith('"""', idx):
+            in_raw_string = True
+            out.append("   ")
+            idx += 3
+        elif ch == '"':
+            in_string = True
+            out.append(" ")
+            idx += 1
+        else:
+            out.append(ch)
+            idx += 1
+    return "".join(out)
+
 
 def strip_swift_comments_and_strings(text: str) -> str:
     out: list[str] = []
@@ -427,7 +508,9 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
     violations: list[str] = []
     line_count = len(text.splitlines())
     if (
-        path_str.endswith(".swift") or path_str.endswith("crates/koe-host-api/src/lib.rs")
+        path_str.endswith(".swift")
+        or path_str.endswith(".kt")
+        or path_str.endswith("crates/koe-host-api/src/lib.rs")
     ) and line_count > 500:
         violations.append(
             f"Architecture violation: {path_str} has {line_count} lines (max is 500 lines)"
@@ -496,11 +579,11 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         )
 
     uppercases = len(
-        re.findall(r"\.(?:uppercased|to_uppercase|to_ascii_uppercase)\(", text)
+        re.findall(r"\.(?:uppercased|uppercase|to_uppercase|to_ascii_uppercase)\(", text)
     )
     if uppercases > 0:
         violations.append(
-            f"Principle 8 violation: {path_str} contains {uppercases} .uppercased() call(s)"
+            f"Principle 8 violation: {path_str} contains {uppercases} .uppercased()/.uppercase() call(s)"
         )
 
     pushy_verbs = re.findall(r"立即(?:购买|体验|开启|升级|绑定|转写|同步|隐藏|执行|前往)", text)
@@ -668,6 +751,42 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                     violations.append(
                         f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
                     )
+    elif path_str.endswith(".kt"):
+        norm_path = "/" + path_str.replace("\\", "/").lstrip("/")
+        code_only = strip_kotlin_comments_and_strings(text)
+        if "/com/semanticcraft/koe/core/" in norm_path:
+            forbidden_imports = sorted(
+                set(
+                    re.findall(
+                        r"\bimport\s+(androidx\.compose|android\.widget|android\.view)\b",
+                        code_only,
+                    )
+                )
+            )
+            if forbidden_imports:
+                violations.append(
+                    f"Architecture violation: {path_str} imports forbidden UI framework(s) {forbidden_imports} inside platform-neutral com.semanticcraft.koe.core"
+                )
+        elif "/com/semanticcraft/koe/ui/" in norm_path:
+            if re.search(r"\bstore\??\.snapshot\b", code_only):
+                violations.append(
+                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped StateFlow slice instead"
+                )
+            filename = Path(norm_path).name
+            allowed_prop = ANDROID_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename)
+            hf_props = sorted(
+                set(
+                    re.findall(
+                        r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
+                        code_only,
+                    )
+                )
+            )
+            disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
+            if disallowed:
+                violations.append(
+                    f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
+                )
 
     return {
         "file": path_str,
@@ -788,6 +907,17 @@ def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
                 str(p.relative_to(root))
                 for p in (root / "platforms").rglob("*.swift")
                 if ".build" not in p.parts and "DerivedData" not in p.parts
+            )
+        )
+    android_kotlin_root = (
+        root / "platforms" / "android" / "gradle-app" / "app" / "src" / "main" / "java"
+    )
+    if android_kotlin_root.exists():
+        rel_files.extend(
+            sorted(
+                str(p.relative_to(root))
+                for p in android_kotlin_root.rglob("*.kt")
+                if "build" not in p.parts and ".gradle" not in p.parts
             )
         )
 

@@ -969,6 +969,214 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             res_ios_cross["violations"],
         )
 
+    def test_enforces_kotlin_copy_style_line_limit_and_core_ui_boundaries(self) -> None:
+        bad_kotlin = """
+        package com.semanticcraft.koe.ui
+
+        fun SampleLabel(): String {
+            val a = "录音中 · 打开".uppercase()
+            val b = "立即开启"
+            val c = "移到回收站？"
+            return a + b + c
+        }
+        """
+        res_bad = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/SampleLabel.kt",
+            bad_kotlin,
+            strict_scale=True,
+        )
+        joined = "\n".join(res_bad["violations"])
+        self.assertIn("middle dot", joined)
+        self.assertIn("uppercase", joined.lower())
+        self.assertIn("pushy marketing verb", joined)
+        self.assertIn("移到回收站？", joined)
+
+        oversized_kt = "\n".join(["// line"] * 505)
+        res_oversized = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/Oversized.kt",
+            oversized_kt,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("max is 500 lines" in v for v in res_oversized["violations"]),
+            res_oversized["violations"],
+        )
+
+        for forbidden_import in (
+            "import androidx.compose.runtime.Composable",
+            "import androidx.compose.material3.Text",
+            "import android.widget.Toast",
+            "import android.view.View",
+        ):
+            snippet = f"package com.semanticcraft.koe.core\n{forbidden_import}\nclass CoreModel\n"
+            res_core = verifier.check_ui_file(
+                "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/CoreModel.kt",
+                snippet,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("com.semanticcraft.koe.core" in v or "core" in v.lower() for v in res_core["violations"]),
+                (forbidden_import, res_core["violations"]),
+            )
+
+        safe_core = '''
+        package com.semanticcraft.koe.core
+
+        // import androidx.compose.runtime.Composable
+        /* import android.widget.Toast
+           /* import android.view.View */ */
+        object CoreDocs {
+            const val single = "import androidx.compose.ui.Modifier"
+            val raw = """
+                import android.widget.TextView
+                import android.view.Surface
+            """.trimIndent()
+        }
+        '''
+        res_safe_core = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/CoreDocs.kt",
+            safe_core,
+            strict_scale=True,
+        )
+        self.assertEqual(res_safe_core["violations"], [], res_safe_core["violations"])
+
+    def test_enforces_android_ui_scoped_observation_and_leaf_slice_ownership(self) -> None:
+        for expr in ("store.snapshot.section", "store?.snapshot?.section"):
+            bad_snapshot_ui = f"""
+            package com.semanticcraft.koe.ui
+
+            fun TodayScreen(store: HostSessionStore) {{
+                val s = {expr}
+                println(s)
+            }}
+            """
+            res_snap = verifier.check_ui_file(
+                "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/TodayScreen.kt",
+                bad_snapshot_ui,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("reads store.snapshot directly" in v for v in res_snap["violations"]),
+                (expr, res_snap["violations"]),
+            )
+
+        for prop in ("playback", "activeCapture", "liveCaption", "liveMinutesCoverage"):
+            bad_page = f"""
+            package com.semanticcraft.koe.ui
+
+            fun WorkspaceScreen(store: HostSessionStore) {{
+                val slice = store.{prop}
+                println(slice)
+            }}
+            """
+            res_page = verifier.check_ui_file(
+                "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/WorkspaceScreen.kt",
+                bad_page,
+                strict_scale=True,
+            )
+            self.assertTrue(
+                any("4 Hz high-frequency slice(s)" in v for v in res_page["violations"]),
+                (prop, res_page["violations"]),
+            )
+
+        for leaf_file, prop in (
+            ("AndroidPlayerBar.kt", "playback"),
+            ("AndroidActiveCaptureBar.kt", "activeCapture"),
+            ("AndroidLiveCaptionBar.kt", "liveCaption"),
+            ("AndroidLiveMinutesCoverageSlot.kt", "liveMinutesCoverage"),
+        ):
+            compliant_leaf = f"""
+            package com.semanticcraft.koe.ui
+
+            fun LeafBar(store: HostSessionStore) {{
+                val slice = store.{prop}
+                println(slice)
+            }}
+            """
+            res_leaf = verifier.check_ui_file(
+                f"platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/{leaf_file}",
+                compliant_leaf,
+                strict_scale=True,
+            )
+            self.assertEqual(res_leaf["violations"], [], (leaf_file, res_leaf["violations"]))
+
+        cross_leaf = """
+        package com.semanticcraft.koe.ui
+
+        fun AndroidPlayerBar(store: HostSessionStore) {
+            val a = store.playback
+            val b = store.activeCapture
+            println("$a $b")
+        }
+        """
+        res_cross = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/AndroidPlayerBar.kt",
+            cross_leaf,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("4 Hz high-frequency slice(s)" in v for v in res_cross["violations"]),
+            res_cross["violations"],
+        )
+
+        compliant_page = """
+        package com.semanticcraft.koe.ui
+
+        // Never read store.snapshot or store.playback here
+        fun TodayScreen(store: HostSessionStore) {
+            val today = store.today
+            val nav = store.navigation
+            println("$today $nav")
+        }
+        """
+        res_ok = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/TodayScreen.kt",
+            compliant_page,
+            strict_scale=True,
+        )
+        self.assertEqual(res_ok["violations"], [], res_ok["violations"])
+
+    def test_analyze_repository_scans_android_kotlin_and_skips_build_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture_root = Path(tmp)
+            theme_path = fixture_root / "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+            theme_path.parent.mkdir(parents=True)
+            theme_path.write_text(VALID_LIGHT_THEME, encoding="utf-8")
+
+            clean_kt = fixture_root / "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/Clean.kt"
+            clean_kt.parent.mkdir(parents=True)
+            clean_kt.write_text("package com.semanticcraft.koe.core\nclass Clean\n", encoding="utf-8")
+
+            ignored_build = fixture_root / "platforms/android/gradle-app/app/build/generated/Ignored.kt"
+            ignored_build.parent.mkdir(parents=True)
+            ignored_build.write_text('val bad = "a · b".uppercase()\n', encoding="utf-8")
+
+            ignored_gradle = fixture_root / "platforms/android/gradle-app/.gradle/cache/Ignored.kt"
+            ignored_gradle.parent.mkdir(parents=True)
+            ignored_gradle.write_text('val bad = "a · b".uppercase()\n', encoding="utf-8")
+
+            report_clean = verifier.analyze_repository(fixture_root, "all")
+            self.assertEqual(report_clean["violations"], [], report_clean["violations"])
+            checked_paths = {f["file"] for f in report_clean["files"]}
+            self.assertIn(
+                "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/Clean.kt",
+                checked_paths,
+            )
+
+            bad_kt = fixture_root / "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/Bad.kt"
+            bad_kt.parent.mkdir(parents=True)
+            bad_kt.write_text('package com.semanticcraft.koe.ui\nval x = "a · b".uppercase()\n', encoding="utf-8")
+
+            report_bad = verifier.analyze_repository(fixture_root, "all")
+            self.assertTrue(
+                any("middle dot" in v for v in report_bad["violations"]),
+                report_bad["violations"],
+            )
+            self.assertTrue(
+                any("uppercase" in v.lower() for v in report_bad["violations"]),
+                report_bad["violations"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
