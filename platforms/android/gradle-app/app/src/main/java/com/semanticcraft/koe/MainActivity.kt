@@ -2,7 +2,6 @@ package com.semanticcraft.koe
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,6 +13,7 @@ import androidx.compose.runtime.setValue
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.platform.capture.PermissionRequester
 import com.semanticcraft.koe.platform.files.DocumentPickerHost
+import com.semanticcraft.koe.platform.files.PickerLaunchFailure
 import com.semanticcraft.koe.platform.files.SystemSafDocumentIo
 import com.semanticcraft.koe.ui.screens.KoeRootScreen
 import com.semanticcraft.koe.ui.theme.KoeTheme
@@ -21,9 +21,6 @@ import com.semanticcraft.koe.ui.theme.KoeTheme
 class MainActivity : ComponentActivity() {
     private var activeStore by mutableStateOf<HostSessionStore?>(null)
     private var pendingPermissionCallback: ((Map<String, Boolean>) -> Unit)? = null
-    private var pendingOpenDocumentCallback: ((Uri?) -> Unit)? = null
-    private var pendingCreateMarkdownCallback: ((Uri?) -> Unit)? = null
-    private var pendingOpenDocumentTreeCallback: ((Uri?) -> Unit)? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -35,23 +32,17 @@ class MainActivity : ComponentActivity() {
     private val openDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        val callback = pendingOpenDocumentCallback
-        pendingOpenDocumentCallback = null
-        callback?.invoke(uri)
+        (application as KoeApplication).fileActions.onOpenDocumentResult(uri)
     }
     private val createMarkdownLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument(SystemSafDocumentIo.MARKDOWN_MIME_TYPE),
     ) { uri ->
-        val callback = pendingCreateMarkdownCallback
-        pendingCreateMarkdownCallback = null
-        callback?.invoke(uri)
+        (application as KoeApplication).fileActions.onCreateMarkdownResult(uri)
     }
     private val openDocumentTreeLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
-        val callback = pendingOpenDocumentTreeCallback
-        pendingOpenDocumentTreeCallback = null
-        callback?.invoke(uri)
+        (application as KoeApplication).fileActions.onOpenDocumentTreeResult(uri)
     }
 
     private val permissionRequester: PermissionRequester = { permissions, callback ->
@@ -66,50 +57,37 @@ class MainActivity : ComponentActivity() {
     }
 
     private val documentPickerHost = object : DocumentPickerHost {
-        override fun launchOpenDocument(mimeTypes: Array<String>, onResult: (Uri?) -> Unit) {
-            runOnUiThread {
-                if (isFinishing || isDestroyed) {
-                    onResult(null)
-                } else {
-                    pendingOpenDocumentCallback = onResult
-                    try {
-                        openDocumentLauncher.launch(mimeTypes)
-                    } catch (_: ActivityNotFoundException) {
-                        pendingOpenDocumentCallback = null
-                        onResult(null)
-                    }
-                }
-            }
+        override fun launchOpenDocument(
+            mimeTypes: Array<String>,
+            onLaunchFailed: (PickerLaunchFailure) -> Unit,
+        ) {
+            runPickerLaunch(onLaunchFailed) { openDocumentLauncher.launch(mimeTypes) }
         }
 
-        override fun launchCreateMarkdownDocument(suggestedFilename: String, onResult: (Uri?) -> Unit) {
-            runOnUiThread {
-                if (isFinishing || isDestroyed) {
-                    onResult(null)
-                } else {
-                    pendingCreateMarkdownCallback = onResult
-                    try {
-                        createMarkdownLauncher.launch(suggestedFilename)
-                    } catch (_: ActivityNotFoundException) {
-                        pendingCreateMarkdownCallback = null
-                        onResult(null)
-                    }
-                }
-            }
+        override fun launchCreateMarkdownDocument(
+            suggestedFilename: String,
+            onLaunchFailed: (PickerLaunchFailure) -> Unit,
+        ) {
+            runPickerLaunch(onLaunchFailed) { createMarkdownLauncher.launch(suggestedFilename) }
         }
 
-        override fun launchOpenDocumentTree(onResult: (Uri?) -> Unit) {
-            runOnUiThread {
-                if (isFinishing || isDestroyed) {
-                    onResult(null)
-                } else {
-                    pendingOpenDocumentTreeCallback = onResult
-                    try {
-                        openDocumentTreeLauncher.launch(null)
-                    } catch (_: ActivityNotFoundException) {
-                        pendingOpenDocumentTreeCallback = null
-                        onResult(null)
-                    }
+        override fun launchOpenDocumentTree(onLaunchFailed: (PickerLaunchFailure) -> Unit) {
+            runPickerLaunch(onLaunchFailed) { openDocumentTreeLauncher.launch(null) }
+        }
+    }
+
+    private fun runPickerLaunch(
+        onLaunchFailed: (PickerLaunchFailure) -> Unit,
+        launch: () -> Unit,
+    ) {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) {
+                onLaunchFailed(PickerLaunchFailure.ACTIVITY_UNAVAILABLE)
+            } else {
+                try {
+                    launch()
+                } catch (_: ActivityNotFoundException) {
+                    onLaunchFailed(PickerLaunchFailure.NO_PICKER_APP)
                 }
             }
         }
@@ -135,11 +113,11 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         val app = application as KoeApplication
         app.permissionCoordinator.detachActivity(permissionRequester)
-        app.fileActions.detachActivity(documentPickerHost)
+        app.fileActions.detachActivity(
+            host = documentPickerHost,
+            keepPendingRequest = isChangingConfigurations,
+        )
         pendingPermissionCallback = null
-        pendingOpenDocumentCallback = null
-        pendingCreateMarkdownCallback = null
-        pendingOpenDocumentTreeCallback = null
         super.onDestroy()
     }
 

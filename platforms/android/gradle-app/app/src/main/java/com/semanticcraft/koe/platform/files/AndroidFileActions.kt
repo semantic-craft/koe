@@ -1,89 +1,15 @@
 package com.semanticcraft.koe.platform.files
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.net.Uri
-import android.provider.DocumentsContract
-import android.provider.OpenableColumns
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.platform.AndroidHostAdapter
 import java.io.File
 import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
-
-interface DocumentPickerHost {
-    fun launchOpenDocument(mimeTypes: Array<String>, onResult: (Uri?) -> Unit)
-    fun launchCreateMarkdownDocument(suggestedFilename: String, onResult: (Uri?) -> Unit)
-    fun launchOpenDocumentTree(onResult: (Uri?) -> Unit)
-}
-
-interface SafDocumentIo {
-    fun queryDisplayName(uri: Uri): String?
-    fun queryMimeType(uri: Uri): String?
-    fun openInputStream(uri: Uri): InputStream?
-    fun openOutputStream(uri: Uri): OutputStream?
-    fun createChildMarkdownDocument(treeUri: Uri, fileName: String): Uri?
-    fun deleteDocumentBestEffort(uri: Uri)
-}
-
-class SystemSafDocumentIo(
-    private val context: Context,
-) : SafDocumentIo {
-    override fun queryDisplayName(uri: Uri): String? = runCatching {
-        context.contentResolver.query(
-            uri,
-            arrayOf(OpenableColumns.DISPLAY_NAME),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                cursor.getString(index)
-            } else {
-                null
-            }
-        }
-    }.getOrNull()
-
-    override fun queryMimeType(uri: Uri): String? =
-        runCatching { context.contentResolver.getType(uri) }.getOrNull()
-
-    override fun openInputStream(uri: Uri): InputStream? =
-        context.contentResolver.openInputStream(uri)
-
-    override fun openOutputStream(uri: Uri): OutputStream? = try {
-        context.contentResolver.openOutputStream(uri, "wt")
-    } catch (_: IllegalArgumentException) {
-        context.contentResolver.openOutputStream(uri)
-    } catch (_: UnsupportedOperationException) {
-        context.contentResolver.openOutputStream(uri)
-    }
-
-    override fun createChildMarkdownDocument(treeUri: Uri, fileName: String): Uri? {
-        val treeDocId = DocumentsContract.getTreeDocumentId(treeUri)
-        val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocId)
-        return DocumentsContract.createDocument(
-            context.contentResolver,
-            parentDocUri,
-            MARKDOWN_MIME_TYPE,
-            fileName,
-        )
-    }
-
-    override fun deleteDocumentBestEffort(uri: Uri) {
-        runCatching {
-            DocumentsContract.deleteDocument(context.contentResolver, uri)
-        }
-    }
-
-    companion object {
-        const val MARKDOWN_MIME_TYPE = "text/markdown"
-    }
-}
 
 class AndroidFileActions(
     private val safIo: SafDocumentIo,
@@ -98,17 +24,30 @@ class AndroidFileActions(
         exportStagingRoot = File(context.cacheDir, EXPORT_STAGING_DIR),
     )
 
-    private data class PickerLaunch(
-        val store: HostSessionStore,
-        val host: DocumentPickerHost,
-        val token: Long,
-    )
+    private sealed interface PendingPickerRequest {
+        val store: HostSessionStore
+
+        class Import(
+            override val store: HostSessionStore,
+        ) : PendingPickerRequest
+
+        class ExportWorkspace(
+            override val store: HostSessionStore,
+            val recordId: String?,
+            val date: String?,
+            val safeName: String,
+        ) : PendingPickerRequest
+
+        class ExportRecords(
+            override val store: HostSessionStore,
+            val recordIds: List<String>,
+        ) : PendingPickerRequest
+    }
 
     private val lock = Any()
     private var boundStore: HostSessionStore? = null
     private var pickerHost: DocumentPickerHost? = null
-    private var pickerInFlight: Boolean = false
-    private var pickerToken: Long = 0L
+    private var pendingRequest: PendingPickerRequest? = null
     private var activeIoJobs: Int = 0
 
     fun attachActivity(host: DocumentPickerHost) {
@@ -117,12 +56,13 @@ class AndroidFileActions(
         }
     }
 
-    fun detachActivity(host: DocumentPickerHost) {
+    fun detachActivity(host: DocumentPickerHost, keepPendingRequest: Boolean = false) {
         synchronized(lock) {
             if (pickerHost === host) {
                 pickerHost = null
-                pickerInFlight = false
-                pickerToken += 1L
+                if (!keepPendingRequest) {
+                    pendingRequest = null
+                }
             }
         }
     }
@@ -146,21 +86,19 @@ class AndroidFileActions(
     override fun onSessionUnbound() {
         synchronized(lock) {
             boundStore = null
+            pendingRequest = null
         }
     }
 
     fun requestImportFile() {
-        val launch = tryAcquirePickerLaunch() ?: return
-        try {
-            launch.host.launchOpenDocument(OPEN_DOCUMENT_MIME_TYPES) { uri ->
-                if (!completePicker(launch.token) || uri == null) return@launchOpenDocument
-                submitIoJob {
-                    performImport(launch.store, uri)
+        launchPicker(
+            requestFactory = { store -> PendingPickerRequest.Import(store) },
+            launch = { host, request ->
+                host.launchOpenDocument(OPEN_DOCUMENT_MIME_TYPES) { failure ->
+                    handleLaunchFailed(request, failure)
                 }
-            }
-        } catch (_: Throwable) {
-            completePicker(launch.token)
-        }
+            },
+        )
     }
 
     fun requestExportWorkspace(recordId: String?, date: String?, suggestedFilename: String) {
@@ -169,17 +107,16 @@ class AndroidFileActions(
         if (cleanRecordId == null && cleanDate == null) return
 
         val safeName = sanitizeExportFileName(suggestedFilename)
-        val launch = tryAcquirePickerLaunch() ?: return
-        try {
-            launch.host.launchCreateMarkdownDocument(safeName) { uri ->
-                if (!completePicker(launch.token) || uri == null) return@launchCreateMarkdownDocument
-                submitIoJob {
-                    performExportWorkspace(launch.store, cleanRecordId, cleanDate, safeName, uri)
+        launchPicker(
+            requestFactory = { store ->
+                PendingPickerRequest.ExportWorkspace(store, cleanRecordId, cleanDate, safeName)
+            },
+            launch = { host, request ->
+                host.launchCreateMarkdownDocument(safeName) { failure ->
+                    handleLaunchFailed(request, failure)
                 }
-            }
-        } catch (_: Throwable) {
-            completePicker(launch.token)
-        }
+            },
+        )
     }
 
     fun requestExportRecords(recordIds: List<String>) {
@@ -189,16 +126,92 @@ class AndroidFileActions(
             .distinct()
         if (cleanIds.isEmpty()) return
 
-        val launch = tryAcquirePickerLaunch() ?: return
-        try {
-            launch.host.launchOpenDocumentTree { treeUri ->
-                if (!completePicker(launch.token) || treeUri == null) return@launchOpenDocumentTree
-                submitIoJob {
-                    performExportRecords(launch.store, cleanIds, treeUri)
+        launchPicker(
+            requestFactory = { store -> PendingPickerRequest.ExportRecords(store, cleanIds) },
+            launch = { host, request ->
+                host.launchOpenDocumentTree { failure ->
+                    handleLaunchFailed(request, failure)
                 }
+            },
+        )
+    }
+
+    fun onOpenDocumentResult(uri: Uri?) {
+        val request = synchronized(lock) {
+            val current = pendingRequest as? PendingPickerRequest.Import ?: return
+            pendingRequest = null
+            current
+        }
+        if (uri == null) return
+        submitIoJob {
+            performImport(request.store, uri)
+        }
+    }
+
+    fun onCreateMarkdownResult(uri: Uri?) {
+        val request = synchronized(lock) {
+            val current = pendingRequest as? PendingPickerRequest.ExportWorkspace
+            if (current != null) {
+                pendingRequest = null
             }
+            current
+        }
+        if (request == null) {
+            if (uri != null) {
+                submitIoJob { safIo.deleteDocumentBestEffort(uri) }
+            }
+            return
+        }
+        if (uri == null) return
+        submitIoJob {
+            performExportWorkspace(request.store, request.recordId, request.date, request.safeName, uri)
+        }
+    }
+
+    fun onOpenDocumentTreeResult(treeUri: Uri?) {
+        val request = synchronized(lock) {
+            val current = pendingRequest as? PendingPickerRequest.ExportRecords ?: return
+            pendingRequest = null
+            current
+        }
+        if (treeUri == null) return
+        submitIoJob {
+            performExportRecords(request.store, request.recordIds, treeUri)
+        }
+    }
+
+    private fun launchPicker(
+        requestFactory: (HostSessionStore) -> PendingPickerRequest,
+        launch: (DocumentPickerHost, PendingPickerRequest) -> Unit,
+    ) {
+        val (host, request) = synchronized(lock) {
+            val store = boundStore ?: return
+            val activeHost = pickerHost ?: return
+            if (pendingRequest != null) return
+            val created = requestFactory(store)
+            pendingRequest = created
+            activeHost to created
+        }
+        try {
+            launch(host, request)
+        } catch (_: ActivityNotFoundException) {
+            handleLaunchFailed(request, PickerLaunchFailure.NO_PICKER_APP)
         } catch (_: Throwable) {
-            completePicker(launch.token)
+            handleLaunchFailed(request, PickerLaunchFailure.ACTIVITY_UNAVAILABLE)
+        }
+    }
+
+    private fun handleLaunchFailed(request: PendingPickerRequest, failure: PickerLaunchFailure) {
+        val cleared = synchronized(lock) {
+            if (pendingRequest === request) {
+                pendingRequest = null
+                true
+            } else {
+                false
+            }
+        }
+        if (cleared && failure == PickerLaunchFailure.NO_PICKER_APP) {
+            reportErrorIfBound(request.store, ERROR_NO_PICKER_APP)
         }
     }
 
@@ -384,24 +397,6 @@ class AndroidFileActions(
         false
     }
 
-    private fun tryAcquirePickerLaunch(): PickerLaunch? = synchronized(lock) {
-        val store = boundStore ?: return null
-        val host = pickerHost ?: return null
-        if (pickerInFlight) return null
-        pickerInFlight = true
-        pickerToken += 1L
-        PickerLaunch(store = store, host = host, token = pickerToken)
-    }
-
-    private fun completePicker(token: Long): Boolean = synchronized(lock) {
-        if (pickerToken == token) {
-            pickerInFlight = false
-            true
-        } else {
-            false
-        }
-    }
-
     private fun isStoreBound(targetStore: HostSessionStore): Boolean =
         synchronized(lock) { boundStore === targetStore }
 
@@ -446,6 +441,7 @@ class AndroidFileActions(
         private const val COPY_BUFFER_BYTES = 64 * 1024
         private val OPEN_DOCUMENT_MIME_TYPES = arrayOf("*/*")
 
+        private const val ERROR_NO_PICKER_APP = "系统未找到可用的文件选择器。"
         private const val ERROR_INVALID_FILE_NAME = "文件名无效，无法导入。"
         private const val ERROR_UNSUPPORTED_EXTENSION = "支持 WAV、TXT、Markdown 和 Koe 资料包"
         private const val ERROR_READ_FAILED = "无法读取所选文件。"

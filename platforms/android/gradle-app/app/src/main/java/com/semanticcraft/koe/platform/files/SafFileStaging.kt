@@ -163,7 +163,7 @@ private fun inferExtensionFromMime(mimeType: String?): String? {
         ?.lowercase(Locale.ROOT)
         ?: return null
     return when (normalized) {
-        "audio/wav", "audio/x-wav" -> "wav"
+        "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave" -> "wav"
         "text/markdown", "text/x-markdown" -> "md"
         "text/plain" -> "txt"
         else -> null

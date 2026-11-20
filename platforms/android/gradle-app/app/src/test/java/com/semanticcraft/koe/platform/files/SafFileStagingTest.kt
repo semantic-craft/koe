@@ -31,6 +31,8 @@ class SafFileStagingTest {
     fun resolveImportFileNameInfersExtensionFromMimeForMissingExtensionOrBlankName() {
         assertEquals(ImportFileNameResult.Valid("会议录音.wav"), resolveImportFileName("会议录音", "audio/wav"))
         assertEquals(ImportFileNameResult.Valid("会议录音.wav"), resolveImportFileName("会议录音", "audio/x-wav"))
+        assertEquals(ImportFileNameResult.Valid("录音.wav"), resolveImportFileName("录音", "audio/wave"))
+        assertEquals(ImportFileNameResult.Valid("录音.wav"), resolveImportFileName("录音", "audio/vnd.wave"))
         assertEquals(ImportFileNameResult.Valid("项目笔记.md"), resolveImportFileName("项目笔记", "text/markdown"))
         assertEquals(
             ImportFileNameResult.Valid("项目笔记.md"),
@@ -43,6 +45,8 @@ class SafFileStagingTest {
 
         assertEquals(ImportFileNameResult.Valid("导入音频.wav"), resolveImportFileName(null, "audio/wav"))
         assertEquals(ImportFileNameResult.Valid("导入音频.wav"), resolveImportFileName("   ", "audio/x-wav"))
+        assertEquals(ImportFileNameResult.Valid("导入音频.wav"), resolveImportFileName("", "audio/wave"))
+        assertEquals(ImportFileNameResult.Valid("导入音频.wav"), resolveImportFileName(null, "audio/vnd.wave"))
         assertEquals(ImportFileNameResult.Valid("导入文稿.md"), resolveImportFileName("", "text/markdown"))
         assertEquals(ImportFileNameResult.Valid("导入文稿.md"), resolveImportFileName(null, "text/x-markdown"))
         assertEquals(ImportFileNameResult.Valid("导入文本.txt"), resolveImportFileName("", "text/plain"))

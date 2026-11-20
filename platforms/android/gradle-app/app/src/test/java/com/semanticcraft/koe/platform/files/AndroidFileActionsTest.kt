@@ -35,6 +35,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class AndroidFileActionsTest {
     private class FakePickerHost(
+        private val actionsProvider: () -> AndroidFileActions,
         var deferred: Boolean = false,
     ) : DocumentPickerHost {
         var openResult: Uri? = null
@@ -47,36 +48,32 @@ class AndroidFileActionsTest {
         var lastMimeTypes: List<String> = emptyList()
         var lastSuggestedFilename: String? = null
 
-        var pendingOpenCallback: ((Uri?) -> Unit)? = null
-        var pendingCreateCallback: ((Uri?) -> Unit)? = null
-        var pendingTreeCallback: ((Uri?) -> Unit)? = null
-
-        override fun launchOpenDocument(mimeTypes: Array<String>, onResult: (Uri?) -> Unit) {
+        override fun launchOpenDocument(
+            mimeTypes: Array<String>,
+            onLaunchFailed: (PickerLaunchFailure) -> Unit,
+        ) {
             openLaunchCount += 1
             lastMimeTypes = mimeTypes.toList()
-            if (deferred) {
-                pendingOpenCallback = onResult
-            } else {
-                onResult(openResult)
+            if (!deferred) {
+                actionsProvider().onOpenDocumentResult(openResult)
             }
         }
 
-        override fun launchCreateMarkdownDocument(suggestedFilename: String, onResult: (Uri?) -> Unit) {
+        override fun launchCreateMarkdownDocument(
+            suggestedFilename: String,
+            onLaunchFailed: (PickerLaunchFailure) -> Unit,
+        ) {
             createLaunchCount += 1
             lastSuggestedFilename = suggestedFilename
-            if (deferred) {
-                pendingCreateCallback = onResult
-            } else {
-                onResult(createResult)
+            if (!deferred) {
+                actionsProvider().onCreateMarkdownResult(createResult)
             }
         }
 
-        override fun launchOpenDocumentTree(onResult: (Uri?) -> Unit) {
+        override fun launchOpenDocumentTree(onLaunchFailed: (PickerLaunchFailure) -> Unit) {
             treeLaunchCount += 1
-            if (deferred) {
-                pendingTreeCallback = onResult
-            } else {
-                onResult(treeResult)
+            if (!deferred) {
+                actionsProvider().onOpenDocumentTreeResult(treeResult)
             }
         }
     }
@@ -226,8 +223,8 @@ class AndroidFileActionsTest {
         safIo.mimeTypes[uri] = "text/markdown"
         safIo.inputStreams[uri] = { ByteArrayInputStream(payload) }
 
-        val picker = FakePickerHost().apply { openResult = uri }
         val actions = AndroidFileActions(safIo, importRoot, exportRoot, ioExecutor = Executor { it.run() })
+        val picker = FakePickerHost({ actions }).apply { openResult = uri }
         actions.onSessionBound(store)
         actions.attachActivity(picker)
 
@@ -247,7 +244,6 @@ class AndroidFileActionsTest {
         val bridge = FileActionBridgeClient()
         val store = HostSessionStore("/tmp/koe-import-err", bridge = bridge)
         val safIo = FakeSafIo()
-        val picker = FakePickerHost()
         val actions = AndroidFileActions(
             safIo = safIo,
             importStagingRoot = importRoot,
@@ -255,6 +251,7 @@ class AndroidFileActionsTest {
             ioExecutor = Executor { it.run() },
             maxImportBytes = 32L,
         )
+        val picker = FakePickerHost({ actions })
         actions.onSessionBound(store)
         actions.attachActivity(picker)
 
@@ -294,8 +291,8 @@ class AndroidFileActionsTest {
         val bridge = FileActionBridgeClient()
         val store = HostSessionStore("/tmp/koe-export-single", bridge = bridge)
         val safIo = FakeSafIo()
-        val picker = FakePickerHost()
         val actions = AndroidFileActions(safIo, importRoot, exportRoot, ioExecutor = Executor { it.run() })
+        val picker = FakePickerHost({ actions })
         actions.onSessionBound(store)
         actions.attachActivity(picker)
 
@@ -338,8 +335,8 @@ class AndroidFileActionsTest {
         val bridge = FileActionBridgeClient()
         val store = HostSessionStore("/tmp/koe-export-batch", bridge = bridge)
         val safIo = FakeSafIo()
-        val picker = FakePickerHost()
         val actions = AndroidFileActions(safIo, importRoot, exportRoot, ioExecutor = Executor { it.run() })
+        val picker = FakePickerHost({ actions })
         actions.onSessionBound(store)
         actions.attachActivity(picker)
 
@@ -376,7 +373,7 @@ class AndroidFileActionsTest {
     }
 
     @Test
-    fun cancelIsSilentAndActivityDetachAndSessionUnbindProtectState() = withTempRoots { importRoot, exportRoot ->
+    fun cancelIsSilentAndSessionBoundCleansStaleDirsAndUnbindBlocksDispatch() = withTempRoots { importRoot, exportRoot ->
         val staleImport = File(importRoot, "stale-1").apply { mkdirs() }
         val staleExport = File(exportRoot, "stale-2").apply { mkdirs() }
         File(staleImport, "old.wav").writeText("old")
@@ -398,7 +395,7 @@ class AndroidFileActionsTest {
         assertFalse(staleImport.exists())
         assertFalse(staleExport.exists())
 
-        val cancelPicker = FakePickerHost(deferred = false)
+        val cancelPicker = FakePickerHost({ actions }, deferred = false)
         actions.attachActivity(cancelPicker)
         actions.requestImportFile()
         actions.requestExportWorkspace("rec-1", null, "x.md")
@@ -406,30 +403,11 @@ class AndroidFileActionsTest {
         assertNull(store.navigation.value.effectiveError)
         assertTrue(bridge.commands.isEmpty())
 
-        val firstHost = FakePickerHost(deferred = true)
-        val otherHost = FakePickerHost(deferred = true)
-        actions.attachActivity(firstHost)
-        actions.requestImportFile()
-        actions.requestImportFile()
-        assertEquals(1, firstHost.openLaunchCount)
-
-        actions.detachActivity(otherHost)
-        actions.requestImportFile()
-        assertEquals(1, firstHost.openLaunchCount)
-
-        actions.detachActivity(firstHost)
-        val secondHost = FakePickerHost(deferred = true)
-        actions.attachActivity(secondHost)
-        actions.requestImportFile()
-        assertEquals(1, secondHost.openLaunchCount)
-
-        val uri = Uri.parse("content://docs/late")
-        safIo.displayNames[uri] = "late.txt"
+        val uri = Uri.parse("content://docs/queued")
+        safIo.displayNames[uri] = "queued.txt"
         safIo.inputStreams[uri] = { ByteArrayInputStream("hi".toByteArray()) }
-        firstHost.pendingOpenCallback?.invoke(uri)
-        assertTrue(queuedJobs.isEmpty())
-
-        secondHost.pendingOpenCallback?.invoke(uri)
+        cancelPicker.openResult = uri
+        actions.requestImportFile()
         assertEquals(1, queuedJobs.size)
 
         actions.onSessionUnbound()
