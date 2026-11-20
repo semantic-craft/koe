@@ -41,7 +41,11 @@ class HostSessionStore(
         private set
     var nativeError: String? = null
         private set
+    @Volatile
+    var bridgeActions: HostBridgeActions = HostBridgeActions()
+    @Volatile
     var onSnapshotChanged: ((HostSnapshot) -> Unit)? = null
+    @Volatile
     var onTraceUpdated: (() -> Unit)? = null
 
     private val _platform = MutableStateFlow(HostPlatformSnapshot.androidDefault)
@@ -172,22 +176,33 @@ class HostSessionStore(
     val canReleaseToPhone: Boolean
         get() = today.value.picker?.canReleaseToPhone ?: (device.value.transferPhase != "pulling_offline")
 
+    fun startCapture(mode: CaptureMode, stayOnPage: Boolean = false) {
+        send(HostCommand.StartCaptureMode(mode = mode, stayOnPage = stayOnPage))
+        bridgeActions.flushBleOutbound()
+    }
+
     fun toggleModeSession(card: ModePickerCardSnapshot) {
         if (card.isSessionActive) {
-            send(HostCommand.CaptureActionCommand(action = CaptureAction.END))
+            performCaptureAction(CaptureAction.END)
         } else {
             CaptureMode.fromRaw(card.mode)?.let { mode ->
-                send(HostCommand.StartCaptureMode(mode = mode, stayOnPage = true))
+                startCapture(mode, stayOnPage = true)
             }
         }
     }
 
     fun performCaptureAction(action: CaptureAction) {
-        send(HostCommand.CaptureActionCommand(action = action))
+        if (action == CaptureAction.RESUME) {
+            bridgeActions.resumeMicrophone()
+        } else {
+            send(HostCommand.CaptureActionCommand(action = action))
+            bridgeActions.flushBleOutbound()
+        }
     }
 
     fun refreshSnapshot(nowEpochSec: Long = 0L) {
         var traced = false
+        var changedSnapshot: HostSnapshot? = null
         synchronized(stateLock) {
             if (handle == 0L) return
             try {
@@ -197,12 +212,13 @@ class HostSessionStore(
                     setNativeErrorLocked("无法读取工作区状态。")
                     return
                 }
-                applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false)
+                changedSnapshot = applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false).changed
             } finally {
                 recordTraceLocked(kind = "snapshot", name = "snapshot")
                 traced = true
             }
         }
+        changedSnapshot?.let { onSnapshotChanged?.invoke(it) }
         if (traced) {
             onTraceUpdated?.invoke()
         }
@@ -241,6 +257,7 @@ class HostSessionStore(
     ) {
         var needsFullRefresh = false
         var minRefreshGeneration: Long? = null
+        var changedSnapshot: HostSnapshot? = null
         synchronized(stateLock) {
             if (handle == 0L) return
             val receipt = bridge.sessionReportPlaybackProgress(
@@ -260,10 +277,11 @@ class HostSessionStore(
                     currentSnapshot = next
                     lastProjectedNowSec = receipt.nowEpochSec
                     _playback.value = next.playback
-                    onSnapshotChanged?.invoke(next)
+                    changedSnapshot = next
                 }
             }
         }
+        changedSnapshot?.let { onSnapshotChanged?.invoke(it) }
         if (needsFullRefresh) {
             refreshSnapshot(nowEpochSec)
         } else if (minRefreshGeneration != null) {
@@ -320,24 +338,29 @@ class HostSessionStore(
 
     fun loadDebugSnapshotFixtureJson(json: String): Boolean {
         if (!allowDebugFixture) return false
-        val applied = synchronized(stateLock) {
+        val result = synchronized(stateLock) {
             try {
                 applySnapshotJsonLocked(json, projectedNowSec = 0L, resetGate = true)
             } finally {
                 recordTraceLocked(kind = "fixture", name = "fixture")
             }
         }
+        result.changed?.let { onSnapshotChanged?.invoke(it) }
         onTraceUpdated?.invoke()
-        return applied
+        return result.accepted
     }
 
-    internal fun applySnapshotJson(json: String, projectedNowSec: Long = 0L): Boolean =
-        synchronized(stateLock) {
+    internal fun applySnapshotJson(json: String, projectedNowSec: Long = 0L): Boolean {
+        val result = synchronized(stateLock) {
             applySnapshotJsonLocked(json, projectedNowSec = projectedNowSec, resetGate = false)
         }
+        result.changed?.let { onSnapshotChanged?.invoke(it) }
+        return result.accepted
+    }
 
     private fun dispatchEncodedJson(json: String, traceKind: String, commandType: String, nowEpochSec: Long) {
         var traced = false
+        var changedSnapshot: HostSnapshot? = null
         synchronized(stateLock) {
             if (handle == 0L) return
             try {
@@ -351,41 +374,44 @@ class HostSessionStore(
                     setNativeErrorLocked("操作未能完成，请重试。工作区数据仍然保留。")
                     return
                 }
-                applySnapshotJsonLocked(response, projectedNowSec = effectiveNow, resetGate = false)
+                changedSnapshot = applySnapshotJsonLocked(response, projectedNowSec = effectiveNow, resetGate = false).changed
             } finally {
                 recordTraceLocked(kind = traceKind, name = commandType)
                 traced = true
             }
         }
+        changedSnapshot?.let { onSnapshotChanged?.invoke(it) }
         if (traced) {
             onTraceUpdated?.invoke()
         }
     }
 
-    private fun applySnapshotJsonLocked(json: String, projectedNowSec: Long, resetGate: Boolean): Boolean {
+    private data class ApplySnapshotResult(val accepted: Boolean, val changed: HostSnapshot? = null)
+
+    private fun applySnapshotJsonLocked(json: String, projectedNowSec: Long, resetGate: Boolean): ApplySnapshotResult {
         val decoded = try {
             HostJson.json.decodeFromString(HostSnapshot.serializer(), json)
         } catch (_: Exception) {
             setNativeErrorLocked("无法读取数据引擎的回应，请重新打开应用。")
-            return false
+            return ApplySnapshotResult(false)
         }
         if (decoded.version != EXPECTED_ABI_VERSION) {
             setNativeErrorLocked("数据引擎返回了不兼容的版本。")
-            return false
+            return ApplySnapshotResult(false)
         }
         if (resetGate) {
             nativeError = null
             requestGate.reset(decoded.generation)
         } else if (!requestGate.acceptRustGeneration(decoded.generation)) {
-            return false
+            return ApplySnapshotResult(false)
         }
         if (projectedNowSec > 0L) lastProjectedNowSec = projectedNowSec
         if (decoded != currentSnapshot || resetGate) {
             currentSnapshot = decoded
             reconcileSlicesLocked()
-            onSnapshotChanged?.invoke(decoded)
+            return ApplySnapshotResult(accepted = true, changed = decoded)
         }
-        return true
+        return ApplySnapshotResult(accepted = true)
     }
 
     private fun setNativeErrorLocked(message: String?) {

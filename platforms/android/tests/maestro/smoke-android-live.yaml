@@ -27,4 +27,21 @@ appId: com.semanticcraft.koe
     visible: "Android"
     timeout: 10000
 - assertVisible: "github"
+- scrollUntilVisible:
+    element:
+      id: "settings-meeting-audio-switch"
+    direction: DOWN
+    timeout: 15000
+- tapOn:
+    id: "settings-meeting-audio-switch"
+- scrollUntilVisible:
+    element:
+      id: "settings-save-button"
+    direction: DOWN
+    timeout: 15000
+- tapOn:
+    id: "settings-save-button"
+- extendedWaitUntil:
+    visible: "已保存模型配置"
+    timeout: 10000
 - takeScreenshot: final_screen

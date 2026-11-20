@@ -162,6 +162,7 @@ fun DeviceSheet(
                             onClick = {
                                 if (isReleased) {
                                     store.send(HostCommand.DeviceOpenGuide)
+                                    store.bridgeActions.requestBleScan()
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -173,6 +174,7 @@ fun DeviceSheet(
                             onClick = {
                                 if (!isReleased) {
                                     store.send(HostCommand.DeviceRelease)
+                                    store.bridgeActions.flushBleOutbound()
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -264,7 +266,10 @@ fun DeviceSheet(
                             title = "全部取回",
                             isPrimary = false,
                             enabled = !device.busy,
-                            onClick = { store.send(HostCommand.DeviceDownloadAll) },
+                            onClick = {
+                                store.send(HostCommand.DeviceDownloadAll)
+                                store.bridgeActions.flushBleOutbound()
+                            },
                         )
                     }
                 }
@@ -314,7 +319,10 @@ fun DeviceSheet(
                                         title = if (file.downloading) "取回中" else "取回",
                                         isPrimary = false,
                                         enabled = !file.downloading && !device.busy,
-                                        onClick = { store.send(HostCommand.DeviceDownload(file.id)) },
+                                        onClick = {
+                                            store.send(HostCommand.DeviceDownload(file.id))
+                                            store.bridgeActions.flushBleOutbound()
+                                        },
                                     )
                                 }
                             }
@@ -329,7 +337,10 @@ fun DeviceSheet(
                     icon = Icons.Outlined.Refresh,
                     isPrimary = false,
                     enabled = !device.busy,
-                    onClick = { store.send(HostCommand.DeviceRefresh) },
+                    onClick = {
+                        store.send(HostCommand.DeviceRefresh)
+                        store.bridgeActions.flushBleOutbound()
+                    },
                 )
                 KoePrimaryButton(
                     title = "连接引导",

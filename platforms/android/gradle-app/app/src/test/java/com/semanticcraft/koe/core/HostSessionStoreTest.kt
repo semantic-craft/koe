@@ -353,4 +353,62 @@ class HostSessionStoreTest {
         assertEquals("00:42", TimeLabel.duration(42_000L))
         assertEquals("03:05", TimeLabel.duration(185_000L))
     }
+
+    @Test
+    fun performCaptureActionRoutesResumeToBridgeAndFlushesBleForOtherActions() {
+        val bridge = FakeHostBridgeClient(snapshotJson = loadRichAndroidSnapshot())
+        val store = HostSessionStore(workspacePath = "/tmp/koe-capture-routing", bridge = bridge)
+        var resumeCount = 0
+        var flushCount = 0
+        store.bridgeActions = HostBridgeActions(
+            resumeMicrophone = { resumeCount += 1 },
+            flushBleOutbound = { flushCount += 1 },
+        )
+
+        store.performCaptureAction(CaptureAction.RESUME)
+
+        assertEquals(1, resumeCount)
+        assertEquals(0, flushCount)
+        assertTrue(bridge.dispatchedCommands.isEmpty())
+
+        store.performCaptureAction(CaptureAction.PAUSE)
+        store.performCaptureAction(CaptureAction.END)
+        store.startCapture(CaptureMode.MEETING, stayOnPage = true)
+        store.toggleModeSession(
+            ModePickerCardSnapshot(
+                id = "quick_note",
+                mode = "quick_note",
+                title = "随心闪记",
+                subtitle = "快速留下一段想法",
+                isSessionActive = false,
+            ),
+        )
+        store.toggleModeSession(
+            ModePickerCardSnapshot(
+                id = "quick_note",
+                mode = "quick_note",
+                title = "随心闪记",
+                subtitle = "快速留下一段想法",
+                isSessionActive = true,
+            ),
+        )
+
+        assertEquals(1, resumeCount)
+        assertEquals(5, flushCount)
+        val parsed = bridge.dispatchedCommands.map {
+            HostJson.json.parseToJsonElement(it) as JsonObject
+        }
+        assertEquals(5, parsed.size)
+        assertEquals("capture_action", parsed[0]["type"]?.jsonPrimitive?.content)
+        assertEquals("pause", parsed[0]["action"]?.jsonPrimitive?.content)
+        assertEquals("capture_action", parsed[1]["type"]?.jsonPrimitive?.content)
+        assertEquals("end", parsed[1]["action"]?.jsonPrimitive?.content)
+        assertEquals("start_capture_mode", parsed[2]["type"]?.jsonPrimitive?.content)
+        assertEquals("meeting", parsed[2]["mode"]?.jsonPrimitive?.content)
+        assertEquals(true, parsed[2]["stayOnPage"]?.jsonPrimitive?.boolean)
+        assertEquals("start_capture_mode", parsed[3]["type"]?.jsonPrimitive?.content)
+        assertEquals("quick_note", parsed[3]["mode"]?.jsonPrimitive?.content)
+        assertEquals("capture_action", parsed[4]["type"]?.jsonPrimitive?.content)
+        assertEquals("end", parsed[4]["action"]?.jsonPrimitive?.content)
+    }
 }
