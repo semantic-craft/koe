@@ -12,6 +12,20 @@ enum class PickerLaunchFailure {
     NO_PICKER_APP,
 }
 
+data class PendingPickerState(
+    val kind: String,
+    val recordId: String? = null,
+    val date: String? = null,
+    val safeName: String? = null,
+    val recordIds: List<String> = emptyList(),
+) {
+    companion object {
+        const val KIND_IMPORT = "import"
+        const val KIND_EXPORT_WORKSPACE = "export_workspace"
+        const val KIND_EXPORT_RECORDS = "export_records"
+    }
+}
+
 interface DocumentPickerHost {
     fun launchOpenDocument(mimeTypes: Array<String>, onLaunchFailed: (PickerLaunchFailure) -> Unit)
     fun launchCreateMarkdownDocument(suggestedFilename: String, onLaunchFailed: (PickerLaunchFailure) -> Unit)
@@ -21,6 +35,7 @@ interface DocumentPickerHost {
 interface SafDocumentIo {
     fun queryDisplayName(uri: Uri): String?
     fun queryMimeType(uri: Uri): String?
+    fun queryLastModifiedMs(uri: Uri): Long? = null
     fun openInputStream(uri: Uri): InputStream?
     fun openOutputStream(uri: Uri): OutputStream?
     fun createChildMarkdownDocument(treeUri: Uri, fileName: String): Uri?
@@ -49,6 +64,23 @@ class SystemSafDocumentIo(
 
     override fun queryMimeType(uri: Uri): String? =
         runCatching { context.contentResolver.getType(uri) }.getOrNull()
+
+    override fun queryLastModifiedMs(uri: Uri): Long? = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val index = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                cursor.getLong(index).takeIf { it > 0L }
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
 
     override fun openInputStream(uri: Uri): InputStream? =
         context.contentResolver.openInputStream(uri)

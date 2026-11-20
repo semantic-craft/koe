@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import kotlin.math.abs
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -179,6 +180,53 @@ class SafFileStagingTest {
             val traversalErr = stageInputStreamToFile(ByteArrayInputStream(byteArrayOf(1, 2)), root, "../escape.wav")
             assertTrue(traversalErr is StageImportResult.IoError)
             assertTrue("traversal staging dir must be removed", root.listFiles().orEmpty().isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun stageInputStreamToFilePreservesHistoricalLastModifiedAndIgnoresInvalidValues() {
+        val root = Files.createTempDirectory("koe-saf-stage-mtime").toFile()
+        try {
+            val expectedMs = 1_700_000_000_000L
+            val historical = stageInputStreamToFile(
+                input = ByteArrayInputStream("old-wav".toByteArray(Charsets.UTF_8)),
+                stagingRoot = root,
+                fileName = "meeting.wav",
+                lastModifiedMs = expectedMs,
+            )
+            assertTrue(historical is StageImportResult.Success)
+            val stagedHistorical = historical as StageImportResult.Success
+            assertTrue(
+                "expected mtime near $expectedMs, got ${stagedHistorical.file.lastModified()}",
+                abs(stagedHistorical.file.lastModified() - expectedMs) < 2_000L,
+            )
+
+            val beforeMs = System.currentTimeMillis() - 2_000L
+            val nullResult = stageInputStreamToFile(
+                input = ByteArrayInputStream("now".toByteArray(Charsets.UTF_8)),
+                stagingRoot = root,
+                fileName = "null.txt",
+                lastModifiedMs = null,
+            ) as StageImportResult.Success
+            val zeroResult = stageInputStreamToFile(
+                input = ByteArrayInputStream("zero".toByteArray(Charsets.UTF_8)),
+                stagingRoot = root,
+                fileName = "zero.txt",
+                lastModifiedMs = 0L,
+            ) as StageImportResult.Success
+            val negativeResult = stageInputStreamToFile(
+                input = ByteArrayInputStream("neg".toByteArray(Charsets.UTF_8)),
+                stagingRoot = root,
+                fileName = "neg.txt",
+                lastModifiedMs = -1_000L,
+            ) as StageImportResult.Success
+            val afterMs = System.currentTimeMillis() + 2_000L
+
+            assertTrue(nullResult.file.lastModified() in beforeMs..afterMs)
+            assertTrue(zeroResult.file.lastModified() in beforeMs..afterMs)
+            assertTrue(negativeResult.file.lastModified() in beforeMs..afterMs)
         } finally {
             root.deleteRecursively()
         }

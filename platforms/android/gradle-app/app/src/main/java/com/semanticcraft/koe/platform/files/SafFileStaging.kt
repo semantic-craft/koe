@@ -98,6 +98,7 @@ fun stageInputStreamToFile(
     stagingRoot: File,
     fileName: String,
     maxBytes: Long = MAX_IMPORT_BYTES,
+    lastModifiedMs: Long? = null,
 ): StageImportResult {
     if (maxBytes < 0L) {
         return StageImportResult.TooLarge
@@ -142,6 +143,9 @@ fun stageInputStreamToFile(
         if (overflow) {
             runDir.deleteRecursively()
             return StageImportResult.TooLarge
+        }
+        if (lastModifiedMs != null && lastModifiedMs > 0L) {
+            canonicalTarget.setLastModified(lastModifiedMs)
         }
         return StageImportResult.Success(runDir = runDir, file = canonicalTarget)
     } catch (e: IOException) {

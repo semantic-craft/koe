@@ -26,22 +26,14 @@ class AndroidFileActions(
 
     private sealed interface PendingPickerRequest {
         val store: HostSessionStore
-
-        class Import(
-            override val store: HostSessionStore,
-        ) : PendingPickerRequest
-
+        class Import(override val store: HostSessionStore) : PendingPickerRequest
         class ExportWorkspace(
             override val store: HostSessionStore,
             val recordId: String?,
             val date: String?,
             val safeName: String,
         ) : PendingPickerRequest
-
-        class ExportRecords(
-            override val store: HostSessionStore,
-            val recordIds: List<String>,
-        ) : PendingPickerRequest
+        class ExportRecords(override val store: HostSessionStore, val recordIds: List<String>) : PendingPickerRequest
     }
 
     private val lock = Any()
@@ -63,6 +55,51 @@ class AndroidFileActions(
                 if (!keepPendingRequest) {
                     pendingRequest = null
                 }
+            }
+        }
+    }
+
+    fun exportPendingState(): PendingPickerState? = synchronized(lock) {
+        when (val current = pendingRequest) {
+            null -> null
+            is PendingPickerRequest.Import -> PendingPickerState(kind = PendingPickerState.KIND_IMPORT)
+            is PendingPickerRequest.ExportWorkspace -> PendingPickerState(
+                kind = PendingPickerState.KIND_EXPORT_WORKSPACE,
+                recordId = current.recordId,
+                date = current.date,
+                safeName = current.safeName,
+            )
+            is PendingPickerRequest.ExportRecords -> PendingPickerState(
+                kind = PendingPickerState.KIND_EXPORT_RECORDS,
+                recordIds = current.recordIds,
+            )
+        }
+    }
+
+    fun restorePendingState(state: PendingPickerState?) {
+        if (state == null) return
+        synchronized(lock) {
+            if (pendingRequest != null) return
+            val store = boundStore ?: return
+            pendingRequest = when (state.kind) {
+                PendingPickerState.KIND_IMPORT -> PendingPickerRequest.Import(store)
+                PendingPickerState.KIND_EXPORT_WORKSPACE -> {
+                    val cleanRecordId = state.recordId?.trim()?.takeIf { it.isNotEmpty() }
+                    val cleanDate = state.date?.trim()?.takeIf { it.isNotEmpty() }
+                    if (cleanRecordId == null && cleanDate == null) return
+                    PendingPickerRequest.ExportWorkspace(
+                        store = store,
+                        recordId = cleanRecordId,
+                        date = cleanDate,
+                        safeName = sanitizeExportFileName(state.safeName),
+                    )
+                }
+                PendingPickerState.KIND_EXPORT_RECORDS -> {
+                    val cleanIds = normalizeRecordIds(state.recordIds)
+                    if (cleanIds.isEmpty()) return
+                    PendingPickerRequest.ExportRecords(store, cleanIds)
+                }
+                else -> null
             }
         }
     }
@@ -120,10 +157,7 @@ class AndroidFileActions(
     }
 
     fun requestExportRecords(recordIds: List<String>) {
-        val cleanIds = recordIds
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinct()
+        val cleanIds = normalizeRecordIds(recordIds)
         if (cleanIds.isEmpty()) return
 
         launchPicker(
@@ -232,6 +266,7 @@ class AndroidFileActions(
             }
         }
 
+        val lastModifiedMs = safIo.queryLastModifiedMs(uri)
         val inputStream = try {
             safIo.openInputStream(uri)
         } catch (_: SecurityException) {
@@ -253,6 +288,7 @@ class AndroidFileActions(
                     stagingRoot = importStagingRoot,
                     fileName = fileName,
                     maxBytes = maxImportBytes,
+                    lastModifiedMs = lastModifiedMs,
                 )
             }
         } catch (_: SecurityException) {
@@ -396,6 +432,9 @@ class AndroidFileActions(
     } catch (_: IllegalArgumentException) {
         false
     }
+
+    private fun normalizeRecordIds(recordIds: List<String>): List<String> =
+        recordIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
     private fun isStoreBound(targetStore: HostSessionStore): Boolean =
         synchronized(lock) { boundStore === targetStore }
