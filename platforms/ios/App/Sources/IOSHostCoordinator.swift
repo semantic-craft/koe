@@ -39,7 +39,7 @@ final class IOSHostCoordinator {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let now = ProcessInfo.processInfo.systemUptime
-                let elapsed = UInt64((now - self.lastTick) * 1000)
+                let elapsed = UInt64(max(0, now - self.lastTick) * 1000)
                 self.lastTick = now
                 self.store.pollTimers(elapsedMs: elapsed)
                 self.store.bridgeActions.flushBleOutbound()

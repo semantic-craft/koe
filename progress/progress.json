@@ -2785,29 +2785,10 @@
             }
           ],
           "id": "ios-native-skeleton",
-          "next": "推进 iOS 硬件与系统适配器（CoreBluetooth D3200、AVAudioSession、AVPlayer、Apple 本机语音、文件导入导出与 ActivityKit），并按 #775 完成物理 iPhone 签装与 Keychain 验收。",
+          "next": "推进 iOS 硬件与系统适配器（CoreBluetooth D3200、AVAudioSession、AVPlayer、Apple 本机语音、文件导入导出、ActivityKit 与设置编辑表单），并按 #775 完成物理 iPhone 签装与 Keychain 验收。",
           "status": "in_progress",
-          "summary": "PR #776（de429b9）已合并主线，完成 iOS 原生 4-Tab 骨架与模拟器取证闭环。本次拆出零 UI 依赖的 KoeAppleCore（KoeAppleShared 通过 @_exported import 保持 macOS 兼容），新增 XcodeGen 单源配置 platforms/ios/project.yml、18 份原生 SwiftUI 与宿主源码及 NativeCredentialsiOS，并扩展 verify-ui-principles.py 守门 KoeAppleCore 零 UI 导入与 iOS 4 Hz 叶子隔离。本地自动化与模拟器验证已通过。Release iphoneos xcodebuild 成功，真实 iPhone 17（iOS 27.2 Simulator）跑通 verify-simulator.sh，包含 KoeiOSHostTests 4/4、活体 Rust 新建闪记跨 Tab 核验、fixture 85% 录音豆与 [S1] 来源弹层，以及 fail-probe 四件取证。Phase 1 交付时尚未实现 CoreBluetooth（D3200）、AVAudioSession 麦克风采集、AVPlayer 回放、Apple 本机语音识别、文件导入导出、ActivityKit、设置编辑表单、iPad 分屏适配，也未完成物理 iPhone 签装与 Keychain 验收（#775）及发行。",
+          "summary": "PR #776（de429b9）已合并主线，完成 iOS 原生 4-Tab 骨架与模拟器取证闭环。本次拆出零 UI 依赖的 KoeAppleCore（KoeAppleShared 通过 @_exported import 保持 macOS 兼容），新增 XcodeGen 单源配置 platforms/ios/project.yml、18 份原生 SwiftUI 与宿主源码及 NativeCredentialsiOS，并扩展 verify-ui-principles.py 守门 KoeAppleCore 零 UI 导入与 iOS 4 Hz 叶子隔离。本地自动化与模拟器验证已通过。Release iphoneos xcodebuild 成功，真实 iPhone 17（iOS 27.2 Simulator）跑通 verify-simulator.sh，包含 KoeiOSHostTests 4/4、活体 Rust 新建闪记跨 Tab 核验、fixture 85% 录音豆与 [S1] 来源弹层，以及 fail-probe 四件取证。尚未实现 CoreBluetooth（D3200）、AVAudioSession 麦克风采集、AVPlayer 回放、Apple 本机语音识别、文件导入导出、ActivityKit、设置编辑表单、iPad 分屏适配，也未完成物理 iPhone 签装与 Keychain 验收（#775）及发行。",
           "title": "iOS 原生 SwiftUI 4-Tab 骨架与模拟器取证闭环（Phase 1）"
-        },
-        {
-          "evidence": [
-            {
-              "kind": "file",
-              "note": "使用真实 Rust 工作区验证轮询启停、屏幕常亮和追踪文件。",
-              "ref": "platforms/ios/Tests/KoeiOSTests/IOSLaunchLifecycleTests.swift"
-            },
-            {
-              "kind": "file",
-              "note": "从设置页选择模型，保存后重新打开核对。",
-              "ref": "platforms/ios/Tests/maestro/smoke-ios-live.yaml"
-            }
-          ],
-          "id": "ios-host-loop-settings",
-          "next": "等待本地分支评审与合并。物理 iPhone 签装与 Keychain 验收沿用 #775。",
-          "status": "in_progress",
-          "summary": "本地分支已实现 4 Hz 宿主轮询、按前后台与 keepAwake 启停以及屏幕常亮同步。设置页复用 KoeAppleCore 的模型目录和草稿，可编辑凭据、服务商、模型、端点、深度思考与会议音频上传策略。iPhone 17e 模拟器上 7 项宿主 XCTest 通过。 活体设置页保存 deepseek-v4-pro 后，重新打开表单及读取 product-workspace.json 均得到同一模型。",
-          "title": "iOS 宿主轮询与可编辑模型设置（Phase 3A）"
         },
         {
           "evidence": [
