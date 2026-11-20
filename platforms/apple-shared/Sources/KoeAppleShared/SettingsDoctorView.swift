@@ -133,22 +133,7 @@ public struct SettingsDoctorView: View {
     }
 
     private func saveConfiguration() {
-        let trimmedQwen = draft.qwenApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedDeepseek = draft.deepseekApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let asrEndpoint = draft.customAsrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let chatEndpoint = draft.customChatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        store.send(.configureProvider(
-            apiKey: trimmedQwen.isEmpty ? nil : draft.qwenApiKey,
-            deepseekApiKey: trimmedDeepseek.isEmpty ? nil : draft.deepseekApiKey,
-            asrProvider: draft.asrProvider,
-            asrModel: draft.asrProvider == "deepseek" ? "" : draft.qwenAsrModel,
-            llmProvider: draft.llmProvider,
-            model: draft.resolvedLlmModelForSave,
-            enableThinking: draft.enableThinking,
-            qwenWorkspaceId: draft.qwenWorkspaceId.trimmingCharacters(in: .whitespacesAndNewlines),
-            asrEndpoint: asrEndpoint.isEmpty ? "" : asrEndpoint,
-            chatEndpoint: chatEndpoint.isEmpty ? "" : chatEndpoint
-        ))
+        store.send(draft.configureProviderCommand)
         if store.navigation.effectiveError == nil {
             draft.qwenApiKey = ""
             draft.deepseekApiKey = ""

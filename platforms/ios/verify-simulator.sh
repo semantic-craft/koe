@@ -445,6 +445,7 @@ run_unit_tests() {
     -sdk iphonesimulator \
     -destination "platform=iOS Simulator,id=$UDID" \
     -derivedDataPath "$DERIVED_DATA" \
+    -parallel-testing-enabled NO \
     test \
     CODE_SIGNING_ALLOWED=NO
 }
@@ -602,6 +603,19 @@ run_single_flow() {
   if [[ -n "$MAESTRO_PID" ]]; then
     wait "$MAESTRO_PID" || flow_exit=$?
     MAESTRO_PID=""
+  fi
+
+  if [[ "$flow_exit" -eq 0 && "$flow" -ef "$LIVE_FLOW" ]]; then
+    python3 - "$workspace_dir/product-workspace.json" <<'PYTHON' || flow_exit=$?
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as workspace:
+    saved_model = json.load(workspace)["provider"]["model"]
+if saved_model != "deepseek-v4-pro":
+    sys.exit(f"iOS live settings persistence failed: saved model is {saved_model!r}")
+print(f"iOS live settings persisted: {saved_model}")
+PYTHON
   fi
 
   local should_collect=0

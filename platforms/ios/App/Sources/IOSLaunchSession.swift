@@ -34,39 +34,29 @@ struct IOSLaunchConfig: Equatable {
 final class IOSLaunchSession {
     private static let logger = Logger(subsystem: "com.semanticcraft.koe.ios", category: "host")
 
-    let config: IOSLaunchConfig
-    let credentials: NativeCredentialsiOS
     let store: HostSessionStore
-    private let sandboxTraceURL: URL
+    let coordinator: IOSHostCoordinator
+    private let traceURLs: [URL]
 
     init(
+        bridgeActions: HostBridgeActions,
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
-        let parsed = IOSLaunchConfig.parse(arguments: arguments, environment: environment)
-        self.config = parsed
-        self.credentials = NativeCredentialsiOS(
-            workspaceOverride: parsed.workspacePath != nil,
+        let config = IOSLaunchConfig.parse(arguments: arguments, environment: environment)
+        let credentials = NativeCredentialsiOS(
+            workspaceOverride: config.workspacePath != nil,
             environment: environment
         )
-        let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        self.sandboxTraceURL = docsURL.appendingPathComponent("koe-trace.json")
-
-        let resolvedWorkspace: String?
-        if let explicitWorkspace = parsed.workspacePath {
-            resolvedWorkspace = explicitWorkspace
-        } else {
-            resolvedWorkspace = nil
+        let sandboxTrace = URL.documentsDirectory.appendingPathComponent("koe-trace.json")
+        var outputs = [sandboxTrace]
+        if let path = config.traceOutputPath {
+            let url = URL(fileURLWithPath: path, relativeTo: .documentsDirectory).standardizedFileURL
+            if url != sandboxTrace.standardizedFileURL { outputs.append(url) }
         }
-
-        self.store = HostSessionStore(workspacePath: resolvedWorkspace, credentials: credentials)
-        self.store.onSnapshotChanged = { [weak self] _ in
-            // HostSessionStore records the command trace in defer after onSnapshotChanged fires.
-            DispatchQueue.main.async {
-                self?.writeTraceFile()
-            }
-        }
+        traceURLs = outputs
+        store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials)
+        coordinator = IOSHostCoordinator(store: store, actions: bridgeActions)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.6.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "15"
@@ -83,63 +73,47 @@ final class IOSLaunchSession {
         )
 
         #if DEBUG
-        if let fixturePath = parsed.snapshotFixturePath {
-            _ = loadDebugFixture(at: fixturePath)
+        if let fixturePath = config.snapshotFixturePath {
+            loadDebugFixture(at: fixturePath)
         }
         #endif
 
+        store.onTraceRecorded = { [weak self] in self?.writeTraceFile() }
         writeTraceFile()
         Self.logger.info("Koe iOS host session ready (workspace=\(self.store.workspacePath, privacy: .public))")
     }
 
     #if DEBUG
-    @discardableResult
-    func loadDebugFixture(at path: String) -> Bool {
-        let url = resolveReadableURL(path)
-        guard let data = try? Data(contentsOf: url),
-              let json = String(data: data, encoding: .utf8) else {
+    private func loadDebugFixture(at path: String) {
+        do {
+            let url = URL(fileURLWithPath: path, relativeTo: .documentsDirectory)
+            let json = try String(contentsOf: url, encoding: .utf8)
+            if !store.loadDebugSnapshotFixtureJSON(json) {
+                Self.logger.error("Invalid snapshot fixture: \(self.store.nativeError ?? "读取失败", privacy: .public)")
+            }
+        } catch {
+            Self.logger.error("Snapshot fixture read failed: \(error.localizedDescription, privacy: .public)")
             store.reportNativeError("无法读取调试快照文件。")
-            writeTraceFile()
-            return false
         }
-        let ok = store.loadDebugSnapshotFixtureJSON(json)
-        writeTraceFile()
-        return ok
     }
     #endif
 
-    func writeTraceFile() {
-        let json = store.exportTraceJSON()
-        guard let data = (json + "\n").data(using: .utf8) else { return }
-        try? FileManager.default.createDirectory(
-            at: sandboxTraceURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: sandboxTraceURL, options: .atomic)
-
-        if let explicitTrace = config.traceOutputPath {
-            let explicitURL = resolveWritableURL(explicitTrace)
-            try? FileManager.default.createDirectory(
-                at: explicitURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? data.write(to: explicitURL, options: .atomic)
+    private func writeTraceFile() {
+        let data = Data((store.exportTraceJSON() + "\n").utf8)
+        for url in traceURLs {
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                Self.logger.error("Trace write failed: \(error.localizedDescription, privacy: .public)")
+                store.reportNativeError("无法保存宿主追踪文件。")
+            }
         }
     }
 
-    private func resolveReadableURL(_ path: String) -> URL {
-        if path.hasPrefix("/") {
-            return URL(fileURLWithPath: path)
-        }
-        let docsURL = sandboxTraceURL.deletingLastPathComponent()
-        return docsURL.appendingPathComponent(path)
-    }
-
-    private func resolveWritableURL(_ path: String) -> URL {
-        if path.hasPrefix("/") {
-            return URL(fileURLWithPath: path)
-        }
-        let docsURL = sandboxTraceURL.deletingLastPathComponent()
-        return docsURL.appendingPathComponent(path)
+    func shutdown() {
+        coordinator.shutdown()
+        store.onTraceRecorded = nil
+        store.shutdown()
     }
 }

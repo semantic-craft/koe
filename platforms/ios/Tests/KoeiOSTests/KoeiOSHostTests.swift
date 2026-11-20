@@ -117,6 +117,7 @@ final class KoeiOSHostTests: XCTestCase {
         let traceURL = tempDir.appendingPathComponent("trace.json")
 
         let session = IOSLaunchSession(
+            bridgeActions: HostBridgeActions(),
             arguments: [
                 "Koe",
                 "-koe-workspace", workspaceDir.path,
@@ -125,7 +126,7 @@ final class KoeiOSHostTests: XCTestCase {
             ],
             environment: [:]
         )
-        defer { session.store.shutdown() }
+        defer { session.shutdown() }
 
         XCTAssertEqual(session.store.platform.hostDisplayName, "iPhone")
         XCTAssertEqual(session.store.device.deviceName, "Soundcore Work")
@@ -138,7 +139,6 @@ final class KoeiOSHostTests: XCTestCase {
 
         let secret = "sk-should-never-appear-in-trace"
         session.store.send(.configureProvider(apiKey: secret, model: "deepseek-flash"))
-        session.writeTraceFile()
 
         let traceText = try String(contentsOf: traceURL, encoding: .utf8)
         XCTAssertFalse(traceText.contains(secret))
