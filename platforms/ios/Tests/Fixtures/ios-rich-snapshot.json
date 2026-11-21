@@ -288,11 +288,31 @@
         "transport": "built_in",
         "badge": "本机",
         "isDefault": true
+      },
+      {
+        "id": "headset",
+        "sourceKey": "input:headset",
+        "name": "蓝牙耳机麦克风",
+        "transport": "bluetooth",
+        "badge": "蓝牙耳机",
+        "isDefault": false
+      },
+      {
+        "id": "usb-mic",
+        "sourceKey": "input:usb-mic",
+        "name": "USB 麦克风",
+        "transport": "usb",
+        "badge": "USB",
+        "isDefault": false
       }
     ],
     "includeSystemAudio": false,
     "canIncludeSystemAudio": false,
-    "audioStorage": null
+    "audioStorage": {
+      "path": "/audio",
+      "fileCount": 3,
+      "totalBytes": 4200000
+    }
   },
   "activeCapture": {
     "mode": "meeting",
@@ -396,8 +416,40 @@
             }
           ],
           "gist": "确认录音豆与充电仓电量分列展示。",
-          "topics": [],
-          "nextSteps": []
+          "topics": [
+            {
+              "title": "设备状态",
+              "summary": "连接状态与电量分开显示。",
+              "sources": [
+                {
+                  "recordId": "rec-note-1",
+                  "segmentId": "seg-note-1",
+                  "title": "录音豆低功耗设计笔记",
+                  "quote": "确认录音豆电量与充电仓电量分列展示，让出控制权后关闭自动重连。",
+                  "startMs": 0
+                }
+              ]
+            }
+          ],
+          "nextSteps": [
+            {
+              "id": "task-note",
+              "kind": "task",
+              "text": "核对充电仓电量",
+              "state": "proposed",
+              "completed": false,
+              "due": null,
+              "sources": [
+                {
+                  "recordId": "rec-note-1",
+                  "segmentId": "seg-note-1",
+                  "title": "录音豆低功耗设计笔记",
+                  "quote": "确认录音豆电量与充电仓电量分列展示，让出控制权后关闭自动重连。",
+                  "startMs": 0
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -414,8 +466,8 @@
       ],
       "totalRecordedMs": 42000,
       "eventCount": 1,
-      "pauseCount": 0,
-      "gapCount": 0,
+      "pauseCount": 1,
+      "gapCount": 1,
       "spans": [
         {
           "kind": "event",
@@ -445,12 +497,91 @@
             "周宁"
           ],
           "segmentCount": 2
+        },
+        {
+          "id": "pause",
+          "kind": "pause",
+          "startEpochSec": 1763596842,
+          "endEpochSec": 1763596872,
+          "durationMs": 30000
+        },
+        {
+          "id": "unrecorded_gap",
+          "kind": "unrecorded_gap",
+          "startEpochSec": 1763596872,
+          "endEpochSec": 1763596902,
+          "durationMs": 30000
         }
       ],
-      "reviewTasks": [],
-      "reviewMemories": [],
-      "reviewDecisions": [],
-      "dailyReview": null
+      "reviewTasks": [
+        {
+          "id": "task-day",
+          "kind": "task",
+          "text": "安排工作区复审",
+          "state": "proposed",
+          "completed": false,
+          "due": null,
+          "sources": [
+            {
+              "recordId": "rec-meeting-1",
+              "segmentId": "seg-1",
+              "title": "iOS 架构同步会",
+              "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+              "startMs": 12000
+            }
+          ]
+        }
+      ],
+      "reviewMemories": [
+        {
+          "id": "memory-day",
+          "kind": "memory",
+          "text": "保留独立原生界面",
+          "state": "proposed",
+          "completed": false,
+          "due": null,
+          "sources": [
+            {
+              "recordId": "rec-meeting-1",
+              "segmentId": "seg-1",
+              "title": "iOS 架构同步会",
+              "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+              "startMs": 12000
+            }
+          ]
+        }
+      ],
+      "reviewDecisions": [
+        {
+          "id": "decision-day",
+          "recordId": "rec-meeting-1",
+          "text": "共用 Rust 投影。",
+          "sources": [
+            {
+              "recordId": "rec-meeting-1",
+              "segmentId": "seg-1",
+              "title": "iOS 架构同步会",
+              "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+              "startMs": 12000
+            }
+          ]
+        }
+      ],
+      "dailyReview": {
+        "overview": "今天确定了移动端共享核心的边界。",
+        "highlights": [
+          "先完成 iOS 原生工作区。"
+        ],
+        "sources": [
+          {
+            "recordId": "rec-meeting-1",
+            "segmentId": "seg-1",
+            "title": "iOS 架构同步会",
+            "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+            "startMs": 12000
+          }
+        ]
+      }
     },
     "liveMinutes": {
       "isActive": true,
@@ -463,7 +594,7 @@
       "selectedTitle": "iOS 架构同步会",
       "minutesStale": false,
       "canSummarize": true,
-      "error": null,
+      "error": "上次整理未完成。",
       "coverage": {
         "audioDurationMs": 42000,
         "transcribedDurationMs": 41000,
@@ -486,21 +617,63 @@
           "speaker": "林序"
         }
       ],
-      "drafts": [],
+      "drafts": [
+        "接下来核对来源定位。"
+      ],
       "liveSections": [
         {
           "title": "实时议题",
           "text": "共享核心只保留状态与模型，iOS 独立实现原生交互。",
-          "sources": []
+          "sources": [
+            {
+              "recordId": "rec-meeting-1",
+              "segmentId": "seg-1",
+              "title": "iOS 架构同步会",
+              "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+              "startMs": 12000
+            }
+          ]
         }
       ],
-      "finalSections": [],
-      "actionItems": [],
+      "finalSections": [
+        {
+          "title": "会后结论",
+          "text": "采用共享核心。",
+          "sources": [
+            {
+              "recordId": "rec-meeting-1",
+              "segmentId": "seg-1",
+              "title": "iOS 架构同步会",
+              "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+              "startMs": 12000
+            }
+          ]
+        }
+      ],
+      "actionItems": [
+        {
+          "id": "task-live",
+          "kind": "task",
+          "text": "核对会议原文",
+          "state": "proposed",
+          "completed": false,
+          "due": null,
+          "sources": [
+            {
+              "recordId": "rec-meeting-1",
+              "segmentId": "seg-1",
+              "title": "iOS 架构同步会",
+              "quote": "第一阶段先用 KoeAppleCore 共享核心，iOS 独立构建原生 SwiftUI 骨架。",
+              "startMs": 12000
+            }
+          ]
+        }
+      ],
       "pastMeetings": [
         {
-          "id": "rec-meeting-1",
-          "title": "iOS 架构同步会",
-          "createdAtEpochSec": 1763596800,
+          "id": "rec-past-meeting",
+          "title": "上周工作区复盘",
+          "createdAtEpochSec": 1762992000,
           "durationMs": 42000,
           "source": "Soundcore Work",
           "status": "已整理",
