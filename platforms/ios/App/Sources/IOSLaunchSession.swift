@@ -64,7 +64,7 @@ final class IOSLaunchSession {
             if !outputs.contains(url) { outputs.append(url) }
         }
         traceURLs = outputs
-        store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials)
+        store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials, verificationTrace: config.traceOutputPath != nil)
         fileActions = IOSFileActions(store: store)
         #if DEBUG
         let useRadio = allowsCoreBluetooth && config.snapshotFixturePath == nil && environment["KOE_DISABLE_CORE_BLUETOOTH"] != "1"
@@ -93,7 +93,7 @@ final class IOSLaunchSession {
         inputMonitor.start()
         #if DEBUG
         if let fixturePath = config.snapshotFixturePath {
-            loadDebugFixture(at: fixturePath)
+            loadDebugFixture(at: fixturePath, resumeLive: arguments.contains("-koe-fixture-to-live"))
         }
         #endif
 
@@ -103,11 +103,11 @@ final class IOSLaunchSession {
     }
 
     #if DEBUG
-    private func loadDebugFixture(at path: String) {
+    private func loadDebugFixture(at path: String, resumeLive: Bool) {
         do {
             let url = URL(fileURLWithPath: path, relativeTo: .documentsDirectory)
             let json = try String(contentsOf: url, encoding: .utf8)
-            if !store.loadDebugSnapshotFixtureJSON(json) {
+            if !store.loadDebugSnapshotFixtureJSON(json, resumeLiveOnCommand: resumeLive) {
                 Self.logger.error("Invalid snapshot fixture: \(self.store.nativeError ?? "读取失败", privacy: .public)")
             }
         } catch {

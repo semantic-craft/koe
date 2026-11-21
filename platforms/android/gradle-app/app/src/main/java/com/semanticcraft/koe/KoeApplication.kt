@@ -173,6 +173,7 @@ class KoeApplication : Application() {
                     isolatedCredentials = BuildConfig.DEBUG,
                     allowDebugFixture = BuildConfig.DEBUG,
                     autoOpen = false,
+                    verificationTrace = BuildConfig.DEBUG && debugWorkspace != null,
                 )
                 created.openSession()
                 created.send(
@@ -226,7 +227,8 @@ class KoeApplication : Application() {
             } else {
                 val loaded = try {
                     val json = fixtureFile.readText(StandardCharsets.UTF_8)
-                    store.loadDebugSnapshotFixtureJson(json)
+                    store.loadDebugSnapshotFixtureJson(json, resumeLiveOnCommand =
+                        intent?.getBooleanExtra("koe_fixture_to_live", false) == true)
                 } catch (_: Exception) {
                     false
                 }

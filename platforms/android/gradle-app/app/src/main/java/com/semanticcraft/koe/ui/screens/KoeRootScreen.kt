@@ -309,6 +309,7 @@ private fun TabNavigationBar(selectedTab: AndroidAppTab, onSelect: (AndroidAppTa
         AndroidAppTab.entries.forEach { tab ->
             val selected = selectedTab == tab
             NavigationBarItem(
+                modifier = Modifier.testTag("tab-" + tab.name.lowercase()),
                 selected = selected,
                 onClick = {
                     onSelect(tab)
@@ -484,6 +485,7 @@ private fun UndoTrashBar(store: HostSessionStore) {
             )
             KoePrimaryButton(
                 title = "撤销",
+                modifier = Modifier.testTag("trash-undo"),
                 isPrimary = true,
                 onClick = {
                     val ids = undo.effectiveRecordIds

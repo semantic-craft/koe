@@ -1,0 +1,13 @@
+appId: com.semanticcraft.koe
+---
+- tapOn: {id: "device-status-pill"}
+- scrollUntilVisible:
+    element: {id: "device-open-record-.*"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "device-open-record-.*"}
+- extendedWaitUntil:
+    visible: "M9Synced"
+    timeout: 25000
+- assertVisible: "原文"
+- takeScreenshot: synced-detail

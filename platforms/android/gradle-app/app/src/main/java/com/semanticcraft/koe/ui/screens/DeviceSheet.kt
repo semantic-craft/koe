@@ -96,7 +96,7 @@ fun DeviceSheet(
 
             navigation.effectiveError?.let { message ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, color = colors.danger, modifier = Modifier.weight(1f))
+                    Text(message, color = colors.danger, modifier = Modifier.weight(1f).testTag("device-error"))
                     KoePrimaryButton(title = "知道了", isPrimary = false, onClick = store::clearError)
                 }
             }
@@ -175,7 +175,7 @@ fun DeviceSheet(
                                     store.bridgeActions.requestBleScan()
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).testTag("device-control-acquire"),
                         )
                         ControlModeButton(
                             title = "让出控制权",
@@ -187,7 +187,7 @@ fun DeviceSheet(
                                     store.bridgeActions.flushBleOutbound()
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).testTag("device-control-release"),
                         )
                     }
                 }
@@ -235,6 +235,7 @@ fun DeviceSheet(
                             )
                             KoePrimaryButton(
                                 title = "关闭引导",
+                                modifier = Modifier.testTag("device-guide-close"),
                                 isPrimary = false,
                                 onClick = { store.send(HostCommand.DeviceCloseGuide) },
                             )
@@ -253,6 +254,7 @@ fun DeviceSheet(
                         if (guide.primaryLabel.isNotBlank()) {
                             KoePrimaryButton(
                                 title = guide.primaryLabel,
+                                modifier = Modifier.testTag("device-guide-next"),
                                 isPrimary = true,
                                 onClick = {
                                     if (guide.mode == "connect_guide") {
@@ -286,6 +288,7 @@ fun DeviceSheet(
                     )
                     KoePrimaryButton(
                         title = "连接引导",
+                        modifier = Modifier.testTag("device-guide-open"),
                         icon = Icons.AutoMirrored.Outlined.HelpOutline,
                         isPrimary = false,
                         onClick = { store.send(HostCommand.DeviceOpenGuide) },

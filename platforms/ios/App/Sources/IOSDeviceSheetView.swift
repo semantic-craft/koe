@@ -36,8 +36,9 @@ struct IOSDeviceSheetView: View {
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(IOSColors.textSecondary)
 
-                IOSHostErrorBar(store: store)
+                IOSHostErrorBar(store: store, identifier: "device-error")
                 disconnectedScanButton
+                    .accessibilityIdentifier("device-connect-button")
 
                 LazyVGrid(
                     columns: [
@@ -79,6 +80,7 @@ struct IOSDeviceSheetView: View {
                             }
                         }
                         .disabled(device.busy)
+                        .accessibilityIdentifier("device-control-acquire")
 
                         controlButton(
                             title: "让出控制权",
@@ -89,6 +91,7 @@ struct IOSDeviceSheetView: View {
                             }
                         }
                         .disabled(isReleased || !store.canReleaseToPhone)
+                        .accessibilityIdentifier("device-control-release")
                     }
                     .padding(4)
                     .background(IOSColors.bgSubtle, in: RoundedRectangle(cornerRadius: IOSRadii.control))
@@ -121,14 +124,17 @@ struct IOSDeviceSheetView: View {
                                 IOSPrimaryButton("关闭引导", isPrimary: false) {
                                     store.send(.deviceCloseGuide)
                                 }
+                                .accessibilityIdentifier("device-guide-close")
                             }
                             Text(guide.title)
+                                .accessibilityIdentifier("device-guide-title")
                                 .font(.system(size: AppFontSizes.sm, weight: .semibold))
                                 .foregroundStyle(IOSColors.textPrimary)
                             Text(guide.subtitle)
                                 .font(.system(size: AppFontSizes.xs))
                                 .foregroundStyle(IOSColors.textSecondary)
                             guidePrimaryButton(guide)
+                            .accessibilityIdentifier("device-guide-next")
                         }
                     }
                 }
@@ -153,6 +159,7 @@ struct IOSDeviceSheetView: View {
                         } currentValueLabel: {
                             Text(device.progress, format: .percent.precision(.fractionLength(0)))
                         }
+                        .accessibilityIdentifier("transfer-progress")
                     }
                     if device.files.isEmpty {
                         Text("设备内暂无待取回的离线文件。")
@@ -178,6 +185,7 @@ struct IOSDeviceSheetView: View {
                                             dismiss()
                                             onOpenRecord(id)
                                         }
+                                        .accessibilityIdentifier("device-open-record-\(id)")
                                     } else {
                                         IOSBadge("已取回", tint: IOSColors.success)
                                     }
@@ -204,6 +212,7 @@ struct IOSDeviceSheetView: View {
                     IOSPrimaryButton("连接引导", systemImage: "questionmark.circle", isPrimary: false) {
                         store.send(.deviceOpenGuide)
                     }
+                    .accessibilityIdentifier("device-guide-open")
                 }
             }
             .padding(20)
@@ -238,7 +247,7 @@ struct IOSDeviceSheetView: View {
                 .foregroundStyle(IOSColors.textPrimary)
                 .monospacedDigit()
                 .lineLimit(1)
-            if let ratio { ProgressView(value: ratio).accessibilityLabel("存储占用") }
+            if let ratio { ProgressView(value: ratio).accessibilityLabel("存储占用").accessibilityIdentifier("storage-progress") }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

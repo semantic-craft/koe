@@ -11,8 +11,9 @@ ROOT = Path(__file__).resolve().parents[4]
 APP = "com.semanticcraft.koe.ios"
 
 
-def seed(directory):
-    api = ctypes.CDLL(str(ROOT / "target/debug/libkoe_host_api.dylib"))
+def seed(directory, *, title="行动页测试", speakers=()):
+    library = "libkoe_host_api.dylib" if sys.platform == "darwin" else "libkoe_host_api.so"
+    api = ctypes.CDLL(str(ROOT / "target/debug" / library))
     api.koe_host_session_create.argtypes = [ctypes.c_char_p]
     api.koe_host_session_create.restype = ctypes.c_uint64
     api.koe_host_session_dispatch_json.argtypes = [ctypes.c_uint64, ctypes.c_char_p, ctypes.c_uint64]
@@ -38,12 +39,15 @@ def seed(directory):
         return snapshot
 
     try:
-        detail = send("create_note", title="行动页测试", text="核对会议纪要\n整理项目文档")["detail"]
-        for segment in detail["segments"]:
+        detail = send("create_note", title=title, text="核对会议纪要\n整理项目文档")["detail"]
+        for index, segment in enumerate(detail["segments"]):
+            if speakers:
+                send("set_segment_speaker", recordId=detail["id"], segmentId=segment["id"], speaker=speakers[index])
             for command, collection in [("create_task", "tasks"), ("save_memory", "memories")]:
                 snapshot = send(command, recordId=detail["id"], segmentId=segment["id"])
                 item = next(item for item in snapshot[collection] if item["text"] == segment["text"])
                 send("review_item", itemId=item["id"], decision="reset")
+        return detail["id"]
     finally:
         api.koe_host_session_destroy(handle)
 

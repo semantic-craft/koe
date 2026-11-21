@@ -1,0 +1,162 @@
+appId: com.semanticcraft.koe.ios
+---
+- extendedWaitUntil:
+    visible: "模式选择"
+    timeout: 25000
+- assertNotVisible: "这台设备不支持蓝牙连接。"
+- tapOn: {id: "settings-button"}
+- scrollUntilVisible:
+    element: {id: "settings-speech-engine"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "settings-speech-engine"}
+- tapOn: "云端识别"
+- assertVisible: ".*云端识别.*"
+- scrollUntilVisible:
+    element: {id: "settings-llm-model"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "settings-llm-model"}
+- tapOn: "deepseek-v4-pro"
+- assertVisible: ".*deepseek-v4-pro.*"
+- takeScreenshot: settings
+- scrollUntilVisible:
+    element: {id: "settings-save-button"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "settings-save-button"}
+- tapOn: {id: "quick-note-input"}
+- inputText: "M9Note"
+- tapOn: {id: "quick-note-submit"}
+- extendedWaitUntil:
+    visible: "记录已保存"
+    timeout: 25000
+- scrollUntilVisible:
+    element: {id: "enter-workspace-notes"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "enter-workspace-notes"}
+- scrollUntilVisible:
+    element: {id: "project-assign-.*"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "project-assign-.*"}
+- tapOn: {id: "project-new"}
+- tapOn: {id: "project-name"}
+- inputText: "M9Project"
+- tapOn: {id: "project-confirm"}
+- extendedWaitUntil:
+    visible: ".*M9Project.*"
+    timeout: 25000
+- takeScreenshot: project
+- tapOn: "今天"
+- scrollUntilVisible:
+    element: {id: "quick-note-input"}
+    direction: UP
+- tapOn: {id: "quick-note-input"}
+- inputText: "M9Archive"
+- tapOn: {id: "quick-note-submit"}
+- assertVisible: "记录已保存"
+- tapOn: {id: "quick-note-input"}
+- inputText: "M9Disposable"
+- tapOn: {id: "quick-note-submit"}
+- extendedWaitUntil:
+    visible: "记录已保存"
+    timeout: 25000
+- scrollUntilVisible:
+    element: {id: "mode-switch-notes"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "mode-switch-notes"}
+- extendedWaitUntil:
+    visible: {id: "active-capture-bar"}
+    timeout: 25000
+- extendedWaitUntil:
+    visible: ".*00:1[0-9].*"
+    timeout: 25000
+- tapOn: {id: "enter-workspace-notes"}
+- assertVisible: {id: "workspace-capture-pause"}
+- takeScreenshot: capture
+- tapOn: {id: "workspace-capture-pause"}
+- extendedWaitUntil:
+    visible: {id: "workspace-capture-resume"}
+    timeout: 25000
+- tapOn: {id: "workspace-capture-resume"}
+- extendedWaitUntil:
+    visible: {id: "workspace-capture-end"}
+    timeout: 25000
+- tapOn: {id: "workspace-capture-end"}
+- tapOn: "记录"
+- extendedWaitUntil:
+    visible: ".*麦克风录音"
+    timeout: 25000
+- tapOn: ".*麦克风录音"
+- takeScreenshot: playback
+- tapOn: {id: "player-toggle-button"}
+- swipe:
+    from: {id: "player-seek"}
+    direction: LEFT
+    duration: 500
+- tapOn: "行动"
+- assertVisible: {id: "ios-mini-player"}
+- takeScreenshot: mini-player
+- tapOn: "记录"
+- tapOn: "记录"
+- scrollUntilVisible:
+    element: "M9Note"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "M9Note"
+- tapOn: "原文"
+- scrollUntilVisible:
+    element: {id: "segment-edit-.*"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "segment-edit-.*"}
+- tapOn: {id: "editor-value"}
+- eraseText
+- inputText: "M9Revised"
+- tapOn: {id: "editor-save"}
+- extendedWaitUntil:
+    visible: "M9Revised"
+    timeout: 25000
+- tapOn: {id: "segment-original-.*"}
+- assertVisible: "M9Note"
+- tapOn: {id: "segment-speaker-.*"}
+- tapOn: {id: "segment-speaker-edit-.*"}
+- tapOn: {id: "editor-value"}
+- eraseText
+- inputText: "SpeakerA"
+- tapOn: {id: "editor-save"}
+- tapOn: {id: "segment-speaker-.*"}
+- tapOn: {id: "segment-speaker-merge-.*"}
+- tapOn: {id: "editor-value"}
+- eraseText
+- inputText: "SpeakerB"
+- tapOn: {id: "editor-save"}
+- tapOn: {id: "segment-highlight-.*"}
+- takeScreenshot: detail
+- scrollUntilVisible:
+    element: {id: "record-export-markdown"}
+    direction: UP
+    timeout: 15000
+- tapOn: {id: "record-export-markdown"}
+- tapOn: "Cancel|取消|Close|关闭"
+# Merge both real speakers in the seeded transcript under one existing name.
+- tapOn: "记录"
+- scrollUntilVisible:
+    element: "M9Synced"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "M9Synced"
+- tapOn: "原文"
+- scrollUntilVisible:
+    element: {id: "segment-speaker-.*"}
+    direction: DOWN
+- tapOn: {id: "segment-speaker-.*", index: 0}
+- tapOn: {id: "segment-speaker-merge-.*"}
+- tapOn: {id: "editor-value"}
+- eraseText
+- inputText: "Bob"
+- tapOn: {id: "editor-save"}
+- assertNotVisible: "Alice"

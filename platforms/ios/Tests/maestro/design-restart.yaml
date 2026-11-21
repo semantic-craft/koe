@@ -1,0 +1,39 @@
+appId: com.semanticcraft.koe.ios
+---
+- extendedWaitUntil:
+    visible: "模式选择"
+    timeout: 25000
+- tapOn: {id: "settings-button"}
+- scrollUntilVisible:
+    element: {id: "settings-speech-engine"}
+    direction: DOWN
+    timeout: 15000
+- assertVisible: ".*云端识别.*"
+- scrollUntilVisible:
+    element: {id: "settings-llm-model"}
+    direction: DOWN
+    timeout: 15000
+- assertVisible: ".*deepseek-v4-pro.*"
+- tapOn: {id: "settings-close"}
+- tapOn: "记录"
+- scrollUntilVisible:
+    element: "M9Note"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "M9Note"
+- tapOn: "原文"
+- extendedWaitUntil:
+    visible: "M9Revised"
+    timeout: 25000
+- tapOn: {id: "segment-original-.*"}
+- assertVisible: "M9Note"
+- tapOn: "今天"
+- scrollUntilVisible:
+    element: {id: "enter-workspace-notes"}
+    direction: DOWN
+    timeout: 15000
+- tapOn: {id: "enter-workspace-notes"}
+- extendedWaitUntil:
+    visible: ".*M9Project.*"
+    timeout: 25000
+- takeScreenshot: restart

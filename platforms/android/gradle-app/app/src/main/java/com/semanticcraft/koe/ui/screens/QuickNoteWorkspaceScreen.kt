@@ -161,7 +161,7 @@ private fun ProjectSheet(projects: List<QuickNoteProjectCountSnapshot>, onDismis
         OutlinedTextField(name, { name = it }, label = { Text("新项目名称") }, singleLine = true,
             modifier = Modifier.fillMaxWidth().testTag("project-name"))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            KoePrimaryButton("使用新项目", { assign(name.trim()) }, enabled = name.isNotBlank())
+            KoePrimaryButton("使用新项目", { assign(name.trim()) }, Modifier.testTag("project-confirm"), enabled = name.isNotBlank())
             KoePrimaryButton("取消", onDismiss, isPrimary = false)
         }
     }

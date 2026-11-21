@@ -20,11 +20,12 @@ struct IOSWorkspaceCaptureHeader: View {
                 }
                 IOSCaptureSourceButton(store: store, title: source)
                 if isActive {
-                    IOSCaptureActionButtons(store: store, mode: mode)
+                    IOSCaptureActionButtons(store: store, mode: mode, identifierPrefix: "workspace-capture")
                 } else {
                     IOSPrimaryButton("开始\(mode.title)", systemImage: "mic.fill") {
                         store.startCapture(mode, stayOnPage: true)
                     }.disabled(!canStart)
+                    .accessibilityIdentifier("workspace-capture-start")
                 }
             }
         }

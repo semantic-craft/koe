@@ -170,6 +170,7 @@ fun RecordsScreen(
                     RecordFilterCategory.entries.forEach { category ->
                         KoeFilterChip(
                             label = category.title,
+                            modifier = Modifier.testTag("records-filter-" + category.name.lowercase()),
                             selected = filterCategory == category,
                             onClick = { filterCategory = category },
                         )
@@ -314,7 +315,7 @@ private fun RecordRowCard(
     onTrash: () -> Unit,
 ) {
     val colors = KoeTheme.colors
-    KoeCard(modifier = Modifier.clickable(onClick = onOpen)) {
+    KoeCard(modifier = Modifier.testTag("records-row-" + record.id).clickable(onClick = onOpen)) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -335,7 +336,7 @@ private fun RecordRowCard(
                 IconButton(
                     onClick = onTrash,
                     enabled = canTrash,
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(32.dp).testTag("row-trash-" + record.id),
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.DeleteOutline,

@@ -1,0 +1,21 @@
+appId: com.semanticcraft.koe.ios
+---
+- tapOn: "问 AI"
+- tapOn: {id: "ask-scope-picker"}
+- tapOn: "M9Note"
+- tapOn: {id: "ask-question-input"}
+- inputText: "M9Revised"
+- waitForAnimationToEnd
+- tapOn:
+    id: "ask-question-submit"
+    retryTapIfNoChange: false
+- extendedWaitUntil:
+    visible: {id: "ask-source-chip-1"}
+    timeout: 25000
+- takeScreenshot: answer
+- tapOn: {id: "ask-source-chip-1"}
+- extendedWaitUntil:
+    visible: "定位段落"
+    timeout: 25000
+- assertVisible: "M9Revised"
+- takeScreenshot: source-focused

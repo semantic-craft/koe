@@ -53,10 +53,10 @@ internal fun TextEditorDialog(
         },
         confirmButton = {
             Row {
-                if (onSaveAll != null) TextButton(enabled = value.isNotBlank(), onClick = {
+                if (onSaveAll != null) TextButton(modifier = Modifier.testTag("editor-save-all"), enabled = value.isNotBlank(), onClick = {
                     if (onSaveAll(value.trim())) onDismiss()
                 }) { Text("整条记录") }
-                TextButton(enabled = allowEmpty || value.isNotBlank(), onClick = {
+                TextButton(modifier = Modifier.testTag("editor-save"), enabled = allowEmpty || value.isNotBlank(), onClick = {
                     if (onSave(value.trim())) onDismiss()
                 }) { Text(saveLabel) }
             }
@@ -71,12 +71,12 @@ internal fun TranscriptEditors(store: HostSessionStore, detail: RecordDetailSnap
     var editor by rememberSaveable(segment.id) { mutableStateOf<String?>(null) }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (detail.canEditTranscript) {
-            KoePrimaryButton("编辑原文", { editor = "text" }, isPrimary = false)
-            KoePrimaryButton("说话人", { editor = "speaker" }, isPrimary = false)
+            KoePrimaryButton("编辑原文", { editor = "text" }, Modifier.testTag("segment-edit-${segment.id}"), isPrimary = false)
+            KoePrimaryButton("说话人", { editor = "speaker" }, Modifier.testTag("segment-speaker-${segment.id}"), isPrimary = false)
         }
         if (segment.isEdited && !segment.originalText.isNullOrBlank()) {
             KoePrimaryButton(if (originalExpanded) "收起改前原文" else "改前原文",
-                { originalExpanded = !originalExpanded }, isPrimary = false)
+                { originalExpanded = !originalExpanded }, Modifier.testTag("segment-original-${segment.id}"), isPrimary = false)
         }
     }
     if (originalExpanded && segment.isEdited && !segment.originalText.isNullOrBlank()) {

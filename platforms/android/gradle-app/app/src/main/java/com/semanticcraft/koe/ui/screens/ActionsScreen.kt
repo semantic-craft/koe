@@ -1,5 +1,6 @@
 package com.semanticcraft.koe.ui.screens
 
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -105,7 +106,7 @@ fun ActionsScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val labels = if (selectedSegment == ActionsSegment.TASKS) listOf("活跃", "待处理", "已完成", "已忽略")
                 else listOf("活跃", "待确认", "已记住", "已忽略")
-            labels.forEach { label -> KoeFilterChip(label, filter == label, { filter = label }) }
+            labels.forEach { label -> KoeFilterChip(label, filter == label, { filter = label }, Modifier.testTag("review-filter-" + label)) }
         }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),

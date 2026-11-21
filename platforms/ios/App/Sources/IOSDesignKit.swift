@@ -47,16 +47,19 @@ struct IOSPrimaryButton: View {
     var systemImage: String?
     var isPrimary: Bool = true
     let action: () -> Void
+    let minimumHeight: CGFloat
 
     init(
         _ title: String,
         systemImage: String? = nil,
         isPrimary: Bool = true,
+        minimumHeight: CGFloat = 38,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.systemImage = systemImage
         self.isPrimary = isPrimary
+        self.minimumHeight = minimumHeight
         self.action = action
     }
 
@@ -72,7 +75,7 @@ struct IOSPrimaryButton: View {
             .font(.system(size: AppFontSizes.xs, weight: .semibold))
             .foregroundStyle(isPrimary ? IOSColors.onAccent : IOSColors.textPrimary)
             .padding(.horizontal, 14)
-            .frame(minHeight: 38)
+            .frame(minHeight: minimumHeight)
             .background(
                 isPrimary ? IOSColors.accent : IOSColors.bgSubtle,
                 in: RoundedRectangle(cornerRadius: IOSRadii.control)

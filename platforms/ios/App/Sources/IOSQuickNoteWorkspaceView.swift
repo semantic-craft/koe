@@ -147,7 +147,7 @@ struct IOSQuickNoteCardList: View {
                     .contentShape(Rectangle())
                 }.buttonStyle(.plain)
                 if selection == nil {
-                    IOSProjectMenu(title: "项目归类", projects: projects.map(\.name)) { project in
+                    IOSProjectMenu(title: "项目归类", identifier: "project-assign-\(card.id)", projects: projects.map(\.name)) { project in
                         store.send(.setRecordProject(recordId: card.id, project: project))
                     }
                 }
@@ -158,6 +158,7 @@ struct IOSQuickNoteCardList: View {
 
 struct IOSProjectMenu: View {
     let title: String
+    var identifier = "project-batch-assign"
     let projects: [String]
     let assign: (String?) -> Void
     @State private var creating = false
@@ -170,15 +171,19 @@ struct IOSProjectMenu: View {
                 name = ""
                 creating = true
             }
+            .accessibilityIdentifier("project-new")
             Button("移回收件箱") { assign(nil) }
         } label: {
             Label(title, systemImage: "folder")
         }
+        .accessibilityIdentifier(identifier)
         .alert("新建项目", isPresented: $creating) {
             TextField("项目名称", text: $name)
                 .onSubmit { submitName() }
+                .accessibilityIdentifier("project-name")
             Button("取消", role: .cancel) {}
             Button("归入项目") { submitName() }.disabled(trimmedName.isEmpty)
+            .accessibilityIdentifier("project-confirm")
         }
     }
 

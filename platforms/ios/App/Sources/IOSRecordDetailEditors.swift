@@ -88,6 +88,7 @@ struct IOSEditForm<Fields: View>: View {
         NavigationStack {
             Form {
                 TextField(title, text: $text, axis: .vertical).lineLimit(1...12)
+                .accessibilityIdentifier("editor-value")
                     .onSubmit { if allowsEmpty || !trimmed.isEmpty { save(trimmed) } }
                 fields()
                 IOSHostErrorBar(store: store)
@@ -98,6 +99,7 @@ struct IOSEditForm<Fields: View>: View {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save(trimmed) }.disabled(!allowsEmpty && trimmed.isEmpty)
+                    .accessibilityIdentifier("editor-save")
                 }
             }
         }

@@ -102,7 +102,7 @@ internal fun DeviceFilesSection(device: DeviceSnapshot, store: HostSessionStore,
                         if (file.synced) {
                             KoeBadge(text = "已取回", tint = colors.success)
                             file.recordId?.takeIf { it.isNotBlank() }?.let { id ->
-                                KoePrimaryButton("查看记录", { onOpenRecord(id) }, isPrimary = false)
+                                KoePrimaryButton("查看记录", { onOpenRecord(id) }, Modifier.testTag("device-open-record-$id"), isPrimary = false)
                             }
                         } else {
                             KoePrimaryButton(

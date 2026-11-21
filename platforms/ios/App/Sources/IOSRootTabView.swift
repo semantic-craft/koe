@@ -56,6 +56,7 @@ struct IOSRootTabView: View {
             }
             .tabItem {
                 Label("今天", systemImage: "square.grid.2x2")
+                .accessibilityIdentifier("tab-today")
             }
             .tag(IOSAppTab.today)
 
@@ -69,6 +70,7 @@ struct IOSRootTabView: View {
             }
             .tabItem {
                 Label("记录", systemImage: "tray.full")
+                .accessibilityIdentifier("tab-records")
             }
             .tag(IOSAppTab.records)
 
@@ -82,6 +84,7 @@ struct IOSRootTabView: View {
             }
             .tabItem {
                 Label("行动", systemImage: "checklist")
+                .accessibilityIdentifier("tab-actions")
             }
             .tag(IOSAppTab.actions)
 
@@ -95,6 +98,7 @@ struct IOSRootTabView: View {
             }
             .tabItem {
                 Label("问 AI", systemImage: "bubble.left.and.text.bubble.right")
+                .accessibilityIdentifier("tab-ask")
             }
             .tag(IOSAppTab.ask)
         }
@@ -283,6 +287,7 @@ private struct IOSUndoTrashBar: View {
                         store.send(.restoreRecord(recordId: undo.recordId))
                     }
                 }
+                .accessibilityIdentifier("trash-undo")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -306,6 +311,7 @@ private struct IOSUndoTrashBar: View {
 
 struct IOSHostErrorBar: View {
     let store: HostSessionStore
+    var identifier = "host-error"
 
     var body: some View {
         if let errorMessage = store.navigation.effectiveError {
@@ -314,6 +320,7 @@ struct IOSHostErrorBar: View {
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(IOSColors.danger)
                 Text(errorMessage)
+                    .accessibilityIdentifier(identifier)
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(IOSColors.textPrimary)
                     .lineLimit(2)

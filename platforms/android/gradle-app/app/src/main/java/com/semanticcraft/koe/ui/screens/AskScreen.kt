@@ -1,5 +1,7 @@
 package com.semanticcraft.koe.ui.screens
 
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.semantics
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.foundation.BorderStroke
@@ -72,6 +74,7 @@ import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeShapes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun AskScreen(
     store: HostSessionStore,
@@ -100,6 +103,7 @@ fun AskScreen(
         listState.scrollToItem(last)
     }
     if (picking) AlertDialog(
+        modifier = Modifier.semantics { testTagsAsResourceId = true },
         onDismissRequest = { picking = false },
         title = { Text("选择问答记录") },
         text = {
@@ -112,7 +116,7 @@ fun AskScreen(
                 items(records, key = { it.id }) { record ->
                     TextButton(onClick = {
                         if (store.sendReturningError(HostCommand.SetAskScope("record", record.id)) == null) picking = false
-                    }, modifier = Modifier.fillMaxWidth()) { Text(record.title) }
+                    }, modifier = Modifier.fillMaxWidth().testTag("ask-scope-" + record.id)) { Text(record.title) }
                 }
             }
         },
@@ -152,7 +156,7 @@ fun AskScreen(
                     selected = ask.scope == "all",
                     onClick = { store.send(HostCommand.SetAskScope(scope = "all", recordId = null)) },
                 )
-                if (records.isNotEmpty()) KoeFilterChip("选择记录", false, { picking = true })
+                if (records.isNotEmpty()) KoeFilterChip("选择记录", false, { picking = true }, Modifier.testTag("ask-scope-picker"))
                 if (scopedRecord != null) {
                     KoeFilterChip(
                         label = scopedRecord.title,
@@ -231,7 +235,7 @@ fun AskScreen(
                 KoeFilterChip(
                     label = scopedRecord?.title?.takeIf { ask.scope == "record" } ?: "选择记录",
                     selected = ask.scope == "record",
-                    modifier = Modifier.widthIn(max = 168.dp),
+                    modifier = Modifier.widthIn(max = 168.dp).testTag("ask-scope-picker"),
                     onClick = { picking = true },
                 )
             }
