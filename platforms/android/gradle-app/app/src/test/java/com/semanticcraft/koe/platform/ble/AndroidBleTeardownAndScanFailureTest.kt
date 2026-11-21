@@ -206,7 +206,7 @@ class AndroidBleTeardownAndScanFailureTest {
             requestBlePermission = { cb -> cb(true) },
             clockMs = { clock.nowMs },
             scheduleDelayed = clock::schedule,
-            onForegroundRequirementChanged = { foregroundChanges.add(it) },
+            onForegroundRequirementChanged = { foregroundChanges.add(it != BleForegroundActivity.IDLE) },
         )
         val hostCoordinator = AndroidHostCoordinator(
             tickIntervalMs = 250L,

@@ -27,6 +27,9 @@ impl TransportSession {
                 } else {
                     (0, pkt.payload[0])
                 };
+                if self.observe_realtime_pause(state, (fid > 0).then_some(fid), now_epoch_sec, outcome) {
+                    return;
+                }
                 if state == 1 {
                     self.device_recording_active = true;
                     if fid > 0 {
@@ -110,6 +113,9 @@ impl TransportSession {
                 } else {
                     0
                 };
+                if self.observe_realtime_pause(state, (fid > 0).then_some(fid), now_epoch_sec, outcome) {
+                    return;
+                }
                 if state == 1 {
                     self.device_recording_active = true;
                     if fid > 0 {
@@ -176,6 +182,9 @@ impl TransportSession {
                 }
             } else if pkt.payload.len() == 1 {
                 let state = pkt.payload[0];
+                if self.observe_realtime_pause(state, None, now_epoch_sec, outcome) {
+                    return;
+                }
                 if state == 1 {
                     self.device_recording_active = true;
                     if let Some(fid) = self

@@ -82,6 +82,8 @@ class HostSessionStore(
     val settings: StateFlow<SettingsSlice> = _settings.asStateFlow()
     private val _playback = MutableStateFlow(HostSnapshot.empty.playback)
     val playback: StateFlow<PlaybackSnapshot> = _playback.asStateFlow()
+    private val _keepAwake = MutableStateFlow(false)
+    val keepAwake = _keepAwake.asStateFlow()
     private val _activeCapture = MutableStateFlow<ActiveCaptureSnapshot?>(null)
     val activeCapture: StateFlow<ActiveCaptureSnapshot?> = _activeCapture.asStateFlow()
     private val _liveCaption = MutableStateFlow<LiveCaptionSnapshot?>(null)
@@ -197,7 +199,7 @@ class HostSessionStore(
     }
 
     fun performCaptureAction(action: CaptureAction) {
-        if (action == CaptureAction.RESUME) {
+        if (action == CaptureAction.RESUME && (currentMicrophone() != null || captureStudio.value.studio.activeSource != "bean")) {
             bridgeActions.resumeMicrophone()
         } else {
             send(HostCommand.CaptureActionCommand(action = action))
@@ -458,6 +460,7 @@ class HostSessionStore(
         _device.value = snap.device
         _settings.value = SettingsSlice.from(snap)
         _playback.value = snap.playback
+        _keepAwake.value = snap.lifecycle?.keepAwake == true
         _activeCapture.value = snap.activeCapture
         _liveCaption.value = snap.liveCaption
     }

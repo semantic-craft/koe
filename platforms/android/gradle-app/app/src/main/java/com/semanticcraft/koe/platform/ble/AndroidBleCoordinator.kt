@@ -15,7 +15,7 @@ class AndroidBleCoordinator(
     private val requestBlePermission: ((Boolean) -> Unit) -> Unit,
     private val clockMs: () -> Long = { SystemClock.elapsedRealtime() },
     private val scheduleDelayed: (Long, () -> Unit) -> AutoCloseable = CoroutineDelayScheduler()::schedule,
-    private val onForegroundRequirementChanged: (Boolean) -> Unit = {},
+    private val onForegroundRequirementChanged: (BleForegroundActivity) -> Unit = {},
 ) : AndroidHostAdapter, BleTransportListener {
     private enum class WriteAction { IGNORE, FINISH_TEARDOWN, PUMP_TEARDOWN, FLUSH, FAIL }
 
@@ -52,7 +52,7 @@ class AndroidBleCoordinator(
     private var teardownEpoch: Long = 0L
     private var permissionRequestInFlight: Boolean = false
     private var lastObservedAutoConnect: Boolean? = null
-    private var lastForegroundRequired: Boolean = false
+    private var lastForegroundActivity = BleForegroundActivity.IDLE
     private var scheduledPump: AutoCloseable? = null
     private var teardownDeadline: AutoCloseable? = null
     private var pumping: Boolean = false
@@ -68,7 +68,8 @@ class AndroidBleCoordinator(
             lastObservedAutoConnect = null
         }
         val device = store.device.value
-        syncWithRuntimeDevice(device)
+        syncWithRuntimeDevice(device, store.captureStudio.value.studio.activeSource == "bean" &&
+            store.currentMicrophone() == null, store.activeCapture.value?.phase)
         if (device.autoConnect &&
             !device.connected &&
             device.phase == "disconnected" &&
@@ -88,11 +89,12 @@ class AndroidBleCoordinator(
             frames to payloadMtu
         }
         beginTeardown(stopFrames, mtu)
-        emitForegroundRequirement(false)
+        emitForegroundRequirement(BleForegroundActivity.IDLE)
     }
 
     override fun onSnapshotChanged(snapshot: HostSnapshot) {
-        syncWithRuntimeDevice(snapshot.device)
+        syncWithRuntimeDevice(snapshot.device, snapshot.capture.activeSource == "bean" &&
+            snapshot.microphone == null, snapshot.activeCapture?.phase)
         flushOutboundFrames()
     }
 
@@ -231,10 +233,15 @@ class AndroidBleCoordinator(
         }
     }
 
-    fun syncWithRuntimeDevice(device: DeviceSnapshot) {
-        val foregroundRequired = device.connected &&
-            (device.recording || device.transferPhase == "pulling_offline" || device.busy)
-        emitForegroundRequirement(foregroundRequired)
+    private fun syncWithRuntimeDevice(device: DeviceSnapshot, beanCapture: Boolean, phase: String?) {
+        val activity = when {
+            !device.connected -> BleForegroundActivity.IDLE
+            beanCapture && phase == "recording" -> BleForegroundActivity.RECORDING
+            beanCapture && phase == "paused" -> BleForegroundActivity.PAUSED
+            device.recording || device.transferPhase == "pulling_offline" || device.busy -> BleForegroundActivity.SYNC
+            else -> BleForegroundActivity.IDLE
+        }
+        emitForegroundRequirement(activity)
 
         val state = synchronized(lock) {
             val wasAutoConnectDisabled = (lastObservedAutoConnect == false)
@@ -454,12 +461,12 @@ class AndroidBleCoordinator(
     private fun decodeStopFrames(device: DeviceSnapshot): List<ByteArray> =
         device.teardownStopFramesHex.mapNotNull(BleHex::decode).filter { it.isNotEmpty() }
 
-    private fun emitForegroundRequirement(required: Boolean) {
+    private fun emitForegroundRequirement(required: BleForegroundActivity) {
         val changed = synchronized(lock) {
-            if (lastForegroundRequired == required) {
+            if (lastForegroundActivity == required) {
                 false
             } else {
-                lastForegroundRequired = required
+                lastForegroundActivity = required
                 true
             }
         }

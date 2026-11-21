@@ -70,6 +70,7 @@ data class CaptureForegroundState(
     val active: Boolean,
     val paused: Boolean,
     val modeTitle: String? = null,
+    val beanCapture: Boolean = false,
 )
 
 class MicrophoneMailbox(

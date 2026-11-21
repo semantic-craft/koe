@@ -367,7 +367,9 @@ class HostSessionStoreTest {
 
     @Test
     fun performCaptureActionRoutesResumeToBridgeAndFlushesBleForOtherActions() {
-        val bridge = FakeHostBridgeClient(snapshotJson = loadRichAndroidSnapshot())
+        val fixture = HostJson.json.decodeFromString(HostSnapshot.serializer(), loadRichAndroidSnapshot())
+        val microphoneCapture = fixture.copy(capture = fixture.capture.copy(activeSource = "system_default"))
+        val bridge = FakeHostBridgeClient(snapshotJson = HostJson.json.encodeToString(HostSnapshot.serializer(), microphoneCapture))
         val store = HostSessionStore(workspacePath = "/tmp/koe-capture-routing", bridge = bridge)
         var resumeCount = 0
         var flushCount = 0

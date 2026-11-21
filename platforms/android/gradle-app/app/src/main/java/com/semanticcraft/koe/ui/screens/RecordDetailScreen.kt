@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Subject
@@ -67,7 +68,7 @@ fun RecordDetailScreen(
     val slice by store.recordDetail.collectAsStateWithLifecycle()
     val records by store.records.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
-    var selectedTab by rememberSaveable { mutableStateOf(DetailTab.SUMMARY) }
+    var selectedTab by rememberSaveable(recordId) { mutableStateOf(DetailTab.SUMMARY) }
 
     LaunchedEffect(recordId) {
         if (store.recordDetail.value.detail?.id != recordId) {
@@ -76,6 +77,14 @@ fun RecordDetailScreen(
     }
 
     val detail = slice.detail?.takeIf { it.id == recordId }
+    val listState = rememberLazyListState()
+    val focusIndex = detail?.segments?.indexOfFirst { it.id == slice.focusSegmentId } ?: -1
+    LaunchedEffect(recordId, slice.focusSegmentId, focusIndex) {
+        if (focusIndex >= 0) {
+            selectedTab = DetailTab.TRANSCRIPT
+            listState.requestScrollToItem(focusIndex + 1) // The detail header precedes the segments.
+        }
+    }
     val fallbackRecord = records.firstOrNull { it.id == recordId }
 
     Column(
@@ -108,6 +117,7 @@ fun RecordDetailScreen(
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),

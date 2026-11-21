@@ -38,6 +38,7 @@ impl TransportSession {
         self.ecdh_private_key = None;
         self.session_key = None;
         self.clear_file_decryption();
+        self.realtime_pause = RealtimePause::Running;
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;
         self.pre_start_entries.clear();
@@ -69,6 +70,7 @@ impl TransportSession {
         self.ecdh_private_key = None;
         self.session_key = None;
         self.clear_file_decryption();
+        self.realtime_pause = RealtimePause::Running;
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;
         self.connection_phase = ConnectionPhaseTag::Disconnected;
@@ -282,10 +284,12 @@ impl TransportSession {
     pub(super) fn handle_device_info_packet(
         &mut self,
         pkt: &DecodedPacket,
+        now_epoch_sec: u64,
         outcome: &mut SessionIngestOutcome,
     ) {
             let info = DeviceInfoModel::parse_packet(&pkt.raw);
-            let is_rec = info.recording();
+            let continuing = self.observe_realtime_pause(info.recording_status, None, now_epoch_sec, outcome);
+            let is_rec = info.recording() || continuing;
             self.device_recording_active = is_rec;
             if is_rec {
                 if !self.active_is_realtime || self.active_file_id.is_none() {

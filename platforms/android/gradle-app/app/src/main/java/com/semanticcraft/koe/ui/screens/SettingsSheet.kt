@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -14,6 +16,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.mapSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +39,36 @@ import com.semanticcraft.koe.ui.components.KoeModalSheet
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
+
+// Only non-secret fields belong in Android saved instance state.
+private val settingsDraftSaver = mapSaver(
+    save = { draft: ModelSettingsDraft ->
+        mapOf(
+            "qwenWorkspaceId" to draft.qwenWorkspaceId,
+            "customChatEndpoint" to draft.customChatEndpoint,
+            "customAsrEndpoint" to draft.customAsrEndpoint,
+            "asrProvider" to draft.asrProvider,
+            "qwenAsrModel" to draft.qwenAsrModel,
+            "llmProvider" to draft.llmProvider,
+            "deepseekLlmModel" to draft.deepseekLlmModel,
+            "customLlmModel" to draft.customLlmModel,
+            "enableThinking" to draft.enableThinking,
+        )
+    },
+    restore = { saved ->
+        ModelSettingsDraft(
+            qwenWorkspaceId = saved.getValue("qwenWorkspaceId") as String,
+            customChatEndpoint = saved.getValue("customChatEndpoint") as String,
+            customAsrEndpoint = saved.getValue("customAsrEndpoint") as String,
+            asrProvider = saved.getValue("asrProvider") as String,
+            qwenAsrModel = saved.getValue("qwenAsrModel") as String,
+            llmProvider = saved.getValue("llmProvider") as String,
+            deepseekLlmModel = saved.getValue("deepseekLlmModel") as String,
+            customLlmModel = saved.getValue("customLlmModel") as String,
+            enableThinking = saved.getValue("enableThinking") as Boolean,
+        )
+    },
+)
 
 private data class ProviderModelSyncKey(
     val asrProvider: String,
@@ -71,7 +105,7 @@ fun SettingsSheet(
     val speech = settings.speech
     val colors = KoeTheme.colors
 
-    var draft by remember { mutableStateOf(ModelSettingsDraft.from(provider)) }
+    var draft by rememberSaveable(stateSaver = settingsDraftSaver) { mutableStateOf(ModelSettingsDraft.from(provider)) }
     val modelSyncKey = provider.modelSyncKey()
     var lastSyncedKey by remember { mutableStateOf(modelSyncKey) }
     var showSavedNotice by remember { mutableStateOf(false) }
@@ -123,6 +157,18 @@ fun SettingsSheet(
                     isPrimary = false,
                     onClick = onDismiss,
                     modifier = Modifier.testTag("settings-sheet-close"),
+                )
+            }
+
+            navigation.effectiveError?.let { errorMessage ->
+                val errorBanner = remember { BringIntoViewRequester() }
+                LaunchedEffect(errorMessage) { errorBanner.bringIntoView() }
+                Text(
+                    modifier = Modifier.bringIntoViewRequester(errorBanner),
+                    text = errorMessage,
+                    color = colors.danger,
+                    fontSize = KoeFontSizes.xs,
+                    fontWeight = FontWeight.Medium,
                 )
             }
 
@@ -257,14 +303,6 @@ fun SettingsSheet(
 
             KoeCard {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    navigation.effectiveError?.let { errorMessage ->
-                        Text(
-                            text = errorMessage,
-                            color = colors.danger,
-                            fontSize = KoeFontSizes.xs,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
                     if (showSavedNotice) {
                         Text(
                             text = "已保存模型配置",

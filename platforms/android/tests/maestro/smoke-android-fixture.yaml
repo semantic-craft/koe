@@ -22,7 +22,7 @@ appId: com.semanticcraft.koe
     visible: "\\[S1\\]"
     timeout: 10000
 - tapOn:
-    id: "ask-source-chip-1"
+    text: "查看摘录"
 - extendedWaitUntil:
     visible: "原文来源"
     timeout: 10000

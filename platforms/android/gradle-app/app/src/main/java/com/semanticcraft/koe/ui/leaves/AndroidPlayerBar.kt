@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -51,6 +52,8 @@ fun AndroidPlayerBar(
 
     val colors = KoeTheme.colors
     val durationMs = nav.detailDurationMs.coerceAtLeast(1L)
+    var dragPosition by remember(playback.recordId, playback.lane) { mutableStateOf<Long?>(null) }
+    val position = dragPosition ?: playback.positionMs
     var laneMenuExpanded by remember { mutableStateOf(false) }
 
     Surface(
@@ -105,7 +108,7 @@ fun AndroidPlayerBar(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "${TimeLabel.duration(playback.positionMs)} / ${TimeLabel.duration(nav.detailDurationMs)}",
+                        text = "${TimeLabel.duration(position)} / ${TimeLabel.duration(nav.detailDurationMs)}",
                         color = colors.textMuted,
                         fontSize = KoeFontSizes.xs,
                         modifier = Modifier.testTag("player-position-label"),
@@ -143,8 +146,12 @@ fun AndroidPlayerBar(
             }
 
             Slider(
-                value = playback.positionMs.coerceIn(0L, durationMs).toFloat(),
-                onValueChange = { pos -> store.send(HostCommand.Seek(pos.toLong())) },
+                value = position.coerceIn(0L, durationMs).toFloat(),
+                onValueChange = { dragPosition = it.toLong() },
+                onValueChangeFinished = {
+                    dragPosition?.let { store.send(HostCommand.Seek(it)) }
+                    dragPosition = null
+                },
                 valueRange = 0f..durationMs.toFloat(),
                 colors = SliderDefaults.colors(
                     thumbColor = colors.accent,
@@ -153,6 +160,30 @@ fun AndroidPlayerBar(
                 ),
                 modifier = Modifier.semantics { contentDescription = "播放进度" },
             )
+        }
+    }
+}
+
+@Composable
+fun AndroidMiniPlayerBar(store: HostSessionStore, visibleRecordId: String?, onOpenRecord: (String) -> Unit) {
+    val playback by store.playback.collectAsStateWithLifecycle()
+    val asset = playback.asset ?: return
+    val id = playback.recordId ?: return
+    if (id == visibleRecordId) return
+    val records by store.records.collectAsStateWithLifecycle()
+    val record = records.firstOrNull { it.id == id }
+    val duration = record?.durationMs?.takeIf { it > 0 } ?: asset.durationNs / 1_000_000
+    Surface(onClick = { onOpenRecord(id) }, color = KoeTheme.colors.surface1,
+        modifier = Modifier.fillMaxWidth().testTag("mini-player-bar")) {
+        Row(modifier = Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { store.send(HostCommand.Playback(!playback.isPlaying)) }) {
+                Icon(if (playback.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (playback.isPlaying) "暂停播放" else "开始播放")
+            }
+            Text(record?.title ?: "录音回放", modifier = Modifier.weight(1f), maxLines = 1,
+                overflow = TextOverflow.Ellipsis, fontSize = KoeFontSizes.sm)
+            Text("${TimeLabel.duration(playback.positionMs)} / ${TimeLabel.duration(duration)}",
+                fontSize = KoeFontSizes.xs)
         }
     }
 }

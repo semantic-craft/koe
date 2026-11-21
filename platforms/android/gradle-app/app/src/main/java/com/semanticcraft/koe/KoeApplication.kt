@@ -10,6 +10,7 @@ import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.JniHostBridgeClient
 import com.semanticcraft.koe.platform.AndroidHostCoordinator
 import com.semanticcraft.koe.platform.ble.AndroidBleCoordinator
+import com.semanticcraft.koe.platform.ble.BleForegroundActivity
 import com.semanticcraft.koe.platform.ble.SharedPreferencesBleAddressStore
 import com.semanticcraft.koe.platform.ble.SystemAndroidBleTransport
 import com.semanticcraft.koe.platform.capture.AndroidAudioInputMonitor
@@ -24,13 +25,16 @@ import com.semanticcraft.koe.platform.playback.AndroidAudioTrackSink
 import com.semanticcraft.koe.platform.playback.AndroidPlaybackCoordinator
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class KoeApplication : Application() {
     private val sessionLock = Any()
     private val foregroundLock = Any()
     private var currentStore: HostSessionStore? = null
     private var captureForegroundState = CaptureForegroundState(active = false, paused = false, modeTitle = null)
-    private var bleForegroundActive = false
+    private val traceWriter = Executors.newSingleThreadExecutor()
+    private var bleForegroundActivity = BleForegroundActivity.IDLE
     private var lastSyncedForeground: Pair<CaptureForegroundState, Int>? = null
     val hostCoordinator = AndroidHostCoordinator()
     val permissionCoordinator: AndroidPermissionCoordinator by lazy {
@@ -80,22 +84,21 @@ class KoeApplication : Application() {
     private fun updateCaptureForegroundState(state: CaptureForegroundState) {
         synchronized(foregroundLock) {
             captureForegroundState = state
+            syncForegroundServiceLocked()
         }
-        syncForegroundService()
     }
 
-    private fun updateBleForegroundRequirement(required: Boolean) {
+    private fun updateBleForegroundRequirement(required: BleForegroundActivity) {
         synchronized(foregroundLock) {
-            bleForegroundActive = required
+            bleForegroundActivity = required
+            syncForegroundServiceLocked()
         }
-        syncForegroundService()
     }
 
-    private fun syncForegroundService() {
-        val (captureState, bleRequired) = synchronized(foregroundLock) {
-            captureForegroundState to bleForegroundActive
-        }
-        val effectiveBle = bleRequired && permissionCoordinator.hasBlePermissions()
+    private fun syncForegroundServiceLocked() {
+        val captureState = captureForegroundState
+        val bleActivity = bleForegroundActivity
+        val effectiveBle = bleActivity != BleForegroundActivity.IDLE && permissionCoordinator.hasBlePermissions()
         var fgsFlags = 0
         if (captureState.active) {
             fgsFlags = fgsFlags or KoeCaptureForegroundService.FGS_FLAG_MICROPHONE
@@ -107,23 +110,16 @@ class KoeApplication : Application() {
             captureState.active -> captureState
             effectiveBle -> CaptureForegroundState(
                 active = true,
-                paused = false,
+                paused = bleActivity == BleForegroundActivity.PAUSED,
                 modeTitle = "Soundcore Work",
+                beanCapture = bleActivity == BleForegroundActivity.RECORDING || bleActivity == BleForegroundActivity.PAUSED,
             )
             else -> CaptureForegroundState(active = false, paused = false, modeTitle = null)
         }
         val target = combinedState to fgsFlags
-        val changed = synchronized(foregroundLock) {
-            if (lastSyncedForeground == target) {
-                false
-            } else {
-                lastSyncedForeground = target
-                true
-            }
-        }
-        if (changed) {
-            KoeCaptureForegroundService.sync(this, combinedState, fgsFlags)
-        }
+        if (lastSyncedForeground == target) return
+        lastSyncedForeground = target
+        KoeCaptureForegroundService.sync(this, combinedState, fgsFlags)
     }
 
     fun setForegroundActive(active: Boolean) {
@@ -148,7 +144,13 @@ class KoeApplication : Application() {
         }
 
         val workspaceDir = resolveSafeWorkspaceDir(filesDir, debugWorkspace)
-        val traceFile = File(filesDir, TRACE_FILE_NAME)
+        val explicitPath = intent?.getStringExtra(EXTRA_TRACE_PATH)
+        val traceFile = when {
+            explicitPath != null -> resolveStrictChild(File(filesDir, "traces"), explicitPath)
+                ?.takeIf { it.extension == "json" }
+            BuildConfig.DEBUG -> File(filesDir, TRACE_FILE_NAME)
+            else -> null
+        }
 
         var newlyCreated = false
         val store = synchronized(sessionLock) {
@@ -156,6 +158,7 @@ class KoeApplication : Application() {
             if (existing != null && existing.workspacePath == workspaceDir.absolutePath) {
                 existing
             } else {
+                existing?.onTraceUpdated = null
                 existing?.shutdown()
                 workspaceDir.mkdirs()
                 val credentials = if (BuildConfig.DEBUG) {
@@ -171,9 +174,6 @@ class KoeApplication : Application() {
                     allowDebugFixture = BuildConfig.DEBUG,
                     autoOpen = false,
                 )
-                created.onTraceUpdated = {
-                    created.writeTraceAtomically(traceFile)
-                }
                 created.openSession()
                 created.send(
                     HostAdapterEvent.SyncAppMetadata(
@@ -190,6 +190,19 @@ class KoeApplication : Application() {
                 newlyCreated = true
                 created
             }
+        }
+
+        store.onTraceUpdated = traceFile?.let { target ->
+            val pending = AtomicBoolean(false)
+            val enqueue: () -> Unit = {
+                if (pending.compareAndSet(false, true)) {
+                    traceWriter.execute {
+                        pending.set(false)
+                        store.writeTraceAtomically(target)
+                    }
+                }
+            }
+            enqueue
         }
 
         if (newlyCreated) {
@@ -225,20 +238,23 @@ class KoeApplication : Application() {
             }
         }
 
-        store.writeTraceAtomically(traceFile)
+        store.onTraceUpdated?.invoke()
         return store
     }
 
     override fun onTerminate() {
         hostCoordinator.shutdown()
         synchronized(sessionLock) {
+            currentStore?.onTraceUpdated = null
             currentStore?.shutdown()
             currentStore = null
         }
+        traceWriter.shutdown()
         super.onTerminate()
     }
 
     companion object {
+        const val EXTRA_TRACE_PATH = "koe_trace_path"
         const val EXTRA_WORKSPACE = "koe_workspace"
         const val EXTRA_SNAPSHOT_FIXTURE = "koe_snapshot_fixture"
         const val DEFAULT_WORKSPACE_DIR = "KoeWorkspace"

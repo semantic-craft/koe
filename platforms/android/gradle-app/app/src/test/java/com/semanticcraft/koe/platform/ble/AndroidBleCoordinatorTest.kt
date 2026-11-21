@@ -260,7 +260,7 @@ class AndroidBleCoordinatorTest {
             requestBlePermission = { cb -> cb(permissionGranted) },
             clockMs = { nowMs },
             scheduleDelayed = delayScheduler::schedule,
-            onForegroundRequirementChanged = { foregroundChanges.add(it) },
+            onForegroundRequirementChanged = { foregroundChanges.add(it != BleForegroundActivity.IDLE) },
         )
         val hostCoordinator = AndroidHostCoordinator(
             tickIntervalMs = 250L,

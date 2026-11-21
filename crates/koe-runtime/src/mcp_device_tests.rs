@@ -959,3 +959,50 @@ fn mcp_device_start_respects_all_day_and_bean_mode_guards() {
     }
     assert!(runtime.drain_outbound_ble_frames().is_empty());
 }
+
+#[test]
+fn bean_notification_pause_resume_keeps_device_file_and_audio_offset() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let key = connect_simulated_bean(&mut runtime, "notification", NOW);
+    let fid = 7331u32;
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &fid.to_le_bytes()), NOW);
+    runtime.ingest_ble_chunk(&build_head_rx(&key, fid, u32::MAX, &[3; 32], &[1; 16]), NOW);
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&[3; 32], &[1; 16], &[(0, 0)]),
+        NOW,
+    );
+    assert_eq!(runtime.snapshot(NOW)["activeCapture"]["phase"], "recording");
+    runtime.drain_outbound_ble_frames();
+    let pause: Value = serde_json::from_str(
+        &runtime.dispatch_json(r#"{"type":"capture_action","action":"pause"}"#, NOW),
+    )
+    .unwrap();
+    assert!(pause["error"].is_null(), "{}", pause["error"]);
+    assert!(runtime
+        .drain_outbound_ble_frames()
+        .contains(&DeviceCommands::pause_record()));
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[2]), NOW);
+    runtime.ingest_ble_chunk(&build_telemetry_rx(2, 8), NOW);
+    runtime.poll_timers(5_000, NOW + 5);
+    assert_eq!(
+        runtime.snapshot(NOW + 5)["activeCapture"]["phase"],
+        "paused"
+    );
+    let resume: Value = serde_json::from_str(
+        &runtime.dispatch_json(r#"{"type":"capture_action","action":"resume"}"#, NOW + 5),
+    )
+    .unwrap();
+    assert!(resume["error"].is_null(), "{}", resume["error"]);
+    assert!(runtime
+        .drain_outbound_ble_frames()
+        .contains(&DeviceCommands::start_app_recording()));
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[1]), NOW + 5);
+    assert_eq!(
+        runtime.snapshot(NOW + 5)["activeCapture"]["phase"],
+        "recording"
+    );
+    assert!(runtime.drain_outbound_ble_frames().contains(
+        &DeviceCommands::start_transport_audio_file(fid, SLICE_RECORD_BYTES as u32, 1)
+    ));
+}

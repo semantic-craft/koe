@@ -192,6 +192,7 @@ class DeviceSheetBleActionsTest {
             }
         }
 
+        composeRule.onNode(hasText("连接引导  2 / 3")).performScrollTo().assertIsDisplayed()
         composeRule.onNode(hasAnyAncestor(isDialog()) and hasText("下一步引导"))
             .performScrollTo()
             .performSemanticsAction(SemanticsActions.OnClick)
