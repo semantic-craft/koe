@@ -131,7 +131,7 @@ struct HostCommandTests {
 
         store.send(.createTask(recordId: detail.id, segmentId: firstSeg.id))
         let task = try #require(store.snapshot.tasks.first)
-        store.send(.reviewItem(itemId: task.id, decision: "accept"))
+        store.send(.reviewItem(itemId: task.id, decision: .accept))
         store.send(.editItem(itemId: task.id, text: "Verify typed ABI command", due: "2026-11-20"))
         #expect(store.snapshot.tasks.first(where: { $0.id == task.id })?.due == "2026-11-20")
         store.send(.editItem(itemId: task.id, text: "Verify typed ABI command", due: nil))

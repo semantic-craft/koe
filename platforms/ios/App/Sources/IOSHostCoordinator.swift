@@ -7,6 +7,7 @@ import UIKit
 final class IOSHostCoordinator {
     private let store: HostSessionStore
     private let capture: NativeCapture
+    private let localTranscription: NativeLocalTranscription
     private let playback: NativePlayback
     let bluetoothBridge: BluetoothBridge
     private var interruptionObserver: NSObjectProtocol?
@@ -17,8 +18,10 @@ final class IOSHostCoordinator {
     init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
          audioSession: IOSAudioSession = IOSAudioSession(),
          allowsCoreBluetooth: Bool = true,
+         recognizer: (any LocalSpeechRecognizer)? = nil, allowsLocalSpeech: Bool = true,
          nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
         self.store = store
+        localTranscription = NativeLocalTranscription(recognizer: recognizer)
         bluetoothBridge = BluetoothBridge(store: store)
         let microphone = source ?? IOSAudioSource(audioSession: audioSession) { [weak store] message in
             Task { @MainActor in store?.reportNativeError(message) }
@@ -47,6 +50,7 @@ final class IOSHostCoordinator {
             bluetoothBridge.flushOutboundFrames()
             updatePolling()
         }
+        if allowsLocalSpeech { localTranscription.store = store }
         bluetoothBridge.activateHost(allowsCoreBluetooth: allowsCoreBluetooth)
         updatePolling()
     }
@@ -79,6 +83,7 @@ final class IOSHostCoordinator {
                 self.lastTick = now
                 self.store.pollTimers(elapsedMs: elapsed)
                 self.capture.apply()
+                self.localTranscription.apply()
                 self.playback.tick()
                 self.store.bridgeActions.flushBleOutbound()
             }
@@ -97,6 +102,7 @@ final class IOSHostCoordinator {
             self.interruptionObserver = nil
         }
         playback.stop()
+        localTranscription.shutdown()
         capture.shutdown()
         store.bridgeActions = HostBridgeActions()
         UIApplication.shared.isIdleTimerDisabled = false

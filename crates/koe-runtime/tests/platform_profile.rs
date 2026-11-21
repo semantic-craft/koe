@@ -364,3 +364,36 @@ fn invalid_platform_in_sync_app_metadata_is_rejected_without_mutating_profile() 
         assert_eq!(rejected["appUpdate"]["currentVersion"], "2.9.0");
     }
 }
+
+#[test]
+fn first_install_persists_the_supported_speech_engine() {
+    for (platform, expected_engine, supports_native) in [
+        ("android", "cloud", false),
+        ("ios", "apple_speech", true),
+        ("macos", "apple_speech", true),
+    ] {
+        let ws = TempWorkspace::new(platform);
+        let mut runtime = KoeRuntime::open(&ws.0).expect("open fresh workspace");
+        let metadata = json!({
+            "type": "sync_app_metadata", "version": "2.6.0", "build": "15", "platform": platform
+        });
+        let snapshot = send(&mut runtime, metadata, 1);
+        assert!(
+            snapshot["error"].is_null(),
+            "{platform}: {}",
+            snapshot["error"]
+        );
+        assert_eq!(snapshot["speech"]["engine"], expected_engine, "{platform}");
+        assert_eq!(
+            snapshot["platform"]["supportsNativeSpeech"], supports_native,
+            "{platform}"
+        );
+        drop(runtime);
+        let reopened = KoeRuntime::open(&ws.0).expect("reopen workspace");
+        assert_eq!(
+            reopened.snapshot(2)["speech"]["engine"],
+            expected_engine,
+            "{platform}"
+        );
+    }
+}

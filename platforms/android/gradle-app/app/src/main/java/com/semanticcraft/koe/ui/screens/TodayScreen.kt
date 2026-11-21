@@ -66,7 +66,6 @@ fun TodayScreen(
     modifier: Modifier = Modifier,
 ) {
     val today by store.today.collectAsStateWithLifecycle()
-    val navigation by store.navigation.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -80,8 +79,8 @@ fun TodayScreen(
         focusManager.clearFocus()
         keyboardController?.hide()
         val title = trimmed.take(24)
-        store.send(HostCommand.CreateNote(title = title, text = trimmed, stayOnPage = true))
-        if (store.navigation.value.effectiveError == null && navigation.effectiveError == null) {
+        val error = store.sendReturningError(HostCommand.CreateNote(title = title, text = trimmed, stayOnPage = true))
+        if (error == null) {
             quickNoteDraft = ""
         }
     }

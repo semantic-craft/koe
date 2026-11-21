@@ -146,17 +146,22 @@ class HostSessionStore(
     fun writeTraceAtomically(outputFile: File): Boolean = traceBuffer.writeAtomically(outputFile)
 
     fun send(command: HostCommand, nowEpochSec: Long = 0L) {
+        sendReturningError(command, nowEpochSec)
+    }
+
+    fun sendReturningError(command: HostCommand, nowEpochSec: Long = 0L): String? {
         val json = try {
             command.toJsonString()
         } catch (_: Exception) {
+            val message = "无法发送这次操作，请重试。"
             synchronized(stateLock) {
-                setNativeErrorLocked("无法发送这次操作，请重试。")
+                setNativeErrorLocked(message)
                 recordTraceLocked(kind = "command", name = command.commandType)
             }
             onTraceUpdated?.invoke()
-            return
+            return message
         }
-        dispatchEncodedJson(json, traceKind = "command", commandType = command.commandType, nowEpochSec = nowEpochSec)
+        return dispatchEncodedJson(json, traceKind = "command", commandType = command.commandType, nowEpochSec = nowEpochSec)
     }
 
     fun send(event: HostAdapterEvent, nowEpochSec: Long = 0L) {
@@ -358,60 +363,57 @@ class HostSessionStore(
         return result.accepted
     }
 
-    private fun dispatchEncodedJson(json: String, traceKind: String, commandType: String, nowEpochSec: Long) {
-        var traced = false
-        var changedSnapshot: HostSnapshot? = null
-        synchronized(stateLock) {
-            if (handle == 0L) return
-            try {
-                val preservesNativeError = commandType == "sync_audio_inputs" ||
-                    commandType == "sync_app_metadata" ||
-                    commandType.startsWith("local_asr_")
-                if (!preservesNativeError) setNativeErrorLocked(null)
-                val effectiveNow = resolveNowEpochSec(nowEpochSec)
-                val response = bridge.sessionDispatchJson(handle, json, effectiveNow)
-                if (response == null) {
-                    setNativeErrorLocked("操作未能完成，请重试。工作区数据仍然保留。")
-                    return
-                }
-                changedSnapshot = applySnapshotJsonLocked(response, projectedNowSec = effectiveNow, resetGate = false).changed
-            } finally {
-                recordTraceLocked(kind = traceKind, name = commandType)
-                traced = true
+    private fun dispatchEncodedJson(json: String, traceKind: String, commandType: String, nowEpochSec: Long): String? {
+        val result = synchronized(stateLock) {
+            if (handle == 0L) return "工作区未打开。"
+            val preservesNativeError = commandType == "sync_audio_inputs" ||
+                commandType == "sync_app_metadata" ||
+                commandType.startsWith("local_asr_")
+            if (!preservesNativeError) setNativeErrorLocked(null)
+            val effectiveNow = resolveNowEpochSec(nowEpochSec)
+            val response = bridge.sessionDispatchJson(handle, json, effectiveNow)
+            val applied = if (response == null) {
+                snapshotFailureLocked("操作未能完成，请重试。工作区数据仍然保留。")
+            } else {
+                applySnapshotJsonLocked(response, projectedNowSec = effectiveNow, resetGate = false)
             }
+            recordTraceLocked(kind = traceKind, name = commandType)
+            applied
         }
-        changedSnapshot?.let { onSnapshotChanged?.invoke(it) }
-        if (traced) {
-            onTraceUpdated?.invoke()
-        }
+        result.changed?.let { onSnapshotChanged?.invoke(it) }
+        onTraceUpdated?.invoke()
+        return result.error
     }
 
-    private data class ApplySnapshotResult(val accepted: Boolean, val changed: HostSnapshot? = null)
+    private data class ApplySnapshotResult(val accepted: Boolean, val changed: HostSnapshot? = null, val error: String? = null)
+
+    private fun snapshotFailureLocked(message: String): ApplySnapshotResult {
+        setNativeErrorLocked(message)
+        return ApplySnapshotResult(false, error = message)
+    }
 
     private fun applySnapshotJsonLocked(json: String, projectedNowSec: Long, resetGate: Boolean): ApplySnapshotResult {
         val decoded = try {
             HostJson.json.decodeFromString(HostSnapshot.serializer(), json)
         } catch (_: Exception) {
-            setNativeErrorLocked("无法读取数据引擎的回应，请重新打开应用。")
-            return ApplySnapshotResult(false)
+            return snapshotFailureLocked("无法读取数据引擎的回应，请重新打开应用。")
         }
         if (decoded.version != EXPECTED_ABI_VERSION) {
-            setNativeErrorLocked("数据引擎返回了不兼容的版本。")
-            return ApplySnapshotResult(false)
+            return snapshotFailureLocked("数据引擎返回了不兼容的版本。")
         }
         if (resetGate) {
             nativeError = null
             requestGate.reset(decoded.generation)
         } else if (!requestGate.acceptRustGeneration(decoded.generation)) {
-            return ApplySnapshotResult(false)
+            return ApplySnapshotResult(false, error = decoded.error)
         }
         if (projectedNowSec > 0L) lastProjectedNowSec = projectedNowSec
         if (decoded != currentSnapshot || resetGate) {
             currentSnapshot = decoded
             reconcileSlicesLocked()
-            return ApplySnapshotResult(accepted = true, changed = decoded)
+            return ApplySnapshotResult(accepted = true, changed = decoded, error = decoded.error)
         }
-        return ApplySnapshotResult(accepted = true)
+        return ApplySnapshotResult(accepted = true, error = decoded.error)
     }
 
     private fun setNativeErrorLocked(message: String?) {

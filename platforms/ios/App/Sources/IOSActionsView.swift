@@ -70,17 +70,19 @@ struct IOSActionsView: View {
         IOSCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
-                    Button {
-                        store.send(.completeTask(itemId: task.id, completed: !task.completed))
-                    } label: {
-                        Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: AppFontSizes.md))
-                            .foregroundStyle(task.completed ? IOSColors.success : IOSColors.textMuted)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
+                    if task.state == "accepted" {
+                        Button {
+                            store.send(.completeTask(itemId: task.id, completed: !task.completed))
+                        } label: {
+                            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: AppFontSizes.md))
+                                .foregroundStyle(task.completed ? IOSColors.success : IOSColors.textMuted)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(task.completed ? "标记未完成" : "标记已完成")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(task.completed ? "标记未完成" : "标记已完成")
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(task.text)
@@ -105,10 +107,10 @@ struct IOSActionsView: View {
                 if task.state == "proposed" {
                     HStack(spacing: 8) {
                         IOSPrimaryButton("采纳", systemImage: "checkmark", isPrimary: true) {
-                            store.send(.reviewItem(itemId: task.id, decision: "accepted"))
+                            store.send(.reviewItem(itemId: task.id, decision: .accept))
                         }
                         IOSPrimaryButton("忽略", systemImage: "xmark", isPrimary: false) {
-                            store.send(.reviewItem(itemId: task.id, decision: "dismissed"))
+                            store.send(.reviewItem(itemId: task.id, decision: .dismiss))
                         }
                     }
                 }
@@ -146,10 +148,10 @@ struct IOSActionsView: View {
                 if memory.state == "proposed" {
                     HStack(spacing: 8) {
                         IOSPrimaryButton("记住", systemImage: "checkmark", isPrimary: true) {
-                            store.send(.reviewItem(itemId: memory.id, decision: "accepted"))
+                            store.send(.reviewItem(itemId: memory.id, decision: .accept))
                         }
                         IOSPrimaryButton("忽略", systemImage: "xmark", isPrimary: false) {
-                            store.send(.reviewItem(itemId: memory.id, decision: "dismissed"))
+                            store.send(.reviewItem(itemId: memory.id, decision: .dismiss))
                         }
                     }
                 }

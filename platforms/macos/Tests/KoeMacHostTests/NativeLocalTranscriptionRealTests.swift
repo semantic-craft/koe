@@ -1,4 +1,5 @@
 import AVFoundation
+import KoeAppleCore
 import XCTest
 @testable import Koe
 

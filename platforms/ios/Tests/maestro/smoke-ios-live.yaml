@@ -29,6 +29,18 @@ appId: com.semanticcraft.koe.ios
 - takeScreenshot: settings_top
 - scrollUntilVisible:
     element:
+      id: "settings-speech-engine"
+    direction: DOWN
+- tapOn:
+    id: "settings-speech-engine"
+- tapOn: "云端识别"
+- assertVisible: ".*云端识别.*"
+- tapOn:
+    id: "settings-speech-engine"
+- tapOn: "Apple 本机"
+- assertVisible: ".*Apple 本机.*"
+- scrollUntilVisible:
+    element:
       id: "settings-llm-model"
     direction: DOWN
     centerElement: true

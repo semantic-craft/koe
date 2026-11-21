@@ -53,12 +53,12 @@ struct TaskRow: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             if item.state == "proposed" {
                 VStack(spacing: 6) {
-                    KoeActionButton("确认待办") { review("accept") }
-                    Button("忽略") { review("dismiss") }.buttonStyle(.borderless)
+                    KoeActionButton("确认待办") { review(.accept) }
+                    Button("忽略") { review(.dismiss) }.buttonStyle(.borderless)
                         .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                 }
             } else if item.state == "dismissed" {
-                KoeActionButton("恢复") { review("reset") }
+                KoeActionButton("恢复") { review(.reset) }
             } else {
                 Button("编辑") { editing = true }.buttonStyle(.borderless).font(.system(size: AppFontSizes.xs))
             }
@@ -67,7 +67,7 @@ struct TaskRow: View {
                 ItemEditor(store: store, id: item.id, initialText: item.text, initialDue: item.due, isTask: true)
             }
     }
-    private func review(_ decision: String) { store.send(.reviewItem(itemId: item.id, decision: decision)) }
+    private func review(_ decision: ReviewDecision) { store.send(.reviewItem(itemId: item.id, decision: decision)) }
 }
 
 struct MemoryView: View {
@@ -107,15 +107,15 @@ struct MemoryRow: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             if item.state == "proposed" {
                 VStack(spacing: 8) {
-                    KoeActionButton("记住这条") { review("accept") }
-                    Button("忽略") { review("dismiss") }.font(.system(size: AppFontSizes.xs)).buttonStyle(.borderless)
+                    KoeActionButton("记住这条") { review(.accept) }
+                    Button("忽略") { review(.dismiss) }.font(.system(size: AppFontSizes.xs)).buttonStyle(.borderless)
                 }
             } else if item.state == "dismissed" {
-                KoeActionButton("恢复") { review("reset") }
+                KoeActionButton("恢复") { review(.reset) }
             } else {
                 Menu {
                     Button("编辑") { editing = true }
-                    Button("移除") { review("dismiss") }
+                    Button("移除") { review(.dismiss) }
                 } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
                 .menuStyle(.borderlessButton).frame(width: 30)
             }
@@ -124,7 +124,7 @@ struct MemoryRow: View {
                 ItemEditor(store: store, id: item.id, initialText: item.text, initialDue: nil, isTask: false)
             }
     }
-    private func review(_ decision: String) { store.send(.reviewItem(itemId: item.id, decision: decision)) }
+    private func review(_ decision: ReviewDecision) { store.send(.reviewItem(itemId: item.id, decision: decision)) }
 }
 
 public struct ItemEditor: View {

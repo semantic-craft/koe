@@ -185,6 +185,14 @@ data class SpeechSnapshot(
     val appleState: String = "unavailable",
     val appleMessage: String? = null,
 ) {
+    val appleStateLabel: String
+        get() = when (appleState) {
+            "ready" -> "已就绪"
+            "preparing" -> "准备中"
+            "unavailable" -> "暂不可用"
+            else -> "状态未知"
+        }
+
     companion object {
         val empty = SpeechSnapshot()
     }

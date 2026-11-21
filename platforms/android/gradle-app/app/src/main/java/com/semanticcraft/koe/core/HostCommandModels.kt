@@ -4,6 +4,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class ReviewDecision {
+    @SerialName("accept") ACCEPT,
+    @SerialName("dismiss") DISMISS,
+    @SerialName("reset") RESET,
+}
+
+@Serializable
 sealed interface HostCommand {
     fun toJsonString(): String = HostJson.json.encodeToString(serializer(), this)
 
@@ -124,7 +131,7 @@ sealed interface HostCommand {
         val includeSources: Boolean = true,
     ) : HostCommand
 
-    @Serializable @SerialName("review_item") data class ReviewItem(val itemId: String, val decision: String) : HostCommand
+    @Serializable @SerialName("review_item") data class ReviewItem(val itemId: String, val decision: ReviewDecision) : HostCommand
     @Serializable @SerialName("complete_task") data class CompleteTask(val itemId: String, val completed: Boolean) : HostCommand
     @Serializable @SerialName("edit_item")
     data class EditItem(val itemId: String, val text: String, val due: String? = null) : HostCommand

@@ -5,6 +5,22 @@ import Testing
 
 @Suite("KoeAppleCore cross-platform contract")
 struct KoeAppleCorePlatformTests {
+    @Test func reviewDecisionsEncodeRustVerbs() throws {
+        for (decision, verb) in [(ReviewDecision.accept, "accept"), (.dismiss, "dismiss"), (.reset, "reset")] {
+            let data = try JSONEncoder().encode(HostCommand.reviewItem(itemId: "item", decision: decision))
+            let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+            #expect(json == ["type": "review_item", "itemId": "item", "decision": verb])
+        }
+    }
+
+    @Test func legacyPlatformSnapshotsInferNativeSpeech() throws {
+        for (id, supported) in [("android", false), ("ios", true), ("macos", true)] {
+            let json = #"{"id":"\#(id)","hostDisplayName":"Host","supportsSystemAudio":false,"supportsSelfUpdate":false,"nativeSpeechLabel":"本机"}"#
+            let platform = try JSONDecoder().decode(HostPlatformSnapshot.self, from: Data(json.utf8))
+            #expect(platform.supportsNativeSpeech == supported)
+        }
+    }
+
     @Test("syncAppMetadata projects iOS host profile, disables system audio, and sets this_device bean control")
     @MainActor
     func syncAppMetadataProjectsIOSPlatformAndBeanControl() {

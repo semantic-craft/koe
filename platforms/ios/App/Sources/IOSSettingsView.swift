@@ -17,8 +17,8 @@ struct IOSSettingsView: View {
                     DisclosureGroup {
                         LabeledContent("平台标识", value: platform.id)
                         LabeledContent("本机语音引擎", value: platform.nativeSpeechLabel)
-                        LabeledContent("识别模式", value: speech.engine)
-                        LabeledContent("Apple 本机状态", value: speech.appleMessage ?? speech.appleState)
+                        LabeledContent("识别模式", value: engineLabel(speech.engine))
+                        LabeledContent("Apple 本机状态", value: appleStateLabel(speech.appleState))
                         LabeledContent {
                             Text(platform.supportsSystemAudio ? "可用" : "iOS 端不可用")
                         } label: {
@@ -43,6 +43,23 @@ struct IOSSettingsView: View {
                 }
 
                 Section("语音识别（ASR）") {
+                    Picker("识别引擎", selection: Binding(
+                        get: { speech.engine },
+                        set: { store.send(.configureSpeech(engine: $0)) }
+                    )) {
+                        Text("Apple 本机").tag("apple_speech")
+                        Text("云端识别").tag("cloud")
+                        if speech.engine == "downloaded" { Text("下载的本机模型").tag("downloaded") }
+                    }
+                    .accessibilityIdentifier("settings-speech-engine")
+                    if speech.engine == "apple_speech" {
+                        LabeledContent("本机状态", value: appleStateLabel(speech.appleState))
+                        if speech.appleState == "unavailable" {
+                            Text(speech.appleMessage ?? "此设备暂时无法进行本机识别，原始录音仍会保存。")
+                                .foregroundStyle(IOSColors.textSecondary)
+                            Button("切换为云端识别") { store.send(.configureSpeech(engine: "cloud")) }
+                        }
+                    }
                     Picker("提供方", selection: Binding(
                         get: { draft.asrProvider },
                         set: {
@@ -177,6 +194,24 @@ struct IOSSettingsView: View {
                     .accessibilityLabel("清除 \(name) 凭据")
                 }
             }
+        }
+    }
+
+    private func engineLabel(_ engine: String) -> String {
+        switch engine {
+        case "apple_speech": "Apple 本机"
+        case "cloud": "云端识别"
+        case "downloaded": "下载的本机模型"
+        default: "未知引擎"
+        }
+    }
+
+    private func appleStateLabel(_ state: String) -> String {
+        switch state {
+        case "ready": "已就绪"
+        case "preparing": "准备中"
+        case "unavailable": "暂不可用"
+        default: "状态未知"
         }
     }
 

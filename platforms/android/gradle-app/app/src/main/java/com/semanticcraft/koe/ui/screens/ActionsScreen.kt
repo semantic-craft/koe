@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.semanticcraft.koe.core.ReviewDecision
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.MemorySnapshot
@@ -164,16 +165,18 @@ private fun TaskItemCard(
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconButton(
-                    onClick = { store.send(HostCommand.CompleteTask(task.id, !task.completed)) },
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        imageVector = if (task.completed) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
-                        contentDescription = if (task.completed) "标记未完成" else "标记已完成",
-                        tint = if (task.completed) colors.success else colors.textMuted,
-                        modifier = Modifier.size(20.dp),
-                    )
+                if (task.state == "accepted") {
+                    IconButton(
+                        onClick = { store.send(HostCommand.CompleteTask(task.id, !task.completed)) },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (task.completed) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = if (task.completed) "标记未完成" else "标记已完成",
+                            tint = if (task.completed) colors.success else colors.textMuted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
 
                 Column(
@@ -213,13 +216,13 @@ private fun TaskItemCard(
                         title = "采纳",
                         icon = Icons.Outlined.Check,
                         isPrimary = true,
-                        onClick = { store.send(HostCommand.ReviewItem(task.id, "accepted")) },
+                        onClick = { store.send(HostCommand.ReviewItem(task.id, ReviewDecision.ACCEPT)) },
                     )
                     KoePrimaryButton(
                         title = "忽略",
                         icon = Icons.Outlined.Close,
                         isPrimary = false,
-                        onClick = { store.send(HostCommand.ReviewItem(task.id, "dismissed")) },
+                        onClick = { store.send(HostCommand.ReviewItem(task.id, ReviewDecision.DISMISS)) },
                     )
                 }
             }
@@ -272,13 +275,13 @@ private fun MemoryItemCard(
                         title = "记住",
                         icon = Icons.Outlined.Check,
                         isPrimary = true,
-                        onClick = { store.send(HostCommand.ReviewItem(memory.id, "accepted")) },
+                        onClick = { store.send(HostCommand.ReviewItem(memory.id, ReviewDecision.ACCEPT)) },
                     )
                     KoePrimaryButton(
                         title = "忽略",
                         icon = Icons.Outlined.Close,
                         isPrimary = false,
-                        onClick = { store.send(HostCommand.ReviewItem(memory.id, "dismissed")) },
+                        onClick = { store.send(HostCommand.ReviewItem(memory.id, ReviewDecision.DISMISS)) },
                     )
                 }
             }

@@ -48,7 +48,7 @@ public enum KoeSelfCheckRunner {
         let secondSegment = first.segments[1]
         store.send(.createTask(recordId: first.id, segmentId: segment.id))
         guard let task = store.snapshot.tasks.first else { return fail("create task") }
-        store.send(.reviewItem(itemId: task.id, decision: "accept"))
+        store.send(.reviewItem(itemId: task.id, decision: .accept))
         store.send(.createNote(title: "Independent discussion", text: "The blue notebook is on the shelf."))
         guard let second = store.snapshot.detail, store.snapshot.records.count == 2 else { return fail("record isolation") }
         store.send(.selectRecord(recordId: first.id))
@@ -130,7 +130,7 @@ public enum KoeSelfCheckRunner {
         }
         store.send(.saveMemory(recordId: detail.id, segmentId: segment.id))
         guard let memory = store.snapshot.memories.first else { store.shutdown(); return fail("save memory") }
-        store.send(.reviewItem(itemId: memory.id, decision: "accept"))
+        store.send(.reviewItem(itemId: memory.id, decision: .accept))
         store.send(.setRecordProject(recordId: detail.id, project: "自检项目"))
         guard store.snapshot.workspaces?.quickNote.inboxCount == 0 else {
             store.shutdown()

@@ -11,7 +11,8 @@ use koe_engine::{
 };
 use serde_json::{json, Value};
 
-use crate::KoeRuntime;
+use crate::local_asr::Readiness;
+use crate::{KoeRuntime, SpeechEngine};
 
 const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -167,16 +168,23 @@ impl KoeRuntime {
         platform_patch: crate::platform::PlatformMetadataPatch<'_>,
     ) -> Result<(), String> {
         let next_platform = self.platform.apply_patch(platform_patch)?;
-        if let Some(endpoint) = update_endpoint {
-            let trimmed = endpoint.trim();
-            validate_update_endpoint(trimmed)?;
-            if trimmed != self.app_update.endpoint {
-                self.cancel_app_update_check();
-                self.app_update.last_remote = None;
-                self.app_update.outcome = AppUpdateOutcome::Idle;
-                self.app_update.endpoint = trimmed.to_owned();
-                self.clear_app_update_notice();
-            }
+        let endpoint = update_endpoint.map(str::trim);
+        if let Some(endpoint) = endpoint {
+            validate_update_endpoint(endpoint)?;
+        }
+        if !next_platform.supports_native_speech
+            && self.local_asr.state == Readiness::Unavailable
+            && !self.store.requires_reopen()
+            && self.workspace().provider_configuration().speech_engine == SpeechEngine::AppleSpeech
+        {
+            self.configure_speech("cloud", None)?;
+        }
+        if let Some(endpoint) = endpoint.filter(|value| *value != self.app_update.endpoint) {
+            self.cancel_app_update_check();
+            self.app_update.last_remote = None;
+            self.app_update.outcome = AppUpdateOutcome::Idle;
+            self.app_update.endpoint = endpoint.to_owned();
+            self.clear_app_update_notice();
         }
         self.platform = next_platform;
         if !self.platform.supports_system_audio {
