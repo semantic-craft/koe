@@ -6,7 +6,11 @@ struct IOSLiveMinutesCoverageSlotView: View {
 
     var body: some View {
         if let coverage = store.liveMinutesCoverage {
-            VStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("处理进度").font(.headline)
+                    IOSInfoTip("转写覆盖按已转写音频时长计算，纪要覆盖按有引用的原文句数计算。会后整理阶段显示本场会议的收尾状态。", title: "覆盖指标说明")
+                }
                 HStack(spacing: 10) {
                     metricCard(
                         title: "转写覆盖",

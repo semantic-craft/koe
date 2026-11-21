@@ -5,6 +5,9 @@ options:
   deploymentTarget:
     iOS: "17.0"
 packages:
+  ViewInspector:
+    url: https://github.com/nalexn/ViewInspector.git
+    exactVersion: 0.10.5
   KoeAppleShared:
     path: ../apple-shared
 targets:
@@ -55,6 +58,7 @@ targets:
         buildPhase: resources
     dependencies:
       - target: KoeiOSApp
+      - package: ViewInspector
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.semanticcraft.koe.ios.tests

@@ -5,9 +5,6 @@ struct IOSTodayView: View {
     let store: HostSessionStore
     let onOpenWorkspace: (IOSModeWorkspaceRoute) -> Void
 
-    @State private var quickNoteDraft = ""
-    @FocusState private var isQuickNoteFocused: Bool
-
     var body: some View {
         let today = store.today
         let cards = (today.picker?.cards.isEmpty == false ? today.picker?.cards : nil)
@@ -16,7 +13,7 @@ struct IOSTodayView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 headerSection(today)
-                quickFlashNoteCard
+                IOSQuickNoteComposer(store: store)
                 VStack(spacing: 12) {
                     ForEach(cards) { card in
                         modeCard(card)
@@ -42,10 +39,7 @@ struct IOSTodayView: View {
                         title: "模式说明"
                     )
                     Spacer()
-                    IOSBadge(
-                        today.picker?.sourceBadge ?? today.captureSelectedBadge,
-                        tint: IOSColors.accent
-                    )
+                    IOSCaptureSourceButton(store: store, title: today.picker?.sourceBadge ?? today.captureSelectedBadge)
                 }
                 Text(today.picker?.sourceLabel ?? today.captureSelectedLabel)
                     .font(.system(size: AppFontSizes.sm, weight: .medium))
@@ -54,51 +48,6 @@ struct IOSTodayView: View {
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(IOSColors.textMuted)
                     .monospacedDigit()
-            }
-        }
-    }
-
-    private var quickFlashNoteCard: some View {
-        IOSCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.horizontal")
-                        .font(.system(size: AppFontSizes.sm))
-                        .foregroundStyle(IOSColors.accent)
-                    Text("快速文字闪记")
-                        .font(.system(size: AppFontSizes.sm, weight: .semibold))
-                        .foregroundStyle(IOSColors.textPrimary)
-                    Spacer()
-                    IOSInfoTip(
-                        "输入文字后按回车或点击保存闪记，将直接写入本地 Rust 工作区。",
-                        title: "文字闪记"
-                    )
-                }
-
-                HStack(spacing: 8) {
-                    TextField("快速记下一段想法…", text: $quickNoteDraft)
-                        .font(.system(size: AppFontSizes.sm))
-                        .foregroundStyle(IOSColors.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(IOSColors.bgSubtle, in: RoundedRectangle(cornerRadius: IOSRadii.control))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: IOSRadii.control)
-                                .stroke(IOSColors.border, lineWidth: 1)
-                        )
-                        .submitLabel(.done)
-                        .focused($isQuickNoteFocused)
-                        .accessibilityIdentifier("quick-note-input")
-                        .onSubmit {
-                            submitQuickNote()
-                        }
-
-                    IOSPrimaryButton("保存闪记", isPrimary: true) {
-                        submitQuickNote()
-                    }
-                    .disabled(quickNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("quick-note-submit")
-                }
             }
         }
     }
@@ -176,14 +125,12 @@ struct IOSTodayView: View {
         }
     }
 
-    private func submitQuickNote() {
-        let trimmed = quickNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func submitQuickNote(draft: inout String, store: HostSessionStore) {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let title = String(trimmed.prefix(24))
-        isQuickNoteFocused = false
-        store.send(.createNote(title: title, text: trimmed, stayOnPage: true))
-        if store.navigation.effectiveError == nil {
-            quickNoteDraft = ""
+        if store.sendReturningError(.createNote(title: title, text: trimmed, stayOnPage: true)) == nil {
+            draft = ""
         }
     }
 }

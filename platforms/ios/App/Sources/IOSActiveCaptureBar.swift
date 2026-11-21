@@ -26,14 +26,7 @@ struct IOSActiveCaptureBar: View {
 
                 Spacer(minLength: 4)
 
-                ForEach(capture.actions, id: \.self) { action in
-                    IOSPrimaryButton(
-                        actionTitle(action),
-                        isPrimary: action == .end
-                    ) {
-                        store.performCaptureAction(action)
-                    }
-                }
+                IOSCaptureActionButtons(store: store, mode: capture.mode)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -58,8 +51,28 @@ struct IOSActiveCaptureBar: View {
         }
     }
 
-    private func actionTitle(_ action: CaptureAction) -> String {
-        switch action {
+}
+
+struct IOSCaptureActionButtons: View {
+    let store: HostSessionStore
+    let mode: CaptureMode
+
+    var body: some View {
+        if let capture = store.activeCapture, capture.mode == mode {
+            HStack(spacing: 6) {
+                ForEach(capture.actions, id: \.self) { action in
+                    IOSPrimaryButton(action.iosTitle, isPrimary: action == .end) {
+                        store.performCaptureAction(action)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private extension CaptureAction {
+    var iosTitle: String {
+        switch self {
         case .pause: "暂停"
         case .resume: "继续"
         case .end: "结束"

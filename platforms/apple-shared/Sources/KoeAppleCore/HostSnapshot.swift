@@ -9,6 +9,12 @@ public struct SourceSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let startMs: UInt64
 }
 
+extension SourceSnapshot {
+    public init(recordId: String, title: String, segment: SegmentSnapshot) {
+        self.init(recordId: recordId, segmentId: segment.id, title: title, quote: segment.text, startMs: segment.startMs)
+    }
+}
+
 public struct SpeakerSummarySnapshot: Codable, Equatable, Identifiable, Sendable {
     public var id: String { name }
     public let name: String

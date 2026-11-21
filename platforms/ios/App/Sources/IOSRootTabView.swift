@@ -125,9 +125,8 @@ struct IOSRootTabView: View {
                         IOSModeWorkspacesView(
                             store: store,
                             route: modeRoute,
-                            onSelectRecord: { recordId in
-                                openRecordInCurrentTab(recordId)
-                            }
+                            onSelectRecord: openRecordInCurrentTab,
+                            onOpenSource: openSource
                         )
                     }
                 }
