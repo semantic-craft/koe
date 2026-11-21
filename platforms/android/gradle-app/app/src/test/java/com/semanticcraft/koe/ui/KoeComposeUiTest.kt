@@ -2,34 +2,34 @@ package com.semanticcraft.koe.ui
 
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.AnnotatedString
 import com.semanticcraft.koe.BuildConfig
 import com.semanticcraft.koe.KoeApplication
 import com.semanticcraft.koe.bridge.KoeNativeBridge
 import com.semanticcraft.koe.core.HostBridgeClient
 import com.semanticcraft.koe.core.HostJson
 import com.semanticcraft.koe.core.HostSessionStore
-import com.semanticcraft.koe.core.TaskSnapshot
-import com.semanticcraft.koe.core.MemorySnapshot
 import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.core.MemorySnapshot
 import com.semanticcraft.koe.core.PcmIngestReceipt
 import com.semanticcraft.koe.core.PcmIngestStatus
 import com.semanticcraft.koe.core.PlaybackProgressReceipt
 import com.semanticcraft.koe.core.RecordSnapshot
+import com.semanticcraft.koe.core.TaskSnapshot
 import com.semanticcraft.koe.ui.screens.ActionsScreen
 import com.semanticcraft.koe.ui.screens.KoeRootScreen
 import com.semanticcraft.koe.ui.theme.KoeTheme
@@ -55,7 +55,7 @@ class KoeComposeUiTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    private class FakeUiBridgeClient(
+    internal class FakeUiBridgeClient(
         private var currentSnapshot: HostSnapshot = HostSnapshot.empty.copy(generation = 1L),
     ) : HostBridgeClient {
         val dispatchedCommands = mutableListOf<JsonObject>()
@@ -225,7 +225,7 @@ class KoeComposeUiTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("[S1]").assertIsDisplayed()
 
-        composeRule.onNodeWithTag("ask-source-chip-1").performClick()
+        composeRule.onNodeWithText("查看摘录").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("原文来源").assertIsDisplayed()
         composeRule.onNodeWithText("打开完整记录").assertIsDisplayed()

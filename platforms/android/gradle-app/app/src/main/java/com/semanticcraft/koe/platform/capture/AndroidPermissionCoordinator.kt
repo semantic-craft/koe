@@ -145,27 +145,20 @@ class AndroidPermissionCoordinator(
         Bucket.BLE -> hasBlePermissions()
     }
 
-    private fun buildPermissionRequest(bucket: Bucket): Array<String> = when (bucket) {
-        Bucket.RECORD_AUDIO -> {
-            val list = mutableListOf(Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                !checkPermission(Manifest.permission.POST_NOTIFICATIONS)
-            ) {
-                list.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            list.toTypedArray()
-        }
-        Bucket.BLE -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                )
+    private fun buildPermissionRequest(bucket: Bucket): Array<String> = buildList {
+        when (bucket) {
+            Bucket.RECORD_AUDIO -> add(Manifest.permission.RECORD_AUDIO)
+            Bucket.BLE -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
             } else {
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
         }
-    }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !checkPermission(Manifest.permission.POST_NOTIFICATIONS)
+        ) add(Manifest.permission.POST_NOTIFICATIONS)
+    }.toTypedArray()
 
     private fun evaluateResults(bucket: Bucket, results: Map<String, Boolean>): Boolean = when (bucket) {
         Bucket.RECORD_AUDIO ->

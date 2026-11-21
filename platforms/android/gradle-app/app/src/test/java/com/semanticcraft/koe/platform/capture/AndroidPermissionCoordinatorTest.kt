@@ -100,7 +100,7 @@ class AndroidPermissionCoordinatorTest {
         assertTrue(bleOutcomes.isEmpty())
         assertEquals(2, launchedRequests.size)
         assertEquals(
-            listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT),
+            listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.POST_NOTIFICATIONS),
             launchedRequests[1].first,
         )
 
@@ -113,6 +113,15 @@ class AndroidPermissionCoordinatorTest {
         )
         assertEquals(listOf(false, false), bleOutcomes)
         assertFalse(coordinator.hasBlePermissions())
+
+        var optionalNotificationDenied: Boolean? = null
+        coordinator.requestBlePermissions { optionalNotificationDenied = it }
+        launchedRequests.last().second(mapOf(
+            Manifest.permission.BLUETOOTH_SCAN to true,
+            Manifest.permission.BLUETOOTH_CONNECT to true,
+            Manifest.permission.POST_NOTIFICATIONS to false,
+        ))
+        assertEquals(true, optionalNotificationDenied)
 
         granted.add(Manifest.permission.BLUETOOTH_CONNECT)
         assertTrue(coordinator.hasBlePermissions())

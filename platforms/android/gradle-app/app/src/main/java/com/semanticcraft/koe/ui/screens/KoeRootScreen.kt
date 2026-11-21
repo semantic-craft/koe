@@ -1,5 +1,7 @@
 package com.semanticcraft.koe.ui.screens
 
+import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Inbox
@@ -38,9 +41,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -59,6 +63,7 @@ import com.semanticcraft.koe.core.SourceSnapshot
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.leaves.AndroidActiveCaptureBar
 import com.semanticcraft.koe.ui.leaves.AndroidLiveCaptionBar
+import com.semanticcraft.koe.ui.leaves.AndroidMiniPlayerBar
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeShapes
 import com.semanticcraft.koe.ui.theme.KoeTheme
@@ -75,6 +80,35 @@ sealed interface AndroidDetailRoute {
     data class Record(val recordId: String) : AndroidDetailRoute
     data class Workspace(val route: AndroidModeWorkspaceRoute) : AndroidDetailRoute
 }
+
+private val tabStackSaver = Saver<SnapshotStateMap<AndroidAppTab, List<AndroidDetailRoute>>, Bundle>(
+    save = { stacks ->
+        Bundle().apply {
+            stacks.forEach { (tab, routes) ->
+                putStringArrayList(tab.name, ArrayList(routes.map { route ->
+                    when (route) {
+                        is AndroidDetailRoute.Record -> "record:" + route.recordId
+                        is AndroidDetailRoute.Workspace -> "workspace:" + route.route.name
+                    }
+                }))
+            }
+        }
+    },
+    restore = { bundle ->
+        mutableStateMapOf<AndroidAppTab, List<AndroidDetailRoute>>().apply {
+            for (tab in AndroidAppTab.entries) {
+                this[tab] = bundle.getStringArrayList(tab.name).orEmpty().mapNotNull { route ->
+                    when {
+                        route.startsWith("record:") -> AndroidDetailRoute.Record(route.removePrefix("record:"))
+                        route.startsWith("workspace:") -> AndroidModeWorkspaceRoute.entries
+                            .find { it.name == route.removePrefix("workspace:") }?.let(AndroidDetailRoute::Workspace)
+                        else -> null
+                    }
+                }
+            }
+        }
+    },
+)
 
 private enum class AndroidRootSheet {
     NONE,
@@ -95,13 +129,8 @@ fun KoeRootScreen(
 
     var selectedTab by rememberSaveable { mutableStateOf(AndroidAppTab.TODAY) }
     var activeSheet by rememberSaveable { mutableStateOf(AndroidRootSheet.NONE) }
-    val tabStacks = remember {
-        mutableStateMapOf(
-            AndroidAppTab.TODAY to emptyList<AndroidDetailRoute>(),
-            AndroidAppTab.RECORDS to emptyList<AndroidDetailRoute>(),
-            AndroidAppTab.ACTIONS to emptyList<AndroidDetailRoute>(),
-            AndroidAppTab.ASK to emptyList<AndroidDetailRoute>(),
-        )
+    val tabStacks = rememberSaveable(saver = tabStackSaver) {
+        mutableStateMapOf<AndroidAppTab, List<AndroidDetailRoute>>()
     }
 
     val currentStack = tabStacks[selectedTab].orEmpty()
@@ -113,6 +142,10 @@ fun KoeRootScreen(
 
     fun popCurrentTab() {
         if (currentStack.isNotEmpty()) tabStacks[selectedTab] = currentStack.dropLast(1)
+    }
+
+    BackHandler(enabled = activeSheet != AndroidRootSheet.NONE || currentStack.isNotEmpty()) {
+        if (activeSheet != AndroidRootSheet.NONE) activeSheet = AndroidRootSheet.NONE else popCurrentTab()
     }
 
     fun openRecord(recordId: String) {
@@ -186,6 +219,7 @@ fun KoeRootScreen(
             },
             bottomBar = {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    AndroidMiniPlayerBar(store, (topRoute as? AndroidDetailRoute.Record)?.recordId, ::openRecord)
                     DockedBottomChrome(store = store, onOpenRecord = ::openRecord)
                     HorizontalDivider(color = colors.border)
                     NavigationBar(containerColor = colors.surface0, tonalElevation = 0.dp) {
@@ -324,6 +358,20 @@ private fun DockedBottomChrome(
                         modifier = Modifier.weight(1f),
                     )
                     KoePrimaryButton(title = "知道了", isPrimary = false, onClick = { store.clearError() })
+                }
+            }
+        }
+
+        val notice = navigation.notice
+        var dismissed by rememberSaveable(notice) { mutableStateOf(false) }
+        if (!notice.isNullOrBlank() && !dismissed) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(notice, modifier = Modifier.weight(1f), color = colors.success, fontSize = KoeFontSizes.xs)
+                IconButton(onClick = { dismissed = true }) {
+                    Icon(Icons.Outlined.Close, contentDescription = "关闭提示")
                 }
             }
         }

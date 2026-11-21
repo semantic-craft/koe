@@ -20,8 +20,10 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -298,17 +301,20 @@ private fun CredentialSectionBox(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                SettingsTextField(
-                    value = apiKeyValue,
-                    onValueChange = onApiKeyChange,
-                    placeholder = apiKeyPlaceholder,
-                    isSecret = true,
-                    keyboardType = KeyboardType.Password,
-                    onDone = onSave,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag(apiKeyTestTag),
-                )
+                // Also exclude the text field's internal editing state from the Bundle.
+                CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
+                    SettingsTextField(
+                        value = apiKeyValue,
+                        onValueChange = onApiKeyChange,
+                        placeholder = apiKeyPlaceholder,
+                        isSecret = true,
+                        keyboardType = KeyboardType.Password,
+                        onDone = onSave,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(apiKeyTestTag),
+                    )
+                }
                 KoePrimaryButton(
                     title = "清除",
                     isPrimary = false,
@@ -357,6 +363,8 @@ internal fun SettingsTextField(
             unfocusedTextColor = colors.textPrimary,
         ),
         keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.None,
+            autoCorrectEnabled = false,
             keyboardType = keyboardType,
             imeAction = ImeAction.Done,
         ),

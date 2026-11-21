@@ -22,6 +22,14 @@ use crate::models::{DeviceInfoModel, OfflineFileEntry};
 use crate::transport::OPUS_FRAME_BYTES;
 use crate::wav::{ASR_SAMPLE_RATE, OpusDecoderFactory, OpusStreamDecoder};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RealtimePause {
+    #[default]
+    Running,
+    Requested,
+    Paused,
+}
+
 /// Stateful D3200 transport session engine.
 pub struct TransportSession {
     pub(in crate::session) capture_events: VecDeque<CaptureEvent>,
@@ -82,6 +90,7 @@ pub struct TransportSession {
     pub active_is_realtime: bool,
     /// Whether the recording bean hardware is currently recording (`01/01`, `18/81`, `18/82`, or `1A/06` state `1`).
     pub device_recording_active: bool,
+    realtime_pause: RealtimePause,
     /// Whether the session is awaiting the next `1A/0E` or `1B/0E` catalog response to subscribe to the newest active file in realtime mode.
     pub pending_realtime_subscribe: bool,
     /// Accumulated decrypted 160-byte Opus frames.
@@ -135,6 +144,7 @@ impl Clone for TransportSession {
             active_nonce: self.active_nonce,
             active_is_realtime: self.active_is_realtime,
             device_recording_active: self.device_recording_active,
+            realtime_pause: self.realtime_pause,
             pending_realtime_subscribe: self.pending_realtime_subscribe,
             opus_buffer: self.opus_buffer.clone(),
             marks_ms: self.marks_ms.clone(),
@@ -222,6 +232,7 @@ impl TransportSession {
             active_nonce: None,
             active_is_realtime: false,
             device_recording_active: false,
+            realtime_pause: RealtimePause::Running,
             pending_realtime_subscribe: false,
             opus_buffer: Vec::new(),
             marks_ms: Vec::new(),
@@ -387,7 +398,7 @@ impl TransportSession {
                     self.handle_handshake_packet(&pkt, &mut outcome);
                 }
                 (RxCmd::DEVICE_INFO_TYPE, RxCmd::DEVICE_INFO_ID) => {
-                    self.handle_device_info_packet(&pkt, &mut outcome);
+                    self.handle_device_info_packet(&pkt, now_epoch_sec, &mut outcome);
                 }
                 (RxCmd::AUDIO_TYPE, RxCmd::AUDIO_REALTIME_START_ID)
                 | (RxCmd::AUDIO_TYPE, RxCmd::AUDIO_CONTROL_ID) => {

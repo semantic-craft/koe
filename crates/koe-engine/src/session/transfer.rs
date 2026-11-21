@@ -7,6 +7,7 @@ use crate::wav::{OpusWave, WAV_SAMPLE_RATE};
 impl TransportSession {
     /// Resets any active file transfer and clears partial buffers.
     pub fn reset_active_transfer(&mut self) {
+        self.realtime_pause = RealtimePause::Running;
         self.active_file_id = None;
         self.active_file_key = None;
         self.active_nonce = None;
@@ -88,6 +89,7 @@ impl TransportSession {
         }
         let is_new_stream = self.active_file_id != Some(file_id) || !self.active_is_realtime;
         if self.active_file_id != Some(file_id) {
+            self.realtime_pause = RealtimePause::Running;
             if self.active_is_realtime && self.active_file_id.is_some() {
                 let _ = self.finalize_active_transfer(now_epoch_sec);
             }
@@ -179,9 +181,66 @@ impl TransportSession {
         outcome
     }
 
+    /// Whether the device acknowledged a pause of the current app-controlled stream.
+    pub fn realtime_paused(&self) -> bool {
+        self.realtime_pause == RealtimePause::Paused
+    }
+
+    /// Toggle recording while retaining the current file, decoder, and slice offset.
+    pub fn set_realtime_paused(&mut self, pause: bool) -> Option<Vec<u8>> {
+        if !self.active_is_realtime || self.active_file_id.is_none() || self.transfer.quiet_draining
+        {
+            return None;
+        }
+        match (pause, self.realtime_pause) {
+            (true, RealtimePause::Running | RealtimePause::Requested) => {
+                self.realtime_pause = RealtimePause::Requested;
+                Some(DeviceCommands::pause_record())
+            }
+            (false, RealtimePause::Paused) => Some(DeviceCommands::start_app_recording()),
+            _ => None,
+        }
+    }
+
+    // Ending a session also sends 18/82 [2]. Only a requested in-session pause
+    // keeps the stream open after its acknowledgement.
+    pub(super) fn observe_realtime_pause(
+        &mut self,
+        state: u8,
+        file_id: Option<u32>,
+        now: u64,
+        outcome: &mut SessionIngestOutcome,
+    ) -> bool {
+        if self.realtime_pause == RealtimePause::Running {
+            return false;
+        }
+        if state == 0 || file_id.is_some_and(|id| Some(id) != self.active_file_id) {
+            self.realtime_pause = RealtimePause::Running;
+            return false;
+        }
+        if state == 2 {
+            self.realtime_pause = RealtimePause::Paused;
+            outcome.transfer_updated = true;
+            return true;
+        }
+        if state == 1 && self.realtime_paused() {
+            self.realtime_pause = RealtimePause::Running;
+            if let Some(frame) = self
+                .active_file_id
+                .and_then(|id| self.enter_or_resume_realtime_stream_at(id, 0, now))
+            {
+                outcome.outbound_tx_frames.push(frame);
+                outcome.transfer_updated = true;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Stops/pauses an active realtime bean recording (`0x18 0x82 [0x02]`) and enters the
     /// 2,000 ms quiet-drain window before finalization.
     pub fn stop_realtime_recording(&mut self) -> SessionIngestOutcome {
+        self.realtime_pause = RealtimePause::Running;
         let mut outcome = SessionIngestOutcome::default();
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;

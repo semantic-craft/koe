@@ -45,6 +45,7 @@ fun DeviceSheet(
     onDismiss: () -> Unit,
 ) {
     val device by store.device.collectAsStateWithLifecycle()
+    val navigation by store.navigation.collectAsStateWithLifecycle()
     val today by store.today.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
     val isReleased = today.beanControlState == "released"
@@ -91,6 +92,13 @@ fun DeviceSheet(
                     onClick = onDismiss,
                     modifier = Modifier.testTag("device-sheet-close"),
                 )
+            }
+
+            navigation.effectiveError?.let { message ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, color = colors.danger, modifier = Modifier.weight(1f))
+                    KoePrimaryButton(title = "知道了", isPrimary = false, onClick = store::clearError)
+                }
             }
 
             Text(
@@ -217,7 +225,9 @@ fun DeviceSheet(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = "连接引导  ${guide.step}/${guide.totalSteps}",
+                                text = if (guide.mode == "onboarding") {
+                                    "连接引导  ${guide.step + 1} / ${maxOf(guide.totalSteps, 1)}"
+                                } else "连接引导",
                                 color = colors.textMuted,
                                 fontSize = KoeFontSizes.xs,
                                 fontWeight = FontWeight.SemiBold,

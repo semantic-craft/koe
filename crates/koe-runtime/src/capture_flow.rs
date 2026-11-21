@@ -123,6 +123,18 @@ impl KoeRuntime {
         action: CaptureAction,
         clock_ns: Option<u64>,
     ) -> Result<(), String> {
+        if self.microphone.is_none()
+            && self.is_bean_meeting_recording()
+            && matches!(action, CaptureAction::Pause | CaptureAction::Resume)
+        {
+            let frame = self
+                .device
+                .session
+                .set_realtime_paused(matches!(action, CaptureAction::Pause))
+                .ok_or("当前录音豆状态无法暂停或继续")?;
+            self.device.outbound.push(frame);
+            return Ok(());
+        }
         match action {
             CaptureAction::Pause => self.pause_microphone(),
             CaptureAction::Resume => {
@@ -212,6 +224,15 @@ impl KoeRuntime {
                 && self.is_bean_meeting_recording()
                 && !self.device.session.transfer.quiet_draining
             {
+                if self.platform.kind == crate::platform::HostPlatformKind::Android
+                    && !self.captures.active.is_empty()
+                {
+                    actions.push(if self.device.session.realtime_paused() {
+                        CaptureAction::Resume
+                    } else {
+                        CaptureAction::Pause
+                    });
+                }
                 actions.push(CaptureAction::End);
             }
             let mic_fallback_label;
@@ -232,6 +253,8 @@ impl KoeRuntime {
                     || !self.is_bean_meeting_recording()
                 {
                     "stopping"
+                } else if self.device.session.realtime_paused() {
+                    "paused"
                 } else if self.captures.active.is_empty() {
                     "starting"
                 } else {

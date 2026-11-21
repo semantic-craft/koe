@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Inbox
-import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -36,6 +34,7 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,13 +53,11 @@ import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.RecordFilterCategory
 import com.semanticcraft.koe.core.RecordSnapshot
 import com.semanticcraft.koe.core.TimeLabel
-import com.semanticcraft.koe.core.TrashRecordSnapshot
 import com.semanticcraft.koe.core.matches
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeEmptyState
 import com.semanticcraft.koe.ui.components.KoeFilterChip
-import com.semanticcraft.koe.ui.components.KoeModalSheet
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeShapes
@@ -223,11 +220,11 @@ fun RecordsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(filteredRecords, key = { it.id }) { record ->
+                    val canTrash by rememberUpdatedState(record.canTrash && navigation.savingRecordId != record.id)
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { value ->
-                            if (value == SwipeToDismissBoxValue.EndToStart) {
-                                store.send(HostCommand.TrashRecord(record.id))
-                                true
+                            if (canTrash && value == SwipeToDismissBoxValue.EndToStart) {
+                                store.sendReturningError(HostCommand.TrashRecord(record.id)) == null
                             } else {
                                 false
                             }
@@ -236,6 +233,7 @@ fun RecordsScreen(
                     SwipeToDismissBox(
                         state = dismissState,
                         enableDismissFromStartToEnd = false,
+                        enableDismissFromEndToStart = canTrash,
                         backgroundContent = {
                             Box(
                                 modifier = Modifier
@@ -267,6 +265,7 @@ fun RecordsScreen(
                     ) {
                         RecordRowCard(
                             record = record,
+                            canTrash = canTrash,
                             onOpen = { onSelectRecord(record.id) },
                             onTrash = { store.send(HostCommand.TrashRecord(record.id)) },
                         )
@@ -290,6 +289,7 @@ fun RecordsScreen(
 @Composable
 private fun RecordRowCard(
     record: RecordSnapshot,
+    canTrash: Boolean,
     onOpen: () -> Unit,
     onTrash: () -> Unit,
 ) {
@@ -313,6 +313,7 @@ private fun RecordRowCard(
                 KoeBadge(text = record.modeLabel, tint = colors.textSecondary)
                 IconButton(
                     onClick = onTrash,
+                    enabled = canTrash,
                     modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
@@ -354,97 +355,6 @@ private fun RecordRowCard(
                 )
                 if (record.archived) {
                     KoeBadge(text = "已归档", tint = colors.textMuted)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TrashSheet(
-    trashRecords: List<TrashRecordSnapshot>,
-    onRestore: (String) -> Unit,
-    onPurge: (String) -> Unit,
-    onEmptyTrash: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val colors = KoeTheme.colors
-    KoeModalSheet(onDismissRequest = onDismiss) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "回收站",
-                    color = colors.textPrimary,
-                    fontSize = KoeFontSizes.md,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                if (trashRecords.isNotEmpty()) {
-                    KoePrimaryButton(title = "清空", isPrimary = false, onClick = onEmptyTrash)
-                }
-                KoePrimaryButton(
-                    title = "完成",
-                    isPrimary = false,
-                    onClick = onDismiss,
-                    modifier = Modifier.testTag("trash-sheet-close"),
-                )
-            }
-
-            if (trashRecords.isEmpty()) {
-                KoeEmptyState(
-                    icon = Icons.Outlined.DeleteOutline,
-                    title = "回收站为空",
-                    detail = "左滑或轻点移入回收站后，可在 30 天内随时恢复。",
-                )
-            } else {
-                trashRecords.forEach { item ->
-                    KoeCard {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    text = item.title,
-                                    color = colors.textPrimary,
-                                    fontSize = KoeFontSizes.sm,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                KoeBadge(text = "剩余 ${item.remainingDays} 天", tint = colors.textMuted)
-                            }
-                            if (item.preview.isNotEmpty()) {
-                                Text(
-                                    text = item.preview,
-                                    color = colors.textSecondary,
-                                    fontSize = KoeFontSizes.xs,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                KoePrimaryButton(
-                                    title = "恢复",
-                                    icon = Icons.Outlined.Restore,
-                                    isPrimary = true,
-                                    onClick = { onRestore(item.id) },
-                                )
-                                KoePrimaryButton(
-                                    title = "彻底删除",
-                                    icon = Icons.Outlined.DeleteOutline,
-                                    isPrimary = false,
-                                    onClick = { onPurge(item.id) },
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }

@@ -3,13 +3,16 @@ package com.semanticcraft.koe
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.platform.capture.PermissionRequester
 import com.semanticcraft.koe.platform.files.DocumentPickerHost
@@ -105,6 +108,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val store = activeStore
             if (store != null) {
+                val keepAwake by store.keepAwake.collectAsStateWithLifecycle()
+                DisposableEffect(keepAwake) {
+                    if (keepAwake) window.addFlags(FLAG_KEEP_SCREEN_ON)
+                    onDispose { window.clearFlags(FLAG_KEEP_SCREEN_ON) }
+                }
                 KoeTheme {
                     KoeRootScreen(store = store)
                 }

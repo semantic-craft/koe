@@ -41,7 +41,8 @@ class KoeCaptureForegroundService : Service() {
         val paused = intent?.getBooleanExtra(EXTRA_PAUSED, false) ?: false
         val modeTitle = intent?.getStringExtra(EXTRA_MODE_TITLE)
         val fgsFlags = intent?.getIntExtra(EXTRA_FGS_TYPES, FGS_FLAG_MICROPHONE) ?: FGS_FLAG_MICROPHONE
-        val notification = buildNotification(paused = paused, modeTitle = modeTitle, fgsFlags = fgsFlags)
+        val beanCapture = intent?.getBooleanExtra(EXTRA_BEAN_CAPTURE, false) == true
+        val notification = buildNotification(paused, modeTitle, fgsFlags, beanCapture)
         startForegroundCompat(notification, fgsFlags)
         return START_NOT_STICKY
     }
@@ -61,7 +62,7 @@ class KoeCaptureForegroundService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(paused: Boolean, modeTitle: String?, fgsFlags: Int): Notification {
+    private fun buildNotification(paused: Boolean, modeTitle: String?, fgsFlags: Int, beanCapture: Boolean): Notification {
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -73,6 +74,7 @@ class KoeCaptureForegroundService : Service() {
         )
         val hasMicrophone = (fgsFlags and FGS_FLAG_MICROPHONE) != 0
         val contentText = when {
+            beanCapture -> if (paused) "录音豆已暂停" else "正在用录音豆录音"
             !hasMicrophone -> "正在同步录音豆"
             paused -> "已暂停"
             else -> "正在后台录音"
@@ -84,7 +86,7 @@ class KoeCaptureForegroundService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openPending)
-        if (hasMicrophone) {
+        if (hasMicrophone || beanCapture) {
             val toggleAction = if (paused) {
                 Notification.Action.Builder(
                     null,
@@ -156,6 +158,7 @@ class KoeCaptureForegroundService : Service() {
         const val ACTION_PAUSE = "com.semanticcraft.koe.capture.PAUSE"
         const val ACTION_RESUME = "com.semanticcraft.koe.capture.RESUME"
         const val ACTION_END = "com.semanticcraft.koe.capture.END"
+        const val EXTRA_BEAN_CAPTURE = "extra_bean_capture"
         const val EXTRA_PAUSED = "extra_paused"
         const val EXTRA_MODE_TITLE = "extra_mode_title"
         const val EXTRA_FGS_TYPES = "extra_fgs_types"
@@ -180,6 +183,7 @@ class KoeCaptureForegroundService : Service() {
             }
             val intent = Intent(appContext, KoeCaptureForegroundService::class.java).apply {
                 action = ACTION_SYNC
+                putExtra(EXTRA_BEAN_CAPTURE, state.beanCapture)
                 putExtra(EXTRA_PAUSED, state.paused)
                 putExtra(EXTRA_MODE_TITLE, state.modeTitle)
                 putExtra(EXTRA_FGS_TYPES, fgsFlags)

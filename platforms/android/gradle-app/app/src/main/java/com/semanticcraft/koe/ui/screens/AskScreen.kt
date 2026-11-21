@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -84,8 +85,7 @@ fun AskScreen(
         if (trimmed.isEmpty() || ask.phase == "pending") return
         focusManager.clearFocus()
         keyboardController?.hide()
-        store.send(HostCommand.Ask(question = trimmed, scope = ask.scope, recordId = ask.recordId))
-        if (store.navigation.value.effectiveError == null) {
+        if (store.sendReturningError(HostCommand.Ask(trimmed, ask.scope, ask.recordId)) == null) {
             questionDraft = ""
         }
     }
@@ -146,6 +146,7 @@ fun AskScreen(
                 items(ask.messages, key = { it.id }) { message ->
                     AskMessageCard(
                         message = message,
+                        onOpenSource = onOpenSource,
                         onInspectSource = { source -> inspectedSource = source },
                     )
                 }
@@ -178,6 +179,7 @@ fun AskScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .background(colors.surface0)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -237,6 +239,7 @@ fun AskScreen(
 @Composable
 private fun AskMessageCard(
     message: AskMessageSnapshot,
+    onOpenSource: (SourceSnapshot) -> Unit,
     onInspectSource: (SourceSnapshot) -> Unit,
 ) {
     val colors = KoeTheme.colors
@@ -281,7 +284,7 @@ private fun AskMessageCard(
                     message.sources.forEachIndexed { index, source ->
                         val rank = index + 1
                         Surface(
-                            onClick = { onInspectSource(source) },
+                            onClick = { onOpenSource(source) },
                             shape = KoeShapes.pill,
                             color = colors.accentSoft,
                             border = BorderStroke(1.dp, colors.border),
@@ -295,6 +298,7 @@ private fun AskMessageCard(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             )
                         }
+                        KoePrimaryButton(title = "查看摘录", isPrimary = false, onClick = { onInspectSource(source) })
                     }
                 }
             }

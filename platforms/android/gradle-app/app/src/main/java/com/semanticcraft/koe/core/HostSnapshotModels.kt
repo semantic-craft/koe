@@ -172,6 +172,8 @@ data class RecordSnapshot(
     val mode: String? = null,
     val project: String? = null,
 ) {
+    val canTrash: Boolean get() = !archived && status != "转写中" && status != "整理中"
+
     val isTranscribing: Boolean
         get() = status == "转写中" || status == "等待转写"
 

@@ -210,3 +210,5 @@ class BleOutboundQueue(
         inFlightSinceMs = null
     }
 }
+
+enum class BleForegroundActivity { IDLE, SYNC, RECORDING, PAUSED }
