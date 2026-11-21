@@ -71,12 +71,14 @@ fun SettingsAsrCard(
                     onClick = { onConfigureSpeech("cloud") },
                     modifier = Modifier.testTag("settings-speech-cloud"),
                 )
-                KoeFilterChip(
-                    label = platform.nativeSpeechLabel,
-                    selected = speech.engine == "apple_speech",
-                    onClick = { onConfigureSpeech("apple_speech") },
-                    modifier = Modifier.testTag("settings-speech-native"),
-                )
+                if (platform.supportsNativeSpeech || speech.engine == "apple_speech") {
+                    KoeFilterChip(
+                        label = platform.nativeSpeechLabel,
+                        selected = speech.engine == "apple_speech",
+                        onClick = { onConfigureSpeech("apple_speech") },
+                        modifier = Modifier.testTag("settings-speech-native"),
+                    )
+                }
             }
 
             if (isCloud) {
@@ -138,7 +140,7 @@ fun SettingsAsrCard(
             } else {
                 Surface(shape = KoeShapes.control, color = colors.bgSubtle, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("本机引擎状态：${speech.appleState}", color = colors.textSecondary, fontSize = KoeFontSizes.xs, fontWeight = FontWeight.Medium)
+                        Text("本机引擎状态：${speech.appleStateLabel}", color = colors.textSecondary, fontSize = KoeFontSizes.xs, fontWeight = FontWeight.Medium)
                         Text(
                             text = speech.appleMessage?.takeIf { it.isNotBlank() } ?: "当前使用本机语音识别。",
                             color = colors.textMuted,

@@ -4,31 +4,42 @@ import Foundation
 import Speech
 
 @MainActor
-func makeLocalSpeechRecognizer() -> any LocalSpeechRecognizer {
-    if #available(macOS 26, *) { return AppleLocalSpeechRecognizer() }
+public func makeLocalSpeechRecognizer() -> any LocalSpeechRecognizer {
+    if #available(macOS 26, iOS 26, *) { return AppleLocalSpeechRecognizer() }
     return UnsupportedLocalSpeechRecognizer()
 }
 
 @MainActor
 private struct UnsupportedLocalSpeechRecognizer: LocalSpeechRecognizer {
-    func prepare() async throws {
-        throw LocalSpeechError("中文离线转写需要 macOS 26 或更新版本及支持的 Mac。录音仍会保存。")
+    private var unsupported: LocalSpeechError {
+        #if os(iOS)
+        LocalSpeechError("Apple 本机识别需要 iOS 26 或更新版本及支持的设备。请在设置中切换为云端识别，原始录音仍会保存。")
+        #else
+        LocalSpeechError("中文离线转写需要 macOS 26 或更新版本及支持的 Mac。录音仍会保存。")
+        #endif
     }
+
+    func prepare() async throws { throw unsupported }
     func start(locale: String, result: @escaping @MainActor (Result<LocalSpeechResult, Error>) -> Void) async throws -> any LocalSpeechSession {
-        try await prepare()
-        throw LocalSpeechError("此 Mac 不支持中文离线转写。")
+        throw unsupported
     }
 }
 
-@available(macOS 26, *)
+@available(macOS 26, iOS 26, *)
 @MainActor
-final class AppleLocalSpeechRecognizer: LocalSpeechRecognizer {
+public final class AppleLocalSpeechRecognizer: LocalSpeechRecognizer {
     private var locale: Locale?
 
-    func prepare() async throws {
+    public init() {}
+
+    public func prepare() async throws {
         guard SpeechTranscriber.isAvailable,
               let supported = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "zh-CN")) else {
+            #if os(iOS)
+            throw LocalSpeechError("此设备暂不支持中文本机识别。请在设置中切换为云端识别，原始录音仍会保存。")
+            #else
             throw LocalSpeechError("此 Mac 暂不支持中文离线转写。录音仍会保存。")
+            #endif
         }
         try await AssetInventory.reserve(locale: supported)
         let module = Self.transcriber(locale: supported)
@@ -42,7 +53,7 @@ final class AppleLocalSpeechRecognizer: LocalSpeechRecognizer {
         locale = supported
     }
 
-    func start(locale requested: String, result: @escaping @MainActor (Result<LocalSpeechResult, Error>) -> Void) async throws -> any LocalSpeechSession {
+    public func start(locale requested: String, result: @escaping @MainActor (Result<LocalSpeechResult, Error>) -> Void) async throws -> any LocalSpeechSession {
         guard requested == "zh-CN", let locale else {
             throw LocalSpeechError("中文离线转写尚未就绪。录音仍会保存。")
         }
@@ -56,12 +67,12 @@ final class AppleLocalSpeechRecognizer: LocalSpeechRecognizer {
 }
 
 @MainActor
-final class LocalSpeechPCMConverter {
-    static let inputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: false)!
+public final class LocalSpeechPCMConverter {
+    public static let inputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: false)!
     private let outputFormat: AVAudioFormat
     private let converter: AVAudioConverter?
 
-    init(outputFormat: AVAudioFormat) throws {
+    public init(outputFormat: AVAudioFormat) throws {
         self.outputFormat = outputFormat
         if outputFormat == Self.inputFormat { converter = nil }
         else {
@@ -72,7 +83,7 @@ final class LocalSpeechPCMConverter {
         }
     }
 
-    func convert(_ samples: [Int16]) throws -> AVAudioPCMBuffer? {
+    public func convert(_ samples: [Int16]) throws -> AVAudioPCMBuffer? {
         guard !samples.isEmpty else { return nil }
         guard let input = AVAudioPCMBuffer(pcmFormat: Self.inputFormat, frameCapacity: AVAudioFrameCount(samples.count)),
               let channel = input.int16ChannelData?[0] else {
@@ -96,7 +107,7 @@ final class LocalSpeechPCMConverter {
         return output.frameLength == 0 ? nil : output
     }
 
-    func flush(_ receive: (AVAudioPCMBuffer) throws -> Void) throws {
+    public func flush(_ receive: (AVAudioPCMBuffer) throws -> Void) throws {
         guard let converter else { return }
         while true {
             let output = try buffer(capacity: 4096)
@@ -120,17 +131,17 @@ final class LocalSpeechPCMConverter {
     }
 }
 
-@available(macOS 26, *)
+@available(macOS 26, iOS 26, *)
 @MainActor
-final class LocalSpeechAudioInput {
-    let stream: AsyncStream<AnalyzerInput>
+public final class LocalSpeechAudioInput {
+    public let stream: AsyncStream<AnalyzerInput>
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
 
-    init(capacity: Int = 64) {
+    public init(capacity: Int = 64) {
         (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingOldest(capacity))
     }
 
-    func append(_ buffer: AVAudioPCMBuffer) throws {
+    public func append(_ buffer: AVAudioPCMBuffer) throws {
         switch continuation.yield(AnalyzerInput(buffer: buffer)) {
         case .enqueued: return
         case .dropped: throw LocalSpeechError("离线转写处理不及，已停止转写；原始录音仍会保存。")
@@ -139,10 +150,10 @@ final class LocalSpeechAudioInput {
         }
     }
 
-    func finish() { continuation.finish() }
+    public func finish() { continuation.finish() }
 }
 
-@available(macOS 26, *)
+@available(macOS 26, iOS 26, *)
 @MainActor
 final class AppleLocalSpeechSession: LocalSpeechSession {
     private let analyzer: SpeechAnalyzer

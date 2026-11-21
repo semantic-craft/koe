@@ -142,8 +142,8 @@ struct RecordDetailView: View {
                         Text(item.text).font(.system(size: AppFontSizes.xs)).lineSpacing(4).strikethrough(item.completed)
                         if item.state == "proposed" {
                             HStack(spacing: 14) {
-                                Button("确认待办") { store.send(.reviewItem(itemId: item.id, decision: "accept")) }
-                                Button("忽略") { store.send(.reviewItem(itemId: item.id, decision: "dismiss")) }
+                                Button("确认待办") { store.send(.reviewItem(itemId: item.id, decision: .accept)) }
+                                Button("忽略") { store.send(.reviewItem(itemId: item.id, decision: .dismiss)) }
                             }
                         } else {
                             Button(item.completed ? "恢复为未完成" : "标为完成") {
@@ -159,7 +159,7 @@ struct RecordDetailView: View {
                     VStack(alignment: .leading, spacing: 9) {
                         Text(item.text).font(.system(size: AppFontSizes.xs)).lineSpacing(4)
                         Button(item.state == "proposed" ? "记住这条" : "移除") {
-                            store.send(.reviewItem(itemId: item.id, decision: item.state == "proposed" ? "accept" : "dismiss"))
+                            store.send(.reviewItem(itemId: item.id, decision: item.state == "proposed" ? .accept : .dismiss))
                         }.font(.system(size: AppFontSizes.xs)).buttonStyle(.borderless)
                     }
                 }

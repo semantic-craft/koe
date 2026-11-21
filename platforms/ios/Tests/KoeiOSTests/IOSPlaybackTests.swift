@@ -139,6 +139,9 @@ final class IOSPlaybackTests: XCTestCase {
             let path = try XCTUnwrap(store.snapshot.playback.asset?.audioPath)
             store.send(.playback(isPlaying: true))
             try FileManager.default.removeItem(atPath: path)
+            // Speech readiness can project a missing asset before AVPlayer reports the read failure.
+            store.send(.localAsrReadiness(state: "unavailable", message: "此设备暂不支持本机识别。"))
+            XCTAssertNil(store.snapshot.playback.asset)
             try await until("missing WAV must stop Rust playback and surface the native error") {
                 !store.snapshot.playback.isPlaying && store.nativeError != nil
             }

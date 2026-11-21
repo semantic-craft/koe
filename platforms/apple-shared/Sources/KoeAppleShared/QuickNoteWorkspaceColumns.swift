@@ -303,10 +303,10 @@ struct WorkspaceReviewItemRow: View {
                 if item.state == "proposed" {
                     HStack(spacing: 6) {
                         KoeActionButton("采纳", isPrimary: true) {
-                            store.send(.reviewItem(itemId: item.id, decision: "accept"))
+                            store.send(.reviewItem(itemId: item.id, decision: .accept))
                         }
                         KoeActionButton("忽略") {
-                            store.send(.reviewItem(itemId: item.id, decision: "dismiss"))
+                            store.send(.reviewItem(itemId: item.id, decision: .dismiss))
                         }
                     }
                 }

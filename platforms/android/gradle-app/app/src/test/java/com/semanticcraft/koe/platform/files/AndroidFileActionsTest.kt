@@ -152,7 +152,7 @@ class AndroidFileActionsTest {
                     val payload = exportWorkspacePayload
                     if (payload != null) {
                         File(path).writeText(payload, Charsets.UTF_8)
-                        current = current.copy(generation = current.generation + 1L, error = null)
+                        current = current.copy(generation = current.generation + 1L, error = exportWorkspaceError)
                     } else {
                         current = current.copy(
                             generation = current.generation + 1L,
@@ -301,6 +301,7 @@ class AndroidFileActionsTest {
 
         val targetUri = Uri.parse("content://docs/out/1")
         picker.createResult = targetUri
+        store.onSnapshotChanged = { store.reportNativeError("蓝牙连接已断开") }
         actions.requestExportWorkspace("rec-1", null, "Q4/复盘:纪要.md")
 
         assertEquals("Q4-复盘-纪要.md", picker.lastSuggestedFilename)
@@ -313,7 +314,8 @@ class AndroidFileActionsTest {
         assertTrue(exportRoot.listFiles().orEmpty().isEmpty())
 
         val rejectedUri = Uri.parse("content://docs/out/rejected")
-        bridge.exportWorkspacePayload = null
+        store.onSnapshotChanged = null
+        bridge.exportWorkspacePayload = "# 未完成的导出"
         bridge.exportWorkspaceError = "记录不存在"
         picker.createResult = rejectedUri
         actions.requestExportWorkspace(null, "2026-11-20", "Koe-2026-11-20.md")
@@ -321,6 +323,7 @@ class AndroidFileActionsTest {
         assertEquals("记录不存在", store.navigation.value.effectiveError)
 
         val brokenWriteUri = Uri.parse("content://docs/out/ioerr")
+        bridge.exportWorkspaceError = null
         bridge.exportWorkspacePayload = "# ok"
         safIo.outputProviders[brokenWriteUri] = { throw IOException("disk full") }
         picker.createResult = brokenWriteUri

@@ -67,7 +67,7 @@ final class IOSLaunchSession {
         let useRadio = allowsCoreBluetooth
         #endif
         coordinator = IOSHostCoordinator(store: store, actions: bridgeActions, source: source,
-                                         allowsCoreBluetooth: useRadio)
+                                         allowsCoreBluetooth: useRadio, allowsLocalSpeech: config.snapshotFixturePath == nil)
         inputMonitor = IOSAudioInputMonitor(store: store)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.6.0"

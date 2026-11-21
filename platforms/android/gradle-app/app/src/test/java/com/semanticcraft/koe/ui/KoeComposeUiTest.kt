@@ -1,6 +1,11 @@
 package com.semanticcraft.koe.ui
 
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
@@ -12,16 +17,20 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import com.semanticcraft.koe.BuildConfig
 import com.semanticcraft.koe.KoeApplication
 import com.semanticcraft.koe.bridge.KoeNativeBridge
 import com.semanticcraft.koe.core.HostBridgeClient
 import com.semanticcraft.koe.core.HostJson
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.TaskSnapshot
+import com.semanticcraft.koe.core.MemorySnapshot
 import com.semanticcraft.koe.core.HostSnapshot
 import com.semanticcraft.koe.core.PcmIngestReceipt
 import com.semanticcraft.koe.core.PcmIngestStatus
 import com.semanticcraft.koe.core.PlaybackProgressReceipt
 import com.semanticcraft.koe.core.RecordSnapshot
+import com.semanticcraft.koe.ui.screens.ActionsScreen
 import com.semanticcraft.koe.ui.screens.KoeRootScreen
 import com.semanticcraft.koe.ui.theme.KoeTheme
 import java.io.File
@@ -238,10 +247,14 @@ class KoeComposeUiTest {
         }
 
         composeRule.onNodeWithText("模式选择").assertIsDisplayed()
+        composeRule.runOnIdle { store.reportNativeError("蓝牙连接已断开") }
         composeRule.onNodeWithTag("quick-note-input").performTextInput("RobolectricSmokeNote")
         composeRule.onNodeWithTag("quick-note-submit").performClick()
         composeRule.waitForIdle()
 
+        composeRule.onNodeWithTag("quick-note-input").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")),
+        )
         val createCmd = bridge.dispatchedCommands.firstOrNull {
             it["type"]?.jsonPrimitive?.content == "create_note"
         }
@@ -252,6 +265,49 @@ class KoeComposeUiTest {
         composeRule.onNodeWithText("记录").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("RobolectricSmokeNote", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun proposedTasksHaveNoCompletionButton() {
+        val snapshot = HostSnapshot.empty.copy(tasks = listOf(TaskSnapshot("t", "评审待办", "proposed")))
+        val store = HostSessionStore("/tmp/koe-actions", bridge = FakeUiBridgeClient(snapshot))
+        composeRule.setContent { KoeTheme { ActionsScreen(store, onOpenSource = {}) } }
+        composeRule.onNodeWithText("评审待办").assertExists()
+        composeRule.onNodeWithContentDescription("标记已完成").assertDoesNotExist()
+    }
+
+    @Test
+    fun proposedItemsDispatchRustReviewDecisions() {
+        val snapshot = HostSnapshot.empty.copy(
+            tasks = listOf(TaskSnapshot("t", "评审待办", "proposed")),
+            memories = listOf(MemorySnapshot("m", "评审记忆", "proposed")),
+        )
+        val bridge = FakeUiBridgeClient(snapshot)
+        val store = HostSessionStore("/tmp/koe-actions", bridge = bridge)
+        composeRule.setContent { KoeTheme { ActionsScreen(store, onOpenSource = {}) } }
+
+        composeRule.onNodeWithText("采纳").performClick()
+        composeRule.onNodeWithText("忽略").performClick()
+        composeRule.onNodeWithText("记忆").performClick()
+        composeRule.onNodeWithText("记住").performClick()
+        composeRule.onNodeWithText("忽略").performClick()
+        val reviews = bridge.dispatchedCommands.map {
+            it["itemId"]?.jsonPrimitive?.content to it["decision"]?.jsonPrimitive?.content
+        }
+        assertEquals(listOf("t" to "accept", "t" to "dismiss", "m" to "accept", "m" to "dismiss"), reviews)
+    }
+
+    @Test
+    fun androidSpeechSettingsTranslateStateAndHideUnsupportedEngineAfterSwitch() {
+        val snapshot = HostSnapshot.empty.copy(generation = 1L)
+        val store = HostSessionStore("/tmp/koe-speech", bridge = FakeUiBridgeClient(snapshot))
+        composeRule.setContent { KoeTheme { KoeRootScreen(store = store) } }
+        composeRule.onNodeWithTag("settings-button").performClick()
+        composeRule.onNodeWithText("本机引擎状态：暂不可用").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-speech-cloud").performScrollTo().performSemanticsAction(SemanticsActions.OnClick)
+        assertEquals("cloud", store.settings.value.speech.engine)
+        composeRule.onNodeWithTag("settings-speech-native").assertDoesNotExist()
+        composeRule.onNodeWithText("unavailable", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -299,7 +355,7 @@ class KoeComposeUiTest {
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Android").assertIsDisplayed()
-        composeRule.onNodeWithText("github").assertIsDisplayed()
+        composeRule.onNodeWithText(BuildConfig.KOE_DISTRIBUTION).assertIsDisplayed()
 
         composeRule.onNodeWithTag("settings-meeting-audio-switch")
             .performScrollTo()

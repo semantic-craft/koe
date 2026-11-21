@@ -303,7 +303,8 @@ class AndroidFileActions(
             is StageImportResult.Success -> {
                 try {
                     if (isStoreBound(targetStore)) {
-                        targetStore.send(HostCommand.ImportFile(stageResult.file.absolutePath))
+                        targetStore.sendReturningError(HostCommand.ImportFile(stageResult.file.absolutePath))
+                            ?.let { reportErrorIfBound(targetStore, it) }
                     }
                 } finally {
                     stageResult.runDir.deleteRecursively()
@@ -337,7 +338,7 @@ class AndroidFileActions(
                 safIo.deleteDocumentBestEffort(targetUri)
                 return
             }
-            targetStore.send(
+            val error = targetStore.sendReturningError(
                 HostCommand.ExportWorkspaceMarkdown(
                     recordId = recordId,
                     date = date,
@@ -346,7 +347,8 @@ class AndroidFileActions(
                     includeSources = true,
                 ),
             )
-            if (!tempFile.isFile) {
+            if (error != null || !tempFile.isFile) {
+                reportErrorIfBound(targetStore, error ?: ERROR_WRITE_FAILED)
                 safIo.deleteDocumentBestEffort(targetUri)
                 return
             }
@@ -374,7 +376,7 @@ class AndroidFileActions(
         }
         try {
             if (!isStoreBound(targetStore)) return
-            targetStore.send(
+            val error = targetStore.sendReturningError(
                 HostCommand.ExportRecordsMarkdown(
                     recordIds = recordIds,
                     directory = tempDir.absolutePath,
@@ -382,6 +384,7 @@ class AndroidFileActions(
                     includeSources = true,
                 ),
             )
+            if (error != null) return reportErrorIfBound(targetStore, error)
             val exportedFiles = tempDir.listFiles()
                 ?.filter { it.isFile && it.extension.equals("md", ignoreCase = true) }
                 ?.sortedBy { it.name }

@@ -44,6 +44,7 @@ data class HostPlatformSnapshot(
     val supportsSystemAudio: Boolean = false,
     val supportsSelfUpdate: Boolean = false,
     val nativeSpeechLabel: String = "Android 本机",
+    val supportsNativeSpeech: Boolean = id != "android",
 ) {
     companion object {
         val androidDefault = HostPlatformSnapshot()

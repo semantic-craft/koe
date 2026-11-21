@@ -112,6 +112,7 @@ class HostSessionStoreTest {
         assertEquals(42L, store.currentGeneration)
         assertEquals("android", store.platform.value.id)
         assertEquals("Android", store.platform.value.hostDisplayName)
+        assertFalse(store.platform.value.supportsNativeSpeech)
         assertFalse(store.platform.value.supportsSystemAudio)
         assertFalse(store.platform.value.supportsSelfUpdate)
         assertEquals("Android 本机", store.platform.value.nativeSpeechLabel)
@@ -235,6 +236,16 @@ class HostSessionStoreTest {
         val releaseObj = HostJson.json.parseToJsonElement(HostCommand.DeviceRelease.toJsonString()) as JsonObject
         assertEquals(setOf("type"), releaseObj.keys)
         assertEquals("device_release", releaseObj["type"]?.jsonPrimitive?.content)
+
+        for ((decision, verb) in listOf(
+            ReviewDecision.ACCEPT to "accept", ReviewDecision.DISMISS to "dismiss", ReviewDecision.RESET to "reset",
+        )) {
+            val command = HostCommand.ReviewItem("item", decision)
+            val json = HostJson.json.parseToJsonElement(command.toJsonString()) as JsonObject
+            assertEquals("review_item", json["type"]?.jsonPrimitive?.content)
+            assertEquals("item", json["itemId"]?.jsonPrimitive?.content)
+            assertEquals(verb, json["decision"]?.jsonPrimitive?.content)
+        }
 
         val noteCmd = HostCommand.CreateNote(title = "闪记标题", text = "内容正文", stayOnPage = true)
         val noteObj = HostJson.json.parseToJsonElement(noteCmd.toJsonString()) as JsonObject

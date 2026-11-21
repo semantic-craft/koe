@@ -1,39 +1,45 @@
 import Foundation
-import KoeAppleShared
 
-struct LocalSpeechResult: Equatable {
-    let text: String
-    let startMs: UInt64
-    let endMs: UInt64
-    let isFinal: Bool
+public struct LocalSpeechResult: Equatable {
+    public let text: String
+    public let startMs: UInt64
+    public let endMs: UInt64
+    public let isFinal: Bool
+
+    public init(text: String, startMs: UInt64, endMs: UInt64, isFinal: Bool) {
+        self.text = text
+        self.startMs = startMs
+        self.endMs = endMs
+        self.isFinal = isFinal
+    }
 }
 
 @MainActor
-protocol LocalSpeechSession: AnyObject {
+public protocol LocalSpeechSession: AnyObject {
     func append(_ samples: [Int16]) throws
     func finish() async throws
     func cancel() async
 }
 
 @MainActor
-protocol LocalSpeechRecognizer {
+public protocol LocalSpeechRecognizer {
     func prepare() async throws
     func start(locale: String, result: @escaping @MainActor (Result<LocalSpeechResult, Error>) -> Void) async throws -> any LocalSpeechSession
 }
 
-struct LocalSpeechError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
+public struct LocalSpeechError: LocalizedError {
+    public let message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
 }
 
-enum LocalSpeechEffect: Equatable {
+public enum LocalSpeechEffect: Equatable {
     case start(UInt64, String)
     case audio(UInt64, [Int16])
     case finish(UInt64)
     case cancel(UInt64)
 
-    static func decodeBinary(_ data: Data) throws -> [LocalSpeechEffect] {
+    public static func decodeBinary(_ data: Data) throws -> [LocalSpeechEffect] {
         guard !data.isEmpty else { return [] }
         var effects: [LocalSpeechEffect] = []
         var offset = data.startIndex
@@ -95,8 +101,8 @@ enum LocalSpeechEffect: Equatable {
 }
 
 @MainActor
-final class NativeLocalTranscription {
-    weak var store: HostSessionStore? {
+public final class NativeLocalTranscription {
+    public weak var store: HostSessionStore? {
         didSet {
             shutdown()
             if store != nil { prepare() }
@@ -115,7 +121,7 @@ final class NativeLocalTranscription {
     private let now: () -> ContinuousClock.Instant
     private let operationTimeout: Duration
 
-    init(
+    public init(
         recognizer: (any LocalSpeechRecognizer)? = nil,
         drain: (() throws -> Data)? = nil,
         send: ((HostAdapterEvent) -> Void)? = nil,
@@ -129,7 +135,7 @@ final class NativeLocalTranscription {
         self.operationTimeout = operationTimeout
     }
 
-    func prepare() {
+    public func prepare() {
         guard readiness == nil else { return }
         let currentEpoch = epoch
         send(.localAsrReadiness(state: "preparing", message: "正在准备中文离线转写。"))
@@ -147,7 +153,7 @@ final class NativeLocalTranscription {
         }
     }
 
-    func apply() {
+    public func apply() {
         guard worker == nil else {
             if let deadline, now() >= deadline {
                 if let operation {
@@ -172,9 +178,9 @@ final class NativeLocalTranscription {
         }
     }
 
-    func waitUntilIdle() async { await worker?.value }
+    public func waitUntilIdle() async { await worker?.value }
 
-    func shutdown() {
+    public func shutdown() {
         epoch &+= 1
         operation = nil
         readiness?.cancel()

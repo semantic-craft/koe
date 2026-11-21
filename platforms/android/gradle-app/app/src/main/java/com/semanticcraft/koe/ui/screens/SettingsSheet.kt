@@ -95,8 +95,7 @@ fun SettingsSheet(
     }
 
     fun saveSettings() {
-        store.send(draft.toConfigureProviderCommand())
-        if (store.navigation.value.effectiveError == null) {
+        if (store.sendReturningError(draft.toConfigureProviderCommand()) == null) {
             draft = draft.clearingApiKeyInputs()
             showSavedNotice = true
         } else {
@@ -145,7 +144,12 @@ fun SettingsSheet(
 
                     SettingsKeyValueRow("平台标识", platform.id)
                     SettingsKeyValueRow("分发渠道", BuildConfig.KOE_DISTRIBUTION)
-                    SettingsKeyValueRow("本机语音引擎", platform.nativeSpeechLabel)
+                    SettingsKeyValueRow("识别引擎", when (speech.engine) {
+                        "apple_speech" -> platform.nativeSpeechLabel
+                        "cloud" -> "云端识别"
+                        "downloaded" -> "下载的本机模型"
+                        else -> "未知引擎"
+                    })
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -261,7 +265,7 @@ fun SettingsSheet(
                             fontWeight = FontWeight.Medium,
                         )
                     }
-                    if (showSavedNotice && navigation.effectiveError == null) {
+                    if (showSavedNotice) {
                         Text(
                             text = "已保存模型配置",
                             color = colors.success,

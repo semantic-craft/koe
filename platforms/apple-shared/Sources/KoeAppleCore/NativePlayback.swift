@@ -47,6 +47,9 @@ public final class NativePlayback {
         defer { isSyncingPlayback = false }
         do {
             guard let id = desired.recordId, let plan = desired.asset else {
+                if desired.isPlaying, desired.recordId != nil {
+                    throw CaptureError("找不到录音文件。")
+                }
                 unload()
                 try updateSession(false)
                 return

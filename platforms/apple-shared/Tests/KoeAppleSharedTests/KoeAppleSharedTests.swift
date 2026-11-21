@@ -42,7 +42,7 @@ struct KoeAppleSharedTests {
         let segment = try #require(first.segments.first)
         store.send(.createTask(recordId: first.id, segmentId: segment.id))
         let task = try #require(store.snapshot.tasks.first)
-        store.send(.reviewItem(itemId: task.id, decision: "accept"))
+        store.send(.reviewItem(itemId: task.id, decision: .accept))
         store.send(.completeTask(itemId: task.id, completed: true))
         store.send(.createNote(title: "Notebook", text: "The notebook is on the shelf."))
         let second = try #require(store.snapshot.detail)

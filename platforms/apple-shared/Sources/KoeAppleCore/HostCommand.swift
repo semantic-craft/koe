@@ -1,5 +1,9 @@
 import Foundation
 
+public enum ReviewDecision: String, Codable, Sendable, Equatable {
+    case accept, dismiss, reset
+}
+
 public enum HostCommand: Encodable, Equatable, Sendable {
     case navigate(section: String)
     case back
@@ -38,7 +42,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         includeSources: Bool = true
     )
 
-    case reviewItem(itemId: String, decision: String)
+    case reviewItem(itemId: String, decision: ReviewDecision)
     case completeTask(itemId: String, completed: Bool)
     case editItem(itemId: String, text: String, due: String?)
     case saveMemory(recordId: String, segmentId: String)

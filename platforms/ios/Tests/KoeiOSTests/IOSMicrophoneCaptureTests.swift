@@ -34,13 +34,14 @@ final class TestMicrophone: MicrophoneSource, @unchecked Sendable {
 
 @MainActor
 final class IOSMicrophoneCaptureTests: XCTestCase {
-    private func fixture(_ body: (HostSessionStore, TestMicrophone, URL) async throws -> Void) async throws {
+    private func fixture(recognizer: (any LocalSpeechRecognizer)? = nil, _ body: (HostSessionStore, TestMicrophone, URL) async throws -> Void) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
         let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
         let source = TestMicrophone()
         let coordinator = IOSHostCoordinator(store: store, actions: HostBridgeActions(),
-                                             source: source, allowsCoreBluetooth: false, nowNanoseconds: { source.clockNs })
+                                             source: source, allowsCoreBluetooth: false, recognizer: recognizer,
+                                             allowsLocalSpeech: recognizer != nil, nowNanoseconds: { source.clockNs })
         coordinator.setScenePhase(.active)
         defer { coordinator.shutdown(); store.shutdown() }
         try await body(store, source, root)
@@ -65,6 +66,20 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
 
     private func wav(_ root: URL, _ id: String) throws -> [UInt8] {
         Array(try Data(contentsOf: root.appendingPathComponent("audio/\(id).wav")).dropFirst(44))
+    }
+
+    func testCoordinatorPreparesSpeechAndTranscribesQueuedPCM() async throws {
+        try await fixture(recognizer: TestRecognizer()) { store, source, _ in
+            try await self.waitFor("本机转写就绪") { store.settings.speech.appleState == "ready" }
+            let id = try await self.start(store)
+            let receive = try XCTUnwrap(source.receive)
+            receive(CapturedPCM(samples: [11, 12], capturedStartNs: source.clockNs))
+            try await self.waitFor("识别结果写入 Rust 记录") {
+                store.records.first(where: { $0.id == id })?.preview.contains("测试转写") == true
+            }
+            store.performCaptureAction(.end)
+            try await self.waitFor("录音已保存") { store.snapshot.microphone == nil }
+        }
     }
 
     func testDeniedPermissionFinishesPendingCaptureAndExplainsFailure() async throws {
@@ -185,4 +200,27 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
             }
         }
     }
+}
+
+@MainActor
+private struct TestRecognizer: LocalSpeechRecognizer {
+    func prepare() async throws {}
+
+    func start(locale: String, result: @escaping @MainActor (Result<LocalSpeechResult, Error>) -> Void) async throws -> any LocalSpeechSession {
+        XCTAssertEqual(locale, "zh-CN")
+        return TestRecognitionSession(result: result)
+    }
+}
+
+@MainActor
+private final class TestRecognitionSession: LocalSpeechSession {
+    let result: @MainActor (Result<LocalSpeechResult, Error>) -> Void
+    init(result: @escaping @MainActor (Result<LocalSpeechResult, Error>) -> Void) { self.result = result }
+
+    func append(_ samples: [Int16]) throws {
+        XCTAssertEqual(samples, [11, 12])
+        result(.success(LocalSpeechResult(text: "测试转写", startMs: 0, endMs: 1, isFinal: true)))
+    }
+    func finish() async throws {}
+    func cancel() async {}
 }

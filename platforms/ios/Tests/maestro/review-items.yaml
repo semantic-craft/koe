@@ -1,0 +1,19 @@
+appId: com.semanticcraft.koe.ios
+---
+- tapOn: "行动"
+- assertVisible: "待确认"
+- assertNotVisible: "标记已完成"
+- tapOn:
+    text: "采纳"
+    index: 0
+- assertVisible: "已采纳"
+- assertVisible: "标记已完成"
+- tapOn: "忽略"
+- assertNotVisible: "待确认"
+- tapOn: "记忆"
+- tapOn:
+    text: "记住"
+    index: 0
+- assertVisible: "已记住"
+- tapOn: "忽略"
+- assertNotVisible: "待确认"
