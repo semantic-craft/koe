@@ -5,7 +5,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
-import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -37,7 +36,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-xhdpi")
 class DeviceSheetBleActionsTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createRobolectricComposeRule()
 
     private class RecordingBridgeClient(
         private var current: HostSnapshot,

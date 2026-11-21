@@ -1,5 +1,7 @@
 package com.semanticcraft.koe.ui.leaves
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.semanticcraft.koe.core.CaptureMode
 import com.semanticcraft.koe.core.CaptureAction
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.TimeLabel
@@ -33,9 +36,11 @@ import com.semanticcraft.koe.ui.theme.KoeTheme
 fun AndroidActiveCaptureBar(
     store: HostSessionStore,
     modifier: Modifier = Modifier,
+    workspaceMode: CaptureMode? = null,
 ) {
     val capture by store.activeCapture.collectAsStateWithLifecycle()
     val active = capture ?: return
+    if (active.mode == workspaceMode) return
     val colors = KoeTheme.colors
 
     Surface(
@@ -104,6 +109,18 @@ private fun capturePhaseLabel(phase: String): String =
         "cancelling" -> "正在取消"
         else -> "正在保存"
     }
+
+@Composable
+internal fun WorkspaceCaptureActions(store: HostSessionStore, mode: CaptureMode) {
+    val capture by store.activeCapture.collectAsStateWithLifecycle()
+    val active = capture?.takeIf { it.mode == mode } ?: return
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        active.actions.forEach { action ->
+            KoePrimaryButton(captureActionTitle(action), { store.performCaptureAction(action) },
+                Modifier.testTag("workspace-capture-" + action.name.lowercase()), isPrimary = action == CaptureAction.END)
+        }
+    }
+}
 
 private fun captureActionTitle(action: CaptureAction): String =
     when (action) {

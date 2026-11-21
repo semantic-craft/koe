@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import com.semanticcraft.koe.core.WorkspaceExportOptions
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -18,6 +19,7 @@ data class PendingPickerState(
     val date: String? = null,
     val safeName: String? = null,
     val recordIds: List<String> = emptyList(),
+    val options: WorkspaceExportOptions = WorkspaceExportOptions(),
 ) {
     companion object {
         const val KIND_IMPORT = "import"

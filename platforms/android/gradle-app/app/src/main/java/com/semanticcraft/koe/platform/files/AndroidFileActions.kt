@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.WorkspaceExportOptions
 import com.semanticcraft.koe.platform.AndroidHostAdapter
 import java.io.File
 import java.io.IOException
@@ -32,6 +33,7 @@ class AndroidFileActions(
             val recordId: String?,
             val date: String?,
             val safeName: String,
+            val options: WorkspaceExportOptions,
         ) : PendingPickerRequest
         class ExportRecords(override val store: HostSessionStore, val recordIds: List<String>) : PendingPickerRequest
     }
@@ -68,6 +70,7 @@ class AndroidFileActions(
                 recordId = current.recordId,
                 date = current.date,
                 safeName = current.safeName,
+                options = current.options,
             )
             is PendingPickerRequest.ExportRecords -> PendingPickerState(
                 kind = PendingPickerState.KIND_EXPORT_RECORDS,
@@ -92,6 +95,7 @@ class AndroidFileActions(
                         recordId = cleanRecordId,
                         date = cleanDate,
                         safeName = sanitizeExportFileName(state.safeName),
+                        options = state.options,
                     )
                 }
                 PendingPickerState.KIND_EXPORT_RECORDS -> {
@@ -138,7 +142,8 @@ class AndroidFileActions(
         )
     }
 
-    fun requestExportWorkspace(recordId: String?, date: String?, suggestedFilename: String) {
+    fun requestExportWorkspace(recordId: String?, date: String?, suggestedFilename: String,
+                               options: WorkspaceExportOptions = WorkspaceExportOptions()) {
         val cleanRecordId = recordId?.trim()?.takeIf { it.isNotEmpty() }
         val cleanDate = date?.trim()?.takeIf { it.isNotEmpty() }
         if (cleanRecordId == null && cleanDate == null) return
@@ -146,7 +151,7 @@ class AndroidFileActions(
         val safeName = sanitizeExportFileName(suggestedFilename)
         launchPicker(
             requestFactory = { store ->
-                PendingPickerRequest.ExportWorkspace(store, cleanRecordId, cleanDate, safeName)
+                PendingPickerRequest.ExportWorkspace(store, cleanRecordId, cleanDate, safeName, options)
             },
             launch = { host, request ->
                 host.launchCreateMarkdownDocument(safeName) { failure ->
@@ -197,9 +202,7 @@ class AndroidFileActions(
             return
         }
         if (uri == null) return
-        submitIoJob {
-            performExportWorkspace(request.store, request.recordId, request.date, request.safeName, uri)
-        }
+        submitIoJob { performExportWorkspace(request, uri) }
     }
 
     fun onOpenDocumentTreeResult(treeUri: Uri?) {
@@ -313,13 +316,8 @@ class AndroidFileActions(
         }
     }
 
-    private fun performExportWorkspace(
-        targetStore: HostSessionStore,
-        recordId: String?,
-        date: String?,
-        safeName: String,
-        targetUri: Uri,
-    ) {
+    private fun performExportWorkspace(request: PendingPickerRequest.ExportWorkspace, targetUri: Uri) {
+        val targetStore = request.store
         if (!isStoreBound(targetStore)) {
             safIo.deleteDocumentBestEffort(targetUri)
             return
@@ -332,7 +330,7 @@ class AndroidFileActions(
             reportErrorIfBound(targetStore, ERROR_WRITE_FAILED)
             return
         }
-        val tempFile = File(tempDir, safeName)
+        val tempFile = File(tempDir, request.safeName)
         try {
             if (!isStoreBound(targetStore)) {
                 safIo.deleteDocumentBestEffort(targetUri)
@@ -340,11 +338,11 @@ class AndroidFileActions(
             }
             val error = targetStore.sendReturningError(
                 HostCommand.ExportWorkspaceMarkdown(
-                    recordId = recordId,
-                    date = date,
+                    recordId = request.recordId,
+                    date = request.date,
                     path = tempFile.absolutePath,
-                    includeAnalysis = true,
-                    includeSources = true,
+                    includeAnalysis = request.options.includeAnalysis,
+                    includeSources = request.options.includeSources,
                 ),
             )
             if (error != null || !tempFile.isFile) {

@@ -1,11 +1,9 @@
 package com.semanticcraft.koe.ui
 
-import androidx.activity.ComponentActivity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import com.semanticcraft.koe.core.*
 import com.semanticcraft.koe.ui.leaves.AndroidPlayerBar
 import com.semanticcraft.koe.ui.screens.*
@@ -21,7 +19,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-xhdpi")
 class AndroidSystemUxTest {
-    @get:Rule val ui = createAndroidComposeRule<ComponentActivity>()
+    @get:Rule val ui = createRobolectricComposeRule()
     private val fixture: HostSnapshot get() {
         val json = checkNotNull(javaClass.getResource("/android-rich-snapshot.json")).readText()
         return HostJson.json.decodeFromString(HostSnapshot.serializer(), json)

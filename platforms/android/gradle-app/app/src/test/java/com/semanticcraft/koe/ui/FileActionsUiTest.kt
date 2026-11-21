@@ -2,7 +2,6 @@ package com.semanticcraft.koe.ui
 
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -35,7 +34,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-xhdpi")
 class FileActionsUiTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createRobolectricComposeRule()
 
     private class StaticSnapshotBridge(
         private var current: HostSnapshot,
@@ -170,7 +169,7 @@ class FileActionsUiTest {
         )
         val calls = mutableListOf<Triple<String?, String?, String>>()
         store.bridgeActions = HostBridgeActions(
-            requestExportWorkspace = { recordId, date, filename ->
+            requestExportWorkspace = { recordId, date, filename, _ ->
                 calls.add(Triple(recordId, date, filename))
             },
         )
@@ -205,7 +204,7 @@ class FileActionsUiTest {
         )
         val calls = mutableListOf<Triple<String?, String?, String>>()
         store.bridgeActions = HostBridgeActions(
-            requestExportWorkspace = { recordId, date, filename ->
+            requestExportWorkspace = { recordId, date, filename, _ ->
                 calls.add(Triple(recordId, date, filename))
             },
         )

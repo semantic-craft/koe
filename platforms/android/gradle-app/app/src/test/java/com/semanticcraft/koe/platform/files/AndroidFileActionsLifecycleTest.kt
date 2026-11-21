@@ -12,6 +12,7 @@ import com.semanticcraft.koe.MainActivity
 import com.semanticcraft.koe.bridge.KoeNativeBridge
 import com.semanticcraft.koe.core.HostBridgeClient
 import com.semanticcraft.koe.core.HostJson
+import com.semanticcraft.koe.core.WorkspaceExportOptions
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
 import com.semanticcraft.koe.core.PcmIngestReceipt
@@ -98,6 +99,8 @@ class AndroidFileActionsLifecycleTest {
         val commandTypes = mutableListOf<String>()
         var observedImportName: String? = null
         var observedImportLastModifiedMs: Long? = null
+        var observedIncludeAnalysis: String? = null
+        var observedIncludeSources: String? = null
         var observedExportRecordId: String? = null
         var observedExportDate: String? = null
         var observedExportRecordIds: List<String> = emptyList()
@@ -127,6 +130,8 @@ class AndroidFileActionsLifecycleTest {
                     observedImportLastModifiedMs = staged.lastModified()
                 }
                 "export_workspace_markdown" -> {
+                    observedIncludeAnalysis = obj["includeAnalysis"]?.jsonPrimitive?.content
+                    observedIncludeSources = obj["includeSources"]?.jsonPrimitive?.content
                     observedExportRecordId = obj["recordId"]?.jsonPrimitive?.content
                     observedExportDate = obj["date"]?.jsonPrimitive?.content
                     File(obj["path"]?.jsonPrimitive?.content.orEmpty()).writeText("# 旋转后导出", Charsets.UTF_8)
@@ -308,7 +313,7 @@ class AndroidFileActionsLifecycleTest {
         assertTrue(importRoot.listFiles().orEmpty().isEmpty())
 
         actions1.onOpenDocumentResult(null)
-        actions1.requestExportWorkspace("rec-42", null, "复盘/纪要.md")
+        actions1.requestExportWorkspace("rec-42", null, "复盘/纪要.md", WorkspaceExportOptions(includeAnalysis = false))
         val workspaceBundle = Bundle()
         MainActivity.writePendingPickerState(workspaceBundle, actions1.exportPendingState())
         val workspaceBridge = RecordingBridge()
@@ -318,6 +323,8 @@ class AndroidFileActionsLifecycleTest {
         val exportUri = Uri.parse("content://docs/death-export")
         actionsAfterExportDeath.onCreateMarkdownResult(exportUri)
         assertEquals(listOf("export_workspace_markdown"), workspaceBridge.commandTypes)
+        assertEquals("false", workspaceBridge.observedIncludeAnalysis)
+        assertEquals("true", workspaceBridge.observedIncludeSources)
         assertEquals("rec-42", workspaceBridge.observedExportRecordId)
         assertEquals("# 旋转后导出", safIo.outputs[exportUri]?.toString(Charsets.UTF_8.name()))
         assertFalse(exportUri in safIo.deletedUris)

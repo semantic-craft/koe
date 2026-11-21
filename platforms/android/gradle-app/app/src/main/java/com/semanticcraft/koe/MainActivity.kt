@@ -16,6 +16,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.platform.capture.PermissionRequester
 import com.semanticcraft.koe.platform.files.DocumentPickerHost
+import com.semanticcraft.koe.core.WorkspaceExportOptions
 import com.semanticcraft.koe.platform.files.PendingPickerState
 import com.semanticcraft.koe.platform.files.PickerLaunchFailure
 import com.semanticcraft.koe.platform.files.SystemSafDocumentIo
@@ -159,9 +160,14 @@ class MainActivity : ComponentActivity() {
         private const val STATE_PICKER_SAFE_NAME = "koe_saf_picker_safe_name"
         private const val STATE_PICKER_RECORD_IDS = "koe_saf_picker_record_ids"
 
+        private const val STATE_INCLUDE_ANALYSIS = "koe_saf_include_analysis"
+        private const val STATE_INCLUDE_SOURCES = "koe_saf_include_sources"
+
         internal fun writePendingPickerState(outState: Bundle, state: PendingPickerState?) {
             if (state == null) return
             outState.putString(STATE_PICKER_KIND, state.kind)
+            outState.putBoolean(STATE_INCLUDE_ANALYSIS, state.options.includeAnalysis)
+            outState.putBoolean(STATE_INCLUDE_SOURCES, state.options.includeSources)
             state.recordId?.let { outState.putString(STATE_PICKER_RECORD_ID, it) }
             state.date?.let { outState.putString(STATE_PICKER_DATE, it) }
             state.safeName?.let { outState.putString(STATE_PICKER_SAFE_NAME, it) }
@@ -174,6 +180,8 @@ class MainActivity : ComponentActivity() {
             val kind = savedInstanceState?.getString(STATE_PICKER_KIND) ?: return null
             return PendingPickerState(
                 kind = kind,
+                options = WorkspaceExportOptions(savedInstanceState.getBoolean(STATE_INCLUDE_ANALYSIS, true),
+                    savedInstanceState.getBoolean(STATE_INCLUDE_SOURCES, true)),
                 recordId = savedInstanceState.getString(STATE_PICKER_RECORD_ID),
                 date = savedInstanceState.getString(STATE_PICKER_DATE),
                 safeName = savedInstanceState.getString(STATE_PICKER_SAFE_NAME),
