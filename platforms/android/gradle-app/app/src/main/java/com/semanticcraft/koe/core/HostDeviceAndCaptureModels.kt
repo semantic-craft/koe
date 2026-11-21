@@ -227,8 +227,8 @@ data class AppUpdateSnapshot(
     val isUpdateAvailable: Boolean get() = phase == "available"
 
     companion object {
-        const val DEFAULT_VERSION = "2.6.0"
-        const val DEFAULT_BUILD = "15"
+        const val DEFAULT_VERSION = "2.7.0"
+        const val DEFAULT_BUILD = "16"
         const val DEFAULT_RELEASES_URL = "https://github.com/semantic-craft/koe/releases"
         val empty = AppUpdateSnapshot()
     }
