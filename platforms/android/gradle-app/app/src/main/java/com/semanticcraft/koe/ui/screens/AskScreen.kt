@@ -1,28 +1,36 @@
 package com.semanticcraft.koe.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -30,7 +38,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,11 +48,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.AskMessageSnapshot
@@ -65,6 +77,7 @@ fun AskScreen(
     store: HostSessionStore,
     onOpenSource: (SourceSnapshot) -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val ask by store.ask.collectAsStateWithLifecycle()
     val records by store.records.collectAsStateWithLifecycle()
@@ -79,6 +92,32 @@ fun AskScreen(
 
     val scopedRecord = (ask.recordId ?: navigation.selectedRecordId)
         ?.let { id -> records.firstOrNull { it.id == id } }
+
+    var picking by rememberSaveable { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(ask.messages.size, ask.phase) {
+        val last = ask.messages.size.coerceAtLeast(1) - 1 + if (ask.phase == "pending") 1 else 0
+        listState.scrollToItem(last)
+    }
+    if (picking) AlertDialog(
+        onDismissRequest = { picking = false },
+        title = { Text("选择问答记录") },
+        text = {
+            LazyColumn {
+                item {
+                    TextButton(onClick = {
+                        if (store.sendReturningError(HostCommand.SetAskScope("all")) == null) picking = false
+                    }) { Text("全部记录") }
+                }
+                items(records, key = { it.id }) { record ->
+                    TextButton(onClick = {
+                        if (store.sendReturningError(HostCommand.SetAskScope("record", record.id)) == null) picking = false
+                    }, modifier = Modifier.fillMaxWidth()) { Text(record.title) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { picking = false }) { Text("关闭") } },
+    )
 
     fun submitQuestion() {
         val trimmed = questionDraft.trim()
@@ -95,10 +134,10 @@ fun AskScreen(
             .fillMaxSize()
             .background(colors.bgPanel),
     ) {
-        Row(
+        if (!compact) Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = if (compact) 2.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -113,6 +152,7 @@ fun AskScreen(
                     selected = ask.scope == "all",
                     onClick = { store.send(HostCommand.SetAskScope(scope = "all", recordId = null)) },
                 )
+                if (records.isNotEmpty()) KoeFilterChip("选择记录", false, { picking = true })
                 if (scopedRecord != null) {
                     KoeFilterChip(
                         label = scopedRecord.title,
@@ -130,8 +170,9 @@ fun AskScreen(
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(if (compact) 6.dp else 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (ask.messages.isEmpty()) {
@@ -146,6 +187,7 @@ fun AskScreen(
                 items(ask.messages, key = { it.id }) { message ->
                     AskMessageCard(
                         message = message,
+                        compact = compact,
                         onOpenSource = onOpenSource,
                         onInspectSource = { source -> inspectedSource = source },
                     )
@@ -181,11 +223,43 @@ fun AskScreen(
                 .fillMaxWidth()
                 .imePadding()
                 .background(colors.surface0)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = if (compact) 2.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedTextField(
+            if (compact && records.isNotEmpty()) {
+                KoeFilterChip(
+                    label = scopedRecord?.title?.takeIf { ask.scope == "record" } ?: "选择记录",
+                    selected = ask.scope == "record",
+                    modifier = Modifier.widthIn(max = 168.dp),
+                    onClick = { picking = true },
+                )
+            }
+            val inputModifier = Modifier.weight(1f).testTag("ask-question-input")
+            if (compact) {
+                // A landscape IME can leave less than the Material field's vertical padding.
+                BasicTextField(
+                    value = questionDraft,
+                    onValueChange = { questionDraft = it },
+                    singleLine = false,
+                    maxLines = 4,
+                    textStyle = TextStyle(color = colors.textPrimary, fontSize = KoeFontSizes.sm),
+                    cursorBrush = SolidColor(colors.accent),
+                    modifier = inputModifier,
+                    decorationBox = { field ->
+                        Box(
+                            Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                                .background(colors.surface1, KoeShapes.control)
+                                .border(1.dp, colors.border, KoeShapes.control)
+                                .padding(horizontal = 12.dp, vertical = 2.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (questionDraft.isEmpty()) Text("问问你记下来的事…", color = colors.textMuted, fontSize = KoeFontSizes.sm)
+                            field()
+                        }
+                    },
+                )
+            } else OutlinedTextField(
                 value = questionDraft,
                 onValueChange = { questionDraft = it },
                 placeholder = {
@@ -195,7 +269,8 @@ fun AskScreen(
                         color = colors.textMuted,
                     )
                 },
-                singleLine = true,
+                singleLine = false,
+                maxLines = 4,
                 shape = KoeShapes.control,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = colors.accent,
@@ -205,11 +280,7 @@ fun AskScreen(
                     focusedTextColor = colors.textPrimary,
                     unfocusedTextColor = colors.textPrimary,
                 ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { submitQuestion() }),
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("ask-question-input"),
+                modifier = inputModifier,
             )
 
             KoePrimaryButton(
@@ -239,14 +310,19 @@ fun AskScreen(
 @Composable
 private fun AskMessageCard(
     message: AskMessageSnapshot,
+    compact: Boolean,
     onOpenSource: (SourceSnapshot) -> Unit,
     onInspectSource: (SourceSnapshot) -> Unit,
 ) {
     val colors = KoeTheme.colors
     val isUser = message.role == "user"
 
-    KoeCard {
+    val body: @Composable () -> Unit = {
+        SelectionContainer { Text(message.text, color = colors.textPrimary, fontSize = KoeFontSizes.sm) }
+    }
+    KoeCard(contentPadding = PaddingValues(if (compact) 8.dp else 16.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (compact) body()
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -266,13 +342,15 @@ private fun AskMessageCard(
                 if (!isUser && message.mode == "retrieval") {
                     KoeBadge(text = "原文检索", tint = colors.textMuted)
                 }
+                if (!isUser) {
+                    val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
+                    TextButton(onClick = {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Koe", message.text))
+                    }, modifier = Modifier.testTag("copy-" + message.id)) { Text("复制") }
+                }
             }
 
-            Text(
-                text = message.text,
-                color = colors.textPrimary,
-                fontSize = KoeFontSizes.sm,
-            )
+            if (!compact) body()
 
             if (message.sources.isNotEmpty()) {
                 Row(

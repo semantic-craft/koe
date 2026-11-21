@@ -31,6 +31,8 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,195 +83,212 @@ fun RecordsScreen(
     var filterCategory by rememberSaveable { mutableStateOf(RecordFilterCategory.ALL) }
     var showTrashSheet by rememberSaveable { mutableStateOf(false) }
 
-    val filteredRecords = records.filter { it.matches(filter = filterCategory, query = searchQuery) }
+    var sort by rememberSaveable { mutableStateOf(RecordSort.NEWEST) }
+    var project by rememberSaveable { mutableStateOf<String?>(null) }
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    val projects = records.mapNotNull { it.project?.takeIf(String::isNotBlank) }.distinct().sorted()
+    val filteredRecords = records.filter {
+        it.matches(filterCategory, searchQuery) && (project == null || it.project.orEmpty().ifBlank { "" } == project)
+    }
+    val sortedRecords = filteredRecords.sortedWith(sort.order)
+    val selected = sortedRecords.filter { it.id in selectedIds }
+    LaunchedEffect(filteredRecords) {
+        selectedIds = ArrayList(selected.map { it.id })
+    }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.bgPanel),
+    LazyColumn(
+        modifier = modifier.fillMaxSize().background(colors.bgPanel),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = {
-                    Text(
-                        text = "搜索记录标题或内容…",
-                        fontSize = KoeFontSizes.sm,
-                        color = colors.textMuted,
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Outlined.Search,
-                        contentDescription = null,
-                        tint = colors.textMuted,
-                        modifier = Modifier.size(18.dp),
-                    )
-                },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Clear,
-                                contentDescription = "清空搜索",
-                                tint = colors.textMuted,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = KoeShapes.control,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.accent,
-                    unfocusedBorderColor = colors.border,
-                    focusedContainerColor = colors.surface1,
-                    unfocusedContainerColor = colors.surface1,
-                    focusedTextColor = colors.textPrimary,
-                    unfocusedTextColor = colors.textPrimary,
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = {
-                        focusManager.clearFocus()
-                        keyboardController?.hide()
+        item(key = "records-controls") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            text = "搜索记录标题或内容…",
+                            fontSize = KoeFontSizes.sm,
+                            color = colors.textMuted,
+                        )
                     },
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("records-search-input"),
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RecordFilterCategory.entries.forEach { category ->
-                    KoeFilterChip(
-                        label = category.title,
-                        selected = filterCategory == category,
-                        onClick = { filterCategory = category },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    text = "共 ${filteredRecords.size} 条记录",
-                    color = colors.textMuted,
-                    fontSize = KoeFontSizes.xs,
-                    maxLines = 1,
-                )
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.CenterEnd,
-                ) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        KoePrimaryButton(
-                            title = "导入",
-                            isPrimary = false,
-                            onClick = { store.bridgeActions.requestImportFile() },
-                            modifier = Modifier.testTag("records-import-button"),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Search,
+                            contentDescription = null,
+                            tint = colors.textMuted,
+                            modifier = Modifier.size(18.dp),
                         )
-                        if (filteredRecords.isNotEmpty()) {
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Clear,
+                                    contentDescription = "清空搜索",
+                                    tint = colors.textMuted,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = KoeShapes.control,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.accent,
+                        unfocusedBorderColor = colors.border,
+                        focusedContainerColor = colors.surface1,
+                        unfocusedContainerColor = colors.surface1,
+                        focusedTextColor = colors.textPrimary,
+                        unfocusedTextColor = colors.textPrimary,
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                        },
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("records-search-input"),
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RecordFilterCategory.entries.forEach { category ->
+                        KoeFilterChip(
+                            label = category.title,
+                            selected = filterCategory == category,
+                            onClick = { filterCategory = category },
+                        )
+                    }
+                }
+
+                RecordBatchControls(sort, { sort = it }, project, projects, { project = it },
+                    selecting, { selecting = !selecting; selectedIds = arrayListOf() }, selected, navigation.savingRecordId, store)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "共 ${filteredRecords.size} 条记录",
+                        color = colors.textMuted,
+                        fontSize = KoeFontSizes.xs,
+                        maxLines = 1,
+                    )
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterEnd,
+                    ) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             KoePrimaryButton(
-                                title = "导出",
+                                title = "导入",
                                 isPrimary = false,
-                                onClick = { store.bridgeActions.requestExportRecords(filteredRecords.map { it.id }) },
-                                modifier = Modifier.testTag("records-export-batch-button"),
+                                onClick = { store.bridgeActions.requestImportFile() },
+                                modifier = Modifier.testTag("records-import-button"),
+                            )
+                            if (filteredRecords.isNotEmpty()) {
+                                KoePrimaryButton(
+                                    title = "导出",
+                                    isPrimary = false,
+                                    enabled = !selecting || selected.isNotEmpty(),
+                                    onClick = {
+                                        store.bridgeActions.requestExportRecords((if (selecting) selected else filteredRecords).map { it.id })
+                                    },
+                                    modifier = Modifier.testTag("records-export-batch-button"),
+                                )
+                            }
+                            KoePrimaryButton(
+                                title = if (navigation.trashCount > 0) "回收站 (${navigation.trashCount})" else "回收站",
+                                icon = Icons.Outlined.DeleteOutline,
+                                isPrimary = false,
+                                onClick = { showTrashSheet = true },
+                                modifier = Modifier.testTag("records-trash-button"),
                             )
                         }
-                        KoePrimaryButton(
-                            title = if (navigation.trashCount > 0) "回收站 (${navigation.trashCount})" else "回收站",
-                            icon = Icons.Outlined.DeleteOutline,
-                            isPrimary = false,
-                            onClick = { showTrashSheet = true },
-                            modifier = Modifier.testTag("records-trash-button"),
-                        )
                     }
                 }
             }
         }
-
         if (filteredRecords.isEmpty()) {
-            KoeEmptyState(
+            item { KoeEmptyState(
                 icon = Icons.Outlined.Inbox,
                 title = "暂无匹配记录",
                 detail = "切换筛选条件，或在今天页保存文字闪记与录音。",
-            )
+            ) }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(filteredRecords, key = { it.id }) { record ->
-                    val canTrash by rememberUpdatedState(record.canTrash && navigation.savingRecordId != record.id)
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (canTrash && value == SwipeToDismissBoxValue.EndToStart) {
-                                store.sendReturningError(HostCommand.TrashRecord(record.id)) == null
-                            } else {
-                                false
-                            }
-                        },
-                    )
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        enableDismissFromStartToEnd = false,
-                        enableDismissFromEndToStart = canTrash,
-                        backgroundContent = {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(KoeShapes.card)
-                                    .background(colors.danger.copy(alpha = 0.14f))
-                                    .padding(horizontal = 20.dp),
-                                contentAlignment = Alignment.CenterEnd,
+            items(sortedRecords, key = { "record-" + it.id }) { record ->
+                val canTrash by rememberUpdatedState(!selecting && record.canTrash && navigation.savingRecordId != record.id)
+                val dismissState = rememberSwipeToDismissBoxState(
+                    confirmValueChange = { value ->
+                        if (canTrash && value == SwipeToDismissBoxValue.EndToStart) {
+                            store.sendReturningError(HostCommand.TrashRecord(record.id)) == null
+                        } else {
+                            false
+                        }
+                    },
+                )
+                SwipeToDismissBox(
+                    state = dismissState,
+                    enableDismissFromStartToEnd = false,
+                    enableDismissFromEndToStart = canTrash,
+                    backgroundContent = {
+                        if (canTrash) Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(KoeShapes.card)
+                                .background(colors.danger.copy(alpha = 0.14f))
+                                .padding(horizontal = 20.dp),
+                            contentAlignment = Alignment.CenterEnd,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.DeleteOutline,
-                                        contentDescription = null,
-                                        tint = colors.danger,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                    Text(
-                                        text = "移入回收站",
-                                        color = colors.danger,
-                                        fontSize = KoeFontSizes.xs,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Outlined.DeleteOutline,
+                                    contentDescription = null,
+                                    tint = colors.danger,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = "移入回收站",
+                                    color = colors.danger,
+                                    fontSize = KoeFontSizes.xs,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
                             }
+                        }
+                    },
+                ) {
+                    RecordRowCard(
+                        record = record,
+                        canTrash = canTrash,
+                        selected = if (selecting) record.id in selectedIds else null,
+                        onOpen = {
+                            if (!selecting) onSelectRecord(record.id)
+                            else selectedIds = ArrayList(if (record.id in selectedIds) selectedIds - record.id else selectedIds + record.id)
                         },
-                    ) {
-                        RecordRowCard(
-                            record = record,
-                            canTrash = canTrash,
-                            onOpen = { onSelectRecord(record.id) },
-                            onTrash = { store.send(HostCommand.TrashRecord(record.id)) },
-                        )
-                    }
+                        onTrash = { store.send(HostCommand.TrashRecord(record.id)) },
+                    )
                 }
             }
         }
@@ -290,6 +309,7 @@ fun RecordsScreen(
 private fun RecordRowCard(
     record: RecordSnapshot,
     canTrash: Boolean,
+    selected: Boolean?,
     onOpen: () -> Unit,
     onTrash: () -> Unit,
 ) {
@@ -301,6 +321,7 @@ private fun RecordRowCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (selected != null) Checkbox(checked = selected, onCheckedChange = null)
                 Text(
                     text = record.title,
                     color = colors.textPrimary,

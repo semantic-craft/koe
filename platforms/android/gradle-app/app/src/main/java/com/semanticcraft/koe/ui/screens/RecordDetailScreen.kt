@@ -1,5 +1,8 @@
 package com.semanticcraft.koe.ui.screens
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
+import com.semanticcraft.koe.core.SourceSnapshot
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,12 +20,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Subject
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
-import com.semanticcraft.koe.core.RecordDetailSlice
 import com.semanticcraft.koe.core.RecordDetailSnapshot
 import com.semanticcraft.koe.core.TimeLabel
 import com.semanticcraft.koe.ui.components.KoeBadge
@@ -64,6 +63,10 @@ fun RecordDetailScreen(
     store: HostSessionStore,
     recordId: String,
     modifier: Modifier = Modifier,
+    onOpenSource: (SourceSnapshot) -> Unit = {},
+    onTrashed: () -> Unit = {},
+    onAsk: () -> Unit = {},
+    compact: Boolean = false,
 ) {
     val slice by store.recordDetail.collectAsStateWithLifecycle()
     val records by store.records.collectAsStateWithLifecycle()
@@ -83,6 +86,16 @@ fun RecordDetailScreen(
         if (focusIndex >= 0) {
             selectedTab = DetailTab.TRANSCRIPT
             listState.requestScrollToItem(focusIndex + 1) // The detail header precedes the segments.
+        }
+    }
+    fun followSource(source: SourceSnapshot) {
+        onOpenSource(source)
+        if (source.recordId == recordId) {
+            val index = detail?.segments?.indexOfFirst { it.id == source.segmentId } ?: -1
+            if (index >= 0) {
+                selectedTab = DetailTab.TRANSCRIPT
+                listState.requestScrollToItem(index + 1)
+            }
         }
     }
     val fallbackRecord = records.firstOrNull { it.id == recordId }
@@ -124,11 +137,17 @@ fun RecordDetailScreen(
         ) {
             if (detail != null) {
                 item(key = "detail-header") {
-                    DetailHeaderCard(detail = detail, store = store)
+                    DetailHeaderCard(detail, store, onTrashed, onAsk)
                 }
 
                 when (selectedTab) {
                     DetailTab.SUMMARY -> {
+                        if (detail.minutesStale) item {
+                            KoeCard {
+                                Text("原文已更新，当前纪要已过期。")
+                                KoePrimaryButton("重新整理", { store.send(HostCommand.Summarize(detail.id)) })
+                            }
+                        }
                         if (detail.summary.isEmpty()) {
                             item(key = "summary-empty") {
                                 KoeEmptyState(
@@ -147,20 +166,24 @@ fun RecordDetailScreen(
                                             fontSize = KoeFontSizes.md,
                                             fontWeight = FontWeight.SemiBold,
                                         )
-                                        Text(
-                                            text = item.text,
-                                            color = colors.textSecondary,
-                                            fontSize = KoeFontSizes.sm,
-                                        )
+                                        SelectionContainer {
+                                            Text(
+                                                text = item.text,
+                                                color = colors.textSecondary,
+                                                fontSize = KoeFontSizes.sm,
+                                            )
+                                        }
+                                        WorkspaceSources(item.sources, ::followSource, "summary")
                                     }
                                 }
                             }
                         }
 
-                        if (slice.recordTasks.isNotEmpty()) {
-                            item(key = "detail-tasks") {
-                                DetailTasksCard(slice = slice)
-                            }
+                        items(slice.recordTasks, key = { "task-" + it.id }) { task ->
+                            TaskItemCard(task, store, ::followSource)
+                        }
+                        items(slice.recordMemories, key = { "memory-" + it.id }) { memory ->
+                            MemoryItemCard(memory, store, ::followSource)
                         }
                     }
 
@@ -186,6 +209,13 @@ fun RecordDetailScreen(
                                         ) {
                                             Text(
                                                 text = TimeLabel.duration(segment.startMs),
+                                                modifier = Modifier.testTag("segment-time-" + segment.id).clickable {
+                                                    if (!store.navigation.value.hasPlayableDetailAsset) {
+                                                        store.reportNativeError("这条记录没有可播放的音频。")
+                                                    } else if (store.sendReturningError(HostCommand.Seek(segment.startMs)) == null) {
+                                                        store.send(HostCommand.Playback(true))
+                                                    }
+                                                },
                                                 color = colors.textMuted,
                                                 fontSize = KoeFontSizes.xs,
                                                 fontWeight = FontWeight.Medium,
@@ -198,11 +228,14 @@ fun RecordDetailScreen(
                                                 KoeBadge(text = "定位段落", tint = colors.accent)
                                             }
                                         }
-                                        Text(
-                                            text = segment.text,
-                                            color = colors.textPrimary,
-                                            fontSize = KoeFontSizes.sm,
-                                        )
+                                        SelectionContainer {
+                                            Text(
+                                                text = segment.text,
+                                                color = colors.textPrimary,
+                                                fontSize = KoeFontSizes.sm,
+                                            )
+                                        }
+                                        TranscriptEditors(store, detail, segment)
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             KoePrimaryButton(
                                                 title = "标重点",
@@ -245,11 +278,13 @@ fun RecordDetailScreen(
                                             fontSize = KoeFontSizes.xs,
                                             fontWeight = FontWeight.Medium,
                                         )
-                                        Text(
-                                            text = highlight.quote,
-                                            color = colors.textPrimary,
-                                            fontSize = KoeFontSizes.sm,
-                                        )
+                                        SelectionContainer {
+                                            Text(
+                                                text = highlight.quote,
+                                                color = colors.textPrimary,
+                                                fontSize = KoeFontSizes.sm,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -285,7 +320,7 @@ fun RecordDetailScreen(
             }
         }
 
-        AndroidPlayerBar(store = store)
+        AndroidPlayerBar(store = store, compact = compact)
     }
 }
 
@@ -293,7 +328,14 @@ fun RecordDetailScreen(
 private fun DetailHeaderCard(
     detail: RecordDetailSnapshot,
     store: HostSessionStore,
+    onTrashed: () -> Unit,
+    onAsk: () -> Unit,
 ) {
+    val navigation by store.navigation.collectAsStateWithLifecycle()
+    var renaming by rememberSaveable(detail.id) { mutableStateOf(false) }
+    if (renaming) TextEditorDialog("记录名称", detail.title, { renaming = false }, { value ->
+        store.sendReturningError(HostCommand.RenameRecord(detail.id, value)) == null
+    }, singleLine = true)
     val colors = KoeTheme.colors
     KoeCard {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -332,6 +374,14 @@ private fun DetailHeaderCard(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                KoePrimaryButton("重命名", { renaming = true }, isPrimary = false)
+                KoePrimaryButton("问这条记录", {
+                    if (store.sendReturningError(HostCommand.SetAskScope("record", detail.id)) == null) onAsk()
+                }, isPrimary = false)
+                KoePrimaryButton("移入回收站", {
+                    if (detail.canTrash && store.navigation.value.savingRecordId != detail.id &&
+                        store.sendReturningError(HostCommand.TrashRecord(detail.id)) == null) onTrashed()
+                }, enabled = detail.canTrash && navigation.savingRecordId != detail.id, isPrimary = false)
                 if (detail.canRetranscribe) {
                     KoePrimaryButton(
                         title = "重新转写",
@@ -355,39 +405,6 @@ private fun DetailHeaderCard(
                     isPrimary = false,
                     onClick = { store.send(HostCommand.SetRecordArchived(detail.id, !detail.archived)) },
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DetailTasksCard(slice: RecordDetailSlice) {
-    val colors = KoeTheme.colors
-    KoeCard {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "关联待办 (${slice.recordTasks.size})",
-                color = colors.textPrimary,
-                fontSize = KoeFontSizes.sm,
-                fontWeight = FontWeight.SemiBold,
-            )
-            slice.recordTasks.forEach { task ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = if (task.completed) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = if (task.completed) colors.success else colors.textMuted,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Text(
-                        text = task.text,
-                        color = colors.textPrimary,
-                        fontSize = KoeFontSizes.xs,
-                    )
-                }
             }
         }
     }

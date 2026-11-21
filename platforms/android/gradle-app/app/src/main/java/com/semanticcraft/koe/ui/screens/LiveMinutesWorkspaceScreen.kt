@@ -1,6 +1,9 @@
 package com.semanticcraft.koe.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.items
@@ -41,7 +44,7 @@ internal fun LiveMinutesWorkspaceScreen(
     val hasFinal = workspace.finalSections.isNotEmpty()
     var showFinal by rememberSaveable(recordId, hasFinal) { mutableStateOf(hasFinal) }
     val sections = if (showFinal) workspace.finalSections else workspace.liveSections
-    WorkspaceList(modifier) {
+    val minutes: LazyListScope.() -> Unit = {
         item {
             WorkspaceHeader(store, CaptureMode.MEETING, title, workspace.sourceLabel, workspace.phaseBadgeLabel,
                 workspace.isActive, workspace.canStart, onOpenCaptureSource)
@@ -85,6 +88,8 @@ internal fun LiveMinutesWorkspaceScreen(
         if (sections.isEmpty()) item {
             KoeEmptyState(Icons.Outlined.GraphicEq, "暂无实时纪要", "开始会议后，可在这里查看议题与待办。")
         }
+    }
+    val transcript: LazyListScope.() -> Unit = {
         item { WorkspaceTitle("实时原文") }
         items(workspace.segments, key = { "segment-" + it.id }) { TranscriptSegment(it) }
         items(workspace.drafts) { draft ->
@@ -94,6 +99,8 @@ internal fun LiveMinutesWorkspaceScreen(
             }
         }
         if (workspace.segments.isEmpty() && workspace.drafts.isEmpty()) item { Text("暂无会议原文") }
+    }
+    val actions: LazyListScope.() -> Unit = {
         if (workspace.actionItems.isNotEmpty()) item { WorkspaceTitle("行动项审核") }
         items(workspace.actionItems, key = { "action-" + it.id }) { WorkspaceReviewRow(store, it, onOpenSource) }
         if (recordId != null) {
@@ -108,6 +115,16 @@ internal fun LiveMinutesWorkspaceScreen(
                 WorkspaceTitle(meeting.title)
                 Text("${TimeLabel.duration(meeting.durationMs)}  |  ${meeting.segmentCount} 段原文")
             }
+        }
+    }
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        if (maxWidth >= 600.dp) {
+            Row(Modifier.fillMaxSize()) {
+                WorkspaceList(Modifier.weight(1f)) { minutes(); actions() }
+                WorkspaceList(Modifier.weight(1f), transcript)
+            }
+        } else {
+            WorkspaceList(Modifier) { minutes(); transcript(); actions() }
         }
     }
 }

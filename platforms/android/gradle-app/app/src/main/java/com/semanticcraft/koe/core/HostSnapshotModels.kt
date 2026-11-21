@@ -217,6 +217,8 @@ data class RecordDetailSnapshot(
     val canEditTranscript: Boolean = false,
     val speakers: List<SpeakerSummarySnapshot> = emptyList(),
 ) {
+    val canTrash: Boolean get() = !archived && !isProcessing
+
     val modeLabel: String
         get() = (CaptureMode.fromRaw(mode ?: "quick_note") ?: CaptureMode.QUICK_NOTE).title
 }
