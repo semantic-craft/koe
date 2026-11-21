@@ -18,6 +18,23 @@ final class IOSBluetoothTests: XCTestCase {
         try await body(session.store, session.coordinator)
     }
 
+    func testFirstLaunchLeavesRadioDormantUntilScan() async throws {
+        let key = BluetoothBridge.savedPeripheralKey
+        let previous = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        UserDefaults.standard.removeObject(forKey: key)
+        try await withHost { store, host in
+            XCTAssertEqual(store.snapshot.device.phase, "disconnected")
+            XCTAssertFalse(host.bluetoothBridge.isScanRequested)
+            store.bridgeActions.requestBleScan()
+            XCTAssertEqual(store.snapshot.device.phase, "scanning")
+        }
+        UserDefaults.standard.set(UUID().uuidString, forKey: key)
+        try await withHost { store, _ in
+            XCTAssertEqual(store.snapshot.device.phase, "scanning")
+        }
+    }
+
     func testScanFromReleasedDeviceRestoresAutoConnectWithoutOpeningGuide() async throws {
         try await withHost { store, _ in
             store.send(.deviceRelease)
@@ -30,15 +47,14 @@ final class IOSBluetoothTests: XCTestCase {
     }
 
     func testUnavailableRadioEndsScanAndReportsErrorOnEveryRetry() async throws {
-        let unavailable: [(CBManagerState, String)] = [(.poweredOff, "关闭"), (.unauthorized, "允许"), (.unsupported, "不支持")]
+        let unavailable: [(CBManagerState, String)] = [(.poweredOff, "关闭"), (.unauthorized, "允许"), (.unsupported, "不支持"), (.resetting, "重置")]
         for (state, message) in unavailable {
             try await withHost { store, host in
-                XCTAssertEqual(store.snapshot.device.phase, "scanning")
+                host.bluetoothBridge.startScanningIfPoweredOn() // Passive discovery for a known device.
                 host.bluetoothBridge.centralStateDidChange(state)
                 XCTAssertEqual(store.snapshot.device.phase, "disconnected")
-                XCTAssertTrue(store.nativeError?.contains(message) == true)
+                XCTAssertNil(store.nativeError)
 
-                store.clearError()
                 store.bridgeActions.requestBleScan()
                 XCTAssertEqual(store.snapshot.device.phase, "disconnected", "retry with known state \(state)")
                 XCTAssertTrue(store.nativeError?.contains(message) == true)

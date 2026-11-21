@@ -106,7 +106,7 @@ final class KoeiOSHostTests: XCTestCase {
         XCTAssertTrue(legacyPayload.contains("sk-env-ds"))
     }
 
-    func testLaunchSessionLoadsRichFixtureAndWritesSecretFreeTrace() throws {
+    func testLaunchSessionLoadsRichFixtureAndWritesSecretFreeTrace() async throws {
         let fixtureURL = try XCTUnwrap(
             Bundle(for: Self.self).url(forResource: "ios-rich-snapshot", withExtension: "json")
         )
@@ -140,10 +140,18 @@ final class KoeiOSHostTests: XCTestCase {
         let secret = "sk-should-never-appear-in-trace"
         session.store.send(.configureProvider(apiKey: secret, model: "deepseek-flash"))
 
-        let traceText = try String(contentsOf: traceURL, encoding: .utf8)
+        let expected = session.store.recentTraceEntries
+        let deadline = ContinuousClock.now + .seconds(2)
+        var traceText = ""
+        repeat {
+            traceText = (try? String(contentsOf: traceURL, encoding: .utf8)) ?? ""
+            if (try? JSONDecoder().decode([HostTraceEntry].self, from: Data(traceText.utf8))) == expected { break }
+            try await Task.sleep(for: .milliseconds(20))
+        } while ContinuousClock.now < deadline
         XCTAssertFalse(traceText.contains(secret))
         XCTAssertFalse(traceText.contains("iOS 架构同步会"))
         let entries = try JSONDecoder().decode([HostTraceEntry].self, from: Data(traceText.utf8))
+        XCTAssertEqual(entries, expected)
         XCTAssertTrue(entries.contains(where: { $0.kind == "fixture" && $0.name == "fixture" }))
     }
 }

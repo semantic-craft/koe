@@ -5,15 +5,22 @@ import KoeAppleCore
 final class IOSAudioInputMonitor {
     private let store: HostSessionStore
     private let center: NotificationCenter
-    private let inputs: () throws -> [HostAudioInputDescriptor]
+    private let inputs: () throws -> [HostAudioInputDescriptor]?
     private var observers: [NSObjectProtocol] = []
     private var lastInputs: [HostAudioInputDescriptor]?
 
     init(store: HostSessionStore, center: NotificationCenter = .default,
-         inputs: @escaping () throws -> [HostAudioInputDescriptor] = IOSAudioInputMonitor.availableInputs) {
+         inputs: @escaping () throws -> [HostAudioInputDescriptor]?) {
         self.store = store
         self.center = center
         self.inputs = inputs
+    }
+
+    convenience init(store: HostSessionStore, audioSession: IOSAudioSession) {
+        self.init(store: store) {
+            guard try audioSession.prepareInputDiscovery() else { return nil }
+            return Self.availableInputs()
+        }
     }
 
     func start() {
@@ -38,8 +45,7 @@ final class IOSAudioInputMonitor {
     private func sync() {
         guard !observers.isEmpty else { return }
         do {
-            let devices = try inputs()
-            guard devices != lastInputs else { return }
+            guard let devices = try inputs(), devices != lastInputs else { return }
             store.send(.syncAudioInputs(inputs: devices))
             lastInputs = devices
             IOSAudioSource.logger.info("可用麦克风数量：\(devices.count)")
@@ -50,9 +56,8 @@ final class IOSAudioInputMonitor {
         }
     }
 
-    private nonisolated static func availableInputs() throws -> [HostAudioInputDescriptor] {
+    private nonisolated static func availableInputs() -> [HostAudioInputDescriptor] {
         let session = AVAudioSession.sharedInstance()
-        try IOSAudioSession.configure(session)
         let current = session.currentRoute.inputs.first?.uid
         return (session.availableInputs ?? []).map { port in
             HostAudioInputDescriptor(id: port.uid, name: port.portName,

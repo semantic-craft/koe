@@ -108,10 +108,12 @@ struct IOSRecordsView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        store.send(.trashRecord(recordId: record.id))
-                                    } label: {
-                                        Label("移入回收站", systemImage: "trash")
+                                    if record.canTrash && store.navigation.savingRecordId != record.id {
+                                        Button(role: .destructive) {
+                                            store.send(.trashRecord(recordId: record.id))
+                                        } label: {
+                                            Label("移入回收站", systemImage: "trash")
+                                        }
                                     }
                                 }
                             }
@@ -218,9 +220,30 @@ struct IOSRecordsView: View {
     }
 }
 
+enum IOSTrashRemoval {
+    case record(String)
+    case all
+
+    var title: String {
+        switch self {
+        case .record: "彻底删除这条记录？"
+        case .all: "清空回收站？"
+        }
+    }
+
+    @MainActor
+    func confirm(in store: HostSessionStore) {
+        switch self {
+        case .record(let id): store.send(.purgeRecord(recordId: id))
+        case .all: store.send(.emptyTrash)
+        }
+    }
+}
+
 struct IOSTrashView: View {
     let store: HostSessionStore
     @Environment(\.dismiss) private var dismiss
+    @State private var pendingRemoval: IOSTrashRemoval?
 
     var body: some View {
         let trashRecords = store.trashRecords
@@ -256,7 +279,7 @@ struct IOSTrashView: View {
                                             store.send(.restoreRecord(recordId: item.id))
                                         }
                                         IOSPrimaryButton("彻底删除", systemImage: "trash", isPrimary: false) {
-                                            store.send(.purgeRecord(recordId: item.id))
+                                            pendingRemoval = .record(item.id)
                                         }
                                     }
                                 }
@@ -267,13 +290,24 @@ struct IOSTrashView: View {
                 .padding(16)
             }
             .background(IOSColors.bgPanel)
+            .confirmationDialog(
+                pendingRemoval?.title ?? "", isPresented: Binding(
+                    get: { pendingRemoval != nil },
+                    set: { if !$0 { pendingRemoval = nil } }
+                ), titleVisibility: .visible, presenting: pendingRemoval
+            ) { removal in
+                Button("确认永久删除", role: .destructive) { removal.confirm(in: store) }
+                Button("取消", role: .cancel) {}
+            } message: { _ in
+                Text("记录及其音频文件将被永久删除，无法恢复。")
+            }
             .navigationTitle("回收站")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if !trashRecords.isEmpty {
                         IOSPrimaryButton("清空", isPrimary: false) {
-                            store.send(.emptyTrash)
+                            pendingRemoval = .all
                         }
                     }
                 }

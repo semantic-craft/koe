@@ -10,6 +10,50 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
 
+    func testSavingAndOffscreenWorkBalanceBackgroundTasks() throws {
+        let root = directory
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
+        defer { store.shutdown() }
+        var names: [String] = []
+        var expired: [@MainActor () -> Void] = []
+        var ended: [Int] = []
+        let host = IOSHostCoordinator(store: store, actions: HostBridgeActions(), source: TestMicrophone(),
+                                      allowsCoreBluetooth: false, allowsLocalSpeech: false, beginBackgroundTask: { name, callback in
+            names.append(name)
+            expired.append(callback)
+            return UIBackgroundTaskIdentifier(rawValue: names.count)
+        }, endBackgroundTask: { ended.append($0.rawValue) })
+        defer { host.shutdown() }
+        host.setScenePhase(.active)
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-rich-snapshot", withExtension: "json"))
+        var fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        func publish(_ phase: String, keepAwake: Bool) throws {
+            var capture = try XCTUnwrap(fixture["activeCapture"] as? [String: Any])
+            capture["phase"] = phase
+            fixture["activeCapture"] = capture
+            fixture["lifecycle"] = ["keepAwake": keepAwake, "quitPhase": "idle"]
+            let data = try JSONSerialization.data(withJSONObject: fixture)
+            XCTAssertTrue(store.loadDebugSnapshotFixtureJSON(String(decoding: data, as: UTF8.self)))
+        }
+        try publish("saving", keepAwake: true)
+        XCTAssertEqual(names, ["KoeSaveRecording"])
+        try publish("recording", keepAwake: true)
+        XCTAssertEqual(ended, [1])
+        host.setScenePhase(.background)
+        host.setScenePhase(.inactive)
+        XCTAssertEqual(names.count, 2)
+        try XCTUnwrap(expired.last)()
+        host.setScenePhase(.background)
+        XCTAssertEqual(names.count, 2)
+        XCTAssertEqual(ended, [1, 2])
+        host.setScenePhase(.active)
+        host.setScenePhase(.background)
+        try XCTUnwrap(expired.first)()
+        host.shutdown()
+        XCTAssertEqual(ended, [1, 2, 3])
+    }
+
     func testPendingCaptureKeepsScreenAwakeAndServicesExpiredTrash() async throws {
         let root = directory
         let source = TestMicrophone()
@@ -74,9 +118,11 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         session.store.refreshSnapshot()
         let expected = session.store.recentTraceEntries
         let deadline = ContinuousClock.now + .seconds(1)
-        var entries: [HostTraceEntry]
+        var entries: [HostTraceEntry] = []
         repeat {
-            entries = try JSONDecoder().decode([HostTraceEntry].self, from: Data(contentsOf: output))
+            if let data = try? Data(contentsOf: output) {
+                entries = try JSONDecoder().decode([HostTraceEntry].self, from: data)
+            }
             if entries == expected { break }
             try await Task.sleep(for: .milliseconds(25))
         } while ContinuousClock.now < deadline
@@ -84,7 +130,7 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         XCTAssertEqual(entries.last, expected.last)
     }
 
-    func testTraceWriteFailureReachesStore() throws {
+    func testTraceWriteFailureReachesStore() async throws {
         let root = directory
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
@@ -94,6 +140,10 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         ], environment: [:], allowsCoreBluetooth: false)
         defer { session.shutdown() }
 
+        let deadline = ContinuousClock.now + .seconds(2)
+        while session.store.nativeError?.contains("追踪") != true, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertTrue(session.store.nativeError?.contains("追踪") == true)
     }
 }

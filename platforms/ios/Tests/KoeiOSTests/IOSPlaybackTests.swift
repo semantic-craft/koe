@@ -5,6 +5,27 @@ import XCTest
 
 @MainActor
 final class IOSPlaybackTests: XCTestCase {
+    func testSessionRoutesPlaybackAndMicrophoneIndependently() throws {
+        let owners = IOSAudioSession()
+        let session = AVAudioSession.sharedInstance()
+        defer {
+            try? owners.setActive(false, for: .microphone)
+            try? owners.setActive(false, for: .playback)
+        }
+        try owners.setActive(true, for: .playback)
+        XCTAssertEqual(session.category, .playback)
+        XCTAssertEqual(session.categoryOptions, [])
+        XCTAssertFalse(try owners.prepareInputDiscovery())
+        XCTAssertEqual(session.category, .playback)
+        try owners.setActive(true, for: .microphone)
+        XCTAssertEqual(session.category, .playAndRecord)
+        XCTAssertTrue(session.categoryOptions.isSuperset(of: [.defaultToSpeaker, .allowBluetoothHFP]))
+        try owners.setActive(false, for: .microphone)
+        XCTAssertEqual(session.category, .playback)
+        XCTAssertEqual(session.mode, .default)
+        XCTAssertEqual(session.categoryOptions, [])
+    }
+
     private func fixture(audioSession: IOSAudioSession = IOSAudioSession(),
                          _ body: (HostSessionStore, IOSHostCoordinator, TestMicrophone) async throws -> Void) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -39,6 +39,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     public private(set) var allowsCoreBluetooth = true
     public internal(set) var scanStartCount = 0
     public internal(set) var isScanRequested = false
+    private var scanInitiatedByUser = false
     var central: CBCentralManager?
     var peripheral: CBPeripheral?
     var reconnectingPeripheral: CBPeripheral?
@@ -68,6 +69,10 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         isHostActivated = true
         if let device = store?.runtimeDevice {
             syncWithRuntimeDevice(device)
+            #if os(iOS)
+            guard let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+                  UUID(uuidString: saved) != nil else { return }
+            #endif
             if device.autoConnect && !device.connected && !reportedReady && !isScanRequested && peripheral == nil && reconnectingPeripheral == nil {
                 startScanningIfPoweredOn()
             }
@@ -76,10 +81,10 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     public func requestScan() {
         if store?.runtimeDevice.autoConnect == false { store?.send(.setBleAutoConnect(enabled: true)) }
-        startScanningIfPoweredOn()
+        startScanningIfPoweredOn(initiatedByUser: true)
     }
 
-    public func startScanningIfPoweredOn() {
+    public func startScanningIfPoweredOn(initiatedByUser: Bool = false) {
         if teardownPending {
             scanAfterTeardown = true
             return
@@ -97,6 +102,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             central?.cancelPeripheralConnection(staleReconnect)
             reconnectingPeripheral = nil
         }
+        scanInitiatedByUser = initiatedByUser
         isScanRequested = true
         connectionID = UUID().uuidString
         scanStartCount += 1
@@ -208,6 +214,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         pendingServices = 0
         reportedReady = false
         isScanRequested = false
+        scanInitiatedByUser = false
         if scanAfterTeardown {
             scanAfterTeardown = false
             scheduleScanIfIdle()
@@ -275,8 +282,17 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     private func unavailable(_ message: String) {
         // CoreBluetooth invalidates peripheral handles when the manager leaves poweredOn.
+        #if os(iOS)
+        let showError = scanInitiatedByUser || peripheral != nil || reconnectingPeripheral != nil || reportedReady
+        #endif
         resetLinkState()
         emit("disconnected")
+        #if os(iOS)
+        guard showError else {
+            Self.logger.info("Passive Bluetooth scan ended: \(message, privacy: .public)")
+            return
+        }
+        #endif
         reportError(message)
     }
 
