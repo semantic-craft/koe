@@ -45,6 +45,7 @@ import com.semanticcraft.koe.ui.theme.KoeTheme
 fun AndroidPlayerBar(
     store: HostSessionStore,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val playback by store.playback.collectAsStateWithLifecycle()
     val nav by store.navigation.collectAsStateWithLifecycle()
@@ -55,6 +56,24 @@ fun AndroidPlayerBar(
     var dragPosition by remember(playback.recordId, playback.lane) { mutableStateOf<Long?>(null) }
     val position = dragPosition ?: playback.positionMs
     var laneMenuExpanded by remember { mutableStateOf(false) }
+
+    val seekSlider: @Composable (Modifier) -> Unit = { sliderModifier ->
+        Slider(
+            value = position.coerceIn(0L, durationMs).toFloat(),
+            onValueChange = { dragPosition = it.toLong() },
+            onValueChangeFinished = {
+                dragPosition?.let { store.send(HostCommand.Seek(it)) }
+                dragPosition = null
+            },
+            valueRange = 0f..durationMs.toFloat(),
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.border,
+            ),
+            modifier = sliderModifier.semantics { contentDescription = "播放进度" },
+        )
+    }
 
     Surface(
         modifier = modifier
@@ -115,6 +134,8 @@ fun AndroidPlayerBar(
                     )
                 }
 
+                if (compact) seekSlider(Modifier.weight(2f))
+
                 if (playback.lanes.size > 1) {
                     Box {
                         val activeLaneLabel = playback.lanes
@@ -145,21 +166,7 @@ fun AndroidPlayerBar(
                 }
             }
 
-            Slider(
-                value = position.coerceIn(0L, durationMs).toFloat(),
-                onValueChange = { dragPosition = it.toLong() },
-                onValueChangeFinished = {
-                    dragPosition?.let { store.send(HostCommand.Seek(it)) }
-                    dragPosition = null
-                },
-                valueRange = 0f..durationMs.toFloat(),
-                colors = SliderDefaults.colors(
-                    thumbColor = colors.accent,
-                    activeTrackColor = colors.accent,
-                    inactiveTrackColor = colors.border,
-                ),
-                modifier = Modifier.semantics { contentDescription = "播放进度" },
-            )
+            if (!compact) seekSlider(Modifier)
         }
     }
 }

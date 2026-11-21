@@ -4,6 +4,13 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -156,7 +163,7 @@ fun KoeRootScreen(
 
     fun openSource(source: SourceSnapshot) {
         store.send(HostCommand.OpenSource(recordId = source.recordId, segmentId = source.segmentId))
-        pushRoute(AndroidDetailRoute.Record(source.recordId))
+        if (topRoute != AndroidDetailRoute.Record(source.recordId)) pushRoute(AndroidDetailRoute.Record(source.recordId))
     }
 
     val topTitle = when (topRoute) {
@@ -165,10 +172,14 @@ fun KoeRootScreen(
         null -> selectedTab.label
     }
 
-    Box(modifier = modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+        val compactLandscape = maxWidth >= 600.dp && maxHeight < 600.dp
+        val landscapeKeyboard = compactLandscape && selectedTab == AndroidAppTab.ASK && topRoute == null &&
+            WindowInsets.ime.getBottom(LocalDensity.current) > 0
         Scaffold(
             containerColor = colors.bgPanel,
             topBar = {
+                if (landscapeKeyboard) return@Scaffold
                 Column {
                     TopAppBar(
                         colors = TopAppBarDefaults.topAppBarColors(
@@ -219,70 +230,106 @@ fun KoeRootScreen(
                 }
             },
             bottomBar = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    AndroidMiniPlayerBar(store, (topRoute as? AndroidDetailRoute.Record)?.recordId, ::openRecord)
-                    DockedBottomChrome(store, ::openRecord, (topRoute as? AndroidDetailRoute.Workspace)?.route)
-                    HorizontalDivider(color = colors.border)
-                    NavigationBar(containerColor = colors.surface0, tonalElevation = 0.dp) {
-                        AndroidAppTab.entries.forEach { tab ->
-                            val selected = selectedTab == tab
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = {
-                                    if (selectedTab == tab) tabStacks[tab] = emptyList() else selectedTab = tab
-                                },
-                                icon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                                label = {
-                                    Text(
-                                        text = tab.label,
-                                        fontSize = KoeFontSizes.xs,
-                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                        maxLines = 1,
-                                    )
-                                },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = colors.accent,
-                                    selectedTextColor = colors.accent,
-                                    unselectedIconColor = colors.textMuted,
-                                    unselectedTextColor = colors.textMuted,
-                                    indicatorColor = colors.accentSoft,
-                                ),
-                            )
+                val openTab: (AndroidAppTab) -> Unit = { tab ->
+                    if (selectedTab == tab) tabStacks[tab] = emptyList() else selectedTab = tab
+                }
+                val captureWorkspace = (topRoute as? AndroidDetailRoute.Workspace)?.route
+                val visibleRecord = (topRoute as? AndroidDetailRoute.Record)?.recordId
+                val showDock = (navigation.activeCaptureMode != null && navigation.activeCaptureMode != captureWorkspace?.mode) ||
+                    navigation.hasLiveCaption ||
+                    navigation.effectiveError != null || navigation.notice != null || navigation.undoTrash != null
+                if (landscapeKeyboard) return@Scaffold
+                if (compactLandscape && showDock) {
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding(), verticalAlignment = Alignment.Bottom) {
+                        Box(Modifier.weight(2f)) { DockedBottomChrome(store, ::openRecord, captureWorkspace, compact = true) }
+                        Column(Modifier.weight(1f)) {
+                            AndroidMiniPlayerBar(store, visibleRecord, ::openRecord)
+                            TabNavigationBar(selectedTab, openTab)
                         }
                     }
+                } else {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        AndroidMiniPlayerBar(store, visibleRecord, ::openRecord)
+                        DockedBottomChrome(store, ::openRecord, captureWorkspace)
+                        HorizontalDivider(color = colors.border)
+                        TabNavigationBar(selectedTab, openTab)
+                    }
+
                 }
             },
         ) { innerPadding ->
-            Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                when (topRoute) {
-                    is AndroidDetailRoute.Record -> RecordDetailScreen(store = store, recordId = topRoute.recordId)
-                    is AndroidDetailRoute.Workspace -> ModeWorkspacesScreen(
-                        store = store,
-                        route = topRoute.route,
-                        onSelectRecord = ::openRecord,
-                        onOpenSource = ::openSource,
-                        onOpenCaptureSource = { activeSheet = AndroidRootSheet.CAPTURE_SOURCE },
-                        onOpenSettings = { activeSheet = AndroidRootSheet.SETTINGS },
-                    )
-                    null -> when (selectedTab) {
-                        AndroidAppTab.TODAY -> TodayScreen(
-                            store = store,
-                            onOpenCaptureSource = { activeSheet = AndroidRootSheet.CAPTURE_SOURCE },
-                            onOpenWorkspace = { route -> pushRoute(AndroidDetailRoute.Workspace(route)) },
+            Box(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding), contentAlignment = Alignment.TopCenter) {
+                val liveMeeting = (topRoute as? AndroidDetailRoute.Workspace)?.route == AndroidModeWorkspaceRoute.LIVE_MINUTES
+                val readingWidth = if (liveMeeting) Modifier else Modifier.widthIn(max = 840.dp)
+                Box(readingWidth.fillMaxSize()) {
+                    when (topRoute) {
+                        is AndroidDetailRoute.Record -> RecordDetailScreen(
+                            store, topRoute.recordId, compact = compactLandscape, onOpenSource = ::openSource, onTrashed = ::popCurrentTab,
+                            onAsk = {
+                                tabStacks[AndroidAppTab.ASK] = emptyList()
+                                selectedTab = AndroidAppTab.ASK
+                            },
                         )
-                        AndroidAppTab.RECORDS -> RecordsScreen(store = store, onSelectRecord = ::openRecord)
-                        AndroidAppTab.ACTIONS -> ActionsScreen(store = store, onOpenSource = ::openSource)
-                        AndroidAppTab.ASK -> AskScreen(store = store, onOpenSource = ::openSource)
+                        is AndroidDetailRoute.Workspace -> ModeWorkspacesScreen(
+                            store = store,
+                            route = topRoute.route,
+                            onSelectRecord = ::openRecord,
+                            onOpenSource = ::openSource,
+                            onOpenCaptureSource = { activeSheet = AndroidRootSheet.CAPTURE_SOURCE },
+                            onOpenSettings = { activeSheet = AndroidRootSheet.SETTINGS },
+                        )
+                        null -> when (selectedTab) {
+                            AndroidAppTab.TODAY -> TodayScreen(
+                                store = store,
+                                onOpenCaptureSource = { activeSheet = AndroidRootSheet.CAPTURE_SOURCE },
+                                onOpenWorkspace = { route -> pushRoute(AndroidDetailRoute.Workspace(route)) },
+                            )
+                            AndroidAppTab.RECORDS -> RecordsScreen(store = store, onSelectRecord = ::openRecord)
+                            AndroidAppTab.ACTIONS -> ActionsScreen(store = store, onOpenSource = ::openSource)
+                            AndroidAppTab.ASK -> AskScreen(store, ::openSource, compact = compactLandscape)
+                        }
                     }
                 }
             }
         }
 
         when (activeSheet) {
-            AndroidRootSheet.DEVICE -> DeviceSheet(store = store, onDismiss = { activeSheet = AndroidRootSheet.NONE })
+            AndroidRootSheet.DEVICE -> DeviceSheet(store, onDismiss = { activeSheet = AndroidRootSheet.NONE }, onOpenRecord = ::openRecord)
             AndroidRootSheet.SETTINGS -> SettingsSheet(store = store, onDismiss = { activeSheet = AndroidRootSheet.NONE })
             AndroidRootSheet.CAPTURE_SOURCE -> CaptureSourceSheet(store) { activeSheet = AndroidRootSheet.NONE }
             AndroidRootSheet.NONE -> Unit
+        }
+    }
+}
+
+@Composable
+private fun TabNavigationBar(selectedTab: AndroidAppTab, onSelect: (AndroidAppTab) -> Unit) {
+    val colors = KoeTheme.colors
+    NavigationBar(containerColor = colors.surface0, tonalElevation = 0.dp) {
+        AndroidAppTab.entries.forEach { tab ->
+            val selected = selectedTab == tab
+            NavigationBarItem(
+                selected = selected,
+                onClick = {
+                    onSelect(tab)
+                },
+                icon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                label = {
+                    Text(
+                        text = tab.label,
+                        fontSize = KoeFontSizes.xs,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = colors.accent,
+                    selectedTextColor = colors.accent,
+                    unselectedIconColor = colors.textMuted,
+                    unselectedTextColor = colors.textMuted,
+                    indicatorColor = colors.accentSoft,
+                ),
+            )
         }
     }
 }
@@ -338,6 +385,7 @@ private fun DockedBottomChrome(
     store: HostSessionStore,
     onOpenRecord: (String) -> Unit,
     workspace: AndroidModeWorkspaceRoute?,
+    compact: Boolean = false,
 ) {
     val navigation by store.navigation.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
@@ -383,16 +431,17 @@ private fun DockedBottomChrome(
             }
         }
 
-        AndroidLiveCaptionBar(
-            store = store,
-            onOpenRecord = onOpenRecord,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-        )
-        AndroidActiveCaptureBar(
-            store = store,
-            workspaceMode = workspace?.mode,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-        )
+        val barPadding = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+        if (compact && navigation.hasLiveCaption && navigation.activeCaptureMode != null &&
+            navigation.activeCaptureMode != workspace?.mode) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                AndroidLiveCaptionBar(store, onOpenRecord, Modifier.weight(1f).then(barPadding))
+                AndroidActiveCaptureBar(store, Modifier.weight(1f).then(barPadding), workspace?.mode)
+            }
+        } else {
+            AndroidLiveCaptionBar(store, onOpenRecord, barPadding)
+            AndroidActiveCaptureBar(store, barPadding, workspace?.mode)
+        }
         UndoTrashBar(store = store)
     }
 }

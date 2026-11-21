@@ -30,7 +30,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
-import com.semanticcraft.koe.core.TimeLabel
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeModalSheet
@@ -43,6 +42,7 @@ import com.semanticcraft.koe.ui.theme.KoeTheme
 fun DeviceSheet(
     store: HostSessionStore,
     onDismiss: () -> Unit,
+    onOpenRecord: (String) -> Unit = {},
 ) {
     val device by store.device.collectAsStateWithLifecycle()
     val navigation by store.navigation.collectAsStateWithLifecycle()
@@ -140,6 +140,7 @@ fun DeviceSheet(
                     DeviceTelemetryTile(
                         label = "设备存储",
                         value = device.storageLabel,
+                        ratio = device.storageUsedRatio,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -266,86 +267,9 @@ fun DeviceSheet(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = "离线录音文件 (${device.files.size})",
-                        color = colors.textPrimary,
-                        fontSize = KoeFontSizes.xs,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    if (device.files.isNotEmpty()) {
-                        KoePrimaryButton(
-                            title = "全部取回",
-                            isPrimary = false,
-                            enabled = !device.busy,
-                            onClick = {
-                                store.send(HostCommand.DeviceDownloadAll)
-                                store.bridgeActions.flushBleOutbound()
-                            },
-                        )
-                    }
-                }
-
-                if (device.files.isEmpty()) {
-                    Text(
-                        text = "设备内暂无待取回的离线文件。",
-                        color = colors.textMuted,
-                        fontSize = KoeFontSizes.xs,
-                    )
-                } else {
-                    device.files.forEach { file ->
-                        Surface(
-                            shape = KoeShapes.control,
-                            color = colors.bgSubtle,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                                ) {
-                                    Text(
-                                        text = file.title,
-                                        color = colors.textPrimary,
-                                        fontSize = KoeFontSizes.xs,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = TimeLabel.duration(file.durationMs),
-                                        color = colors.textMuted,
-                                        fontSize = KoeFontSizes.xs,
-                                    )
-                                }
-                                if (file.synced) {
-                                    KoeBadge(text = "已取回", tint = colors.success)
-                                } else {
-                                    KoePrimaryButton(
-                                        title = if (file.downloading) "取回中" else "取回",
-                                        isPrimary = false,
-                                        enabled = !file.downloading && !device.busy,
-                                        onClick = {
-                                            store.send(HostCommand.DeviceDownload(file.id))
-                                            store.bridgeActions.flushBleOutbound()
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+            DeviceFilesSection(device, store) { id ->
+                onDismiss()
+                onOpenRecord(id)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -397,6 +321,7 @@ private fun DeviceTelemetryTile(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    ratio: Double? = null,
 ) {
     val colors = KoeTheme.colors
     Surface(
@@ -423,6 +348,7 @@ private fun DeviceTelemetryTile(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            ratio?.let { DeviceProgress(it.toFloat(), "storage-progress") }
         }
     }
 }

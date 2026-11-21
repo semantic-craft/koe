@@ -275,6 +275,8 @@ fun SettingsSheet(
                 }
             }
 
+            SettingsExtrasCards(store, settings.appUpdate, platform.supportsSelfUpdate)
+
             SettingsCredentialsCard(
                 provider = provider,
                 draft = draft,
@@ -326,7 +328,7 @@ fun SettingsSheet(
 }
 
 @Composable
-private fun SettingsKeyValueRow(label: String, value: String) {
+internal fun SettingsKeyValueRow(label: String, value: String) {
     val colors = KoeTheme.colors
     Row(
         modifier = Modifier.fillMaxWidth(),

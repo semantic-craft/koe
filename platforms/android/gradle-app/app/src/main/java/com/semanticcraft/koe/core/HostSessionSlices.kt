@@ -37,6 +37,8 @@ data class NavigationChromeSlice(
     val hasPlayableDetailAsset: Boolean,
     val hasConnectGuide: Boolean,
     val savingRecordId: String?,
+    val activeCaptureMode: CaptureMode?,
+    val hasLiveCaption: Boolean,
     val trashCount: Int,
     val undoTrash: UndoTrashSnapshot?,
     val effectiveError: String?,
@@ -56,6 +58,8 @@ data class NavigationChromeSlice(
                 hasPlayableDetailAsset = snapshot.playback.asset != null &&
                     snapshot.playback.recordId == snapshot.detail?.id,
                 hasConnectGuide = snapshot.device.guide != null,
+                activeCaptureMode = snapshot.activeCapture?.mode,
+                hasLiveCaption = snapshot.liveCaption != null,
                 savingRecordId = snapshot.microphone?.takeIf {
                     it.phase == "saving" || snapshot.activeCapture?.phase == "saving"
                 }?.recordId,
