@@ -213,9 +213,7 @@ class KoeApplication : Application() {
                     flushBleOutbound = { bleCoordinator.flushOutboundFrames() },
                     resumeMicrophone = { captureCoordinator.resume() },
                     requestImportFile = { fileActions.requestImportFile() },
-                    requestExportWorkspace = { recordId, date, suggestedFilename ->
-                        fileActions.requestExportWorkspace(recordId, date, suggestedFilename)
-                    },
+                    requestExportWorkspace = fileActions::requestExportWorkspace,
                     requestExportRecords = { recordIds -> fileActions.requestExportRecords(recordIds) },
                 ),
             )

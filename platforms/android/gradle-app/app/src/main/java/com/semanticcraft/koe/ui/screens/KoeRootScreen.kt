@@ -113,6 +113,7 @@ private val tabStackSaver = Saver<SnapshotStateMap<AndroidAppTab, List<AndroidDe
 private enum class AndroidRootSheet {
     NONE,
     DEVICE,
+    CAPTURE_SOURCE,
     SETTINGS,
 }
 
@@ -220,7 +221,7 @@ fun KoeRootScreen(
             bottomBar = {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     AndroidMiniPlayerBar(store, (topRoute as? AndroidDetailRoute.Record)?.recordId, ::openRecord)
-                    DockedBottomChrome(store = store, onOpenRecord = ::openRecord)
+                    DockedBottomChrome(store, ::openRecord, (topRoute as? AndroidDetailRoute.Workspace)?.route)
                     HorizontalDivider(color = colors.border)
                     NavigationBar(containerColor = colors.surface0, tonalElevation = 0.dp) {
                         AndroidAppTab.entries.forEach { tab ->
@@ -259,10 +260,14 @@ fun KoeRootScreen(
                         store = store,
                         route = topRoute.route,
                         onSelectRecord = ::openRecord,
+                        onOpenSource = ::openSource,
+                        onOpenCaptureSource = { activeSheet = AndroidRootSheet.CAPTURE_SOURCE },
+                        onOpenSettings = { activeSheet = AndroidRootSheet.SETTINGS },
                     )
                     null -> when (selectedTab) {
                         AndroidAppTab.TODAY -> TodayScreen(
                             store = store,
+                            onOpenCaptureSource = { activeSheet = AndroidRootSheet.CAPTURE_SOURCE },
                             onOpenWorkspace = { route -> pushRoute(AndroidDetailRoute.Workspace(route)) },
                         )
                         AndroidAppTab.RECORDS -> RecordsScreen(store = store, onSelectRecord = ::openRecord)
@@ -276,6 +281,7 @@ fun KoeRootScreen(
         when (activeSheet) {
             AndroidRootSheet.DEVICE -> DeviceSheet(store = store, onDismiss = { activeSheet = AndroidRootSheet.NONE })
             AndroidRootSheet.SETTINGS -> SettingsSheet(store = store, onDismiss = { activeSheet = AndroidRootSheet.NONE })
+            AndroidRootSheet.CAPTURE_SOURCE -> CaptureSourceSheet(store) { activeSheet = AndroidRootSheet.NONE }
             AndroidRootSheet.NONE -> Unit
         }
     }
@@ -331,6 +337,7 @@ private fun DeviceStatusPill(
 private fun DockedBottomChrome(
     store: HostSessionStore,
     onOpenRecord: (String) -> Unit,
+    workspace: AndroidModeWorkspaceRoute?,
 ) {
     val navigation by store.navigation.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
@@ -383,6 +390,7 @@ private fun DockedBottomChrome(
         )
         AndroidActiveCaptureBar(
             store = store,
+            workspaceMode = workspace?.mode,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
         )
         UndoTrashBar(store = store)

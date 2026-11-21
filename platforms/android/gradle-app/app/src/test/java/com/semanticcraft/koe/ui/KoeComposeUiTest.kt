@@ -8,7 +8,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
-import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -53,7 +52,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-xhdpi")
 class KoeComposeUiTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createRobolectricComposeRule()
 
     internal class FakeUiBridgeClient(
         private var currentSnapshot: HostSnapshot = HostSnapshot.empty.copy(generation = 1L),

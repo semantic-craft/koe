@@ -64,26 +64,11 @@ fun TodayScreen(
     store: HostSessionStore,
     onOpenWorkspace: (AndroidModeWorkspaceRoute) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenCaptureSource: () -> Unit = {},
 ) {
     val today by store.today.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    var quickNoteDraft by rememberSaveable { mutableStateOf("") }
-
     val cards = today.picker?.cards?.takeIf { it.isNotEmpty() } ?: ModePickerSnapshot.defaultCards
-
-    fun submitQuickNote() {
-        val trimmed = quickNoteDraft.trim()
-        if (trimmed.isEmpty()) return
-        focusManager.clearFocus()
-        keyboardController?.hide()
-        val title = trimmed.take(24)
-        val error = store.sendReturningError(HostCommand.CreateNote(title = title, text = trimmed, stayOnPage = true))
-        if (error == null) {
-            quickNoteDraft = ""
-        }
-    }
 
     LazyColumn(
         modifier = modifier
@@ -93,78 +78,11 @@ fun TodayScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "today-header") {
-            TodayHeaderCard(today = today)
+            TodayHeaderCard(today, onOpenCaptureSource)
         }
 
         item(key = "quick-note-card") {
-            KoeCard {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Bolt,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text(
-                            text = "快速文字闪记",
-                            color = colors.textPrimary,
-                            fontSize = KoeFontSizes.sm,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        KoeInfoTip(
-                            title = "文字闪记",
-                            message = "输入文字后按完成或点击保存，将直接写入本地 Rust 工作区。",
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = quickNoteDraft,
-                            onValueChange = { quickNoteDraft = it },
-                            placeholder = {
-                                Text(
-                                    text = "快速记下一段想法…",
-                                    fontSize = KoeFontSizes.sm,
-                                    color = colors.textMuted,
-                                )
-                            },
-                            singleLine = true,
-                            shape = KoeShapes.control,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = colors.accent,
-                                unfocusedBorderColor = colors.border,
-                                focusedContainerColor = colors.bgSubtle,
-                                unfocusedContainerColor = colors.bgSubtle,
-                                focusedTextColor = colors.textPrimary,
-                                unfocusedTextColor = colors.textPrimary,
-                            ),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { submitQuickNote() }),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("quick-note-input"),
-                        )
-
-                        KoePrimaryButton(
-                            title = "保存",
-                            isPrimary = true,
-                            enabled = quickNoteDraft.isNotBlank(),
-                            onClick = { submitQuickNote() },
-                            modifier = Modifier.testTag("quick-note-submit"),
-                        )
-                    }
-                }
-            }
+            QuickNoteComposer(store)
         }
 
         items(cards, key = { it.id }) { card ->
@@ -178,7 +96,96 @@ fun TodayScreen(
 }
 
 @Composable
-private fun TodayHeaderCard(today: TodaySlice) {
+internal fun QuickNoteComposer(store: HostSessionStore) {
+    val colors = KoeTheme.colors
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var quickNoteDraft by rememberSaveable { mutableStateOf("") }
+
+    fun submitQuickNote() {
+        val trimmed = quickNoteDraft.trim()
+        if (trimmed.isEmpty()) return
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        val title = trimmed.take(24)
+        val error = store.sendReturningError(HostCommand.CreateNote(title = title, text = trimmed, stayOnPage = true))
+        if (error == null) {
+            quickNoteDraft = ""
+        }
+    }
+
+    KoeCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Bolt,
+                    contentDescription = null,
+                    tint = colors.accent,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = "快速文字闪记",
+                    color = colors.textPrimary,
+                    fontSize = KoeFontSizes.sm,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                KoeInfoTip(
+                    title = "文字闪记",
+                    message = "输入文字后按完成或点击保存，将直接写入本地 Rust 工作区。",
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = quickNoteDraft,
+                    onValueChange = { quickNoteDraft = it },
+                    placeholder = {
+                        Text(
+                            text = "快速记下一段想法…",
+                            fontSize = KoeFontSizes.sm,
+                            color = colors.textMuted,
+                        )
+                    },
+                    singleLine = true,
+                    shape = KoeShapes.control,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.accent,
+                        unfocusedBorderColor = colors.border,
+                        focusedContainerColor = colors.bgSubtle,
+                        unfocusedContainerColor = colors.bgSubtle,
+                        focusedTextColor = colors.textPrimary,
+                        unfocusedTextColor = colors.textPrimary,
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submitQuickNote() }),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("quick-note-input"),
+                )
+
+                KoePrimaryButton(
+                    title = "保存",
+                    isPrimary = true,
+                    enabled = quickNoteDraft.isNotBlank(),
+                    onClick = { submitQuickNote() },
+                    modifier = Modifier.testTag("quick-note-submit"),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayHeaderCard(today: TodaySlice, onOpenCaptureSource: () -> Unit) {
     val colors = KoeTheme.colors
     KoeCard(shape = KoeShapes.largeCard) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -204,11 +211,11 @@ private fun TodayHeaderCard(today: TodaySlice) {
                 )
             }
 
-            Text(
-                text = today.picker?.sourceLabel ?: today.captureSelectedLabel,
-                color = colors.textSecondary,
-                fontSize = KoeFontSizes.sm,
-                fontWeight = FontWeight.Medium,
+            KoePrimaryButton(
+                title = today.picker?.sourceLabel ?: today.captureSelectedLabel,
+                onClick = onOpenCaptureSource,
+                isPrimary = false,
+                modifier = Modifier.testTag("today-capture-source-button"),
             )
 
             Text(
@@ -328,6 +335,7 @@ private fun ModePickerCard(
                     icon = Icons.AutoMirrored.Outlined.ArrowForward,
                     isPrimary = card.isSessionActive,
                     onClick = onEnterWorkspace,
+                    modifier = Modifier.testTag("enter-workspace-" + card.id),
                 )
             }
         }
