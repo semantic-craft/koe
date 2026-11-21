@@ -25,28 +25,26 @@ appId: com.semanticcraft.koe.ios
 - tapOn: "M9Archive"
 - tapOn: {id: "detail-archive"}
 - tapOn: "记录"
-- runFlow:
-    when:
-      notVisible: {id: "records-filter-archived"}
-    commands:
-      - swipe:
-          from: {id: "records-filter-inbox"}
-          direction: LEFT
+- swipe:
+    from: {id: "records-filter-inbox"}
+    direction: LEFT
 - tapOn: {id: "records-filter-archived"}
 - extendedWaitUntil:
     visible: "M9Archive"
     timeout: 25000
+- assertNotVisible: "M9Disposable"
 - swipe:
-    from: {text: "M9Archive"}
+    from: {id: "records-row-.*"}
     direction: LEFT
+- assertVisible: "取消归档"
 - assertNotVisible: "移入回收站"
-- runFlow:
-    when:
-      notVisible: {id: "records-filter-all"}
-    commands:
-      - swipe:
-          from: {id: "records-filter-archived"}
-          direction: RIGHT
+- assertVisible: {id: "records-row-.*"}
+- swipe:
+    from: {id: "records-row-.*"}
+    direction: RIGHT
+- swipe:
+    from: {id: "records-filter-allDay"}
+    direction: RIGHT
 - tapOn: {id: "records-filter-all"}
 - scrollUntilVisible:
     element: "M9Disposable"
@@ -70,10 +68,14 @@ appId: com.semanticcraft.koe.ios
 - tapOn: {id: "records-trash-button"}
 - tapOn: {id: "trash-purge-.*"}
 - tapOn: {id: "purge-cancel"}
+- assertNotVisible: {id: "purge-confirm"}
 - assertVisible: "M9Disposable"
 - takeScreenshot: trash
 - tapOn: {id: "trash-purge-.*"}
 - tapOn: {id: "purge-confirm"}
+- extendedWaitUntil:
+    visible: "回收站为空"
+    timeout: 10000
 - assertNotVisible: "M9Disposable"
 - takeScreenshot: purged
 - tapOn: {id: "trash-sheet-close"}

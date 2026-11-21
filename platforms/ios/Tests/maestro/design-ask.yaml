@@ -4,8 +4,14 @@ appId: com.semanticcraft.koe.ios
 - tapOn: {id: "ask-scope-picker"}
 - tapOn: "M9Note"
 - tapOn: {id: "ask-question-input"}
+- extendedWaitUntil:
+    visible: {id: "Return"}
+    timeout: 10000
 - inputText: "M9Revised"
-- waitForAnimationToEnd
+- tapOn: {id: "ask-dismiss-keyboard"}
+- extendedWaitUntil:
+    notVisible: {id: "Return"}
+    timeout: 10000
 - tapOn:
     id: "ask-question-submit"
     retryTapIfNoChange: false

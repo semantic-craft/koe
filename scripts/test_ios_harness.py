@@ -90,8 +90,9 @@ if not args or args[0] != 'simctl':
     sys.exit(1)
 
 sub = args[1:]
+race_state = Path(os.environ['FAKE_APP_CONTAINER']) / 'booted-concurrently'
 if sub == ['list', 'devices', 'available', '-j']:
-    primary_state = os.environ.get('FAKE_SIM_STATE', 'Shutdown')
+    primary_state = 'Booted' if race_state.exists() else os.environ.get('FAKE_SIM_STATE', 'Shutdown')
     payload = {
         'devices': {
             'com.apple.CoreSimulator.SimRuntime.iOS-18-2': [
@@ -114,6 +115,10 @@ if sub == ['list', 'devices', 'available', '-j']:
     sys.exit(0)
 
 if len(sub) >= 2 and sub[0] in ('boot', 'bootstatus', 'shutdown', 'install', 'terminate', 'launch', 'privacy'):
+    if sub[0] == 'boot' and os.environ.get('FAKE_CONCURRENT_BOOT'):
+        race_state.touch()
+        sys.stderr.write('Unable to boot device in current state: Booted\\n')
+        sys.exit(149)
     if sub[0] == 'launch':
         container_dir = Path(os.environ['FAKE_APP_CONTAINER'])
         docs_dir = container_dir / 'Documents'
@@ -470,6 +475,16 @@ print('{"rss_mb": 256}')
         calls = self.read_calls()
         self.assertFalse(any(c[:3] == ['xcrun', 'simctl', 'boot'] for c in calls))
         self.assertFalse(any(c[:3] == ['xcrun', 'simctl', 'shutdown'] for c in calls))
+
+    def test_simulator_booted_during_selection_runs_flow_and_remains_booted(self):
+        artifacts_dir = self.root / 'concurrent-boot'
+        result = self.run_verify(
+            ['--flow', str(SMOKE_LIVE_FLOW), '--keep-artifacts', '--artifacts-dir', str(artifacts_dir)],
+            FAKE_CONCURRENT_BOOT='1',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_four_artifacts(artifacts_dir)
+        self.assertFalse(any(c[:3] == ['xcrun', 'simctl', 'shutdown'] for c in self.read_calls()))
 
     def test_missing_tool_fails_fast_before_booting_simulator(self):
         missing_maestro = self.root / 'nonexistent-maestro'

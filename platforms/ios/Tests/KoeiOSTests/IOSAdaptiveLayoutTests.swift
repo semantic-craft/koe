@@ -35,6 +35,25 @@ final class IOSAdaptiveLayoutTests: XCTestCase {
         XCTAssertLessThan(height(.regular), height(.compact) - 32)
     }
 
+    func testPhoneCaptureBarMakesRoomForAllThreeRecordingActions() throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path, credentials: NativeCredentialsiOS(forceIsolated: true))
+        defer { store.shutdown() }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-rich-snapshot", withExtension: "json"))
+        var fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var capture = try XCTUnwrap(fixture["activeCapture"] as? [String: Any])
+        capture["sourceLabel"] = "MicrophoneBuiltIn"
+        capture["actions"] = ["pause", "end", "cancel"]
+        fixture["activeCapture"] = capture
+        let data = try JSONSerialization.data(withJSONObject: fixture)
+        XCTAssertTrue(store.loadDebugSnapshotFixtureJSON(String(decoding: data, as: UTF8.self)))
+        let host = UIHostingController(rootView: IOSActiveCaptureBar(store: store))
+        let phone = host.sizeThatFits(in: CGSize(width: 378, height: 500))
+        let tablet = host.sizeThatFits(in: CGSize(width: 700, height: 500))
+        XCTAssertGreaterThan(phone.height, tablet.height + 16, "窄屏应为录音操作另起一行，避免将按钮文字压成省略号")
+    }
+
     func testChromeObscuresHighContrastContentOnModernIOS() throws {
         guard #available(iOS 26, *) else { throw XCTSkip("需要 iOS 26 或更新版本") }
         let content = ZStack(alignment: .top) {
