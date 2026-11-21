@@ -76,8 +76,8 @@ final class IOSLaunchSession {
                                          audioSession: audioSession, allowsCoreBluetooth: useRadio, allowsLocalSpeech: config.snapshotFixturePath == nil)
         inputMonitor = IOSAudioInputMonitor(store: store, audioSession: audioSession)
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.6.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "15"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.7.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "16"
         store.send(
             .syncAppMetadata(
                 version: version,

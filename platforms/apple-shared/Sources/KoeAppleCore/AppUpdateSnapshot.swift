@@ -1,8 +1,8 @@
 import Foundation
 
 public struct AppUpdateSnapshot: Codable, Equatable, Sendable {
-    public static let defaultVersion = "2.6.0"
-    public static let defaultBuild = "15"
+    public static let defaultVersion = "2.7.0"
+    public static let defaultBuild = "16"
     public static let defaultReleasesURL = "https://github.com/semantic-craft/koe/releases"
 
     public let currentVersion: String

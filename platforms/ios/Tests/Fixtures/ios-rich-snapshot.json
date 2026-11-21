@@ -264,8 +264,8 @@
     "appleMessage": "Apple 本机语音识别已就绪"
   },
   "appUpdate": {
-    "currentVersion": "2.6.0",
-    "currentBuild": "15",
+    "currentVersion": "2.7.0",
+    "currentBuild": "16",
     "phase": "idle",
     "availableVersion": null,
     "releaseNotes": null,

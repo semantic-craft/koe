@@ -147,7 +147,7 @@ class HostSessionStoreTest {
         assertTrue(store.captureStudio.value.isRecordingLocked)
         assertEquals(85, store.device.value.batteryPercent)
         assertEquals(72, store.device.value.boxBatteryPercent)
-        assertEquals("2.6.0", store.settings.value.appUpdate.currentVersion)
+        assertEquals("2.7.0", store.settings.value.appUpdate.currentVersion)
         assertEquals(12_000L, store.playback.value.positionMs)
         assertEquals(CaptureMode.MEETING, store.activeCapture.value?.mode)
         assertEquals("实时字幕", store.liveCaption.value?.status)
@@ -214,8 +214,8 @@ class HostSessionStoreTest {
     @Test
     fun encodesAndroidMetadataAndHostCommandsMatchingRustSchema() {
         val syncEvent = HostAdapterEvent.SyncAppMetadata(
-            version = "2.6.0",
-            build = "15",
+            version = "2.7.0",
+            build = "16",
             platform = "android",
             hostDisplayName = "Android",
             supportsSystemAudio = false,
@@ -224,8 +224,8 @@ class HostSessionStoreTest {
         )
         val syncObj = HostJson.json.parseToJsonElement(syncEvent.toJsonString()) as JsonObject
         assertEquals("sync_app_metadata", syncObj["type"]?.jsonPrimitive?.content)
-        assertEquals("2.6.0", syncObj["version"]?.jsonPrimitive?.content)
-        assertEquals("15", syncObj["build"]?.jsonPrimitive?.content)
+        assertEquals("2.7.0", syncObj["version"]?.jsonPrimitive?.content)
+        assertEquals("16", syncObj["build"]?.jsonPrimitive?.content)
         assertEquals("android", syncObj["platform"]?.jsonPrimitive?.content)
         assertEquals("Android", syncObj["hostDisplayName"]?.jsonPrimitive?.content)
         assertEquals(false, syncObj["supportsSystemAudio"]?.jsonPrimitive?.boolean)

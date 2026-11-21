@@ -272,6 +272,46 @@ class InstallMacosScriptTest(unittest.TestCase):
         self.assertNotEqual(legacy.returncode, 0)
         self.assertFalse(bypass_file.exists())
 
+    def test_cross_platform_release_metadata_lockstep_and_ios_app_icon(self) -> None:
+        import re
+
+        def extract(rel_path: str, pattern: str, flags: int = 0) -> str:
+            text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
+            match = re.search(pattern, text, flags)
+            self.assertIsNotNone(match, f"missing pattern {pattern!r} in {rel_path}")
+            assert match is not None
+            return match.group(1)
+
+        expected_version = extract("Cargo.toml", r'^version\s*=\s*"([^"]+)"', re.M)
+        expected_build = extract("crates/koe-engine/src/version.rs", r'KOE_APP_BUILD:\s*&str\s*=\s*"([^"]+)"')
+
+        self.assertEqual(extract("platforms/ios/project.yml", r'MARKETING_VERSION:\s*"([^"]+)"'), expected_version)
+        self.assertEqual(extract("platforms/ios/project.yml", r'CURRENT_PROJECT_VERSION:\s*"([^"]+)"'), expected_build)
+        self.assertEqual(
+            extract("platforms/android/gradle-app/app/build.gradle.kts", r'versionName\s*=\s*"([^"]+)"'),
+            expected_version,
+        )
+        self.assertEqual(
+            extract("platforms/android/gradle-app/app/build.gradle.kts", r'versionCode\s*=\s*(\d+)'),
+            expected_build,
+        )
+        android_models = (
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/HostDeviceAndCaptureModels.kt"
+        )
+        self.assertEqual(extract(android_models, r'DEFAULT_VERSION\s*=\s*"([^"]+)"'), expected_version)
+        self.assertEqual(extract(android_models, r'DEFAULT_BUILD\s*=\s*"([^"]+)"'), expected_build)
+        extract("platforms/ios/project.yml", r'(ASSETCATALOG_COMPILER_APPICON_NAME:\s*AppIcon\b)')
+
+        ios_assets = REPO_ROOT / "platforms" / "ios" / "App" / "Assets.xcassets"
+        ios_app_icon = ios_assets / "AppIcon.appiconset" / "AppIcon.png"
+        self.assertTrue((ios_assets / "Contents.json").is_file(), "missing Assets.xcassets/Contents.json")
+        self.assertTrue(
+            (ios_assets / "AppIcon.appiconset" / "Contents.json").is_file(),
+            "missing AppIcon.appiconset/Contents.json",
+        )
+        self.assertTrue(ios_app_icon.is_file(), f"missing iOS AppIcon asset: {ios_app_icon}")
+        self.assertGreater(ios_app_icon.stat().st_size, 0, "iOS AppIcon.png must be non-empty")
+
     def test_skip_build_replaces_bundle_atomically_and_registers_launchservices(self) -> None:
         install_app = self.sandbox / "Install" / "Koe.app"
         obsolete = install_app / "Contents" / "Resources" / "obsolete.txt"

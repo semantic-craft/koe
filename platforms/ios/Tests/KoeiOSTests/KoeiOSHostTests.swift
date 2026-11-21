@@ -19,8 +19,8 @@ final class KoeiOSHostTests: XCTestCase {
         XCTAssertNotEqual(store.handle, 0)
         store.send(
             .syncAppMetadata(
-                version: "2.6.0",
-                build: "15",
+                version: "2.7.0",
+                build: "16",
                 platform: "ios",
                 hostDisplayName: "iPhone",
                 supportsSystemAudio: false,

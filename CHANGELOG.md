@@ -1,5 +1,14 @@
 # 更新日志
 
+## [2.7.0] - 2026-11-21
+
+- 准备 `2.7.0`（构建 16）公开 GitHub Release，实现 macOS、iOS 与 Android 三端同步发版并落地三端版本/构建号结构化锁步校验，范围与验收边界见[发行说明](docs/releases/v2.7.0.md)。
+- 移动端原生全功能齐平（Phase 0–3E + M1–M10）：落地 Rust 跨平台宿主与 C++17 JNI 16 KB 页对齐底座、iOS 共享 `KoeAppleCore` 与原生 SwiftUI 客户端、Android Compose M3 与 `StateFlow` 客户端，双端齐平三模式完整工作区、录音输入源选择面板、记录编辑/行动/问答闭环、文件导入与 Markdown 导出以及平板/iPad 自适应布局。（`#773`、`#774`、`#776`、`#778`、`#780`–`#784`、`#786`–`#790`、`#792`–`#799`）
+- iOS 后台与发版能力补齐：接入 CoreBluetooth 后台状态恢复（`willRestoreState`）与锁屏/控制中心播放控制（M6，`#797`），完善全局常驻录音/播放控制与音频会话分流（M2，`#793`），并新增 1024×1024 不透明 `AppIcon` 资产目录以支持 TestFlight 与 App Store 打包。
+- Android 硬件与系统体验补齐：接入 D3200 BLE GATT 串行写入队列（API 29–36）、D3200 录音中暂停/续录与前台通知豆控、系统返回与软键盘适配、防误删确认及 GitHub / Play 双渠道发布签名基础（M3，`#794`）。
+- 双端轻量 E2E 闭环：构建 `simslim`（iOS）与 `avdslim`（Android）轻量验证底座及九旅程 E2E 校验套件（M9，`#800`），并修复双端实测暴露的窄屏采集条、详情头部换行、编辑弹层高度与手势交互缺陷（M10，`#801`）。
+- macOS 与开源工程演进：重构「所有记录」管理台并移除顶栏多余「新建记录」（`#767`），完成开源安全加固、托管 `macos-26` CI 与 MIT `LICENSE` 补充（`#768`），修复 Python `F_GETPATH` 1024 字节缓冲兼容（`#770`）并迁移至 `.secrets` + `with-secrets`（`#772`）。
+
 ## 2.6.0 (15) · 2026-11-19
 
 - 准备 `2.6.0`（构建 15）私有 GitHub Release，落地模型分工新架构：默认文本模型全面切换为 DeepSeek 4.1 Flash（`deepseek-flash`），Qwen 专注主力语音识别（ASR），DeepSeek 保留次选 ASR，并补齐旧工作区无损自动迁移与双槽凭据隔离加固，范围与验收边界见[发行说明](docs/releases/v2.6.0.md)。

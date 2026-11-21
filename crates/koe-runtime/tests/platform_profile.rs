@@ -375,7 +375,7 @@ fn first_install_persists_the_supported_speech_engine() {
         let ws = TempWorkspace::new(platform);
         let mut runtime = KoeRuntime::open(&ws.0).expect("open fresh workspace");
         let metadata = json!({
-            "type": "sync_app_metadata", "version": "2.6.0", "build": "15", "platform": platform
+            "type": "sync_app_metadata", "version": "2.7.0", "build": "16", "platform": platform
         });
         let snapshot = send(&mut runtime, metadata, 1);
         assert!(
