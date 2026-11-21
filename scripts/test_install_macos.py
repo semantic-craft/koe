@@ -312,6 +312,60 @@ class InstallMacosScriptTest(unittest.TestCase):
         self.assertTrue(ios_app_icon.is_file(), f"missing iOS AppIcon asset: {ios_app_icon}")
         self.assertGreater(ios_app_icon.stat().st_size, 0, "iOS AppIcon.png must be non-empty")
 
+    def test_android_official_adaptive_launcher_icon_contract(self) -> None:
+        import struct
+        import xml.etree.ElementTree as ET
+
+        android_res = REPO_ROOT / "platforms" / "android" / "gradle-app" / "app" / "src" / "main" / "res"
+        android_ns = "{http://schemas.android.com/apk/res/android}"
+
+        for obsolete in ("ic_launcher_foreground.xml", "ic_launcher_background.xml"):
+            self.assertFalse(
+                (android_res / "drawable" / obsolete).exists(),
+                f"obsolete placeholder vector must be removed: drawable/{obsolete}",
+            )
+
+        colors_xml = android_res / "values" / "colors.xml"
+        self.assertTrue(colors_xml.is_file(), f"missing Android color resources: {colors_xml}")
+        colors_root = ET.parse(colors_xml).getroot()
+        colors = {el.attrib.get("name"): (el.text or "").strip().upper() for el in colors_root.findall("color")}
+        self.assertEqual(colors.get("ic_launcher_background"), "#FFD9BB")
+
+        for launcher_name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+            xml_path = android_res / "mipmap-anydpi-v26" / launcher_name
+            self.assertTrue(xml_path.is_file(), f"missing adaptive icon XML: {xml_path}")
+            root = ET.parse(xml_path).getroot()
+            self.assertEqual(root.tag, "adaptive-icon")
+            bg = root.find("background")
+            fg = root.find("foreground")
+            mono = root.find("monochrome")
+            self.assertIsNotNone(bg, f"missing <background> in {launcher_name}")
+            self.assertIsNotNone(fg, f"missing <foreground> in {launcher_name}")
+            self.assertIsNotNone(mono, f"missing <monochrome> in {launcher_name}")
+            assert bg is not None and fg is not None and mono is not None
+            self.assertEqual(bg.attrib.get(f"{android_ns}drawable"), "@color/ic_launcher_background")
+            self.assertEqual(fg.attrib.get(f"{android_ns}drawable"), "@mipmap/ic_launcher_foreground")
+            self.assertEqual(mono.attrib.get(f"{android_ns}drawable"), "@mipmap/ic_launcher_monochrome")
+
+        expected_densities = (
+            ("mdpi", 108),
+            ("hdpi", 162),
+            ("xhdpi", 216),
+            ("xxhdpi", 324),
+            ("xxxhdpi", 432),
+        )
+        for density, expected_px in expected_densities:
+            for layer in ("ic_launcher_foreground.png", "ic_launcher_monochrome.png"):
+                png_path = android_res / f"mipmap-{density}" / layer
+                with self.subTest(density=density, layer=layer):
+                    self.assertTrue(png_path.is_file(), f"missing Android icon asset: {png_path}")
+                    header = png_path.read_bytes()[:26]
+                    self.assertEqual(header[:8], b"\x89PNG\r\n\x1a\n", f"invalid PNG signature: {png_path}")
+                    width, height, bit_depth, color_type = struct.unpack(">IIBB", header[16:26])
+                    self.assertEqual((width, height), (expected_px, expected_px))
+                    self.assertEqual(bit_depth, 8)
+                    self.assertEqual(color_type, 6, f"adaptive icon layer must be RGBA: {png_path}")
+
     def test_skip_build_replaces_bundle_atomically_and_registers_launchservices(self) -> None:
         install_app = self.sandbox / "Install" / "Koe.app"
         obsolete = install_app / "Contents" / "Resources" / "obsolete.txt"
