@@ -8,6 +8,7 @@ final class IOSHostCoordinator {
     private let store: HostSessionStore
     private let capture: NativeCapture
     private let localTranscription: NativeLocalTranscription
+    private let nowPlaying: IOSNowPlayingController
     private let playback: NativePlayback
     let bluetoothBridge: BluetoothBridge
     typealias BeginBackgroundTask = @MainActor (String, @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier
@@ -23,7 +24,7 @@ final class IOSHostCoordinator {
 
     init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
          audioSession: IOSAudioSession = IOSAudioSession(),
-         allowsCoreBluetooth: Bool = true,
+         allowsCoreBluetooth: Bool = true, mediaCenter: (any IOSMediaCenter)? = nil,
          recognizer: (any LocalSpeechRecognizer)? = nil, allowsLocalSpeech: Bool = true,
          beginBackgroundTask: @escaping BeginBackgroundTask = { name, expire in
              UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expire)
@@ -44,6 +45,12 @@ final class IOSHostCoordinator {
             try audioSession.setActive($0, for: .playback)
         })
         playback.store = store
+        nowPlaying = IOSNowPlayingController(center: mediaCenter ?? IOSSystemMediaCenter(), refreshPosition: { [weak playback] in
+            playback?.tick()
+        }) { [weak store, weak playback] command in
+            store?.send(command)
+            playback?.tick()
+        }
         interruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main
         ) { [weak playback] notification in
@@ -57,17 +64,21 @@ final class IOSHostCoordinator {
         store.bridgeActions.flushBleOutbound = { [weak bluetoothBridge] in bluetoothBridge?.flushOutboundFrames() }
         store.onSnapshotChanged = { [weak self] snapshot in
             guard let self else { return }
+            nowPlaying.sync(snapshot)
             bluetoothBridge.syncWithRuntimeDevice(snapshot.device)
             bluetoothBridge.flushOutboundFrames()
             updatePolling()
         }
         if allowsLocalSpeech { localTranscription.store = store }
+        nowPlaying.sync(store.snapshot)
+        bluetoothBridge.setSceneInBackground(scenePhase != .active)
         bluetoothBridge.activateHost(allowsCoreBluetooth: allowsCoreBluetooth)
         updatePolling()
     }
 
     func setScenePhase(_ phase: ScenePhase) {
         scenePhase = phase
+        bluetoothBridge.setSceneInBackground(phase != .active)
         store.setUISlicesActive(phase == .active)
         playback.tick()
         updatePolling()
@@ -133,6 +144,7 @@ final class IOSHostCoordinator {
         timer?.invalidate()
         timer = nil
         store.onSnapshotChanged = nil
+        nowPlaying.shutdown()
         bluetoothBridge.shutdown()
         if let interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)

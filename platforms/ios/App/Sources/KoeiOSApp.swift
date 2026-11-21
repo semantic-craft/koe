@@ -1,10 +1,24 @@
 import KoeAppleCore
 import SwiftUI
 
+@MainActor
+final class IOSAppDelegate: NSObject, UIApplicationDelegate {
+    lazy var session = IOSLaunchSession(bridgeActions: HostBridgeActions())
+
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        if let identifiers = options?[.bluetoothCentrals] as? [String] {
+            session.coordinator.bluetoothBridge.restoreCentralIfNeeded(restoreIdentifiers: identifiers)
+        }
+        return true
+    }
+}
+
 @main
 struct KoeiOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
-    private let session = IOSLaunchSession(bridgeActions: HostBridgeActions())
+    @UIApplicationDelegateAdaptor(IOSAppDelegate.self) private var delegate
+    private var session: IOSLaunchSession { delegate.session }
 
     var body: some Scene {
         WindowGroup {

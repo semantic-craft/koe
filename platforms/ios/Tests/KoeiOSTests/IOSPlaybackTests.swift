@@ -1,5 +1,6 @@
 import AVFoundation
 import KoeAppleCore
+import MediaPlayer
 import ViewInspector
 import XCTest
 @testable import KoeiOSApp
@@ -27,7 +28,7 @@ final class IOSPlaybackTests: XCTestCase {
         XCTAssertEqual(session.categoryOptions, [])
     }
 
-    private func fixture(audioSession: IOSAudioSession = IOSAudioSession(),
+    private func fixture(audioSession: IOSAudioSession = IOSAudioSession(), mediaCenter: (any IOSMediaCenter)? = nil,
                          _ body: (HostSessionStore, IOSHostCoordinator, TestMicrophone) async throws -> Void) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -37,7 +38,7 @@ final class IOSPlaybackTests: XCTestCase {
         let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
         let source = TestMicrophone()
         let host = IOSHostCoordinator(store: store, actions: HostBridgeActions(), source: source,
-                                      audioSession: audioSession, allowsCoreBluetooth: false,
+                                      audioSession: audioSession, allowsCoreBluetooth: false, mediaCenter: mediaCenter,
                                       nowNanoseconds: { source.clockNs })
         defer { host.shutdown(); store.shutdown() }
         store.send(.importFile(path: wav.path))
@@ -131,6 +132,27 @@ final class IOSPlaybackTests: XCTestCase {
             }
             XCTAssertFalse(sessionActive)
             XCTAssertNil(store.nativeError)
+        }
+    }
+
+    func testRemotePauseKeepsLivePositionAndResumeDrivesBackgroundPlayer() async throws {
+        let center = TestMediaCenter()
+        try await fixture(mediaCenter: center) { store, host, _ in
+            try await play(store)
+            let item = try await seekItem(store, to: 850)
+            enterBackground(host, store: store)
+            let frozenPosition = store.snapshot.playback.positionMs
+            try await until("AVPlayer should advance while foreground polling sleeps") {
+                item.currentTime().seconds * 1000 > Double(frozenPosition) + 500
+            }
+            XCTAssertEqual(try XCTUnwrap(center.handlers[.pause]).handler(nil), .success)
+            try await until("Remote pause must stop the native timebase") { item.timebase?.rate == 0 }
+            XCTAssertFalse(store.snapshot.playback.isPlaying)
+            XCTAssertGreaterThan(store.snapshot.playback.positionMs, frozenPosition + 400)
+            XCTAssertEqual(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double,
+                           Double(store.snapshot.playback.positionMs) / 1000)
+            XCTAssertEqual(try XCTUnwrap(center.handlers[.play]).handler(nil), .success)
+            try await until("Remote play must restart the native timebase") { item.timebase?.rate == 1 }
         }
     }
 
