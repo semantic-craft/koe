@@ -83,6 +83,7 @@ struct IOSRecordsView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("records-filter-\(category.rawValue)")
                         }
                     }
                 }
@@ -295,9 +296,11 @@ struct IOSTrashView: View {
                                         IOSPrimaryButton("恢复", systemImage: "arrow.uturn.backward", isPrimary: true) {
                                             store.send(.restoreRecord(recordId: item.id))
                                         }
+                                        .accessibilityIdentifier("trash-restore-\(item.id)")
                                         IOSPrimaryButton("彻底删除", systemImage: "trash", isPrimary: false) {
                                             pendingRemoval = .record(item.id)
                                         }
+                                        .accessibilityIdentifier("trash-purge-\(item.id)")
                                     }
                                 }
                             }
@@ -314,7 +317,9 @@ struct IOSTrashView: View {
                 ), titleVisibility: .visible, presenting: pendingRemoval
             ) { removal in
                 Button("确认永久删除", role: .destructive) { removal.confirm(in: store) }
+                .accessibilityIdentifier("purge-confirm")
                 Button("取消", role: .cancel) {}
+                .accessibilityIdentifier("purge-cancel")
             } message: { _ in
                 Text("记录及其音频文件将被永久删除，无法恢复。")
             }
@@ -332,6 +337,7 @@ struct IOSTrashView: View {
                     IOSPrimaryButton("完成", isPrimary: false) {
                         dismiss()
                     }
+                    .accessibilityIdentifier("trash-sheet-close")
                 }
             }
         }

@@ -50,16 +50,20 @@ struct IOSTaskCard: View {
                         IOSPrimaryButton("采纳", systemImage: "checkmark", isPrimary: true) {
                             store.send(.reviewItem(itemId: task.id, decision: .accept))
                         }
+                        .accessibilityIdentifier("review-accept-\(task.id)")
                         IOSPrimaryButton("忽略", systemImage: "xmark", isPrimary: false) {
                             store.send(.reviewItem(itemId: task.id, decision: .dismiss))
                         }
+                        .accessibilityIdentifier("review-dismiss-\(task.id)")
                     }
                 }
 
                 if task.state == "accepted" {
                     Button("编辑待办") { editing = true }
+                        .accessibilityIdentifier("review-edit-\(task.id)")
                 } else if task.state == "dismissed" {
                     Button("恢复") { store.send(.reviewItem(itemId: task.id, decision: .reset)) }
+                    .accessibilityIdentifier("review-reset-\(task.id)")
                 }
                 if !task.sources.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -106,19 +110,24 @@ struct IOSMemoryCard: View {
                         IOSPrimaryButton("记住", systemImage: "checkmark", isPrimary: true) {
                             store.send(.reviewItem(itemId: memory.id, decision: .accept))
                         }
+                        .accessibilityIdentifier("review-accept-\(memory.id)")
                         IOSPrimaryButton("忽略", systemImage: "xmark", isPrimary: false) {
                             store.send(.reviewItem(itemId: memory.id, decision: .dismiss))
                         }
+                            .accessibilityIdentifier("review-dismiss-\(memory.id)")
                     }
                 }
 
                 if memory.state == "accepted" {
                     HStack {
                         Button("编辑记忆") { editing = true }
+                        .accessibilityIdentifier("review-edit-\(memory.id)")
                         Button("移除", role: .destructive) { store.send(.reviewItem(itemId: memory.id, decision: .dismiss)) }
+                        .accessibilityIdentifier("review-dismiss-\(memory.id)")
                     }
                 } else if memory.state == "dismissed" {
                     Button("恢复") { store.send(.reviewItem(itemId: memory.id, decision: .reset)) }
+                    .accessibilityIdentifier("review-reset-\(memory.id)")
                 }
                 if !memory.sources.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {

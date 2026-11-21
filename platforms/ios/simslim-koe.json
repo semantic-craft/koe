@@ -1,0 +1,5 @@
+{
+  "name": "koe",
+  "except": ["search", "icloud", "siri"],
+  "keep": []
+}

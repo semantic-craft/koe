@@ -24,7 +24,7 @@ struct IOSActionsView: View {
         VStack(spacing: 0) {
             Picker("行动分类", selection: $selectedSegment) {
                 ForEach(IOSActionsSegment.allCases) { segment in
-                    Text(segment.rawValue).tag(segment)
+                    Text(segment.rawValue).tag(segment).accessibilityIdentifier("review-section-\(segment.rawValue)")
                 }
             }
             .pickerStyle(.segmented)
@@ -36,10 +36,12 @@ struct IOSActionsView: View {
                 Picker("待办状态", selection: $taskFilter) {
                     ForEach(IOSTaskFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented).padding(.horizontal, 16)
+                .accessibilityIdentifier("review-status-filter")
             } else {
                 Picker("记忆状态", selection: $memoryFilter) {
                     ForEach(IOSMemoryFilter.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.pickerStyle(.segmented).padding(.horizontal, 16)
+                .accessibilityIdentifier("review-status-filter")
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {

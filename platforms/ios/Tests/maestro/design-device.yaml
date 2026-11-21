@@ -1,0 +1,25 @@
+appId: com.semanticcraft.koe.ios
+---
+- tapOn: {id: "device-status-pill"}
+- assertVisible: "M9 BLE interrupted"
+- scrollUntilVisible:
+    element: {id: "storage-progress"}
+    direction: DOWN
+- scrollUntilVisible:
+    element: ".*1 / 3.*"
+    direction: DOWN
+- assertVisible: {id: "device-guide-next"}
+- scrollUntilVisible:
+    element: {id: "transfer-progress"}
+    direction: DOWN
+    timeout: 15000
+- assertVisible: ".*42%.*"
+- takeScreenshot: device
+- scrollUntilVisible:
+    element: {id: "device-control-release"}
+    direction: UP
+    timeout: 15000
+- tapOn: {id: "device-control-release"}
+- extendedWaitUntil:
+    visible: "已让出|已释放|已让出控制权"
+    timeout: 25000

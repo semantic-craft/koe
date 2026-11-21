@@ -119,17 +119,21 @@ struct IOSRecordDetailView: View {
                     Spacer()
                     Menu {
                         Button("重命名") { edit = .title(detail) }
+                        .accessibilityIdentifier("detail-rename")
                         Button("问这条记录") {
                             if store.sendReturningError(.setAskScope(scope: "record", recordId: detail.id)) == nil { onAsk() }
                         }
+                        .accessibilityIdentifier("detail-ask")
                         Button("移入回收站", role: .destructive) {
                             guard detail.canTrash, store.navigation.savingRecordId != detail.id else { return }
                             if store.sendReturningError(.trashRecord(recordId: detail.id)) == nil { dismiss() }
                         }
                         .disabled(!detail.canTrash || store.navigation.savingRecordId == detail.id)
+                        .accessibilityIdentifier("detail-trash")
                     } label: {
                         Label("记录操作", systemImage: "ellipsis.circle").labelStyle(.iconOnly)
                     }
+                    .accessibilityIdentifier("detail-menu")
                 }
                     .font(.system(size: AppFontSizes.lg, weight: .semibold))
                     .foregroundStyle(IOSColors.textPrimary)
@@ -148,6 +152,7 @@ struct IOSRecordDetailView: View {
                     IOSPrimaryButton(detail.archived ? "取消归档" : "归档", isPrimary: false) {
                         store.send(.setRecordArchived(recordId: detail.id, archived: !detail.archived))
                     }
+                    .accessibilityIdentifier("detail-archive")
                 }
                 IOSPrimaryButton("导出 Markdown", systemImage: "square.and.arrow.up", isPrimary: false) {
                     files.exportRecord(detail.id)
@@ -234,14 +239,18 @@ struct IOSRecordDetailView: View {
                             IOSSegmentPlaybackButton(store: store, recordID: detail.id, segment: segment)
                             Menu {
                                 Button("修改本段说话人") { edit = .speaker(detail.id, segment) }
+                                .accessibilityIdentifier("segment-speaker-edit-\(segment.id)")
                                 if let speaker = segment.speaker, !speaker.isEmpty {
                                     Button("改名或合并说话人") { edit = .renameSpeaker(detail.id, speaker) }
+                                    .accessibilityIdentifier("segment-speaker-merge-\(segment.id)")
                                 }
                             } label: {
                                 IOSBadge(segment.speaker ?? "说话人", tint: IOSColors.textSecondary)
                             }.disabled(!detail.canEditTranscript)
+                            .accessibilityIdentifier("segment-speaker-\(segment.id)")
                             if isFocused {
                                 IOSBadge("定位段落", tint: IOSColors.accent)
+                                .accessibilityIdentifier("segment-focused-\(segment.id)")
                             }
                             Spacer()
                         }
@@ -251,13 +260,16 @@ struct IOSRecordDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         if segment.isEdited, let original = segment.originalText {
                             DisclosureGroup("对照改前原文") { Text(original).textSelection(.enabled) }
+                            .accessibilityIdentifier("segment-original-\(segment.id)")
                         }
                         Button("编辑原文") { edit = .text(detail.id, segment) }
+                        .accessibilityIdentifier("segment-edit-\(segment.id)")
                             .disabled(!detail.canEditTranscript)
                         HStack(spacing: 8) {
                             IOSPrimaryButton("标重点", isPrimary: false) {
                                 store.send(.addHighlight(recordId: detail.id, segmentId: segment.id))
                             }
+                            .accessibilityIdentifier("segment-highlight-\(segment.id)")
                             IOSPrimaryButton("建待办", isPrimary: false) {
                                 store.send(.createTask(recordId: detail.id, segmentId: segment.id))
                             }

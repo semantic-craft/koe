@@ -66,7 +66,7 @@ struct IOSCaptureSourceSheet: View {
             .navigationTitle("录音输入源")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.accessibilityIdentifier("source-sheet-close") }
             }
         }
         .presentationDetents([.medium, .large])
@@ -91,5 +91,6 @@ struct IOSCaptureSourceSheet: View {
         .foregroundStyle(.primary)
         .disabled(store.captureStudio.isRecordingLocked)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("source-\(key)")
     }
 }

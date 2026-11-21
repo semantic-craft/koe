@@ -153,11 +153,23 @@ if rest and rest[0] == 'shell':
         print(f'UI hierchary dumped to: {tokens[2]}')
         sys.exit(0)
 
+    sandbox = os.environ.get('FAKE_APP_FILES')
+    if sandbox and tokens[:2] == ['am', 'start']:
+        workspace = tokens[tokens.index('koe_workspace') + 1]
+        Path(sandbox, 'active-workspace').write_text(workspace)
+    if tokens and tokens[0] in ('am', 'run-as'):
+        sys.exit(0)
+
     if tokens and tokens[0] == 'rm':
         sys.exit(0)
 
     sys.stderr.write(f'unexpected fake adb shell tokens: {tokens}\\n')
     sys.exit(1)
+
+if rest[:2] == ['exec-out', 'run-as'] and rest[3] == 'cat' and os.environ.get('FAKE_APP_FILES'):
+    path = Path(os.environ['FAKE_APP_FILES'], rest[4].removeprefix('files/'))
+    sys.stdout.buffer.write(path.read_bytes())
+    sys.exit(0)
 
 if rest == ['exec-out', 'screencap', '-p']:
     sys.stdout.buffer.write(b'\\x89PNG\\r\\n\\x1a\\nFAKE_SCREEN_BYTES')
@@ -200,6 +212,16 @@ if log_path:
                 ),
             },
         ]) + '\\n')
+
+if os.environ.get('FAKE_APP_FILES'):
+    files = Path(os.environ['FAKE_APP_FILES'])
+    product = files / (files / 'active-workspace').read_text() / 'product-workspace.json'
+    if Path(sys.argv[-1]).stem == 'restart':
+        if json.loads(product.read_text())['records'][0]['id'] != 'survivor':
+            sys.exit(1)
+    else:
+        product.parent.mkdir(parents=True, exist_ok=True)
+        product.write_text(json.dumps({'records': [{'id': 'survivor'}]}))
 
 if '--udid' not in sys.argv[1:]:
     sys.stderr.write('error: expected --udid flag on maestro test\\n')
@@ -395,6 +417,80 @@ class AndroidHarnessTest(unittest.TestCase):
             child_pid = int(self.emu_child_pid_file.read_text(encoding='utf-8').strip())
             self.assertTrue(wait_until(lambda: not pid_exists(child_pid), timeout=3.0),
                             f'fake emulator child PID {child_pid} leaked after exit')
+
+    def fake_slim(self):
+        return self.write_exec('bin/fake-slim', """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['FAKE_CALL_LOG'], 'a') as log:
+    print(json.dumps(['slim', *sys.argv[1:]]), file=log)
+print('{"rss_mb": 256}')
+""")
+
+    def test_slim_snapshot_cold_boot_audio_and_workspace(self):
+        snapshot = self.avd_home / 'koe-test-api35.avd/snapshots/avdslim_clean'
+        tool = self.fake_slim()
+        artifacts = self.root / 'evidence'
+        args = ['--slim', '--with-audio', '--flow', str(SMOKE_FLOW), '--workspace', 'journeys',
+                '--launch-app', '--app-package', 'com.semanticcraft.koe', '--artifacts-dir', str(artifacts)]
+        for golden in (False, True):
+            if golden:
+                snapshot.mkdir(parents=True)
+                source = snapshot.parents[1]
+                (self.avd_home / 'koe-test-api35.ini').write_text(f'path={source}\n')
+                (source / 'config.ini').write_text('fastboot.forceColdBoot=yes\n')
+                (snapshot / 'hardware.ini').write_text('hw.ramSize = 1536\nfastboot.forceColdBoot = true\n')
+                (snapshot / 'ram.bin').write_bytes(b'golden')
+            result = self.run_verify(args, KOE_AVDSLIM_BIN=str(tool))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            emulator = [c for c in self.read_calls() if c[0] == 'emulator'][-1]
+            self.assertEqual(emulator[emulator.index('-gpu') + 1], 'host')
+            self.assertNotIn('-no-audio', emulator)
+            self.assertIn('-no-snapshot-save', emulator)
+            if golden:
+                self.assertEqual(emulator[emulator.index('-snapshot') + 1], 'avdslim_clean')
+                self.assertNotIn('-no-snapshot-load', emulator)
+                self.assertIn('-force-snapshot-load', emulator)
+                self.assertIn('-lowram', emulator)
+                self.assertEqual(emulator[emulator.index('-memory') + 1], '1536')
+                self.assertEqual((source / 'config.ini').read_text(), 'fastboot.forceColdBoot=yes\n')
+                self.assertIn('fastboot.forceColdBoot = true', (snapshot / 'hardware.ini').read_text())
+                self.assertEqual((snapshot / 'ram.bin').read_bytes(), b'golden')
+                self.assertEqual(list(self.avd_home.glob('.koe-verify-*')), [])
+            else:
+                self.assertIn('-no-snapshot-load', emulator)
+        calls = self.read_calls()
+        self.assertEqual(calls.count(['slim', 'on', 'emulator-5580', '--skip=bluetooth', '--no-anim']), 1)
+        self.assertEqual(calls.count(['slim', 'measure', 'emulator-5580']), 2)
+        self.assertEqual(sum('koe_workspace verify-workspaces/journeys' in c[-1] for c in calls if c[0] == 'adb'), 2)
+        self.assertIn('256', (artifacts / 'avdslim-metrics.txt').read_text())
+
+    def test_restart_flow_reopens_same_workspace_on_same_running_emulator(self):
+        restart = self.root / 'restart.yaml'
+        restart.write_text('appId: com.semanticcraft.koe\n---\n- assertVisible: survivor\n')
+        app_files = self.root / 'app-files'
+        app_files.mkdir()
+        live = self.root / 'evidence/live'
+        result = self.run_verify(['--flow', str(SMOKE_FLOW), '--restart-flow', str(restart), '--launch-app',
+                                  '--app-package', 'com.semanticcraft.koe', '--workspace', 'persistent/session',
+                                  '--artifacts-dir', str(live)], FAKE_APP_FILES=str(app_files))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for phase in (live, live.parent / 'restart'):
+            self.assertEqual(json.loads((phase / 'workspace/product-workspace.json').read_text())['records'],
+                             [{'id': 'survivor'}])
+        self.assertEqual(sum(c[0] == 'emulator' for c in self.read_calls()), 1)
+        stops = [c for c in self.read_calls() if c[0] == 'adb' and c[-1] == 'am force-stop com.semanticcraft.koe']
+        self.assertEqual(len(stops), 2)
+        self.assert_emulator_reaped()
+
+    def test_missing_avdslim_preserves_explicit_gpu(self):
+        result = self.run_verify(['--slim', '--self-check', '--gpu', 'auto',
+                                  '--artifacts-dir', str(self.root / 'slim')],
+                                 KOE_AVDSLIM_BIN=str(self.root / 'missing'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('avdslim', result.stderr)
+        emulator = next(c for c in self.read_calls() if c[0] == 'emulator')
+        self.assertEqual(emulator[emulator.index('-gpu') + 1], 'auto')
+        self.assertIn('-no-audio', emulator)
 
     def test_rejects_non_test_avd_before_launching_emulator(self):
         result = self.run_verify(['--avd', 'pixel_personal', '--self-check'])

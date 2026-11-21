@@ -239,6 +239,7 @@ fun RecordDetailScreen(
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             KoePrimaryButton(
                                                 title = "标重点",
+                                                modifier = Modifier.testTag("segment-highlight-${segment.id}"),
                                                 isPrimary = false,
                                                 onClick = { store.send(HostCommand.AddHighlight(detail.id, segment.id)) },
                                             )
@@ -374,14 +375,14 @@ private fun DetailHeaderCard(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                KoePrimaryButton("重命名", { renaming = true }, isPrimary = false)
+                KoePrimaryButton("重命名", { renaming = true }, Modifier.testTag("detail-rename"), isPrimary = false)
                 KoePrimaryButton("问这条记录", {
                     if (store.sendReturningError(HostCommand.SetAskScope("record", detail.id)) == null) onAsk()
-                }, isPrimary = false)
+                }, Modifier.testTag("detail-ask"), isPrimary = false)
                 KoePrimaryButton("移入回收站", {
                     if (detail.canTrash && store.navigation.value.savingRecordId != detail.id &&
                         store.sendReturningError(HostCommand.TrashRecord(detail.id)) == null) onTrashed()
-                }, enabled = detail.canTrash && navigation.savingRecordId != detail.id, isPrimary = false)
+                }, Modifier.testTag("detail-trash"), enabled = detail.canTrash && navigation.savingRecordId != detail.id, isPrimary = false)
                 if (detail.canRetranscribe) {
                     KoePrimaryButton(
                         title = "重新转写",
@@ -402,6 +403,7 @@ private fun DetailHeaderCard(
                 )
                 KoePrimaryButton(
                     title = if (detail.archived) "取消归档" else "归档",
+                    modifier = Modifier.testTag("detail-archive"),
                     isPrimary = false,
                     onClick = { store.send(HostCommand.SetRecordArchived(detail.id, !detail.archived)) },
                 )

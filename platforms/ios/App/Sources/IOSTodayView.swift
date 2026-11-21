@@ -102,6 +102,7 @@ struct IOSTodayView: View {
                     .foregroundStyle(IOSColors.textSecondary)
                     .disabled(!card.canToggleSession)
                     .accessibilityLabel("\(card.title)录音开关")
+                    .accessibilityIdentifier("mode-switch-\(card.id)")
 
                     Spacer(minLength: 4)
 
@@ -112,6 +113,7 @@ struct IOSTodayView: View {
                     ) {
                         onOpenWorkspace(route)
                     }
+                    .accessibilityIdentifier("enter-workspace-\(card.id)")
                 }
             }
         }

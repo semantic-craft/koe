@@ -30,12 +30,14 @@ class HostSessionStore(
     private val clockEpochSec: () -> Long = { System.currentTimeMillis() / 1_000L },
     private val clockEpochMs: () -> Long = { System.currentTimeMillis() },
     autoOpen: Boolean = true,
+    private val verificationTrace: Boolean = false,
 ) {
     private val stateLock = Any()
     private var currentSnapshot: HostSnapshot = HostSnapshot.empty
     private var lastProjectedNowSec: Long = 0L
     private var requestGate = ViewRequestGeneration()
-    private val traceBuffer = HostTraceRingBuffer(HostTraceRingBuffer.DEFAULT_CAPACITY)
+    private var resumeLiveOnCommand = false
+    private val traceBuffer = HostTraceRingBuffer(if (verificationTrace) 2048 else HostTraceRingBuffer.DEFAULT_CAPACITY)
 
     var handle: Long = 0L
         private set
@@ -343,11 +345,13 @@ class HostSessionStore(
         bridge.sessionDrainLocalAsr(handle) ?: ByteArray(0)
     }
 
-    fun loadDebugSnapshotFixtureJson(json: String): Boolean {
+    fun loadDebugSnapshotFixtureJson(json: String, resumeLiveOnCommand: Boolean = false): Boolean {
         if (!allowDebugFixture) return false
         val result = synchronized(stateLock) {
             try {
-                applySnapshotJsonLocked(json, projectedNowSec = 0L, resetGate = true)
+                applySnapshotJsonLocked(json, projectedNowSec = 0L, resetGate = true).also {
+                    this.resumeLiveOnCommand = it.accepted && resumeLiveOnCommand
+                }
             } finally {
                 recordTraceLocked(kind = "fixture", name = "fixture")
             }
@@ -368,6 +372,10 @@ class HostSessionStore(
     private fun dispatchEncodedJson(json: String, traceKind: String, commandType: String, nowEpochSec: Long): String? {
         val result = synchronized(stateLock) {
             if (handle == 0L) return "工作区未打开。"
+            if (resumeLiveOnCommand && traceKind == "command") {
+                requestGate.reset(0)
+                resumeLiveOnCommand = false
+            }
             val preservesNativeError = commandType == "sync_audio_inputs" ||
                 commandType == "sync_app_metadata" ||
                 commandType.startsWith("local_asr_")
@@ -425,6 +433,7 @@ class HostSessionStore(
     }
 
     private fun recordTraceLocked(kind: String, name: String) {
+        if (verificationTrace && kind == "snapshot" && nativeError == null && currentSnapshot.error == null) return
         traceBuffer.append(
             HostTraceEntry(
                 kind = kind,

@@ -41,7 +41,9 @@ public final class HostSessionStore {
     @ObservationIgnored public var bridgeActions = HostBridgeActions()
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
     @ObservationIgnored private let credentials: HostCredentials?
-    @ObservationIgnored private var traceBuffer = HostTraceRingBuffer(capacity: 20)
+    @ObservationIgnored private var traceBuffer: HostTraceRingBuffer
+    @ObservationIgnored private let verificationTrace: Bool
+    @ObservationIgnored private var resumeLiveOnCommand = false
 
     public private(set) var platform: HostPlatformSnapshot = .macosDefault
     public private(set) var navigation: NavigationChromeSlice = .empty
@@ -66,7 +68,9 @@ public final class HostSessionStore {
     public private(set) var liveCaption: LiveCaptionSnapshot?
     public private(set) var updatePopoverRequestCount: UInt64 = 0
 
-    public init(workspacePath: String? = nil, credentials: HostCredentials? = nil) {
+    public init(workspacePath: String? = nil, credentials: HostCredentials? = nil, verificationTrace: Bool = false) {
+        self.verificationTrace = verificationTrace
+        traceBuffer = HostTraceRingBuffer(capacity: verificationTrace ? 2048 : 20)
         self.credentials = credentials
         let directory = workspacePath ?? Self.defaultWorkspacePath(isolated: credentials?.isolated == true)
         self.workspacePath = directory
@@ -163,6 +167,11 @@ public final class HostSessionStore {
     @discardableResult
     private func dispatchEncodedJSON(_ data: Data, traceKind: String, commandType: String, nowEpochSec: UInt64) -> String? {
         defer { recordTrace(kind: traceKind, name: commandType) }
+        if resumeLiveOnCommand && traceKind == "command" {
+            // The injected view has an independent generation. Resume the persisted Rust session.
+            requestGate = ViewRequestGeneration()
+            resumeLiveOnCommand = false
+        }
         let preservesNativeError = commandType == "sync_audio_inputs"
             || commandType == "sync_app_metadata"
             || commandType.hasPrefix("local_asr_")
@@ -341,7 +350,7 @@ public final class HostSessionStore {
 
 #if DEBUG
     @discardableResult
-    public func loadDebugSnapshotFixtureJSON(_ json: String) -> Bool {
+    public func loadDebugSnapshotFixtureJSON(_ json: String, resumeLiveOnCommand: Bool = false) -> Bool {
         defer { recordTrace(kind: "fixture", name: "fixture") }
         do {
             let decoded = try Self.decoder.decode(HostSnapshot.self, from: Data(json.utf8))
@@ -352,6 +361,7 @@ public final class HostSessionStore {
             if nativeError != nil { nativeError = nil }
             requestGate = ViewRequestGeneration()
             _ = requestGate.acceptRustGeneration(decoded.generation)
+            self.resumeLiveOnCommand = resumeLiveOnCommand
             if decoded != snapshot {
                 snapshot = decoded
                 if isUISlicesActive {
@@ -398,6 +408,7 @@ public final class HostSessionStore {
     }
 
     private func recordTrace(kind: String, name: String) {
+        if verificationTrace && kind == "snapshot" && nativeError == nil && snapshot.error == nil { return }
         let timestampEpochMs = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
         traceBuffer.append(
             HostTraceEntry(

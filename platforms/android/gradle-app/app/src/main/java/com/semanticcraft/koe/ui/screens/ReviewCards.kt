@@ -1,5 +1,6 @@
 package com.semanticcraft.koe.ui.screens
 
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -155,15 +156,15 @@ private fun ReviewControls(store: HostSessionStore, id: String, text: String, st
         if (state == "proposed") {
             KoePrimaryButton(if (due == null) "记住" else "采纳", {
                 store.send(HostCommand.ReviewItem(id, ReviewDecision.ACCEPT))
-            })
+            }, Modifier.testTag("review-accept-$id"))
         }
         if (state == "proposed" || (due == null && state == "accepted")) {
-            KoePrimaryButton("忽略", { store.send(HostCommand.ReviewItem(id, ReviewDecision.DISMISS)) }, isPrimary = false)
+            KoePrimaryButton("忽略", { store.send(HostCommand.ReviewItem(id, ReviewDecision.DISMISS)) }, Modifier.testTag("review-dismiss-$id"), isPrimary = false)
         }
         if (state == "accepted" || state == "dismissed") {
-            KoePrimaryButton("重新审核", { store.send(HostCommand.ReviewItem(id, ReviewDecision.RESET)) }, isPrimary = false)
+            KoePrimaryButton("重新审核", { store.send(HostCommand.ReviewItem(id, ReviewDecision.RESET)) }, Modifier.testTag("review-reset-$id"), isPrimary = false)
         }
-        KoePrimaryButton("编辑", { editing = true }, isPrimary = false)
+        KoePrimaryButton("编辑", { editing = true }, Modifier.testTag("review-edit-$id"), isPrimary = false)
     }
     if (editing) ItemEditorSheet(store, id, text, due) { editing = false }
 }

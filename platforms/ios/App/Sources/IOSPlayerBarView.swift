@@ -60,6 +60,7 @@ struct IOSPlayerBarView: View {
                 )
                 .tint(IOSColors.accent)
                 .accessibilityLabel("播放进度")
+                .accessibilityIdentifier("player-seek")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -109,6 +110,7 @@ private struct IOSPlaybackToggle: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(playback.isPlaying ? "暂停播放" : "开始播放")
+        .accessibilityIdentifier("player-toggle-button")
     }
 }
 
@@ -174,6 +176,7 @@ struct IOSSegmentPlaybackButton: View {
             }
         }
         .disabled(!timed || store.navigation.detailId != recordID)
+        .accessibilityIdentifier("segment-time-\(segment.id)")
         .font(.system(size: AppFontSizes.xs, weight: .medium))
         .monospacedDigit()
     }

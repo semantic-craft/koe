@@ -71,7 +71,7 @@ fun AndroidPlayerBar(
                 activeTrackColor = colors.accent,
                 inactiveTrackColor = colors.border,
             ),
-            modifier = sliderModifier.semantics { contentDescription = "播放进度" },
+            modifier = sliderModifier.testTag("player-seek").semantics { contentDescription = "播放进度" },
         )
     }
 

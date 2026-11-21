@@ -26,14 +26,17 @@ struct IOSAskView: View {
                     scopeChip("全部记录", active: ask.scope == "all") {
                         store.send(.setAskScope(scope: "all", recordId: nil))
                     }
+                    .accessibilityIdentifier("ask-scope-all")
                     Menu {
                         ForEach(records) { record in
                             Button(record.title) { store.send(.setAskScope(scope: "record", recordId: record.id)) }
+                            .accessibilityIdentifier("ask-scope-\(record.id)")
                         }
                     } label: {
                         Label(ask.scope == "record" ? (records.first { $0.id == ask.recordId }?.title ?? "选择记录") : "选择记录",
                               systemImage: "chevron.down").lineLimit(1)
                     }.disabled(records.isEmpty)
+                    .accessibilityIdentifier("ask-scope-picker")
                     Spacer()
                     if !providerConfigured {
                         IOSBadge("本地检索", tint: IOSColors.textMuted)
@@ -125,6 +128,7 @@ struct IOSAskView: View {
                     Spacer()
                     if !isUser {
                         Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+                        .accessibilityIdentifier("copy-\(message.id)")
                             .labelStyle(.iconOnly)
                     }
                 }

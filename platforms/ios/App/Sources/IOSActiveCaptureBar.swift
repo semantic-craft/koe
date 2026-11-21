@@ -56,6 +56,7 @@ struct IOSActiveCaptureBar: View {
 struct IOSCaptureActionButtons: View {
     let store: HostSessionStore
     let mode: CaptureMode
+    var identifierPrefix = "capture-action"
 
     var body: some View {
         if let capture = store.activeCapture, capture.mode == mode {
@@ -64,6 +65,7 @@ struct IOSCaptureActionButtons: View {
                     IOSPrimaryButton(action.iosTitle, isPrimary: action == .end) {
                         store.performCaptureAction(action)
                     }
+                    .accessibilityIdentifier("\(identifierPrefix)-\(action.rawValue)")
                 }
             }
         }

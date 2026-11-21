@@ -1,5 +1,7 @@
 package com.semanticcraft.koe.ui.screens
 
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +33,7 @@ import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun TrashSheet(
     trashRecords: List<TrashRecordSnapshot>,
@@ -108,12 +111,14 @@ internal fun TrashSheet(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 KoePrimaryButton(
                                     title = "恢复",
+                                    modifier = Modifier.testTag("trash-restore-${item.id}"),
                                     icon = Icons.Outlined.Restore,
                                     isPrimary = true,
                                     onClick = { onRestore(item.id) },
                                 )
                                 KoePrimaryButton(
                                     title = "彻底删除",
+                                    modifier = Modifier.testTag("trash-purge-${item.id}"),
                                     icon = Icons.Outlined.DeleteOutline,
                                     isPrimary = false,
                                     onClick = {
@@ -130,12 +135,13 @@ internal fun TrashSheet(
     }
     confirmDeletion?.let { delete ->
         AlertDialog(
+            modifier = Modifier.semantics { testTagsAsResourceId = true },
             onDismissRequest = { confirmDeletion = null },
             title = { Text(deletionTitle) },
             text = { Text("记录及其音频文件将永久删除，无法恢复。") },
-            dismissButton = { TextButton(onClick = { confirmDeletion = null }) { Text("取消") } },
+            dismissButton = { TextButton(modifier = Modifier.testTag("purge-cancel"), onClick = { confirmDeletion = null }) { Text("取消") } },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(modifier = Modifier.testTag("purge-confirm"), onClick = {
                     confirmDeletion = null
                     delete()
                 }) { Text("确认删除") }

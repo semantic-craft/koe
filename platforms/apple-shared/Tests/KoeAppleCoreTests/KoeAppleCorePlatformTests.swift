@@ -74,6 +74,26 @@ struct KoeAppleCorePlatformTests {
     }
 
 #if DEBUG
+    @Test("Opening a synced fixture row resumes the real workspace")
+    @MainActor
+    func fixtureRecordOpensLiveDetail() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = HostSessionStore(workspacePath: root.path)
+        defer { store.shutdown() }
+        store.send(.createNote(title: "Synced", text: "Real note", stayOnPage: true))
+        let id = try #require(store.records.first?.id)
+        let raw = try #require(koe_host_session_snapshot_json(store.handle, 1))
+        defer { koe_host_string_free(raw) }
+        var fixture = try #require(JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any])
+        fixture["generation"] = 10000
+        fixture["detail"] = NSNull()
+        let data = try JSONSerialization.data(withJSONObject: fixture)
+        #expect(store.loadDebugSnapshotFixtureJSON(String(decoding: data, as: UTF8.self), resumeLiveOnCommand: true))
+        store.send(.selectRecord(recordId: id))
+        #expect(store.recordDetail.detail?.title == "Synced")
+    }
+
     @Test("loadDebugSnapshotFixtureJSON loads real Rust v2 snapshot JSON and rejects version != 2 or invalid JSON")
     @MainActor
     func debugFixtureLoaderAcceptsV2AndRejectsInvalidPayloads() throws {

@@ -1,0 +1,79 @@
+appId: com.semanticcraft.koe.ios
+---
+- tapOn: "行动"
+- assertVisible: "待确认"
+- assertNotVisible: "标记已完成"
+- tapOn: {id: "review-accept-item-1"}
+- tapOn: {id: "review-dismiss-item-3"}
+- tapOn: "已忽略"
+- tapOn: {id: "review-reset-item-3"}
+- tapOn: "记忆"
+- tapOn: {id: "review-accept-item-2"}
+- tapOn: {id: "review-dismiss-item-4"}
+- tapOn: "已忽略"
+- tapOn: {id: "review-reset-item-4"}
+- tapOn: "待确认"
+- assertVisible: {id: "review-accept-item-4"}
+- takeScreenshot: actions
+- runFlow: design-ask.yaml
+- tapOn: "记录"
+- tapOn: "记录"
+- scrollUntilVisible:
+    element: "M9Archive"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "M9Archive"
+- tapOn: {id: "detail-archive"}
+- tapOn: "记录"
+- runFlow:
+    when:
+      notVisible: {id: "records-filter-archived"}
+    commands:
+      - swipe:
+          from: {id: "records-filter-inbox"}
+          direction: LEFT
+- tapOn: {id: "records-filter-archived"}
+- extendedWaitUntil:
+    visible: "M9Archive"
+    timeout: 25000
+- swipe:
+    from: {text: "M9Archive"}
+    direction: LEFT
+- assertNotVisible: "移入回收站"
+- runFlow:
+    when:
+      notVisible: {id: "records-filter-all"}
+    commands:
+      - swipe:
+          from: {id: "records-filter-archived"}
+          direction: RIGHT
+- tapOn: {id: "records-filter-all"}
+- scrollUntilVisible:
+    element: "M9Disposable"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "M9Disposable"
+- tapOn: {id: "detail-menu"}
+- tapOn: {id: "detail-trash"}
+- tapOn: {id: "trash-undo"}
+- extendedWaitUntil:
+    visible: "M9Disposable"
+    timeout: 25000
+- scrollUntilVisible:
+    element: "M9Disposable"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "M9Disposable"
+- tapOn: {id: "detail-menu"}
+- tapOn: {id: "detail-trash"}
+- tapOn: {id: "records-menu"}
+- tapOn: {id: "records-trash-button"}
+- tapOn: {id: "trash-purge-.*"}
+- tapOn: {id: "purge-cancel"}
+- assertVisible: "M9Disposable"
+- takeScreenshot: trash
+- tapOn: {id: "trash-purge-.*"}
+- tapOn: {id: "purge-confirm"}
+- assertNotVisible: "M9Disposable"
+- takeScreenshot: purged
+- tapOn: {id: "trash-sheet-close"}

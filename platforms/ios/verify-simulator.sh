@@ -17,6 +17,11 @@ FLOW_PATH=""
 EXPECT_FAILURE=0
 FIXTURE_PATH=""
 EXPLICIT_UDID=""
+SLIM=0
+SLIM_PROFILE="$IOS_DIR/simslim-koe.json"
+WORKSPACE=""
+SEED=""
+RESTART_FLOW=""
 SKIP_BUILD=0
 KEEP_ARTIFACTS=0
 ARTIFACTS_DIR=""
@@ -43,6 +48,11 @@ Options:
   --flow <path.yaml>      Run a single Maestro YAML flow
   --expect-failure        Exit 0 only if the flow fails AND all 4 artifacts exist
   --fixture <path.json>   Inject a DEBUG HostSnapshot fixture JSON into the app
+  --slim                  Apply simslim on an owned or explicitly selected simulator; retain metrics
+  --slim-profile <path>   Select a simslim JSON profile
+  --seed <file.json>      Initialize a new verification workspace from Rust product-store data
+  --restart-flow <yaml>   Force-stop and relaunch in the same workspace, collect sibling restart bundle
+  --workspace <dir>       Reuse a workspace (absolute or under Documents/verify-workspaces)
   --udid <udid>           Target a specific available iOS Simulator UDID
   --skip-build            Reuse existing Koe.app without regenerating/building
   --keep-artifacts        Keep 4-artifact forensics bundle even on pass
@@ -81,6 +91,23 @@ while [[ $# -gt 0 ]]; do
       FIXTURE_PATH="$2"
       shift
       ;;
+    --slim) SLIM=1 ;;
+    --slim-profile)
+      [[ $# -ge 2 ]] || die_usage "--slim-profile requires a path"
+      SLIM_PROFILE="$2"
+      shift ;;
+    --seed)
+      [[ $# -ge 2 && -f "$2" ]] || die_usage "--seed requires an existing JSON file"
+      SEED="$2"
+      shift ;;
+    --restart-flow)
+      [[ $# -ge 2 && -f "$2" ]] || die_usage "--restart-flow requires an existing flow"
+      RESTART_FLOW="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")"
+      shift ;;
+    --workspace)
+      [[ $# -ge 2 && -n "$2" ]] || die_usage "--workspace requires a directory"
+      WORKSPACE="$2"
+      shift ;;
     --udid)
       [[ $# -ge 2 ]] || die_usage "--udid requires a value"
       EXPLICIT_UDID="$2"
@@ -112,6 +139,11 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$SEED" || -n "$RESTART_FLOW" ]]; then
+  [[ -n "$WORKSPACE" && -n "$FLOW_PATH" && "$SELF_CHECK" -eq 0 ]] || die_usage "--seed and --restart-flow require --workspace and --flow"
+fi
+if [[ -n "$RESTART_FLOW" ]]; then KEEP_ARTIFACTS=1; fi
+
 
 [[ "$FLOW_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die "--flow-timeout must be a positive integer: $FLOW_TIMEOUT"
 
@@ -404,10 +436,37 @@ SIM_INFO="$(resolve_simulator)" || exit 1
 IFS=$'\t' read -r UDID INITIAL_STATE DEVICE_NAME <<< "$SIM_INFO"
 [[ -n "$UDID" ]] || die "failed to resolve iOS simulator UDID"
 
+RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+ARTIFACTS_DIR_CREATED=0
+if [[ -z "$ARTIFACTS_DIR" ]]; then
+  ARTIFACTS_DIR="$ROOT/target/verify-artifacts/ios-$RUN_ID"
+else
+  ARTIFACTS_DIR="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$ARTIFACTS_DIR")"
+fi
+if [[ ! -d "$ARTIFACTS_DIR" ]]; then
+  ARTIFACTS_DIR_CREATED=1
+fi
+
+boot_start=$SECONDS
 if [[ "$INITIAL_STATE" != "Booted" ]]; then
   "$XCRUN_BIN" simctl boot "$UDID"
   BOOTED_BY_SCRIPT=1
   "$XCRUN_BIN" simctl bootstatus "$UDID" -b
+fi
+
+if [[ "$SLIM" -eq 1 ]]; then
+  mkdir -p "$ARTIFACTS_DIR"
+  printf '%s\n' "$((SECONDS - boot_start))" > "$ARTIFACTS_DIR/boot-seconds.txt"
+  slim_bin="${KOE_SIMSLIM_BIN:-$(command -v simslim || true)}"
+  if [[ ! -x "$slim_bin" ]]; then
+    printf 'warning: simslim unavailable; continuing with normal services\n' >&2
+  elif [[ "$BOOTED_BY_SCRIPT" -eq 0 && -z "$EXPLICIT_UDID" ]]; then
+    printf 'warning: skipping simslim on an implicitly selected booted simulator\n' >&2
+  else
+    "$slim_bin" on "$UDID" --no-reboot --profile "$SLIM_PROFILE"
+    "$slim_bin" doctor "$UDID" --requires files-recents,siri
+    "$slim_bin" measure "$UDID" --json > "$ARTIFACTS_DIR/simslim-metrics.json"
+  fi
 fi
 
 ensure_app_built() {
@@ -504,7 +563,7 @@ PY
 
   rm -f "$dir/syslog.txt"
   run_with_timeout "$FORENSICS_TIMEOUT" "$dir/syslog.txt" "__STDOUT__" \
-    "$XCRUN_BIN" simctl spawn "$UDID" log show --last 2m --style compact \
+    "$XCRUN_BIN" simctl spawn "$UDID" log show --last "${5:-120}s" --style compact \
     --predicate 'process == "Koe" OR subsystem BEGINSWITH "com.semanticcraft.koe"' || true
 
   if [[ -n "$trace_src" && -s "$trace_src" ]]; then
@@ -554,12 +613,25 @@ run_single_flow() {
   local docs_dir="$container_dir/Documents"
   mkdir -p "$docs_dir"
   local workspace_dir="$docs_dir/verify-workspaces/${label}-$$"
-  rm -rf "$workspace_dir"
+  if [[ -n "$WORKSPACE" && ( "$SELF_CHECK" -eq 0 || -z "$fixture" ) ]]; then
+    case "$WORKSPACE" in
+      /*) workspace_dir="$WORKSPACE" ;;
+      *) workspace_dir="$docs_dir/verify-workspaces/$WORKSPACE" ;;
+    esac
+  fi
+  "$XCRUN_BIN" simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   mkdir -p "$workspace_dir"
-
+  if [[ -n "$SEED" ]]; then
+    [[ ! -e "$workspace_dir/product-workspace.json" ]] || die "refusing to overwrite seeded workspace"
+    cp "$SEED" "$workspace_dir/product-workspace.json"
+  fi
+  local log_start=$SECONDS
   local trace_file="$docs_dir/koe-trace.json"
   rm -f "$trace_file"
 
+  if [[ -n "$RESTART_FLOW" ]]; then
+    "$XCRUN_BIN" simctl privacy "$UDID" grant microphone "$BUNDLE_ID"
+  fi
   local launch_args=(
     -koe-workspace "$workspace_dir"
     -koe-trace-output "$trace_file"
@@ -568,9 +640,9 @@ run_single_flow() {
     local staged_fixture="$docs_dir/koe-active-fixture.json"
     cp "$fixture" "$staged_fixture"
     launch_args+=(-koe-snapshot-fixture "$staged_fixture")
+    if [[ -n "$SEED" ]]; then launch_args+=(-koe-fixture-to-live); fi
   fi
 
-  "$XCRUN_BIN" simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   "$XCRUN_BIN" simctl launch "$UDID" "$BUNDLE_ID" "${launch_args[@]}" >/dev/null
 
   local wait_ticks=0
@@ -624,22 +696,17 @@ PYTHON
   fi
 
   if [[ "$should_collect" -eq 1 ]]; then
-    collect_forensics "$out_dir" "$container_dir" "$trace_file" "$debug_dir"
+    collect_forensics "$out_dir" "$container_dir" "$trace_file" "$debug_dir" "$((SECONDS - log_start + 1))"
+    if [[ -s "$trace_file" ]]; then cp "$trace_file" "$out_dir/koe-trace.json"; fi
+    if [[ -n "$WORKSPACE" && -z "$fixture" ]]; then
+      mkdir -p "$out_dir/workspace"
+      cp "$workspace_dir/product-workspace.json" "$out_dir/workspace/"
+      if [[ -d "$workspace_dir/audio" ]]; then cp -R "$workspace_dir/audio" "$out_dir/workspace/"; fi
+    fi
   fi
 
   return "$flow_exit"
 }
-
-RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
-ARTIFACTS_DIR_CREATED=0
-if [[ -z "$ARTIFACTS_DIR" ]]; then
-  ARTIFACTS_DIR="$ROOT/target/verify-artifacts/ios-$RUN_ID"
-else
-  ARTIFACTS_DIR="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$ARTIFACTS_DIR")"
-fi
-if [[ ! -d "$ARTIFACTS_DIR" ]]; then
-  ARTIFACTS_DIR_CREATED=1
-fi
 
 ensure_app_built
 
@@ -673,7 +740,7 @@ if [[ "$SELF_CHECK" -eq 1 ]]; then
     printf 'verify-simulator: PASS (self-check, device=%s, udid=%s, artifacts=%s)\n' \
       "$DEVICE_NAME" "$UDID" "$ARTIFACTS_DIR"
   else
-    if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 ]]; then
+    if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 && "$SLIM" -eq 0 ]]; then
       rm -rf "$ARTIFACTS_DIR" || true
     fi
     printf 'verify-simulator: PASS (self-check, device=%s, udid=%s)\n' "$DEVICE_NAME" "$UDID"
@@ -696,13 +763,21 @@ if [[ "$EXPECT_FAILURE" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ "$flow_exit" -eq 0 && -n "$RESTART_FLOW" ]]; then
+  SEED=""
+  SKIP_BUILD=1
+  restart_dir="$(dirname "$ARTIFACTS_DIR")/restart"
+  run_single_flow "$RESTART_FLOW" "" "$restart_dir" restart
+  validate_forensics_bundle "$restart_dir"
+fi
+
 if [[ "$flow_exit" -eq 0 ]]; then
   if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
     validate_forensics_bundle "$ARTIFACTS_DIR"
     printf 'verify-simulator: PASS (device=%s, udid=%s, artifacts=%s)\n' \
       "$DEVICE_NAME" "$UDID" "$ARTIFACTS_DIR"
   else
-    if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 ]]; then
+    if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 && "$SLIM" -eq 0 ]]; then
       rm -rf "$ARTIFACTS_DIR" || true
     fi
     printf 'verify-simulator: PASS (device=%s, udid=%s)\n' "$DEVICE_NAME" "$UDID"

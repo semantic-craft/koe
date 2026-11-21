@@ -20,13 +20,15 @@ struct IOSAskComposer: View {
                         .stroke(IOSColors.border, lineWidth: 1)
                 )
                 .focused($isQuestionFocused)
+                .submitLabel(.send)
                 .onSubmit(submitQuestion)
                 .accessibilityIdentifier("ask-question-input")
 
-            IOSPrimaryButton("发送", systemImage: "arrow.up", isPrimary: true) {
+            IOSPrimaryButton("发送", systemImage: "arrow.up", minimumHeight: 44) {
                 submitQuestion()
             }
             .disabled(questionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.ask.phase == "pending")
+            .accessibilityIdentifier("ask-question-submit")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -42,8 +44,8 @@ struct IOSAskComposer: View {
         let trimmed = questionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let ask = store.ask
         guard !trimmed.isEmpty, ask.phase != "pending" else { return }
-        isQuestionFocused = false
         if store.sendReturningError(.ask(question: trimmed, scope: ask.scope, recordId: ask.recordId)) == nil {
+            isQuestionFocused = false
             questionDraft = ""
         }
     }

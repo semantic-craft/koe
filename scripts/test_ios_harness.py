@@ -113,7 +113,7 @@ if sub == ['list', 'devices', 'available', '-j']:
     print(json.dumps(payload))
     sys.exit(0)
 
-if len(sub) >= 2 and sub[0] in ('boot', 'bootstatus', 'shutdown', 'install', 'terminate', 'launch'):
+if len(sub) >= 2 and sub[0] in ('boot', 'bootstatus', 'shutdown', 'install', 'terminate', 'launch', 'privacy'):
     if sub[0] == 'launch':
         container_dir = Path(os.environ['FAKE_APP_CONTAINER'])
         docs_dir = container_dir / 'Documents'
@@ -329,6 +329,67 @@ class IOSSimulatorHarnessTest(unittest.TestCase):
         self.assertTrue((artifacts_dir / 'screen.png').read_bytes().startswith(b'\x89PNG'))
         trace = json.loads((artifacts_dir / 'trace.json').read_text(encoding='utf-8'))
         self.assertIsInstance(trace, (dict, list))
+
+    def fake_slim(self):
+        return self.write_exec('bin/fake-slim', """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['FAKE_CALL_LOG'], 'a') as log:
+    print(json.dumps(['slim', *sys.argv[1:]]), file=log)
+print('{"rss_mb": 256}')
+""")
+
+    def test_slim_profile_doctor_metrics_and_workspace_relaunch(self):
+        artifacts = self.root / 'slim'
+        workspace = self.root / 'persisted'
+        tool = self.fake_slim()
+        profile = self.root / 'profile.json'
+        profile.write_text('{"name":"test","keep":[],"except":["search","icloud","siri"]}')
+        udid = 'FAKE-IPHONE-17-UDID'
+        args = ['--slim', '--udid', udid, '--slim-profile', str(profile),
+                '--flow', str(SMOKE_LIVE_FLOW), '--workspace', str(workspace),
+                '--artifacts-dir', str(artifacts)]
+        for state in ('Shutdown', 'Booted'):
+            result = self.run_verify(args, FAKE_SIM_STATE=state, KOE_SIMSLIM_BIN=str(tool))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path((self.app_container / 'launched-workspace').read_text()), workspace)
+            self.assertTrue((workspace / 'product-workspace.json').is_file())
+            marker = workspace / 'restart-marker'
+            if state == 'Booted':
+                self.assertEqual(marker.read_text(), 'survivor')
+            marker.write_text('survivor')
+        calls = self.read_calls()
+        for args in (['on', udid, '--no-reboot', '--profile', str(profile)],
+                     ['doctor', udid, '--requires', 'files-recents,siri'], ['measure', udid, '--json']):
+            self.assertEqual(calls.count(['slim', *args]), 2)
+        self.assertEqual(json.loads((artifacts / 'simslim-metrics.json').read_text())['rss_mb'], 256)
+
+    def test_restart_flow_preserves_live_artifacts_and_uses_project_slim_profile(self):
+        restart = self.root / 'restart.yaml'
+        restart.write_text('appId: com.semanticcraft.koe.ios\n---\n- assertVisible: survivor\n')
+        live = self.root / 'evidence/live'
+        result = self.run_verify(['--slim', '--flow', str(SMOKE_LIVE_FLOW), '--workspace', 'persistent',
+                                  '--restart-flow', str(restart), '--artifacts-dir', str(live)],
+                                 FAKE_SIM_STATE='Shutdown', KOE_SIMSLIM_BIN=str(self.fake_slim()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.read_calls()
+        self.assertIn(['slim', 'on', 'FAKE-IPHONE-17-UDID', '--no-reboot', '--profile',
+                       str(ROOT / 'platforms/ios/simslim-koe.json')], calls)
+        launches = [c for c in calls if c[:3] == ['xcrun', 'simctl', 'launch']]
+        self.assertEqual(len(launches), 2)
+        workspaces = [c[c.index('-koe-workspace') + 1] for c in launches]
+        self.assertEqual(workspaces[0], workspaces[1])
+        for phase in (live, live.parent / 'restart'):
+            state = json.loads((phase / 'workspace/product-workspace.json').read_text())
+            self.assertEqual(state['provider']['model'], 'deepseek-v4-pro')
+
+    def test_slim_missing_and_implicit_booted_device(self):
+        for tool, state in ((self.root / 'missing', 'Shutdown'), (self.fake_slim(), 'Booted')):
+            result = self.run_verify(['--slim', '--flow', str(SMOKE_LIVE_FLOW),
+                                      '--artifacts-dir', str(self.root / 'out')],
+                                     KOE_SIMSLIM_BIN=str(tool), FAKE_SIM_STATE=state)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('simslim', result.stderr)
+        self.assertFalse(any(c[0] == 'slim' for c in self.read_calls()))
 
     def test_green_path_boots_runs_flow_collects_artifacts_and_shuts_down(self):
         artifacts_dir = self.root / 'green-artifacts'

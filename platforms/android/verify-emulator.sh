@@ -22,7 +22,14 @@ KEEP_ARTIFACTS=0
 ARTIFACTS_DIR=""
 BOOT_TIMEOUT="180"
 FLOW_TIMEOUT="180"
-GPU_MODE="auto"
+GPU_MODE=""
+SLIM=0
+WITH_AUDIO=0
+WORKSPACE=""
+SEED=""
+RESTART_FLOW=""
+GOLDEN=0
+CLONED_AVD_HOME=""
 
 EMULATOR_PID=""
 EMULATOR_OWNED=0
@@ -57,6 +64,11 @@ Options:
   --artifacts-dir <dir>     Output directory (default: <repo>/target/verify-artifacts/<run-id>)
   --boot-timeout <sec>      Emulator cold-boot timeout in seconds (default: 180)
   --flow-timeout <sec>      Maestro flow timeout in seconds (default: 180)
+  --slim                    Prefer host GPU and read-only avdslim_clean; retain metrics
+  --with-audio              Enable emulator microphone and output
+  --seed <file.json>      Initialize a new verification workspace from Rust product-store data
+  --restart-flow <yaml>   Force-stop and relaunch in the same workspace, collect sibling restart bundle
+  --workspace <dir>         Reuse this app-private verify-workspaces subdirectory
   --gpu <mode>              Emulator -gpu mode (default: auto)
   -h, --help                Show this help
 USAGE
@@ -148,6 +160,20 @@ while [[ $# -gt 0 ]]; do
       FLOW_TIMEOUT="$2"
       shift
       ;;
+    --slim) SLIM=1 ;;
+    --with-audio) WITH_AUDIO=1 ;;
+    --seed)
+      [[ $# -ge 2 && -f "$2" ]] || die_usage "--seed requires an existing JSON file"
+      SEED="$2"
+      shift ;;
+    --restart-flow)
+      [[ $# -ge 2 && -f "$2" ]] || die_usage "--restart-flow requires an existing flow"
+      RESTART_FLOW="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")"
+      shift ;;
+    --workspace)
+      [[ $# -ge 2 && "$2" =~ ^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || die_usage "--workspace requires a safe relative directory"
+      WORKSPACE="$2"
+      shift ;;
     --gpu)
       [[ $# -ge 2 ]] || die_usage "--gpu requires a value"
       GPU_MODE="$2"
@@ -163,6 +189,11 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+if [[ -n "$SEED" || -n "$RESTART_FLOW" ]]; then
+  [[ -n "$WORKSPACE" && -n "$FLOW_PATH" && "$SELF_CHECK" -eq 0 ]] || die_usage "--seed and --restart-flow require --workspace and --flow"
+fi
+if [[ -n "$RESTART_FLOW" ]]; then KEEP_ARTIFACTS=1; fi
+
 
 [[ "$AVD_NAME" =~ $TEST_AVD_REGEX ]] || die "refusing non-test AVD '$AVD_NAME'; AVD must match $TEST_AVD_REGEX"
 [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 5554 && PORT <= 65534 && PORT % 2 == 0 )) || die "--port must be an even integer in [5554, 65534]: $PORT"
@@ -398,6 +429,9 @@ cleanup() {
     fi
   fi
 
+  if [[ -n "$CLONED_AVD_HOME" ]]; then
+    python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' "$CLONED_AVD_HOME"
+  fi
   if [[ -n "$TEMP_EMU_LOG" && -f "$TEMP_EMU_LOG" ]]; then
     rm -f "$TEMP_EMU_LOG" || true
   fi
@@ -433,6 +467,7 @@ verified_running_avd() {
   printf '%s\n' "$name"
 }
 
+boot_start=$SECONDS
 if [[ -n "$REUSE_SERIAL" ]]; then
   SERIAL="$REUSE_SERIAL"
   state="$("$ADB_BIN" -s "$SERIAL" get-state 2>/dev/null | tr -d '\r' || true)"
@@ -454,11 +489,29 @@ else
   fi
 
   TEMP_EMU_LOG="$(mktemp "${TMPDIR:-/tmp}/koe-emulator-${PORT}.log.XXXXXX")"
+  boot_args=(-no-window -no-boot-anim -no-snapshot-save)
+  if [[ "$WITH_AUDIO" -eq 0 ]]; then boot_args+=(-no-audio); fi
+  snapshot_home="${ANDROID_AVD_HOME:-${ANDROID_USER_HOME:-$HOME/.android}/avd}"
+  if [[ "$SLIM" -eq 1 && -d "$snapshot_home/$AVD_NAME.avd/snapshots/avdslim_clean" ]]; then
+    GOLDEN=1
+    boot_args+=(-snapshot avdslim_clean -force-snapshot-load)
+    hardware="$snapshot_home/$AVD_NAME.avd/snapshots/avdslim_clean/hardware.ini"
+    if [[ -f "$hardware" ]]; then
+      CLONED_AVD_HOME="$(mktemp -d "$snapshot_home/.koe-verify-XXXXXX")"
+      python3 "$ROOT/platforms/android/stage-golden-avd.py" "$snapshot_home" "$AVD_NAME" "$CLONED_AVD_HOME"
+      export ANDROID_AVD_HOME="$CLONED_AVD_HOME"
+      ram=$(awk '$1 == "hw.ramSize" && $2 == "=" {print $3}' "$hardware")
+      if [[ "$ram" =~ ^[0-9]+$ ]]; then boot_args+=(-lowram -memory "$ram"); fi
+    fi
+  else
+    boot_args+=(-no-snapshot-load)
+  fi
+  if [[ "$SLIM" -eq 1 ]]; then GPU_MODE="${GPU_MODE:-host}"; fi
   # os.setsid() places the emulator and its child processes in a dedicated process group for clean teardown.
   python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
     "$EMULATOR_BIN" -avd "$AVD_NAME" -port "$PORT" \
-    -no-window -no-audio -no-boot-anim -no-snapshot-load -no-snapshot-save \
-    -gpu "$GPU_MODE" >"$TEMP_EMU_LOG" 2>&1 &
+    "${boot_args[@]}" \
+    -gpu "${GPU_MODE:-auto}" >"$TEMP_EMU_LOG" 2>&1 &
   EMULATOR_PID=$!
   EMULATOR_OWNED=1
 
@@ -489,6 +542,7 @@ else
   done
 fi
 
+boot_seconds=$((SECONDS - boot_start))
 API_LEVEL="$(adb_getprop "$SERIAL" ro.build.version.sdk)"
 ABI="$(adb_getprop "$SERIAL" ro.product.cpu.abi)"
 [[ -n "$API_LEVEL" ]] || die "failed to read ro.build.version.sdk from $SERIAL"
@@ -506,6 +560,18 @@ if [[ ! -d "$ARTIFACTS_DIR" ]]; then
 fi
 MAESTRO_DEBUG_DIR="$ARTIFACTS_DIR/maestro_debug"
 mkdir -p "$MAESTRO_DEBUG_DIR"
+if [[ "$SLIM" -eq 1 ]]; then
+  printf '%s\n' "$boot_seconds" > "$ARTIFACTS_DIR/boot-seconds.txt"
+  slim_bin="${KOE_AVDSLIM_BIN:-$(command -v avdslim || true)}"
+  if [[ ! -x "$slim_bin" ]]; then
+    printf 'warning: avdslim unavailable; continuing with lightweight boot flags\n' >&2
+  else
+    if [[ "$GOLDEN" -eq 0 && "$EMULATOR_OWNED" -eq 1 ]]; then
+      "$slim_bin" on "$SERIAL" --skip=bluetooth --no-anim
+    fi
+    "$slim_bin" measure "$SERIAL" > "$ARTIFACTS_DIR/avdslim-metrics.txt"
+  fi
+fi
 
 if ! start_ts_raw="$("$ADB_BIN" -s "$SERIAL" shell "date '+%Y-%m-%d %H:%M:%S.000'" 2>&1)"; then
   die "failed to capture device timestamp from $SERIAL: $start_ts_raw"
@@ -524,10 +590,14 @@ if [[ ${#GRANT_PERMISSIONS[@]} -gt 0 ]]; then
 fi
 
 if [[ "$LAUNCH_APP" -eq 1 ]]; then
-  WORKSPACE_REL="verify-workspaces/${RUN_ID}"
+  WORKSPACE_REL="verify-workspaces/${WORKSPACE:-$RUN_ID}"
   "$ADB_BIN" -s "$SERIAL" shell "am force-stop $APP_PACKAGE" >/dev/null 2>&1 || true
   "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE rm -f files/koe-trace.json files/koe-active-fixture.json" >/dev/null 2>&1 || true
 
+  if [[ -n "$SEED" ]]; then
+    "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE mkdir -p files/$WORKSPACE_REL"
+    "$ADB_BIN" -s "$SERIAL" shell -T "run-as $APP_PACKAGE sh -c 'set -C; cat > files/$WORKSPACE_REL/product-workspace.json'" < "$SEED"
+  fi
   AM_START_CMD="am start -W -S -n $APP_ACTIVITY --es koe_workspace $WORKSPACE_REL"
   if [[ -n "$FIXTURE_PATH" ]]; then
     REMOTE_TMP_FIXTURE="/data/local/tmp/koe-fixture-${RUN_ID}.json"
@@ -535,6 +605,7 @@ if [[ "$LAUNCH_APP" -eq 1 ]]; then
     "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE sh -c 'mkdir -p files && cat > files/koe-active-fixture.json' < $REMOTE_TMP_FIXTURE"
     "$ADB_BIN" -s "$SERIAL" shell "rm -f $REMOTE_TMP_FIXTURE" >/dev/null 2>&1 || true
     AM_START_CMD="$AM_START_CMD --es koe_snapshot_fixture koe-active-fixture.json"
+    if [[ -n "$SEED" ]]; then AM_START_CMD="$AM_START_CMD --ez koe_fixture_to_live true"; fi
   fi
 
   "$ADB_BIN" -s "$SERIAL" shell "$AM_START_CMD" >/dev/null
@@ -703,7 +774,17 @@ payload = {
 Path(trace_path).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
   if [[ -n "$host_trace_raw" && -f "$host_trace_raw" ]]; then
-    rm -f "$host_trace_raw" || true
+    if [[ -s "$host_trace_raw" ]]; then mv "$host_trace_raw" "$dir/koe-trace.json"; else rm -f "$host_trace_raw"; fi
+  fi
+  if [[ -n "$WORKSPACE" && "$LAUNCH_APP" -eq 1 && -z "$FIXTURE_PATH" ]]; then
+    mkdir -p "$dir/workspace/audio"
+    "$ADB_BIN" -s "$SERIAL" exec-out run-as "$APP_PACKAGE" cat "files/$WORKSPACE_REL/product-workspace.json" > "$dir/workspace/product-workspace.json"
+    local wav
+    while IFS= read -r wav; do
+      wav="${wav%$'\r'}"
+      [[ "$wav" =~ ^[a-zA-Z0-9-]+\.wav$ ]] || continue
+      "$ADB_BIN" -s "$SERIAL" exec-out run-as "$APP_PACKAGE" cat "files/$WORKSPACE_REL/audio/$wav" > "$dir/workspace/audio/$wav"
+    done < <("$ADB_BIN" -s "$SERIAL" shell run-as "$APP_PACKAGE" ls "files/$WORKSPACE_REL/audio" 2>/dev/null)
   fi
 }
 
@@ -742,12 +823,17 @@ if [[ "$EXPECT_FAILURE" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ "$FLOW_EXIT_CODE" -eq 0 && -n "$RESTART_FLOW" ]]; then
+  "$ROOT/platforms/android/verify-emulator.sh" --reuse-serial "$SERIAL" --flow "$RESTART_FLOW" --workspace "$WORKSPACE" \
+    --app-package "$APP_PACKAGE" --app-activity "$APP_ACTIVITY" --launch-app --keep-artifacts \
+    --flow-timeout "$FLOW_TIMEOUT" --artifacts-dir "$(dirname "$ARTIFACTS_DIR")/restart"
+fi
 if [[ "$FLOW_EXIT_CODE" -eq 0 ]]; then
   if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
     validate_forensics_bundle "$ARTIFACTS_DIR"
     printf 'verify-emulator: PASS (avd=%s, api=%s, abi=%s, artifacts=%s)\n' "$AVD_NAME" "$API_LEVEL" "$ABI" "$ARTIFACTS_DIR"
   else
-    if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 ]]; then
+    if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 && "$SLIM" -eq 0 ]]; then
       rm -rf "$ARTIFACTS_DIR" || true
     fi
     printf 'verify-emulator: PASS (avd=%s, api=%s, abi=%s)\n' "$AVD_NAME" "$API_LEVEL" "$ABI"

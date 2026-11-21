@@ -1,0 +1,4 @@
+appId: com.semanticcraft.koe
+---
+- runFlow: design-capture-detail.yaml
+- runFlow: design-review-ask-trash.yaml
