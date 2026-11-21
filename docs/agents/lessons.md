@@ -1,5 +1,12 @@
 # 教训台账（内部）
 
+### Rust crate 同时产出 `cdylib` 与 `staticlib` 时，SwiftPM 必须显式链接 `.a` 路径并用 `otool -L` 拦截动态依赖
+
+- 出处：2026-11-21 在 `main`（`00322b9`）执行 `./scripts/release-macos.sh` 时，Developer ID + Hardened Runtime 签名后的 `Koe` 启动立即被 `dyld` 中止（`mapping process and mapped file (non-platform) have different Team IDs`）。根因是 PR #774 为 Android 在 `crates/koe-host-api/Cargo.toml` 增加了 `"cdylib"`，导致 macOS `cargo build` 同时在 `target/{debug,release}/` 生成 `libkoe_host_api.dylib` 与 `libkoe_host_api.a`；SwiftPM 仍用 `-L<root>/target/{debug,release}` 加 `.linkedLibrary("koe_host_api")`，Apple `ld` 同目录优先选 `.dylib`，把未签名构建目录路径写进了 `LC_LOAD_DYLIB`。
+- 修复：`platforms/macos/Package.swift`（`Koe`、`KoeMacHostTests`）与 `platforms/apple-shared/Package.swift`（`KoeAppleCoreTests`、`KoeAppleSharedTests`）去掉 `-L.../target/{debug,release}` 与 `.linkedLibrary("koe_host_api")`，改为按配置显式传入 `\(repoRoot)/target/{debug,release}/libkoe_host_api.a`；`scripts/install-macos.sh` 在 `swift build` 后及签名前运行 `otool -L`，只要 `LC_LOAD_DYLIB` 命中 `libkoe_host_api` 或仓库 `target/` 目录即刻失败。
+- 验证点：`python3 scripts/test_install_macos.py` 的 `test_static_host_api_link_guard_rejects_dylib_and_accepts_static_macho` 与 `test_apple_swiftpm_manifests_link_static_host_api_archive` 改前失败、改后全绿；`otool -L platforms/macos/.build/release/Koe` 仅含 `/System/Library/...` 与 `/usr/lib/...` 系统库；`./scripts/release-macos.sh --dry-run` 通过 Hardened Runtime 签名、`--verify-self` 与 `--smoke-test`。
+- Seen 1x（2026-11-21）。
+
 ### Dock 图标要核对不透明轮廓，启动时保留系统处理
 
 - 出处：2026-11-10 用户发现 Koe 与 Micro Input 在 Dock 中比相邻图标大一圈；两者的图案占画布 90%，启动时直接加载原始 ICNS。

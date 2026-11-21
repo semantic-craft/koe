@@ -94,6 +94,7 @@ fi
 
 SOURCE="${KOE_BUILD_APP:-$ROOT/build/macos/Build/Products/Release/${APP_NAME}.app}"
 SIGN_SCRIPT="${KOE_SIGN_SCRIPT:-$ROOT/scripts/sign-macos.sh}"
+OTOOL_BIN="${KOE_OTOOL_BIN:-otool}"
 LSREGISTER="${KOE_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
 export KOE_LSREGISTER="$LSREGISTER"
 
@@ -167,6 +168,85 @@ sys.stdout.write(car.atomic_swap_or_move(Path(src_arg), Path(dst_arg)))
 PY
 }
 
+verify_static_host_api_link() {
+  local binary="$1"
+  local require_macho="${2:-0}"
+  [[ -f "$binary" ]] || { echo "error: executable missing: $binary" >&2; exit 1; }
+  if ! command -v "$OTOOL_BIN" >/dev/null 2>&1; then
+    if [[ "$require_macho" -eq 1 && "$(uname -s)" == "Darwin" ]]; then
+      echo "error: otool not found: $OTOOL_BIN" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  python3 - "$OTOOL_BIN" "$ROOT" "$binary" "$require_macho" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+otool_bin, root_arg, binary_arg, require_macho_arg = sys.argv[1:5]
+require_macho = require_macho_arg == "1"
+binary_path = Path(binary_arg)
+with binary_path.open("rb") as fh:
+    header = fh.read(4)
+
+macho_magics = {
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+}
+if header not in macho_magics:
+    if require_macho:
+        sys.stderr.write(f"error: expected Mach-O executable at {binary_path}\n")
+        raise SystemExit(1)
+    raise SystemExit(0)
+
+proc = subprocess.run(
+    [otool_bin, "-L", str(binary_path)],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if proc.returncode != 0:
+    detail = (proc.stderr or proc.stdout).strip()
+    sys.stderr.write(f"error: otool -L failed for {binary_path}: {detail}\n")
+    raise SystemExit(1)
+
+target_prefixes = (
+    f"{root_arg.rstrip('/')}/target/",
+    f"{Path(root_arg).resolve()}/target/",
+)
+offenders: list[str] = []
+for raw_line in proc.stdout.splitlines():
+    if not raw_line[:1].isspace():
+        continue
+    dylib_path = raw_line.strip().split(" (", 1)[0].strip()
+    if not dylib_path:
+        continue
+    if (
+        "libkoe_host_api" in dylib_path
+        or any(dylib_path.startswith(prefix) for prefix in target_prefixes)
+        or "/target/debug/" in dylib_path
+        or "/target/release/" in dylib_path
+    ):
+        offenders.append(dylib_path)
+
+if offenders:
+    sys.stderr.write(
+        "error: Koe must statically link libkoe_host_api.a; "
+        "forbidden dynamic dependencies found in LC_LOAD_DYLIB:\n"
+    )
+    for path in offenders:
+        sys.stderr.write(f"  - {path}\n")
+    raise SystemExit(1)
+PY
+}
+
 # Do not replace files while an installed executable is running.
 ensure_target_not_running
 if [[ -x "$ROOT/scripts/retire-legacy-macos-app.sh" ]]; then
@@ -179,6 +259,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   cargo build --manifest-path "$ROOT/Cargo.toml" --package koe-host-api --release --offline \
     || cargo build --manifest-path "$ROOT/Cargo.toml" --package koe-host-api --release
   swift build --package-path "$ROOT/platforms/macos" -c release
+  verify_static_host_api_link "$ROOT/platforms/macos/.build/release/${APP_NAME}" 1
   rm -rf "$SOURCE"
   mkdir -p "$SOURCE/Contents/MacOS" "$SOURCE/Contents/Resources/product"
   cp "$ROOT/platforms/macos/.build/release/${APP_NAME}" "$SOURCE/Contents/MacOS/${APP_NAME}"
@@ -242,6 +323,7 @@ if [[ -L "$APP/Contents" || -L "$APP/Contents/Resources" ]]; then
   echo 'error: bundle Contents and Contents/Resources must be real directories, not symlinks.' >&2
   exit 1
 fi
+verify_static_host_api_link "$APP/Contents/MacOS/${APP_NAME}" 0
 LICENSES="$APP/Contents/Resources/Licenses"
 rm -rf "$LICENSES"
 mkdir -p "$LICENSES/assets"

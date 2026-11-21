@@ -5,6 +5,13 @@ import PackageDescription
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let repoRoot = packageDir.deletingLastPathComponent().deletingLastPathComponent().path
 
+let hostApiLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags(["\(repoRoot)/target/debug/libkoe_host_api.a"], .when(configuration: .debug)),
+    .unsafeFlags(["\(repoRoot)/target/release/libkoe_host_api.a"], .when(configuration: .release)),
+    .linkedLibrary("c++"),
+    .linkedFramework("Accelerate"),
+]
+
 let package = Package(
     name: "KoeMacHost",
     platforms: [
@@ -23,12 +30,7 @@ let package = Package(
                 .product(name: "KoeAppleShared", package: "apple-shared"),
             ],
             path: "Sources/Koe",
-            linkerSettings: [
-                .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
-                .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
-                .linkedLibrary("koe_host_api"),
-                .linkedLibrary("c++"),
-                .linkedFramework("Accelerate"),
+            linkerSettings: hostApiLinkerSettings + [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreBluetooth"),
                 .linkedFramework("SwiftUI"),
@@ -42,13 +44,7 @@ let package = Package(
                 .product(name: "KoeAppleShared", package: "apple-shared"),
             ],
             path: "Tests/KoeMacHostTests",
-            linkerSettings: [
-                .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
-                .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
-                .linkedLibrary("koe_host_api"),
-                .linkedLibrary("c++"),
-                .linkedFramework("Accelerate"),
-            ]
+            linkerSettings: hostApiLinkerSettings
         ),
     ]
 )
