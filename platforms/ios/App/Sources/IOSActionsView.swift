@@ -14,9 +14,12 @@ struct IOSActionsView: View {
 
     @State private var selectedSegment: IOSActionsSegment = .tasks
 
+    @State private var taskFilter: IOSTaskFilter = .pending
+    @State private var memoryFilter: IOSMemoryFilter = .proposed
+
     var body: some View {
-        let activeTasks = store.tasks.filter { $0.state != "dismissed" }
-        let activeMemories = store.memories.filter { $0.state != "dismissed" }
+        let activeTasks = store.tasks.filter(taskFilter.matches)
+        let activeMemories = store.memories.filter { $0.state == memoryFilter.rawValue }
 
         VStack(spacing: 0) {
             Picker("行动分类", selection: $selectedSegment) {
@@ -29,6 +32,15 @@ struct IOSActionsView: View {
             .padding(.vertical, 10)
             .background(IOSColors.bgPanel)
 
+            if selectedSegment == .tasks {
+                Picker("待办状态", selection: $taskFilter) {
+                    ForEach(IOSTaskFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).padding(.horizontal, 16)
+            } else {
+                Picker("记忆状态", selection: $memoryFilter) {
+                    ForEach(IOSMemoryFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+                }.pickerStyle(.segmented).padding(.horizontal, 16)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     switch selectedSegment {
@@ -41,7 +53,7 @@ struct IOSActionsView: View {
                             )
                         } else {
                             ForEach(activeTasks) { task in
-                                taskCard(task)
+                                IOSTaskCard(store: store, task: task, onOpenSource: onOpenSource)
                             }
                         }
                     case .memories:
@@ -53,11 +65,12 @@ struct IOSActionsView: View {
                             )
                         } else {
                             ForEach(activeMemories) { memory in
-                                memoryCard(memory)
+                                IOSMemoryCard(store: store, memory: memory, onOpenSource: onOpenSource)
                             }
                         }
                     }
                 }
+                .frame(maxWidth: 760)
                 .padding(16)
             }
             .background(IOSColors.bgPanel)
@@ -66,108 +79,28 @@ struct IOSActionsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func taskCard(_ task: TaskSnapshot) -> some View {
-        IOSCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 10) {
-                    if task.state == "accepted" {
-                        Button {
-                            store.send(.completeTask(itemId: task.id, completed: !task.completed))
-                        } label: {
-                            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: AppFontSizes.md))
-                                .foregroundStyle(task.completed ? IOSColors.success : IOSColors.textMuted)
-                                .frame(width: 28, height: 28)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(task.completed ? "标记未完成" : "标记已完成")
-                    }
+}
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(task.text)
-                            .font(.system(size: AppFontSizes.sm, weight: .medium))
-                            .foregroundStyle(IOSColors.textPrimary)
-                            .strikethrough(task.completed)
-                        HStack(spacing: 8) {
-                            IOSBadge(
-                                task.state == "proposed" ? "待确认" : "已采纳",
-                                tint: task.state == "proposed" ? IOSColors.warning : IOSColors.success
-                            )
-                            if let due = task.due, !due.isEmpty {
-                                Text("截止 \(due)")
-                                    .font(.system(size: AppFontSizes.xs))
-                                    .foregroundStyle(IOSColors.textMuted)
-                            }
-                        }
-                    }
-                    Spacer()
-                }
+enum IOSTaskFilter: String, CaseIterable {
+    case pending = "待处理", completed = "已完成", dismissed = "已忽略"
 
-                if task.state == "proposed" {
-                    HStack(spacing: 8) {
-                        IOSPrimaryButton("采纳", systemImage: "checkmark", isPrimary: true) {
-                            store.send(.reviewItem(itemId: task.id, decision: .accept))
-                        }
-                        IOSPrimaryButton("忽略", systemImage: "xmark", isPrimary: false) {
-                            store.send(.reviewItem(itemId: task.id, decision: .dismiss))
-                        }
-                    }
-                }
-
-                if !task.sources.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(task.sources) { source in
-                                IOSSourceLink(source: source) {
-                                    onOpenSource(source)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    func matches(_ task: TaskSnapshot) -> Bool {
+        switch self {
+        case .pending: task.state == "proposed" || (task.state == "accepted" && !task.completed)
+        case .completed: task.state == "accepted" && task.completed
+        case .dismissed: task.state == "dismissed"
         }
     }
+}
 
-    private func memoryCard(_ memory: MemorySnapshot) -> some View {
-        IOSCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 8) {
-                    Text(memory.text)
-                        .font(.system(size: AppFontSizes.sm))
-                        .foregroundStyle(IOSColors.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 4)
-                    IOSBadge(
-                        memory.state == "proposed" ? "待确认" : "已记住",
-                        tint: memory.state == "proposed" ? IOSColors.warning : IOSColors.success
-                    )
-                }
+private enum IOSMemoryFilter: String, CaseIterable {
+    case proposed, accepted, dismissed
 
-                if memory.state == "proposed" {
-                    HStack(spacing: 8) {
-                        IOSPrimaryButton("记住", systemImage: "checkmark", isPrimary: true) {
-                            store.send(.reviewItem(itemId: memory.id, decision: .accept))
-                        }
-                        IOSPrimaryButton("忽略", systemImage: "xmark", isPrimary: false) {
-                            store.send(.reviewItem(itemId: memory.id, decision: .dismiss))
-                        }
-                    }
-                }
-
-                if !memory.sources.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(memory.sources) { source in
-                                IOSSourceLink(source: source) {
-                                    onOpenSource(source)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    var title: String {
+        switch self {
+        case .proposed: "待确认"
+        case .accepted: "已记住"
+        case .dismissed: "已忽略"
         }
     }
 }

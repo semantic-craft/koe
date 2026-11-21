@@ -49,3 +49,8 @@ appId: com.semanticcraft.koe.ios
     visible: "原文来源"
     timeout: 10000
 - takeScreenshot: final_screen
+- tapOn: "关闭"
+- tapOn:
+    id: "ask-question-input"
+- inputText: "DraftAboveCaptureBar"
+- assertVisible: "DraftAboveCaptureBar"

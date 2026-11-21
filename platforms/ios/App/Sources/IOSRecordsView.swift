@@ -7,19 +7,17 @@ struct IOSRecordsView: View {
     let onSelectRecord: (String) -> Void
     @Environment(IOSFileActions.self) private var files
 
-    @State private var searchQuery = ""
-    @State private var filterCategory: RecordFilterCategory = .all
+    @State private var query = IOSRecordListQuery()
     @State private var showingTrashSheet = false
     @State private var importing = false
     @State private var selecting = false
     @State private var selectedIDs: Set<String> = []
 
     var body: some View {
-        let filteredRecords = store.records.filter {
-            $0.matches(filter: filterCategory, query: searchQuery)
-        }
+        let filteredRecords = query.results(in: store.records)
+        let projects = RecordListFormatting.distinctProjects(from: store.records)
         let trashCount = store.navigation.trashCount
-        let selectedRecords = store.records.map(\.id).filter(selectedIDs.contains)
+        let selectedRecords = filteredRecords.map(\.id).filter(selectedIDs.contains)
 
         VStack(spacing: 0) {
             VStack(spacing: 10) {
@@ -27,15 +25,15 @@ struct IOSRecordsView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(IOSColors.textMuted)
-                    TextField("搜索记录标题或内容…", text: $searchQuery)
+                    TextField("搜索记录标题或内容…", text: $query.text)
                         .font(.system(size: AppFontSizes.sm))
                         .foregroundStyle(IOSColors.textPrimary)
                         .submitLabel(.search)
                         .accessibilityIdentifier("records-search-input")
                         .onSubmit {}
-                    if !searchQuery.isEmpty {
+                    if !query.text.isEmpty {
                         Button {
-                            searchQuery = ""
+                            query.text = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: AppFontSizes.sm))
@@ -54,12 +52,23 @@ struct IOSRecordsView: View {
                         .stroke(IOSColors.border, lineWidth: 1)
                 )
 
+                HStack {
+                    Picker("排序", selection: $query.order) {
+                        ForEach([RecordSortOrder.newest, .oldest, .longest]) { Text($0.title).tag($0) }
+                    }
+                    Picker("项目", selection: $query.project) {
+                        Text("全部项目").tag(RecordProjectFilter.all)
+                        Text("未归类").tag(RecordProjectFilter.unassigned)
+                        ForEach(projects, id: \.self) { Text($0).tag(RecordProjectFilter.project($0)) }
+                    }
+                    Spacer()
+                }.pickerStyle(.menu)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(RecordFilterCategory.allCases) { category in
-                            let selected = filterCategory == category
+                            let selected = query.category == category
                             Button {
-                                filterCategory = category
+                                query.category = category
                             } label: {
                                 Text(category.title)
                                     .font(.system(size: AppFontSizes.xs, weight: selected ? .semibold : .medium))
@@ -130,6 +139,9 @@ struct IOSRecordsView: View {
                 .background(IOSColors.bgPanel)
             }
         }
+        .onChange(of: filteredRecords.map(\.id)) { _, visible in
+            selectedIDs.formIntersection(visible)
+        }
         .navigationTitle(selecting ? "已选 \(selectedRecords.count)" : "记录")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -146,6 +158,11 @@ struct IOSRecordsView: View {
                     .labelStyle(.iconOnly)
                     .disabled(selectedRecords.isEmpty)
                     .accessibilityIdentifier("records-export-button")
+                    IOSRecordBatchMenu(store: store, selected: filteredRecords.filter { selectedIDs.contains($0.id) },
+                                       projects: projects) {
+                        selectedIDs.removeAll()
+                        selecting = false
+                    }
                 } else {
                     Button("导入", systemImage: "square.and.arrow.down") {
                         importing = true
@@ -318,5 +335,16 @@ struct IOSTrashView: View {
                 }
             }
         }
+    }
+}
+
+struct IOSRecordListQuery {
+    var text = ""
+    var category: RecordFilterCategory = .all
+    var order: RecordSortOrder = .newest
+    var project: RecordProjectFilter = .all
+
+    func results(in records: [RecordSnapshot]) -> [RecordSnapshot] {
+        order.sort(records.filter { $0.matches(filter: category, projectFilter: project, query: text) })
     }
 }

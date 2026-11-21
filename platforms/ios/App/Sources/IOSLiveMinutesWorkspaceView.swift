@@ -5,6 +5,7 @@ struct IOSLiveMinutesWorkspaceView: View {
     let store: HostSessionStore
     let onSelectRecord: (String) -> Void
     let onOpenSource: (SourceSnapshot) -> Void
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showFinal: Bool?
     @State private var showSettings = false
     private var workspace: LiveMinutesWorkspaceSnapshot { store.liveMinutesWorkspace }
@@ -26,23 +27,15 @@ struct IOSLiveMinutesWorkspaceView: View {
             }.sheet(isPresented: $showSettings) { IOSSettingsView(store: store) }
         }
         IOSLiveMinutesCoverageSlotView(store: store)
-        IOSCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("实时原文").font(.headline)
-                IOSWorkspaceTranscript(segments: workspace.segments, recordID: workspace.selectedRecordId,
-                                       title: workspace.selectedTitle ?? "会议原文", onOpenSource: onOpenSource)
-                ForEach(IOSWorkspaceLine.keyed(workspace.drafts)) { draft in
-                    VStack(alignment: .leading, spacing: 4) {
-                        IOSBadge("识别中")
-                        Text(draft.text).foregroundStyle(.secondary)
-                    }
-                }
-                if workspace.segments.isEmpty && workspace.drafts.isEmpty {
-                    Text(workspace.isActive ? "等待实时转写…" : "本场会议暂无原文。").foregroundStyle(.secondary)
-                }
+        if sizeClass == .regular {
+            HStack(alignment: .top, spacing: 16) {
+                transcript
+                minutes
             }
+        } else {
+            transcript
+            minutes
         }
-        minutes
         if !workspace.actionItems.isEmpty {
             IOSCard {
                 VStack(alignment: .leading, spacing: 12) {
@@ -80,6 +73,25 @@ struct IOSLiveMinutesWorkspaceView: View {
         }
     }
 
+    private var transcript: some View {
+        IOSCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("实时原文").font(.headline)
+                IOSWorkspaceTranscript(segments: workspace.segments, recordID: workspace.selectedRecordId,
+                                       title: workspace.selectedTitle ?? "会议原文", onOpenSource: onOpenSource)
+                ForEach(IOSWorkspaceLine.keyed(workspace.drafts)) { draft in
+                    VStack(alignment: .leading, spacing: 4) {
+                        IOSBadge("识别中")
+                        Text(draft.text).foregroundStyle(.secondary)
+                    }
+                }
+                if workspace.segments.isEmpty && workspace.drafts.isEmpty {
+                    Text(workspace.isActive ? "等待实时转写…" : "本场会议暂无原文。").foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private var minutes: some View {
         let final = showFinal ?? (!workspace.isActive && !workspace.finalSections.isEmpty)
         let sections = final ? workspace.finalSections : workspace.liveSections
@@ -94,7 +106,7 @@ struct IOSLiveMinutesWorkspaceView: View {
                 }
                 ForEach(SummarySectionItem.keyed(sections)) { item in
                     Text(item.section.title).font(.headline)
-                    Text(item.section.text)
+                    Text(item.section.text).textSelection(.enabled)
                     IOSWorkspaceSources(sources: item.section.sources, onOpenSource: onOpenSource)
                 }
             }

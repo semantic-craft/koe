@@ -12,6 +12,10 @@ private enum IOSRecordDetailTab: String, CaseIterable, Identifiable {
 struct IOSRecordDetailView: View {
     let store: HostSessionStore
     let recordId: String
+    var onOpenRelatedSource: (SourceSnapshot) -> Void = { _ in }
+    var onAsk: () -> Void = {}
+    @Environment(\.dismiss) private var dismiss
+    @State private var edit: IOSRecordEdit?
     @Environment(IOSFileActions.self) private var files
 
     @State private var selectedTab: IOSRecordDetailTab = .summary
@@ -69,6 +73,7 @@ struct IOSRecordDetailView: View {
                             )
                         }
                     }
+                    .frame(maxWidth: 760)
                     .padding(16)
                 }
                 .background(IOSColors.bgPanel)
@@ -76,6 +81,7 @@ struct IOSRecordDetailView: View {
 
             IOSPlayerBarView(store: store, recordId: recordId)
         }
+        .sheet(item: $edit) { IOSRecordEditorSheet(store: store, edit: $0) }
         .navigationTitle(detail?.title ?? fallbackRecord?.title ?? "记录详情")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: focusTarget) {
@@ -108,7 +114,23 @@ struct IOSRecordDetailView: View {
                         .foregroundStyle(IOSColors.textMuted)
                         .monospacedDigit()
                 }
-                Text(detail.title)
+                HStack {
+                    Text(detail.title)
+                    Spacer()
+                    Menu {
+                        Button("重命名") { edit = .title(detail) }
+                        Button("问这条记录") {
+                            if store.sendReturningError(.setAskScope(scope: "record", recordId: detail.id)) == nil { onAsk() }
+                        }
+                        Button("移入回收站", role: .destructive) {
+                            guard detail.canTrash, store.navigation.savingRecordId != detail.id else { return }
+                            if store.sendReturningError(.trashRecord(recordId: detail.id)) == nil { dismiss() }
+                        }
+                        .disabled(!detail.canTrash || store.navigation.savingRecordId == detail.id)
+                    } label: {
+                        Label("记录操作", systemImage: "ellipsis.circle").labelStyle(.iconOnly)
+                    }
+                }
                     .font(.system(size: AppFontSizes.lg, weight: .semibold))
                     .foregroundStyle(IOSColors.textPrimary)
                 Text("\(TimeLabel.date(detail.createdAtEpochSec))  |  \(detail.source)  |  \(detail.segments.count) 段原文")
@@ -138,6 +160,16 @@ struct IOSRecordDetailView: View {
     @ViewBuilder
     private func summarySection(_ detail: RecordDetailSnapshot, slice: RecordDetailSlice) -> some View {
         let sections = SummarySectionItem.keyed(detail.summary)
+        if detail.minutesStale {
+            IOSCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("原文已修改，当前纪要需要更新", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(IOSColors.warning)
+                    Button("重新整理纪要") { store.send(.summarize(recordId: detail.id)) }
+                        .disabled(detail.isProcessing || detail.segments.isEmpty)
+                }
+            }
+        }
         if sections.isEmpty {
             IOSEmptyState(
                 icon: "doc.plaintext",
@@ -148,35 +180,40 @@ struct IOSRecordDetailView: View {
             ForEach(sections) { item in
                 IOSCard {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(item.section.title)
+                        Text(item.section.title).textSelection(.enabled)
                             .font(.system(size: AppFontSizes.md, weight: .semibold))
                             .foregroundStyle(IOSColors.textPrimary)
-                        Text(item.section.text)
+                        Text(item.section.text).textSelection(.enabled)
                             .font(.system(size: AppFontSizes.sm))
                             .foregroundStyle(IOSColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        IOSWorkspaceSources(sources: item.section.sources, onOpenSource: openSource)
                     }
                 }
             }
         }
 
         if !slice.recordTasks.isEmpty {
-            IOSCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("关联待办 (\(slice.recordTasks.count))")
-                        .font(.system(size: AppFontSizes.sm, weight: .semibold))
-                        .foregroundStyle(IOSColors.textPrimary)
-                    ForEach(slice.recordTasks) { task in
-                        HStack(spacing: 8) {
-                            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(task.completed ? IOSColors.success : IOSColors.textMuted)
-                            Text(task.text)
-                                .font(.system(size: AppFontSizes.xs))
-                                .foregroundStyle(IOSColors.textPrimary)
-                        }
-                    }
-                }
+            Text("关联待办").font(.headline)
+            ForEach(slice.recordTasks) { task in
+                IOSTaskCard(store: store, task: task, onOpenSource: openSource)
             }
+        }
+        if !slice.recordMemories.isEmpty {
+            Text("关联记忆").font(.headline)
+            ForEach(slice.recordMemories) { memory in
+                IOSMemoryCard(store: store, memory: memory, onOpenSource: openSource)
+            }
+        }
+    }
+
+    private func openSource(_ source: SourceSnapshot) {
+        guard source.recordId == recordId else {
+            onOpenRelatedSource(source)
+            return
+        }
+        if store.sendReturningError(.openSource(recordId: source.recordId, segmentId: source.segmentId)) == nil {
+            selectedTab = .transcript
         }
     }
 
@@ -194,22 +231,29 @@ struct IOSRecordDetailView: View {
                 IOSCard {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Text(TimeLabel.duration(segment.startMs))
-                                .font(.system(size: AppFontSizes.xs, weight: .medium))
-                                .foregroundStyle(IOSColors.textMuted)
-                                .monospacedDigit()
-                            if let speaker = segment.speaker, !speaker.isEmpty {
-                                IOSBadge(speaker, tint: IOSColors.textSecondary)
-                            }
+                            IOSSegmentPlaybackButton(store: store, recordID: detail.id, segment: segment)
+                            Menu {
+                                Button("修改本段说话人") { edit = .speaker(detail.id, segment) }
+                                if let speaker = segment.speaker, !speaker.isEmpty {
+                                    Button("改名或合并说话人") { edit = .renameSpeaker(detail.id, speaker) }
+                                }
+                            } label: {
+                                IOSBadge(segment.speaker ?? "说话人", tint: IOSColors.textSecondary)
+                            }.disabled(!detail.canEditTranscript)
                             if isFocused {
                                 IOSBadge("定位段落", tint: IOSColors.accent)
                             }
                             Spacer()
                         }
-                        Text(segment.text)
+                        Text(segment.text).textSelection(.enabled)
                             .font(.system(size: AppFontSizes.sm))
                             .foregroundStyle(IOSColors.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if segment.isEdited, let original = segment.originalText {
+                            DisclosureGroup("对照改前原文") { Text(original).textSelection(.enabled) }
+                        }
+                        Button("编辑原文") { edit = .text(detail.id, segment) }
+                            .disabled(!detail.canEditTranscript)
                         HStack(spacing: 8) {
                             IOSPrimaryButton("标重点", isPrimary: false) {
                                 store.send(.addHighlight(recordId: detail.id, segmentId: segment.id))
@@ -257,4 +301,8 @@ struct IOSRecordDetailView: View {
             }
         }
     }
+}
+
+private extension RecordDetailSnapshot {
+    var canTrash: Bool { !archived && !isProcessing }
 }

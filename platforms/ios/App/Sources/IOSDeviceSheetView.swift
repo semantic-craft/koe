@@ -3,6 +3,7 @@ import SwiftUI
 
 struct IOSDeviceSheetView: View {
     let store: HostSessionStore
+    var onOpenRecord: (String) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
 
     private var isReleased: Bool { store.today.beanControlState == "released" }
@@ -59,7 +60,7 @@ struct IOSDeviceSheetView: View {
                     )
                     telemetryTile(
                         label: "设备存储",
-                        value: device.storageLabel
+                        value: device.storageLabel, ratio: device.storageUsedRatio
                     )
                 }
 
@@ -69,7 +70,7 @@ struct IOSDeviceSheetView: View {
                         .foregroundStyle(IOSColors.textPrimary)
                     HStack(spacing: 6) {
                         controlButton(
-                            title: "当前 iPhone 连接",
+                            title: "当前 \(store.platform.hostDisplayName) 连接",
                             active: !isReleased
                         ) {
                             if isReleased {
@@ -146,6 +147,13 @@ struct IOSDeviceSheetView: View {
                         }
                     }
 
+                    if (device.busy && device.transferPhase == "pulling_offline") || device.files.contains(where: \.downloading) {
+                        ProgressView(value: device.progress) {
+                            Text("下载进度").font(.caption)
+                        } currentValueLabel: {
+                            Text(device.progress, format: .percent.precision(.fractionLength(0)))
+                        }
+                    }
                     if device.files.isEmpty {
                         Text("设备内暂无待取回的离线文件。")
                             .font(.system(size: AppFontSizes.xs))
@@ -165,7 +173,14 @@ struct IOSDeviceSheetView: View {
                                 }
                                 Spacer()
                                 if file.synced {
-                                    IOSBadge("已取回", tint: IOSColors.success)
+                                    if let id = file.recordId, !id.isEmpty {
+                                        Button("查看记录") {
+                                            dismiss()
+                                            onOpenRecord(id)
+                                        }
+                                    } else {
+                                        IOSBadge("已取回", tint: IOSColors.success)
+                                    }
                                 } else {
                                     IOSPrimaryButton(file.downloading ? "取回中" : "取回", isPrimary: false) {
                                         store.send(.deviceDownload(fileId: file.fileId))
@@ -213,7 +228,7 @@ struct IOSDeviceSheetView: View {
         }
     }
 
-    private func telemetryTile(label: String, value: String) -> some View {
+    private func telemetryTile(label: String, value: String, ratio: Double? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: AppFontSizes.xs))
@@ -223,6 +238,7 @@ struct IOSDeviceSheetView: View {
                 .foregroundStyle(IOSColors.textPrimary)
                 .monospacedDigit()
                 .lineLimit(1)
+            if let ratio { ProgressView(value: ratio).accessibilityLabel("存储占用") }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

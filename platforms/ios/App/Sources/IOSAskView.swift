@@ -14,12 +14,10 @@ struct IOSAskView: View {
 
     @State private var questionDraft = ""
     @State private var inspectedSource: SourceSnapshot?
-    @FocusState private var isQuestionFocused: Bool
 
     var body: some View {
         let ask = store.ask
         let records = store.records
-        let selectedRecordId = store.navigation.selectedRecordId
         let providerConfigured = store.settings.provider.configured
 
         VStack(spacing: 0) {
@@ -28,15 +26,14 @@ struct IOSAskView: View {
                     scopeChip("全部记录", active: ask.scope == "all") {
                         store.send(.setAskScope(scope: "all", recordId: nil))
                     }
-                    if let recordId = ask.recordId ?? selectedRecordId,
-                       let record = records.first(where: { $0.id == recordId }) {
-                        scopeChip(
-                            record.title,
-                            active: ask.scope == "record" && ask.recordId == record.id
-                        ) {
-                            store.send(.setAskScope(scope: "record", recordId: record.id))
+                    Menu {
+                        ForEach(records) { record in
+                            Button(record.title) { store.send(.setAskScope(scope: "record", recordId: record.id)) }
                         }
-                    }
+                    } label: {
+                        Label(ask.scope == "record" ? (records.first { $0.id == ask.recordId }?.title ?? "选择记录") : "选择记录",
+                              systemImage: "chevron.down").lineLimit(1)
+                    }.disabled(records.isEmpty)
                     Spacer()
                     if !providerConfigured {
                         IOSBadge("本地检索", tint: IOSColors.textMuted)
@@ -47,65 +44,41 @@ struct IOSAskView: View {
             .padding(.vertical, 10)
             .background(IOSColors.bgPanel)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if ask.messages.isEmpty {
-                        IOSEmptyState(
-                            icon: "sparkles",
-                            title: "向已保存的记录提问",
-                            detail: "提问讨论结论、待办或决定，回答将附带可追溯的原文出处。"
-                        )
-                    } else {
-                        ForEach(ask.messages) { message in
-                            messageCard(message)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if ask.messages.isEmpty {
+                            IOSEmptyState(
+                                icon: "sparkles",
+                                title: "向已保存的记录提问",
+                                detail: "提问讨论结论、待办或决定，回答将附带可追溯的原文出处。"
+                            )
+                        } else {
+                            ForEach(ask.messages) { message in
+                                messageCard(message)
+                            }
                         }
-                    }
 
-                    if ask.phase == "pending" {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("正在查阅相关记录…")
-                                .font(.system(size: AppFontSizes.xs))
-                                .foregroundStyle(IOSColors.textMuted)
+                        if ask.phase == "pending" {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("正在查阅相关记录…")
+                                    .font(.system(size: AppFontSizes.xs))
+                                    .foregroundStyle(IOSColors.textMuted)
+                            }
+                            .padding(.horizontal, 8)
                         }
-                        .padding(.horizontal, 8)
+                        Color.clear.frame(height: 1).id("ask-bottom")
                     }
+                    .frame(maxWidth: 760)
+                    .padding(16)
                 }
-                .padding(16)
+                .background(IOSColors.bgPanel)
+                .onChange(of: ask.messages.last?.id, initial: true) { proxy.scrollTo("ask-bottom", anchor: .bottom) }
+                .onChange(of: ask.phase) { proxy.scrollTo("ask-bottom", anchor: .bottom) }
             }
-            .background(IOSColors.bgPanel)
 
-            HStack(spacing: 8) {
-                TextField("问问你记下来的事…", text: $questionDraft)
-                    .font(.system(size: AppFontSizes.sm))
-                    .foregroundStyle(IOSColors.textPrimary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(IOSColors.surface1, in: RoundedRectangle(cornerRadius: IOSRadii.control))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: IOSRadii.control)
-                            .stroke(IOSColors.border, lineWidth: 1)
-                    )
-                    .submitLabel(.send)
-                    .focused($isQuestionFocused)
-                    .accessibilityIdentifier("ask-question-input")
-                    .onSubmit {
-                        submitQuestion()
-                    }
-
-                IOSPrimaryButton("发送", systemImage: "arrow.up", isPrimary: true) {
-                    submitQuestion()
-                }
-                .disabled(questionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || ask.phase == "pending")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .iosChromeSurface(IOSColors.surface0)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(IOSColors.border)
-                    .frame(height: 1)
-            }
+            IOSAskComposer(store: store, questionDraft: $questionDraft)
         }
         .navigationTitle("问 AI")
         .navigationBarTitleDisplayMode(.inline)
@@ -150,9 +123,14 @@ struct IOSAskView: View {
                         IOSBadge("原文检索", tint: IOSColors.textMuted)
                     }
                     Spacer()
+                    if !isUser {
+                        Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+                            .labelStyle(.iconOnly)
+                    }
                 }
 
                 Text(message.text)
+                    .textSelection(.enabled)
                     .font(.system(size: AppFontSizes.sm))
                     .foregroundStyle(IOSColors.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -187,16 +165,7 @@ struct IOSAskView: View {
         }
     }
 
-    private func submitQuestion() {
-        let trimmed = questionDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ask = store.ask
-        guard !trimmed.isEmpty, ask.phase != "pending" else { return }
-        isQuestionFocused = false
-        store.send(.ask(question: trimmed, scope: ask.scope, recordId: ask.recordId))
-        if store.navigation.effectiveError == nil {
-            questionDraft = ""
-        }
-    }
+
 }
 
 private struct IOSAskSourceEvidenceSheet: View {

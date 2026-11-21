@@ -100,7 +100,7 @@ struct IOSQuickNoteCardList: View {
             }
             if let selectedIDs = selection {
                 Spacer()
-                IOSProjectMenu(title: "批量归类（\(selectedIDs.count)）", projects: projects) { project in
+                IOSProjectMenu(title: "批量归类（\(selectedIDs.count)）", projects: projects.map(\.name)) { project in
                     let ids = cards.map(\.id).filter(selectedIDs.contains)
                     guard !ids.isEmpty else { return }
                     if store.sendReturningError(.batchSetRecordProject(recordIds: ids, project: project)) == nil {
@@ -147,7 +147,7 @@ struct IOSQuickNoteCardList: View {
                     .contentShape(Rectangle())
                 }.buttonStyle(.plain)
                 if selection == nil {
-                    IOSProjectMenu(title: "项目归类", projects: projects) { project in
+                    IOSProjectMenu(title: "项目归类", projects: projects.map(\.name)) { project in
                         store.send(.setRecordProject(recordId: card.id, project: project))
                     }
                 }
@@ -158,14 +158,14 @@ struct IOSQuickNoteCardList: View {
 
 struct IOSProjectMenu: View {
     let title: String
-    let projects: [QuickNoteProjectCountSnapshot]
+    let projects: [String]
     let assign: (String?) -> Void
     @State private var creating = false
     @State private var name = ""
 
     var body: some View {
         Menu {
-            ForEach(projects) { project in Button(project.name) { assign(project.name) } }
+            ForEach(projects, id: \.self) { project in Button(project) { assign(project) } }
             Button("新建项目…") {
                 name = ""
                 creating = true
