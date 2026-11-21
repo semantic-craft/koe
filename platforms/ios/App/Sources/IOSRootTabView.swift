@@ -39,6 +39,12 @@ struct IOSRootTabView: View {
     }
 
     var body: some View {
+        GeometryReader { viewport in
+            tabs.environment(\.iosViewportHeight, viewport.size.height)
+        }
+    }
+
+    private var tabs: some View {
         TabView(selection: tabSelection) {
             tabNavigationStack(path: $todayPath) {
                 IOSTodayView(
@@ -95,7 +101,7 @@ struct IOSRootTabView: View {
         .onChange(of: store.navigation.notice) { dismissedNotice = nil }
         .tint(IOSColors.accent)
         .sheet(isPresented: $showingDeviceSheet) {
-            IOSDeviceSheetView(store: store)
+            IOSDeviceSheetView(store: store, onOpenRecord: openRecordInCurrentTab)
         }
         .sheet(isPresented: $showingSettingsSheet) {
             IOSSettingsView(store: store)
@@ -107,31 +113,34 @@ struct IOSRootTabView: View {
         path: Binding<[IOSDetailRoute]>,
         @ViewBuilder root: () -> Content
     ) -> some View {
-        NavigationStack(path: path) {
-            root()
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        HStack(spacing: 8) {
-                            deviceStatusPill
-                            settingsButton
+        VStack(spacing: 0) {
+            NavigationStack(path: path) {
+                root()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            HStack(spacing: 8) {
+                                deviceStatusPill
+                                settingsButton
+                            }
                         }
                     }
-                }
-                .navigationDestination(for: IOSDetailRoute.self) { route in
-                    switch route {
-                    case .record(let recordId):
-                        IOSRecordDetailView(store: store, recordId: recordId)
-                    case .workspace(let modeRoute):
-                        IOSModeWorkspacesView(
-                            store: store,
-                            route: modeRoute,
-                            onSelectRecord: openRecordInCurrentTab,
-                            onOpenSource: openSource
-                        )
+                    .navigationDestination(for: IOSDetailRoute.self) { route in
+                        switch route {
+                        case .record(let recordId):
+                            IOSRecordDetailView(store: store, recordId: recordId, onOpenRelatedSource: openSource, onAsk: {
+                                askPath.removeAll()
+                                selectedTab = .ask
+                            })
+                        case .workspace(let modeRoute):
+                            IOSModeWorkspacesView(
+                                store: store,
+                                route: modeRoute,
+                                onSelectRecord: openRecordInCurrentTab,
+                                onOpenSource: openSource
+                            )
+                        }
                     }
-                }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            }
             dockedOverlayStack(route: path.wrappedValue.last)
         }
     }
@@ -218,6 +227,8 @@ struct IOSRootTabView: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .iosChromeSurface()
     }
 
     private func popToRoot(for tab: IOSAppTab) {

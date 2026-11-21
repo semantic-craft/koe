@@ -1,6 +1,7 @@
 import Foundation
 import KoeAppleCore
 import OSLog
+import UIKit
 
 struct IOSLaunchConfig: Equatable {
     let workspacePath: String?
@@ -82,7 +83,7 @@ final class IOSLaunchSession {
                 version: version,
                 build: build,
                 platform: "ios",
-                hostDisplayName: "iPhone",
+                hostDisplayName: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone",
                 supportsSystemAudio: false,
                 supportsSelfUpdate: false,
                 nativeSpeechLabel: "Apple 本机"

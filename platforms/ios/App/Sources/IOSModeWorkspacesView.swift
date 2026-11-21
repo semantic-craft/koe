@@ -33,6 +33,7 @@ struct IOSModeWorkspacesView: View {
                     IOSLiveMinutesWorkspaceView(store: store, onSelectRecord: onSelectRecord, onOpenSource: onOpenSource)
                 }
             }
+            .frame(maxWidth: route == .liveMinutes ? 1200 : 760)
             .padding(16)
         }
         .background(IOSColors.bgPanel)

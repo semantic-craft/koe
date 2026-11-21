@@ -1,11 +1,15 @@
 import KoeAppleCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct IOSSettingsView: View {
     let store: HostSessionStore
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focusedField: String?
     @State private var draft = ModelSettingsDraft()
+
+    @State private var trace: IOSTraceDocument?
+    @State private var exportingTrace = false
 
     var body: some View {
         let platform = store.platform
@@ -25,7 +29,7 @@ struct IOSSettingsView: View {
                         } label: {
                             HStack {
                                 Text("系统音频录制")
-                                IOSInfoTip("iOS 端不支持系统音频内录，请使用 iPhone 麦克风或 Soundcore Work 录音豆。", title: "iOS 音频限制")
+                                IOSInfoTip("iOS 端不支持系统音频内录，请使用本机麦克风或 Soundcore Work 录音豆。", title: "iOS 音频限制")
                             }
                         }
                         LabeledContent("应用更新通道", value: platform.supportsSelfUpdate ? "应用内更新" : "App Store 分发")
@@ -34,7 +38,17 @@ struct IOSSettingsView: View {
                     }
                 }
 
+                Section("官方模型组合") {
+                    IOSModelPresets(store: store, draft: $draft)
+                }
                 Section("服务商凭据") {
+                    if [provider.credentialState, provider.deepseekCredentialState].contains(where: { ["unavailable", "missing_saved", "reopen_required"].contains($0) }) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("服务商凭据需要恢复", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(IOSColors.warning)
+                            Button("重试读取安全配置") { store.send(.retryProviderCredentials(authorize: true)) }
+                        }
+                    }
                     credentialField("Qwen", key: $draft.qwenApiKey, slot: "qwen",
                                     state: provider.credentialState, configured: provider.qwenConfigured)
                     credentialField("DeepSeek", key: $draft.deepseekApiKey, slot: "deepseek",
@@ -84,6 +98,7 @@ struct IOSSettingsView: View {
                             }
                         }
                     }
+                    IOSSpeechModeNotice(draft: draft)
                     DisclosureGroup("自定义识别端点") {
                         settingsField(draft.computedDefaultAsrEndpoint(), text: $draft.customAsrEndpoint)
                             .accessibilityLabel("识别接口地址")
@@ -125,6 +140,13 @@ struct IOSSettingsView: View {
                     }
                     Toggle("纪要与问答启用深度思考", isOn: $draft.enableThinking)
                 }
+                Section("关于 Koe") {
+                    LabeledContent("版本", value: store.settings.appUpdate.versionWithBuildLabel)
+                    Button("导出诊断追踪") {
+                        trace = IOSTraceDocument(json: store.exportTraceJSON())
+                        exportingTrace = true
+                    }
+                }
             }
             .font(.system(size: AppFontSizes.sm))
             .textInputAutocapitalization(.never)
@@ -151,6 +173,10 @@ struct IOSSettingsView: View {
                         .accessibilityIdentifier("settings-save-button")
                 }
             }
+        }
+        .fileExporter(isPresented: $exportingTrace, document: trace, contentType: .json, defaultFilename: "koe-trace") { result in
+            trace = nil
+            if case .failure(let error) = result { store.reportNativeError(error.localizedDescription) }
         }
         .onAppear { draft.sync(from: store.settings.provider) }
     }
@@ -225,5 +251,19 @@ struct IOSSettingsView: View {
         case "unavailable": "暂不可用"
         default: "未设置"
         }
+    }
+}
+
+private struct IOSTraceDocument: FileDocument {
+    static let readableContentTypes: [UTType] = [.json]
+    let data: Data
+
+    init(json: String) { data = Data(json.utf8) }
+    init(configuration: ReadConfiguration) throws {
+        guard let contents = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        data = contents
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }

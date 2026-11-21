@@ -157,3 +157,24 @@ struct IOSMiniPlayerBar: View {
         .accessibilityIdentifier("ios-mini-player")
     }
 }
+
+struct IOSSegmentPlaybackButton: View {
+    let store: HostSessionStore
+    let recordID: String
+    let segment: SegmentSnapshot
+
+    var body: some View {
+        let timed = segment.timed != false
+        Button(timed ? TimeLabel.duration(segment.startMs) : "无时码") {
+            guard store.navigation.detailId == recordID,
+                  store.sendReturningError(.seek(positionMs: segment.startMs)) == nil else { return }
+            let playback = store.playback
+            if playback.recordId == recordID, playback.asset != nil, !playback.isPlaying {
+                store.send(.playback(isPlaying: true))
+            }
+        }
+        .disabled(!timed || store.navigation.detailId != recordID)
+        .font(.system(size: AppFontSizes.xs, weight: .medium))
+        .monospacedDigit()
+    }
+}

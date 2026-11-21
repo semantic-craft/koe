@@ -1,5 +1,6 @@
 import AVFoundation
 import KoeAppleCore
+import ViewInspector
 import XCTest
 @testable import KoeiOSApp
 
@@ -43,6 +44,21 @@ final class IOSPlaybackTests: XCTestCase {
         XCTAssertEqual(store.snapshot.detail?.durationMs, 4000)
         host.setScenePhase(.active)
         try await body(store, host, source)
+    }
+
+    func testTappingTimestampOnIdleAudioStartsAtThatSegment() async throws {
+        try await fixture { store, _, _ in
+            let recordID = try XCTUnwrap(store.recordDetail.detail?.id)
+            XCTAssertFalse(store.playback.isPlaying)
+            let segment = SegmentSnapshot(id: "cue", text: "会议重点", startMs: 1200, endMs: 1800, timed: true)
+            try IOSSegmentPlaybackButton(store: store, recordID: recordID, segment: segment)
+                .inspect().find(ViewType.Button.self).tap()
+            XCTAssertTrue(store.playback.isPlaying)
+            XCTAssertEqual(store.playback.positionMs, 1200)
+            try await until("AVPlayer 未从目标时码继续播放") {
+                store.playback.isPlaying && store.playback.positionMs > 1200
+            }
+        }
     }
 
     private func writeTone(to url: URL) throws {

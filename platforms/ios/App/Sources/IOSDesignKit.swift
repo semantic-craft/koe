@@ -128,10 +128,22 @@ struct IOSInfoTip: View {
     }
 }
 
+private struct IOSViewportHeight: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var iosViewportHeight: CGFloat {
+        get { self[IOSViewportHeight.self] }
+        set { self[IOSViewportHeight.self] = newValue }
+    }
+}
+
 struct IOSContentHuggingSheet<Content: View>: View {
     private let minHeight: CGFloat
     private let maxHeight: CGFloat
     private let content: Content
+    @Environment(\.iosViewportHeight) private var viewportHeight
     @State private var measuredHeight: CGFloat = 320
 
     init(
@@ -159,7 +171,7 @@ struct IOSContentHuggingSheet<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .background(IOSColors.surface0)
-        .presentationDetents([.height(measuredHeight)])
+        .presentationDetents(viewportHeight > 0 ? [.height(min(measuredHeight, viewportHeight * 0.9)), .large] : [.large])
         .presentationCornerRadius(20)
         .presentationDragIndicator(.visible)
     }
@@ -168,16 +180,11 @@ struct IOSContentHuggingSheet<Content: View>: View {
 struct IOSChromeSurfaceModifier: ViewModifier {
     let fallbackColor: Color
 
-    private func legacySurfaceColor() -> Color? {
-        guard #unavailable(iOS 26) else { return nil }
-        return fallbackColor
-    }
-
     func body(content: Content) -> some View {
-        if let background = legacySurfaceColor() {
-            content.background(background)
+        if #available(iOS 26, *) {
+            content.background(.regularMaterial)
         } else {
-            content
+            content.background(fallbackColor)
         }
     }
 }
