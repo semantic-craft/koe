@@ -14,11 +14,11 @@ protocol BleWriteLink: AnyObject {
 
 @MainActor
 final class GattWriteLink: BleWriteLink {
-    let central: CBCentralManager
-    let peripheral: CBPeripheral
+    let central: any BleCentral
+    let peripheral: any BlePeripheral
     let characteristic: CBCharacteristic
 
-    init(_ central: CBCentralManager, _ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
+    init(_ central: any BleCentral, _ peripheral: any BlePeripheral, _ characteristic: CBCharacteristic) {
         self.central = central
         self.peripheral = peripheral
         self.characteristic = characteristic
@@ -33,7 +33,7 @@ final class GattWriteLink: BleWriteLink {
     func write(_ data: Data, type: CBCharacteristicWriteType) {
         peripheral.writeValue(data, for: characteristic, type: type)
     }
-    func cancel() { central.cancelPeripheralConnection(peripheral) }
+    func cancel() { central.cancelPeer(peripheral) }
 }
 
 extension BluetoothBridge {
@@ -113,8 +113,8 @@ extension BluetoothBridge {
         Self.logger.info("Disconnecting local D3200 link")
         stopScanning()
         if let writeLink { writeLink.cancel() }
-        else if let peripheral { central?.cancelPeripheralConnection(peripheral) }
-        if let pending = reconnectingPeripheral { central?.cancelPeripheralConnection(pending) }
+        else if let peripheral { central?.cancelPeer(peripheral) }
+        if let pending = reconnectingPeripheral { central?.cancelPeer(pending) }
         resetLinkState()
     }
 

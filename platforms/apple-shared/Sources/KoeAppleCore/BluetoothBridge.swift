@@ -9,6 +9,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     nonisolated public static var writeCharacteristicUUID: CBUUID { CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB") }
     nonisolated public static var notifyCharacteristicUUID: CBUUID { CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB") }
     nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool { uuid == writeCharacteristicUUID || uuid.uuidString == "7777" }
+    nonisolated static func isWritableD3200Characteristic(_ characteristic: CBCharacteristic) -> Bool {
+        isWriteCharacteristic(characteristic.uuid) && !characteristic.properties.intersection([.write, .writeWithoutResponse]).isEmpty
+    }
     nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool { uuid == notifyCharacteristicUUID || uuid.uuidString == "8888" }
     nonisolated public static func isD3200WriteCharacteristic(_ uuid: CBUUID, serviceUUID: CBUUID?) -> Bool {
         guard let serviceUUID, isPrimaryD3200Service(serviceUUID) else { return false }
@@ -40,9 +43,16 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     public internal(set) var scanStartCount = 0
     public internal(set) var isScanRequested = false
     private var scanInitiatedByUser = false
-    var central: CBCentralManager?
-    var peripheral: CBPeripheral?
-    var reconnectingPeripheral: CBPeripheral?
+    #if os(iOS)
+    var sceneInBackground = false
+    var pendingRestoration: (peripherals: [any BlePeripheral], scanServices: [CBUUID])?
+    var makeIOSCentral: (CBCentralManagerDelegate, [String: Any]) -> any BleCentral = {
+        CBCentralManager(delegate: $0, queue: .main, options: $1)
+    }
+    #endif
+    var central: (any BleCentral)?
+    var peripheral: (any BlePeripheral)?
+    var reconnectingPeripheral: (any BlePeripheral)?
     var writeCharacteristic: CBCharacteristic?
     var writeLink: (any BleWriteLink)?
     var awaitingWriteResponse = false
@@ -55,11 +65,11 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     var outboundFlushTimer: Timer?
     public internal(set) var lastTeardownStopFrames: [Data] = []
     public internal(set) var lastObservedAutoConnect: Bool?
-    private var notifyReady = false
-    private var notifyFound = false
+    var notifyReady = false
+    var notifyFound = false
     private var pendingServices = 0
     var reportedReady = false
-    private var connectionID = ""
+    var connectionID = ""
     private var discoveredName: String?
 
     public init(store: HostSessionStore? = nil) { self.store = store; super.init() }
@@ -95,11 +105,11 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             return
         }
         if let stale = peripheral {
-            central?.cancelPeripheralConnection(stale)
+            central?.cancelPeer(stale)
             resetLinkState()
         }
         if let staleReconnect = reconnectingPeripheral {
-            central?.cancelPeripheralConnection(staleReconnect)
+            central?.cancelPeer(staleReconnect)
             reconnectingPeripheral = nil
         }
         scanInitiatedByUser = initiatedByUser
@@ -117,8 +127,15 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     private func scanWithCurrentState() {
+        #if os(iOS)
+        guard pendingRestoration == nil else { return }
+        #endif
         if allowsCoreBluetooth && central == nil {
+            #if os(iOS)
+            central = createIOSCentral()
+            #else
             central = CBCentralManager(delegate: self, queue: .main)
+            #endif
             return
         }
         centralStateDidChange(central?.state ?? lastCentralState)
@@ -130,6 +147,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     public func shutdown() {
         isHostActivated = false
+        #if os(iOS)
+        pendingRestoration = nil
+        #endif
         scanAfterTeardown = false
         if isScanRequested || reportedReady || peripheral != nil || reconnectingPeripheral != nil {
             disconnect()
@@ -140,53 +160,31 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 
-    private func beginDiscoveryAndReconnect(_ central: CBCentralManager) {
-        guard peripheral == nil, reconnectingPeripheral == nil, !central.isScanning else { return }
-        let connectedPeripherals = central.retrieveConnectedPeripherals(withServices: [
-            Self.d3200ServiceUUID,
-            CBUUID(string: "F5DA")
-        ])
-        if let existing = connectedPeripherals.first {
-            attachAndConnect(existing, on: central, displayName: existing.name ?? "soundcore Work")
-            return
-        }
-        if let savedString = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
-           let savedUUID = UUID(uuidString: savedString),
-           let known = central.retrievePeripherals(withIdentifiers: [savedUUID]).first
-        {
-            Self.logger.info("Reconnecting to saved D3200")
-            reconnectingPeripheral = known
-            known.delegate = self
-            central.connect(known, options: nil)
-        }
-        Self.logger.info("Starting CoreBluetooth discovery")
-        central.scanForPeripherals(
-            withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
-        )
-    }
-
-    private func attachAndConnect(_ target: CBPeripheral, on central: CBCentralManager, displayName: String) {
+    func attachAndConnect(_ target: any BlePeripheral, on central: any BleCentral, displayName: String) {
         peripheral = target
         reconnectingPeripheral = nil
-        discoveredName = displayName
-        connectionID = "\(target.identifier.uuidString):\(UUID().uuidString)"
-        emit("connecting", deviceName: displayName)
+        announceConnection(target, name: displayName)
         target.delegate = self
         central.stopScan()
-        central.connect(target, options: nil)
+        central.connectPeer(target)
     }
 
-    private func emit(_ event: String, deviceName: String? = nil) {
+    func announceConnection(_ target: any BlePeripheral, name: String? = nil) {
+        discoveredName = name ?? target.name ?? "soundcore Work"
+        connectionID = "\(target.identifier.uuidString):\(UUID().uuidString)"
+        emit("connecting")
+    }
+
+    func emit(_ event: String) {
         Self.logger.info("D3200 event: \(event, privacy: .public)")
         store?.send(.deviceEvent(
             event: event,
             connectionId: connectionID,
-            deviceName: deviceName ?? discoveredName
+            deviceName: discoveredName
         ))
     }
 
-    private func checkReady() {
+    func checkReady() {
         guard pendingServices == 0, notifyReady, let characteristic = writeCharacteristic, let peripheral, let central,
               !reportedReady else { return }
         writeLink = GattWriteLink(central, peripheral, characteristic)
@@ -248,7 +246,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         return data
     }
 
-    private nonisolated func onMainActorIsolated(_ body: @MainActor @Sendable @escaping () -> Void) {
+    nonisolated func onMainActorIsolated(_ body: @MainActor @Sendable @escaping () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated(body)
         } else {
@@ -268,6 +266,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     func centralStateDidChange(_ state: CBManagerState) {
         Self.logger.info("CoreBluetooth manager state=\(state.rawValue)")
         lastCentralState = state
+        #if os(iOS)
+        if state == .poweredOn, let central { resumeRestoration(on: central) }
+        #endif
         guard isScanRequested || peripheral != nil || reconnectingPeripheral != nil || reportedReady else { return }
         switch state {
         case .poweredOn:
@@ -309,8 +310,11 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         onMainActorIsolated {
             guard self.central === central, self.store?.runtimeDevice.autoConnect != false else { return }
             guard self.isScanRequested, self.peripheral == nil else { return }
+            #if os(iOS)
+            guard self.reconnectingPeripheral !== discovered else { return }
+            #endif
             if let pending = self.reconnectingPeripheral, pending !== discovered {
-                central.cancelPeripheralConnection(pending)
+                central.cancelPeer(pending)
                 self.reconnectingPeripheral = nil
             }
             self.attachAndConnect(discovered, on: central, displayName: candidate.displayName)
@@ -318,44 +322,50 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didConnect connected: CBPeripheral) {
-        onMainActorIsolated {
-            guard self.central === central, !self.teardownPending else { return }
-            if self.store?.runtimeDevice.autoConnect == false {
-                central.cancelPeripheralConnection(connected)
-                if self.reconnectingPeripheral === connected {
-                    self.reconnectingPeripheral = nil
-                }
-                if self.peripheral === connected {
-                    self.resetLinkState()
-                }
-                return
-            }
-            if self.peripheral == nil, self.reconnectingPeripheral === connected {
-                self.peripheral = connected
-                self.reconnectingPeripheral = nil
-                let name = connected.name ?? "soundcore Work"
-                self.discoveredName = name
-                self.connectionID = "\(connected.identifier.uuidString):\(UUID().uuidString)"
-                self.emit("connecting", deviceName: name)
-                central.stopScan()
-            }
-            guard self.peripheral === connected else { return }
-            connected.delegate = self
-            Self.logger.info("Connected to D3200, discovering GATT services")
-            connected.discoverServices(nil)
+        onMainActorIsolated { self.didConnect(connected, on: central) }
+    }
+
+    func didConnect(_ connected: any BlePeripheral, on central: any BleCentral) {
+        guard self.central === central, !teardownPending else { return }
+        if store?.runtimeDevice.autoConnect == false {
+            central.cancelPeer(connected)
+            if reconnectingPeripheral === connected { reconnectingPeripheral = nil }
+            if peripheral === connected { resetLinkState() }
+            return
         }
+        if peripheral == nil, reconnectingPeripheral === connected {
+            peripheral = connected
+            reconnectingPeripheral = nil
+            // The restored in-flight connection has already been announced.
+            if isScanRequested { announceConnection(connected) }
+            central.stopScan()
+        }
+        guard peripheral === connected else { return }
+        connected.delegate = self
+        Self.logger.info("Connected to D3200, discovering GATT services")
+        connected.discoverServices(nil)
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didFailToConnect failed: CBPeripheral, error: (any Error)?) {
-        onMainActorIsolated {
-            if self.reconnectingPeripheral === failed {
-                self.reconnectingPeripheral = nil
-                self.reportError("未能重连上次的录音豆，仍在扫描附近设备。", error: error)
-                return
+        onMainActorIsolated { self.didFailToConnect(failed, on: central, error: error) }
+    }
+
+    func didFailToConnect(_ failed: any BlePeripheral, on central: any BleCentral, error: (any Error)?) {
+        guard self.central === central else { return }
+        if reconnectingPeripheral === failed {
+            reconnectingPeripheral = nil
+            #if os(iOS)
+            if isHostActivated, store?.runtimeDevice.autoConnect != false, central.state == .poweredOn, !central.isScanning {
+                isScanRequested = true
+                emit("scanning")
+                scan(central)
             }
-            guard self.peripheral === failed else { return }
-            self.failLink("无法连接录音豆，请确认设备已放入充电仓并短按下方按钮。", error: error)
+            #endif
+            reportError("未能重连上次的录音豆，仍在扫描附近设备。", error: error)
+            return
         }
+        guard peripheral === failed else { return }
+        failLink("无法连接录音豆，请确认设备已放入充电仓并短按下方按钮。", error: error)
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral disconnected: CBPeripheral,
@@ -395,8 +405,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             }
             self.pendingServices = max(0, self.pendingServices - 1)
             for characteristic in service.characteristics ?? [] {
-                if Self.isD3200WriteCharacteristic(characteristic.uuid, serviceUUID: service.uuid),
-                   !characteristic.properties.intersection([.write, .writeWithoutResponse]).isEmpty {
+                if Self.isPrimaryD3200Service(service.uuid), Self.isWritableD3200Characteristic(characteristic) {
                     if Self.shouldPreferWriteCharacteristic(
                         existingServiceUUID: self.writeCharacteristic?.service?.uuid,
                         candidateServiceUUID: service.uuid
