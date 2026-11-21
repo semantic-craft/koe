@@ -17,10 +17,11 @@ struct IOSRootTabView: View {
     let store: HostSessionStore
 
     @State private var selectedTab: IOSAppTab = .today
-    @State private var todayPath = NavigationPath()
-    @State private var recordsPath = NavigationPath()
-    @State private var actionsPath = NavigationPath()
-    @State private var askPath = NavigationPath()
+    @State private var todayPath: [IOSDetailRoute] = []
+    @State private var recordsPath: [IOSDetailRoute] = []
+    @State private var actionsPath: [IOSDetailRoute] = []
+    @State private var askPath: [IOSDetailRoute] = []
+    @State private var dismissedNotice: String?
     @State private var showingDeviceSheet = false
     @State private var showingSettingsSheet = false
 
@@ -91,6 +92,7 @@ struct IOSRootTabView: View {
             }
             .tag(IOSAppTab.ask)
         }
+        .onChange(of: store.navigation.notice) { dismissedNotice = nil }
         .tint(IOSColors.accent)
         .sheet(isPresented: $showingDeviceSheet) {
             IOSDeviceSheetView(store: store)
@@ -102,7 +104,7 @@ struct IOSRootTabView: View {
 
     @ViewBuilder
     private func tabNavigationStack<Content: View>(
-        path: Binding<NavigationPath>,
+        path: Binding<[IOSDetailRoute]>,
         @ViewBuilder root: () -> Content
     ) -> some View {
         NavigationStack(path: path) {
@@ -129,9 +131,9 @@ struct IOSRootTabView: View {
                         )
                     }
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    dockedOverlayStack
-                }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            dockedOverlayStack(route: path.wrappedValue.last)
         }
     }
 
@@ -193,30 +195,22 @@ struct IOSRootTabView: View {
         .accessibilityLabel("设置")
     }
 
-    private var dockedOverlayStack: some View {
+    private func dockedOverlayStack(route: IOSDetailRoute?) -> some View {
         VStack(spacing: 8) {
-            if let errorMessage = store.navigation.effectiveError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+            IOSHostErrorBar(store: store)
+            if let notice = store.navigation.notice, !notice.isEmpty, notice != dismissedNotice {
+                HStack {
+                    Text(notice)
                         .font(.system(size: AppFontSizes.xs))
-                        .foregroundStyle(IOSColors.danger)
-                    Text(errorMessage)
-                        .font(.system(size: AppFontSizes.xs))
-                        .foregroundStyle(IOSColors.textPrimary)
                         .lineLimit(2)
-                    Spacer(minLength: 4)
-                    IOSPrimaryButton("知道了", isPrimary: false) {
-                        store.clearError()
-                    }
+                    Spacer()
+                    Button("关闭提示", systemImage: "xmark") { dismissedNotice = notice }
+                        .labelStyle(.iconOnly)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(10)
                 .background(IOSColors.surface1, in: RoundedRectangle(cornerRadius: IOSRadii.card))
-                .overlay(
-                    RoundedRectangle(cornerRadius: IOSRadii.card)
-                        .stroke(IOSColors.danger.opacity(0.4), lineWidth: 1)
-                )
             }
+            IOSMiniPlayerBar(store: store, visibleRoute: route, openRecord: openRecordInCurrentTab)
             IOSLiveCaptionBar(store: store) { recordId in
                 openRecordInCurrentTab(recordId)
             }
@@ -229,10 +223,10 @@ struct IOSRootTabView: View {
 
     private func popToRoot(for tab: IOSAppTab) {
         switch tab {
-        case .today: todayPath = NavigationPath()
-        case .records: recordsPath = NavigationPath()
-        case .actions: actionsPath = NavigationPath()
-        case .ask: askPath = NavigationPath()
+        case .today: todayPath = []
+        case .records: recordsPath = []
+        case .actions: actionsPath = []
+        case .ask: askPath = []
         }
     }
 
@@ -296,6 +290,35 @@ private struct IOSUndoTrashBar: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("undo-trash-bar")
+        }
+    }
+}
+
+struct IOSHostErrorBar: View {
+    let store: HostSessionStore
+
+    var body: some View {
+        if let errorMessage = store.navigation.effectiveError {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(IOSColors.danger)
+                Text(errorMessage)
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(IOSColors.textPrimary)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                IOSPrimaryButton("知道了", isPrimary: false) {
+                    store.clearError()
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(IOSColors.surface1, in: RoundedRectangle(cornerRadius: IOSRadii.card))
+            .overlay(
+                RoundedRectangle(cornerRadius: IOSRadii.card)
+                    .stroke(IOSColors.danger.opacity(0.4), lineWidth: 1)
+            )
         }
     }
 }

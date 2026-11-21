@@ -32,50 +32,68 @@ struct IOSRecordDetailView: View {
             .padding(.vertical, 10)
             .background(IOSColors.bgPanel)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let detail {
-                        headerCard(detail)
-                        switch selectedTab {
-                        case .summary:
-                            summarySection(detail, slice: slice)
-                        case .transcript:
-                            transcriptSection(detail, focusSegmentId: slice.focusSegmentId)
-                        case .highlights:
-                            highlightsSection(detail)
-                        }
-                    } else if let record = fallbackRecord {
-                        IOSCard {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(record.title)
-                                    .font(.system(size: AppFontSizes.lg, weight: .semibold))
-                                    .foregroundStyle(IOSColors.textPrimary)
-                                Text(record.preview.isEmpty ? "正在读取记录详情…" : record.preview)
-                                    .font(.system(size: AppFontSizes.sm))
-                                    .foregroundStyle(IOSColors.textSecondary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if let detail {
+                            headerCard(detail)
+                            switch selectedTab {
+                            case .summary:
+                                summarySection(detail, slice: slice)
+                            case .transcript:
+                                VStack(alignment: .leading, spacing: 14) {
+                                    transcriptSection(detail, focusSegmentId: focusTarget)
+                                }
+                                .onChange(of: focusTarget, initial: true) {
+                                    if let focusTarget { proxy.scrollTo(focusTarget, anchor: .center) }
+                                }
+                            case .highlights:
+                                highlightsSection(detail)
                             }
+                        } else if let record = fallbackRecord {
+                            IOSCard {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(record.title)
+                                        .font(.system(size: AppFontSizes.lg, weight: .semibold))
+                                        .foregroundStyle(IOSColors.textPrimary)
+                                    Text(record.preview.isEmpty ? "正在读取记录详情…" : record.preview)
+                                        .font(.system(size: AppFontSizes.sm))
+                                        .foregroundStyle(IOSColors.textSecondary)
+                                }
+                            }
+                        } else {
+                            IOSEmptyState(
+                                icon: "doc.text",
+                                title: "未找到记录详情",
+                                detail: "该记录可能已移入回收站。"
+                            )
                         }
-                    } else {
-                        IOSEmptyState(
-                            icon: "doc.text",
-                            title: "未找到记录详情",
-                            detail: "该记录可能已移入回收站。"
-                        )
                     }
+                    .padding(16)
                 }
-                .padding(16)
+                .background(IOSColors.bgPanel)
             }
-            .background(IOSColors.bgPanel)
 
-            IOSPlayerBarView(store: store)
+            IOSPlayerBarView(store: store, recordId: recordId)
         }
         .navigationTitle(detail?.title ?? fallbackRecord?.title ?? "记录详情")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: focusTarget) {
+            if focusTarget != nil { selectedTab = .transcript }
+        }
         .onAppear {
+            if focusTarget != nil { selectedTab = .transcript }
             if store.recordDetail.detail?.id != recordId {
                 store.send(.selectRecord(recordId: recordId))
             }
         }
+    }
+
+    var focusTarget: String? {
+        let slice = store.recordDetail
+        guard let detail = slice.detail, detail.id == recordId, let id = slice.focusSegmentId,
+              !id.isEmpty, detail.segments.contains(where: { $0.id == id }) else { return nil }
+        return id
     }
 
     private func headerCard(_ detail: RecordDetailSnapshot) -> some View {
@@ -209,6 +227,7 @@ struct IOSRecordDetailView: View {
                     RoundedRectangle(cornerRadius: IOSRadii.card)
                         .stroke(isFocused ? IOSColors.accent : Color.clear, lineWidth: 1.5)
                 )
+                .id(segment.id)
             }
         }
     }

@@ -32,12 +32,13 @@ struct IOSLaunchConfig: Equatable {
 
 @MainActor
 final class IOSLaunchSession {
-    private static let logger = Logger(subsystem: "com.semanticcraft.koe.ios", category: "host")
+    private nonisolated static let logger = Logger(subsystem: "com.semanticcraft.koe.ios", category: "host")
 
     let store: HostSessionStore
     let fileActions: IOSFileActions
     let coordinator: IOSHostCoordinator
     private let inputMonitor: IOSAudioInputMonitor
+    private static let traceQueue = DispatchQueue(label: "com.semanticcraft.koe.ios.trace", qos: .utility)
     private let traceURLs: [URL]
 
     init(
@@ -52,11 +53,14 @@ final class IOSLaunchSession {
             workspaceOverride: config.workspacePath != nil,
             environment: environment
         )
+        var outputs: [URL] = []
+        #if DEBUG
         let sandboxTrace = URL.documentsDirectory.appendingPathComponent("koe-trace.json")
-        var outputs = [sandboxTrace]
+        outputs.append(sandboxTrace.standardizedFileURL)
+        #endif
         if let path = config.traceOutputPath {
             let url = URL(fileURLWithPath: path, relativeTo: .documentsDirectory).standardizedFileURL
-            if url != sandboxTrace.standardizedFileURL { outputs.append(url) }
+            if !outputs.contains(url) { outputs.append(url) }
         }
         traceURLs = outputs
         store = HostSessionStore(workspacePath: config.workspacePath, credentials: credentials)
@@ -66,9 +70,10 @@ final class IOSLaunchSession {
         #else
         let useRadio = allowsCoreBluetooth
         #endif
+        let audioSession = IOSAudioSession()
         coordinator = IOSHostCoordinator(store: store, actions: bridgeActions, source: source,
-                                         allowsCoreBluetooth: useRadio, allowsLocalSpeech: config.snapshotFixturePath == nil)
-        inputMonitor = IOSAudioInputMonitor(store: store)
+                                         audioSession: audioSession, allowsCoreBluetooth: useRadio, allowsLocalSpeech: config.snapshotFixturePath == nil)
+        inputMonitor = IOSAudioInputMonitor(store: store, audioSession: audioSession)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.6.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "15"
@@ -112,14 +117,18 @@ final class IOSLaunchSession {
     #endif
 
     private func writeTraceFile() {
-        let data = Data((store.exportTraceJSON() + "\n").utf8)
-        for url in traceURLs {
-            do {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
-            } catch {
-                Self.logger.error("Trace write failed: \(error.localizedDescription, privacy: .public)")
-                store.reportNativeError("无法保存宿主追踪文件。")
+        guard !traceURLs.isEmpty else { return }
+        let json = store.exportTraceJSON()
+        Self.traceQueue.async { [traceURLs, weak store] in
+            let data = Data((json + "\n").utf8)
+            for url in traceURLs {
+                do {
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                } catch {
+                    Self.logger.error("Trace write failed: \(error.localizedDescription, privacy: .public)")
+                    Task { @MainActor [weak store] in store?.reportNativeError("无法保存宿主追踪文件。") }
+                }
             }
         }
     }

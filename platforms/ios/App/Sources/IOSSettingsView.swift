@@ -4,6 +4,7 @@ import SwiftUI
 struct IOSSettingsView: View {
     let store: HostSessionStore
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: String?
     @State private var draft = ModelSettingsDraft()
 
     var body: some View {
@@ -155,14 +156,14 @@ struct IOSSettingsView: View {
     }
 
     private func saveConfiguration() {
-        store.send(draft.configureProviderCommand)
-        if store.navigation.effectiveError == nil { dismiss() }
+        if store.sendReturningError(draft.configureProviderCommand) == nil { dismiss() }
     }
 
     private func settingsField(_ placeholder: String, text: Binding<String>) -> some View {
         TextField(placeholder, text: text)
+            .focused($focusedField, equals: placeholder)
             .submitLabel(.done)
-            .onSubmit(saveConfiguration)
+            .onSubmit { focusedField = nil }
     }
 
     private var chatEndpoint: some View {
@@ -182,9 +183,10 @@ struct IOSSettingsView: View {
             }
             HStack {
                 SecureField(configured ? "留空保留已有密钥" : "输入 API Key", text: key)
+                    .focused($focusedField, equals: slot)
                     .accessibilityLabel("\(name) API Key")
                     .submitLabel(.done)
-                    .onSubmit(saveConfiguration)
+                    .onSubmit { focusedField = nil }
                 if configured {
                     Button("清除", role: .destructive) {
                         key.wrappedValue = ""

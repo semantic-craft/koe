@@ -35,6 +35,7 @@ struct IOSDeviceSheetView: View {
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(IOSColors.textSecondary)
 
+                IOSHostErrorBar(store: store)
                 disconnectedScanButton
 
                 LazyVGrid(

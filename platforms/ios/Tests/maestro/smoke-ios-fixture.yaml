@@ -17,12 +17,34 @@ appId: com.semanticcraft.koe.ios
 - extendedWaitUntil:
     notVisible: "让出控制权"
     timeout: 5000
+- scrollUntilVisible:
+    element: "进入工作区"
+    direction: DOWN
+- tapOn:
+    text: "进入工作区"
+    index: 0
+- assertVisible:
+    id: "active-capture-bar"
+- assertVisible:
+    id: "ios-mini-player"
+- assertVisible: "已保存闪记"
+- tapOn: "关闭提示"
+- assertNotVisible: "已保存闪记"
+- tapOn:
+    id: "mini-player-open-record"
+- assertVisible:
+    id: "ios-player-bar"
+- assertNotVisible:
+    id: "ios-mini-player"
+- assertVisible:
+    id: "active-capture-bar"
 - tapOn: "问 AI"
 - extendedWaitUntil:
     visible: "\\[S1\\]"
     timeout: 10000
-- tapOn:
+- longPressOn:
     id: "ask-source-chip-1"
+- tapOn: "查看来源摘录"
 - extendedWaitUntil:
     visible: "原文来源"
     timeout: 10000

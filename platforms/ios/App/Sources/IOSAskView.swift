@@ -162,7 +162,7 @@ struct IOSAskView: View {
                         HStack(spacing: 8) {
                             ForEach(indexedSources) { item in
                                 Button {
-                                    inspectedSource = item.source
+                                    onOpenSource(item.source)
                                 } label: {
                                     Text("[S\(item.rank)]")
                                         .font(.system(size: AppFontSizes.xs, weight: .semibold))
@@ -174,6 +174,9 @@ struct IOSAskView: View {
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button("查看来源摘录") { inspectedSource = item.source }
+                                }
                                 .accessibilityIdentifier("ask-source-chip-\(item.rank)")
                                 .accessibilityLabel("[S\(item.rank)]")
                             }

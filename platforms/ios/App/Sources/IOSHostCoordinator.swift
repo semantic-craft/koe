@@ -10,6 +10,12 @@ final class IOSHostCoordinator {
     private let localTranscription: NativeLocalTranscription
     private let playback: NativePlayback
     let bluetoothBridge: BluetoothBridge
+    typealias BeginBackgroundTask = @MainActor (String, @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+    private let beginBackgroundTask: BeginBackgroundTask
+    typealias EndBackgroundTask = @MainActor (UIBackgroundTaskIdentifier) -> Void
+    private let endBackgroundTask: EndBackgroundTask
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundInterval: UUID?
     private var interruptionObserver: NSObjectProtocol?
     private var scenePhase: ScenePhase = .background
     private var timer: Timer?
@@ -19,7 +25,12 @@ final class IOSHostCoordinator {
          audioSession: IOSAudioSession = IOSAudioSession(),
          allowsCoreBluetooth: Bool = true,
          recognizer: (any LocalSpeechRecognizer)? = nil, allowsLocalSpeech: Bool = true,
+         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expire in
+             UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expire)
+         }, endBackgroundTask: @escaping EndBackgroundTask = { UIApplication.shared.endBackgroundTask($0) },
          nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
+        self.beginBackgroundTask = beginBackgroundTask
+        self.endBackgroundTask = endBackgroundTask
         self.store = store
         localTranscription = NativeLocalTranscription(recognizer: recognizer)
         bluetoothBridge = BluetoothBridge(store: store)
@@ -64,6 +75,8 @@ final class IOSHostCoordinator {
 
     private func updatePolling() {
         let keepAwake = store.lifecycle?.keepAwake == true
+        let saving = store.snapshot.activeCapture?.phase == "saving"
+        updateBackgroundTask(needed: saving || (scenePhase != .active && keepAwake))
         if UIApplication.shared.isIdleTimerDisabled != keepAwake {
             UIApplication.shared.isIdleTimerDisabled = keepAwake
         }
@@ -92,7 +105,31 @@ final class IOSHostCoordinator {
         self.timer = timer
     }
 
+    private func updateBackgroundTask(needed: Bool) {
+        guard needed else {
+            backgroundInterval = nil
+            finishBackgroundTask()
+            return
+        }
+        guard backgroundInterval == nil else { return }
+        let interval = UUID()
+        backgroundInterval = interval
+        backgroundTask = beginBackgroundTask("KoeSaveRecording") { [weak self] in
+            guard let self, self.backgroundInterval == interval else { return }
+            // Do not renew an expired grant until a new interval needs background time.
+            self.finishBackgroundTask()
+        }
+    }
+
+    private func finishBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        let task = backgroundTask
+        backgroundTask = .invalid
+        endBackgroundTask(task)
+    }
+
     func shutdown() {
+        updateBackgroundTask(needed: false)
         timer?.invalidate()
         timer = nil
         store.onSnapshotChanged = nil
