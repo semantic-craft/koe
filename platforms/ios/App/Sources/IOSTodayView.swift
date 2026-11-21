@@ -91,20 +91,21 @@ struct IOSTodayView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 10) {
+                    Text(card.isSessionActive ? "录音中" : "待机")
+                        .font(.system(size: AppFontSizes.xs, weight: .medium))
+                        .foregroundStyle(IOSColors.textSecondary)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 4)
                     Toggle(
-                        card.isSessionActive ? "录音中" : "待机",
+                        "\(card.title)录音开关",
                         isOn: Binding(
                             get: { card.isSessionActive },
                             set: { _ in store.toggleModeSession(card) }
                         )
                     )
-                    .font(.system(size: AppFontSizes.xs, weight: .medium))
-                    .foregroundStyle(IOSColors.textSecondary)
+                    .labelsHidden()
                     .disabled(!card.canToggleSession)
-                    .accessibilityLabel("\(card.title)录音开关")
                     .accessibilityIdentifier("mode-switch-\(card.id)")
-
-                    Spacer(minLength: 4)
 
                     IOSPrimaryButton(
                         "进入工作区",

@@ -124,6 +124,12 @@ struct IOSRecordsView: View {
                                         } label: {
                                             Label("移入回收站", systemImage: "trash")
                                         }
+                                    } else if record.archived {
+                                        Button {
+                                            store.send(.setRecordArchived(recordId: record.id, archived: false))
+                                        } label: {
+                                            Label("取消归档", systemImage: "archivebox")
+                                        }
                                     }
                                 }
                             }
@@ -310,11 +316,11 @@ struct IOSTrashView: View {
                 .padding(16)
             }
             .background(IOSColors.bgPanel)
-            .confirmationDialog(
+            .alert(
                 pendingRemoval?.title ?? "", isPresented: Binding(
                     get: { pendingRemoval != nil },
                     set: { if !$0 { pendingRemoval = nil } }
-                ), titleVisibility: .visible, presenting: pendingRemoval
+                ), presenting: pendingRemoval
             ) { removal in
                 Button("确认永久删除", role: .destructive) { removal.confirm(in: store) }
                 .accessibilityIdentifier("purge-confirm")
@@ -328,13 +334,13 @@ struct IOSTrashView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if !trashRecords.isEmpty {
-                        IOSPrimaryButton("清空", isPrimary: false) {
+                        Button("清空") {
                             pendingRemoval = .all
                         }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    IOSPrimaryButton("完成", isPrimary: false) {
+                    Button("完成") {
                         dismiss()
                     }
                     .accessibilityIdentifier("trash-sheet-close")

@@ -440,3 +440,9 @@
 - 修复：Rust 侧新增 `koe_host_session_ingest_pcm` 二进制采样快路径与 `trash_remaining_days` 24 小时阶跃水位线；Swift 侧将 `HostSessionStore` 按变更频率拆分为 `Equatable` 切片，仅 4 个叶子栏允许读取 4 Hz 切片并由 `verify-ui-principles.py` 静态门禁守护；`NativeCapture` 合并批次后再单次刷新；`KoeWindowPresenter` 在关窗及最小化稳态冻结 UI 切片广播并在恢复时同步追平；`CoreAudioInputMonitor` 用 HAL 属性监听替代 1 Hz 轮询。
 - 验证点：`session_tests`、`ScopedObservationTests`、`OffscreenAndTimerTests`、`HardeningRegressionTests` 与 `test_verify_ui_principles.py` 均先红后绿；Release 基准关窗回放 40 拍耗时中位数从 `307.60 ms` 降至 `0.23 ms`，双路采集 20 拍 CPU 从 `696.66 ms` 降至 `131.30 ms`。
 - Seen 1x（2026-11-16）。
+
+### 移动端操作完成后，等目标页面和落盘结果再取证
+
+- 2026-11-21，M10 在 iPhone 17 上复现了键盘弹出后自动化仍点击旧坐标的问题。编辑框里的项目名满足了原来的文本断言，但工作区项目字段仍为空。Android 窄屏详情页也曾命中只露出边缘的导出按钮。
+- 项目归类和原文编辑现在等待编辑器关闭，归档筛选检查列表内容，删除确认等待回收站空态。复核时把 Maestro 的实际点击坐标与截图对照，并用宿主 trace 和重启后的工作区核实命令与落盘结果。
+- Seen 1x（2026-11-21）。

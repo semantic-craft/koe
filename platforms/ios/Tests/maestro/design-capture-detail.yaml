@@ -42,9 +42,14 @@ appId: com.semanticcraft.koe.ios
     timeout: 15000
 - tapOn: {id: "project-assign-.*"}
 - tapOn: {id: "project-new"}
-- tapOn: {id: "project-name"}
+- assertVisible: {id: "project-confirm", enabled: false}
+# Submit through the focused native field, whose alert moves above the keyboard.
 - inputText: "M9Project"
-- tapOn: {id: "project-confirm"}
+- assertVisible: {id: "project-confirm", enabled: true}
+- pressKey: Enter
+- extendedWaitUntil:
+    notVisible: {id: "project-confirm"}
+    timeout: 10000
 - extendedWaitUntil:
     visible: ".*M9Project.*"
     timeout: 25000
@@ -92,11 +97,16 @@ appId: com.semanticcraft.koe.ios
     timeout: 25000
 - tapOn: ".*麦克风录音"
 - takeScreenshot: playback
-- tapOn: {id: "player-toggle-button"}
+# Drag the paused native slider from its thumb, then leave enough audio to test the mini player.
 - swipe:
-    from: {id: "player-seek"}
+    from: {id: "player-seek", point: "5%,50%"}
+    direction: RIGHT
+    duration: 500
+- swipe:
+    from: {id: "player-seek", point: "93%,50%"}
     direction: LEFT
     duration: 500
+- tapOn: {id: "player-toggle-button"}
 - tapOn: "行动"
 - assertVisible: {id: "ios-mini-player"}
 - takeScreenshot: mini-player
@@ -118,6 +128,9 @@ appId: com.semanticcraft.koe.ios
 - inputText: "M9Revised"
 - tapOn: {id: "editor-save"}
 - extendedWaitUntil:
+    notVisible: {id: "editor-save"}
+    timeout: 10000
+- extendedWaitUntil:
     visible: "M9Revised"
     timeout: 25000
 - tapOn: {id: "segment-original-.*"}
@@ -128,12 +141,18 @@ appId: com.semanticcraft.koe.ios
 - eraseText
 - inputText: "SpeakerA"
 - tapOn: {id: "editor-save"}
+- extendedWaitUntil:
+    notVisible: {id: "editor-save"}
+    timeout: 10000
 - tapOn: {id: "segment-speaker-.*"}
 - tapOn: {id: "segment-speaker-merge-.*"}
 - tapOn: {id: "editor-value"}
 - eraseText
 - inputText: "SpeakerB"
 - tapOn: {id: "editor-save"}
+- extendedWaitUntil:
+    notVisible: {id: "editor-save"}
+    timeout: 10000
 - tapOn: {id: "segment-highlight-.*"}
 - takeScreenshot: detail
 - scrollUntilVisible:
@@ -141,7 +160,20 @@ appId: com.semanticcraft.koe.ios
     direction: UP
     timeout: 15000
 - tapOn: {id: "record-export-markdown"}
-- tapOn: "Cancel|取消|Close|关闭"
+# Files initially exposes its toolbar before the sheet finishes laying out.
+- extendedWaitUntil:
+    visible: "Cancel|取消|Close|关闭"
+    timeout: 15000
+- repeat:
+    times: 3
+    while:
+      visible: "Cancel|取消|Close|关闭"
+    commands:
+      - waitForAnimationToEnd
+      - tapOn: "Cancel|取消|Close|关闭"
+- extendedWaitUntil:
+    visible: {id: "record-export-markdown"}
+    timeout: 10000
 # Merge both real speakers in the seeded transcript under one existing name.
 - tapOn: "记录"
 - scrollUntilVisible:
@@ -159,4 +191,7 @@ appId: com.semanticcraft.koe.ios
 - eraseText
 - inputText: "Bob"
 - tapOn: {id: "editor-save"}
+- extendedWaitUntil:
+    notVisible: {id: "editor-save"}
+    timeout: 10000
 - assertNotVisible: "Alice"

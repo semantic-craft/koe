@@ -83,6 +83,7 @@ struct IOSEditForm<Fields: View>: View {
     @ViewBuilder let fields: () -> Fields
     let save: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedDetent: PresentationDetent = .large
 
     var body: some View {
         NavigationStack {
@@ -103,7 +104,7 @@ struct IOSEditForm<Fields: View>: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $selectedDetent)
     }
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }

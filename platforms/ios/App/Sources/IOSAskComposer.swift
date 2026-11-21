@@ -20,9 +20,16 @@ struct IOSAskComposer: View {
                         .stroke(IOSColors.border, lineWidth: 1)
                 )
                 .focused($isQuestionFocused)
-                .submitLabel(.send)
                 .onSubmit(submitQuestion)
                 .accessibilityIdentifier("ask-question-input")
+                .toolbar {
+                    if isQuestionFocused {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("收起键盘") { isQuestionFocused = false }
+                                .accessibilityIdentifier("ask-dismiss-keyboard")
+                        }
+                    }
+                }
 
             IOSPrimaryButton("发送", systemImage: "arrow.up", minimumHeight: 44) {
                 submitQuestion()

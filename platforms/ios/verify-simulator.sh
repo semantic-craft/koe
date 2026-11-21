@@ -380,7 +380,7 @@ resolve_simulator() {
   local devices_json=""
   devices_json="$("$XCRUN_BIN" simctl list devices available -j)" || die "failed to query available iOS simulators"
 
-  python3 - "$EXPLICIT_UDID" "$devices_json" <<'PY'
+  python3 - "${1:-$EXPLICIT_UDID}" "$devices_json" <<'PY'
 import json
 import sys
 
@@ -449,9 +449,17 @@ fi
 
 boot_start=$SECONDS
 if [[ "$INITIAL_STATE" != "Booted" ]]; then
-  "$XCRUN_BIN" simctl boot "$UDID"
-  BOOTED_BY_SCRIPT=1
-  "$XCRUN_BIN" simctl bootstatus "$UDID" -b
+  if [[ "$INITIAL_STATE" != "Booting" ]]; then
+    if "$XCRUN_BIN" simctl boot "$UDID"; then
+      BOOTED_BY_SCRIPT=1
+    else
+      boot_result=$?
+      SIM_INFO="$(resolve_simulator "$UDID")" || exit "$boot_result"
+      IFS=$'\t' read -r _ current_state _ <<< "$SIM_INFO"
+      [[ "$current_state" == "Booted" || "$current_state" == "Booting" ]] || exit "$boot_result"
+    fi
+  fi
+  "$XCRUN_BIN" simctl bootstatus "$UDID"
 fi
 
 if [[ "$SLIM" -eq 1 ]]; then
