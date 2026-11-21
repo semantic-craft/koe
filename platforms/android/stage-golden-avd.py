@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Relocate a golden AVD into a disposable copy, preserving its original disks and snapshot."""
+"""Stage a disposable AVD for a cold boot or a golden snapshot restore."""
+import argparse
 import os
 from pathlib import Path
 import re
@@ -7,7 +8,7 @@ import subprocess
 import sys
 
 
-def stage(source_home, name, output):
+def stage(source_home, name, output, *, with_audio=False):
     original = (source_home / (name + '.avd')).resolve()
     clone = output / original.name
     # APFS clones don't duplicate the multi-GB RAM and userdata images.
@@ -17,9 +18,19 @@ def stage(source_home, name, output):
     text = re.sub(r'^path=.*$', lambda _: 'path=' + str(clone), ini.read_text(), flags=re.M)
     (output / ini.name).write_text(text)
     config = clone / 'config.ini'
-    config.write_text(re.sub(r'(?im)^(fastboot\.forceColdBoot\s*=\s*)(yes|true|1)\s*$',
-                             r'\g<1>no', config.read_text()))
+    settings = config.read_text()
     hardware = clone / 'snapshots/avdslim_clean/hardware.ini'
+    if hardware.is_file():
+        settings = re.sub(r'(?im)^(fastboot\.forceColdBoot\s*=\s*)(yes|true|1)\s*$', r'\g<1>no', settings)
+    if with_audio:
+        for key in ('hw.audioInput', 'hw.audioOutput'):
+            line = f'{key}=yes'
+            settings, count = re.subn(rf'(?im)^[ \t]*{re.escape(key)}[ \t]*=.*$', line, settings)
+            if not count:
+                settings = settings.rstrip('\n') + '\n' + line + '\n'
+    config.write_text(settings)
+    if not hardware.is_file():
+        return
     # Emulator compares the saved launch configuration before restoring RAM.
     # Only update clone-local paths and the boot preference. Keep VM hardware identical.
     lines = []
@@ -34,4 +45,10 @@ def stage(source_home, name, output):
 
 
 if __name__ == '__main__':
-    stage(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('source_home', type=Path)
+    parser.add_argument('name')
+    parser.add_argument('output', type=Path)
+    parser.add_argument('--with-audio', action='store_true')
+    args = parser.parse_args()
+    stage(args.source_home, args.name, args.output, with_audio=args.with_audio)

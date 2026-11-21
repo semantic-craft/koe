@@ -32,6 +32,13 @@ if log_path:
     with open(log_path, 'a', encoding='utf-8') as f:
         f.write(json.dumps(['emulator', *sys.argv[1:]]) + '\\n')
 
+if os.environ.get('FAKE_AVD_OBSERVATION'):
+    home = Path(os.environ['ANDROID_AVD_HOME'])
+    name = sys.argv[sys.argv.index('-avd') + 1]
+    registry = dict(line.split('=', 1) for line in (home / (name + '.ini')).read_text().splitlines())
+    config = Path(registry['path']) / 'config.ini'
+    Path(os.environ['FAKE_AVD_OBSERVATION']).write_text(json.dumps([str(config), config.read_text()]))
+
 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
 pid_file = os.environ.get('FAKE_EMU_PID_FILE')
 if pid_file:
@@ -432,36 +439,62 @@ print('{"rss_mb": 256}')
         artifacts = self.root / 'evidence'
         args = ['--slim', '--with-audio', '--flow', str(SMOKE_FLOW), '--workspace', 'journeys',
                 '--launch-app', '--app-package', 'com.semanticcraft.koe', '--artifacts-dir', str(artifacts)]
-        for golden in (False, True):
-            if golden:
-                snapshot.mkdir(parents=True)
-                source = snapshot.parents[1]
-                (self.avd_home / 'koe-test-api35.ini').write_text(f'path={source}\n')
-                (source / 'config.ini').write_text('fastboot.forceColdBoot=yes\n')
-                (snapshot / 'hardware.ini').write_text('hw.ramSize = 1536\nfastboot.forceColdBoot = true\n')
-                (snapshot / 'ram.bin').write_bytes(b'golden')
-            result = self.run_verify(args, KOE_AVDSLIM_BIN=str(tool))
-            self.assertEqual(result.returncode, 0, result.stderr)
-            emulator = [c for c in self.read_calls() if c[0] == 'emulator'][-1]
-            self.assertEqual(emulator[emulator.index('-gpu') + 1], 'host')
-            self.assertNotIn('-no-audio', emulator)
-            self.assertIn('-no-snapshot-save', emulator)
-            if golden:
-                self.assertEqual(emulator[emulator.index('-snapshot') + 1], 'avdslim_clean')
-                self.assertNotIn('-no-snapshot-load', emulator)
-                self.assertIn('-force-snapshot-load', emulator)
-                self.assertIn('-lowram', emulator)
-                self.assertEqual(emulator[emulator.index('-memory') + 1], '1536')
-                self.assertEqual((source / 'config.ini').read_text(), 'fastboot.forceColdBoot=yes\n')
-                self.assertIn('fastboot.forceColdBoot = true', (snapshot / 'hardware.ini').read_text())
-                self.assertEqual((snapshot / 'ram.bin').read_bytes(), b'golden')
+        source = snapshot.parents[1]
+        source.mkdir(parents=True)
+        config = source / 'config.ini'
+        original = 'fastboot.forceColdBoot=yes\nhw.audioInput=no\nhw.audioOutput=no\n'
+        config.write_text(original)
+        (self.avd_home / 'koe-test-api35.ini').write_text(f'path={source}\n')
+        observation = self.root / 'launch-config.json'
+        cases = [
+            ('fresh', False, None, False),
+            ('fresh-slim', True, None, False),
+            ('silent-golden', True, ('no', 'no'), False),
+            ('input-only', True, ('yes', 'no'), False),
+            ('output-only', True, ('no', 'yes'), False),
+            ('audio-golden', True, ('YeS', 'YES'), True),
+            ('emulator-boolean-golden', True, ('true', 'true'), True),
+        ]
+        for label, slim, audio, load_snapshot in cases:
+            with self.subTest(label=label):
+                if audio:
+                    snapshot.mkdir(parents=True, exist_ok=True)
+                    saved = (f'hw.ramSize = 1536\nfastboot.forceColdBoot = true\n'
+                             f'HW.audioInput = {audio[0]}\nhw.audioOutput={audio[1]}\n')
+                    (snapshot / 'hardware.ini').write_text(saved)
+                    (snapshot / 'ram.bin').write_bytes(b'golden')
+                self.call_log.unlink(missing_ok=True)
+                result = self.run_verify(args if slim else args[1:], KOE_AVDSLIM_BIN=str(tool),
+                                         FAKE_AVD_OBSERVATION=str(observation))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = self.read_calls()
+                emulator = next(c for c in calls if c[0] == 'emulator')
+                self.assertNotIn('-no-audio', emulator)
+                self.assertIn('-no-snapshot-save', emulator)
+                if load_snapshot:
+                    self.assertEqual(emulator[emulator.index('-snapshot') + 1], 'avdslim_clean')
+                    self.assertNotIn('-no-snapshot-load', emulator)
+                    self.assertIn('-force-snapshot-load', emulator)
+                    self.assertIn('-lowram', emulator)
+                    self.assertEqual(emulator[emulator.index('-memory') + 1], '1536')
+                else:
+                    self.assertIn('-no-snapshot-load', emulator)
+                    self.assertNotIn('-snapshot', emulator)
+                    self.assertNotIn('-force-snapshot-load', emulator)
+                path, effective = json.loads(observation.read_text())
+                self.assertNotEqual(Path(path), config)
+                for key in ('hw.audioInput', 'hw.audioOutput'):
+                    self.assertRegex(effective, rf'(?m)^{re.escape(key)}\s*=\s*yes$')
+                self.assertEqual(config.read_text(), original)
+                if audio:
+                    self.assertEqual((snapshot / 'hardware.ini').read_text(), saved)
+                    self.assertEqual((snapshot / 'ram.bin').read_bytes(), b'golden')
                 self.assertEqual(list(self.avd_home.glob('.koe-verify-*')), [])
-            else:
-                self.assertIn('-no-snapshot-load', emulator)
-        calls = self.read_calls()
-        self.assertEqual(calls.count(['slim', 'on', 'emulator-5580', '--skip=bluetooth', '--no-anim']), 1)
-        self.assertEqual(calls.count(['slim', 'measure', 'emulator-5580']), 2)
-        self.assertEqual(sum('koe_workspace verify-workspaces/journeys' in c[-1] for c in calls if c[0] == 'adb'), 2)
+                self.assertEqual(emulator[emulator.index('-gpu') + 1], 'host' if slim else 'auto')
+                self.assertEqual(['slim', 'on', 'emulator-5580', '--skip=bluetooth', '--no-anim'] in calls,
+                                 slim and not load_snapshot)
+                self.assertEqual(['slim', 'measure', 'emulator-5580'] in calls, slim)
+                self.assertTrue(any('koe_workspace verify-workspaces/journeys' in c[-1] for c in calls if c[0] == 'adb'))
         self.assertIn('256', (artifacts / 'avdslim-metrics.txt').read_text())
 
     def test_restart_flow_reopens_same_workspace_on_same_running_emulator(self):

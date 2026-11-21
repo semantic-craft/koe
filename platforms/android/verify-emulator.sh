@@ -491,15 +491,31 @@ else
   TEMP_EMU_LOG="$(mktemp "${TMPDIR:-/tmp}/koe-emulator-${PORT}.log.XXXXXX")"
   boot_args=(-no-window -no-boot-anim -no-snapshot-save)
   if [[ "$WITH_AUDIO" -eq 0 ]]; then boot_args+=(-no-audio); fi
-  snapshot_home="${ANDROID_AVD_HOME:-${ANDROID_USER_HOME:-$HOME/.android}/avd}"
-  if [[ "$SLIM" -eq 1 && -d "$snapshot_home/$AVD_NAME.avd/snapshots/avdslim_clean" ]]; then
+  snapshot_home="$ANDROID_AVD_HOME"
+  snapshot_dir="$snapshot_home/$AVD_NAME.avd/snapshots/avdslim_clean"
+  hardware="$snapshot_dir/hardware.ini"
+  if [[ "$SLIM" -eq 1 && -d "$snapshot_dir" ]]; then
     GOLDEN=1
+    if [[ "$WITH_AUDIO" -eq 1 ]]; then
+      # Emulator hardware.ini serializes enabled booleans as true on some SDK versions.
+      for key in audioInput audioOutput; do
+        if [[ ! -f "$hardware" ]] || ! grep -Eiq "^[[:blank:]]*hw[.]$key[[:blank:]]*=[[:blank:]]*(yes|true)[[:space:]]*$" "$hardware"; then
+          GOLDEN=0
+          break
+        fi
+      done
+    fi
+  fi
+  if [[ "$WITH_AUDIO" -eq 1 || ( "$GOLDEN" -eq 1 && -f "$hardware" ) ]]; then
+    CLONED_AVD_HOME="$(mktemp -d "$snapshot_home/.koe-verify-XXXXXX")"
+    stage_args=("$snapshot_home" "$AVD_NAME" "$CLONED_AVD_HOME")
+    if [[ "$WITH_AUDIO" -eq 1 ]]; then stage_args+=(--with-audio); fi
+    python3 "$ROOT/platforms/android/stage-golden-avd.py" "${stage_args[@]}"
+    export ANDROID_AVD_HOME="$CLONED_AVD_HOME"
+  fi
+  if [[ "$GOLDEN" -eq 1 ]]; then
     boot_args+=(-snapshot avdslim_clean -force-snapshot-load)
-    hardware="$snapshot_home/$AVD_NAME.avd/snapshots/avdslim_clean/hardware.ini"
     if [[ -f "$hardware" ]]; then
-      CLONED_AVD_HOME="$(mktemp -d "$snapshot_home/.koe-verify-XXXXXX")"
-      python3 "$ROOT/platforms/android/stage-golden-avd.py" "$snapshot_home" "$AVD_NAME" "$CLONED_AVD_HOME"
-      export ANDROID_AVD_HOME="$CLONED_AVD_HOME"
       ram=$(awk '$1 == "hw.ramSize" && $2 == "=" {print $3}' "$hardware")
       if [[ "$ram" =~ ^[0-9]+$ ]]; then boot_args+=(-lowram -memory "$ram"); fi
     fi
