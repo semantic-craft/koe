@@ -6,9 +6,8 @@ let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let repoRoot = packageDir.deletingLastPathComponent().deletingLastPathComponent().path
 
 let hostApiLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
-    .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
-    .linkedLibrary("koe_host_api"),
+    .unsafeFlags(["\(repoRoot)/target/debug/libkoe_host_api.a"], .when(configuration: .debug)),
+    .unsafeFlags(["\(repoRoot)/target/release/libkoe_host_api.a"], .when(configuration: .release)),
     .linkedLibrary("c++"),
     .linkedFramework("Accelerate"),
 ]

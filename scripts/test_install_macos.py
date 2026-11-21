@@ -698,6 +698,133 @@ class InstallMacosScriptTest(unittest.TestCase):
             live_proc.terminate()
             live_proc.wait()
 
+    def test_static_host_api_link_guard_rejects_dylib_and_accepts_static_macho(self) -> None:
+        lib_dir = self.sandbox / "host-lib"
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        lib_src = lib_dir / "host_api.c"
+        lib_src.write_text("int koe_host_api_version(void) { return 2; }\n", encoding="utf-8")
+        main_src = lib_dir / "main.c"
+        main_src.write_text(
+            "#include <string.h>\n"
+            "int koe_host_api_version(void);\n"
+            "int main(int argc, char **argv) {\n"
+            '  if (koe_host_api_version() != 2) return 3;\n'
+            '  if (argc >= 2 && (strcmp(argv[1], "--verify-self") == 0 || strcmp(argv[1], "--smoke-test") == 0)) return 0;\n'
+            "  return 2;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        dylib_path = lib_dir / "libkoe_host_api.dylib"
+        subprocess.run(
+            ["cc", "-dynamiclib", "-install_name", str(dylib_path), str(lib_src), "-o", str(dylib_path)],
+            check=True,
+        )
+        obj_path = lib_dir / "host_api.o"
+        static_path = lib_dir / "libkoe_host_api.a"
+        subprocess.run(["cc", "-c", str(lib_src), "-o", str(obj_path)], check=True)
+        subprocess.run(["ar", "rcs", str(static_path), str(obj_path)], check=True)
+
+        dyn_build_app = self._make_build_app(self.sandbox / "DynBuild" / "Koe.app")
+        dyn_exe = dyn_build_app / "Contents" / "MacOS" / "Koe"
+        subprocess.run(
+            ["cc", str(main_src), f"-L{lib_dir}", "-lkoe_host_api", "-o", str(dyn_exe)],
+            check=True,
+        )
+        otool_dyn = subprocess.check_output(["otool", "-L", str(dyn_exe)], text=True)
+        self.assertIn("libkoe_host_api.dylib", otool_dyn)
+
+        dyn_install = self.sandbox / "DynInstall" / "Koe.app"
+        proc_dyn = self._run_installer(
+            "--skip-build",
+            extra_env={"KOE_BUILD_APP": str(dyn_build_app), "MACOS_INSTALL_PATH": str(dyn_install)},
+        )
+        self.assertNotEqual(proc_dyn.returncode, 0, "dynamically linked libkoe_host_api.dylib must be rejected")
+        self.assertIn("libkoe_host_api", proc_dyn.stderr)
+        self.assertFalse(dyn_install.exists())
+
+        repo_target_dir = self.repo / "target" / "release"
+        repo_target_dir.mkdir(parents=True, exist_ok=True)
+        repo_dylib = repo_target_dir / "libkoe_other.dylib"
+        subprocess.run(
+            ["cc", "-dynamiclib", "-install_name", str(repo_dylib), str(lib_src), "-o", str(repo_dylib)],
+            check=True,
+        )
+        target_build_app = self._make_build_app(self.sandbox / "TargetDylibBuild" / "Koe.app")
+        target_exe = target_build_app / "Contents" / "MacOS" / "Koe"
+        subprocess.run(
+            ["cc", str(main_src), f"-L{repo_target_dir}", "-lkoe_other", "-o", str(target_exe)],
+            check=True,
+        )
+        target_install = self.sandbox / "TargetDylibInstall" / "Koe.app"
+        proc_target = self._run_installer(
+            "--skip-build",
+            extra_env={"KOE_BUILD_APP": str(target_build_app), "MACOS_INSTALL_PATH": str(target_install)},
+        )
+        self.assertNotEqual(proc_target.returncode, 0, "dylib referencing repo target/ must be rejected")
+        self.assertIn("target/release/libkoe_other.dylib", proc_target.stderr)
+        self.assertFalse(target_install.exists())
+
+        static_build_app = self._make_build_app(self.sandbox / "StaticBuild" / "Koe.app")
+        static_exe = static_build_app / "Contents" / "MacOS" / "Koe"
+        subprocess.run(["cc", str(main_src), str(static_path), "-o", str(static_exe)], check=True)
+        otool_static = subprocess.check_output(["otool", "-L", str(static_exe)], text=True)
+        self.assertNotIn("libkoe_host_api", otool_static)
+
+        static_install = self.sandbox / "StaticInstall" / "Koe.app"
+        proc_static = self._run_installer(
+            "--skip-build",
+            extra_env={"KOE_BUILD_APP": str(static_build_app), "MACOS_INSTALL_PATH": str(static_install)},
+        )
+        self.assertEqual(proc_static.returncode, 0, proc_static.stderr)
+        self.assertTrue(static_install.is_dir())
+
+    def test_apple_swiftpm_manifests_link_static_host_api_archive(self) -> None:
+        expected_debug = str(REPO_ROOT / "target" / "debug" / "libkoe_host_api.a")
+        expected_release = str(REPO_ROOT / "target" / "release" / "libkoe_host_api.a")
+        packages = (
+            (REPO_ROOT / "platforms" / "macos", ("Koe", "KoeMacHostTests")),
+            (REPO_ROOT / "platforms" / "apple-shared", ("KoeAppleCoreTests", "KoeAppleSharedTests")),
+        )
+        for pkg_dir, target_names in packages:
+            manifest = json.loads(
+                subprocess.check_output(
+                    ["swift", "package", "--package-path", str(pkg_dir), "dump-package"],
+                    text=True,
+                )
+            )
+            targets_by_name = {target["name"]: target for target in manifest["targets"]}
+            for target_name in target_names:
+                with self.subTest(package=pkg_dir.name, target=target_name):
+                    settings = targets_by_name[target_name]["settings"]
+                    linked_libs = [
+                        entry["kind"]["linkedLibrary"]["_0"]
+                        for entry in settings
+                        if entry.get("tool") == "linker" and "linkedLibrary" in entry.get("kind", {})
+                    ]
+                    self.assertNotIn(
+                        "koe_host_api",
+                        linked_libs,
+                        f"{pkg_dir.name}/{target_name} must not use linkedLibrary(koe_host_api) while cdylib is enabled",
+                    )
+                    unsafe_by_config: dict[str | None, list[str]] = {}
+                    for entry in settings:
+                        if entry.get("tool") != "linker":
+                            continue
+                        flags = entry.get("kind", {}).get("unsafeFlags", {}).get("_0")
+                        if not flags:
+                            continue
+                        config = (entry.get("condition") or {}).get("config")
+                        unsafe_by_config.setdefault(config, []).extend(flags)
+                    self.assertIn(expected_debug, unsafe_by_config.get("debug", []))
+                    self.assertIn(expected_release, unsafe_by_config.get("release", []))
+                    for flags in unsafe_by_config.values():
+                        for flag in flags:
+                            self.assertFalse(
+                                flag.startswith("-L") and "/target/" in flag,
+                                f"{pkg_dir.name}/{target_name} must not add -L search path into cargo target/: {flag}",
+                            )
+
 
 if __name__ == "__main__":
     unittest.main()
