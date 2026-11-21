@@ -318,16 +318,16 @@
         "number": 775,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-20T22:10:39Z"
+        "updated_at": "2026-11-21T07:09:18Z"
       },
       {
         "number": 777,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-20T15:04:03Z"
+        "updated_at": "2026-11-21T07:09:20Z"
       }
     ],
-    "main": "5e145814b0b82b8396bfa065f9e2fffbdcd242bb",
+    "main": "b1c2e10f69bc504ab6a4991c31d31dd98b1cc770",
     "open_pulls": [],
     "pulls": [
       {
@@ -1145,6 +1145,86 @@
         "merged": true,
         "number": 790,
         "state": "closed"
+      },
+      {
+        "base": "60708b1129ef116a56941c1b6e7612f6c459100e",
+        "head": "ab552e75c372f3679f43295402cd1f30d95ec545",
+        "merge_commit": "c3afe36382aeb4dc36a363c2b4d8e90089d7dd16",
+        "merged": true,
+        "number": 792,
+        "state": "closed"
+      },
+      {
+        "base": "c3afe36382aeb4dc36a363c2b4d8e90089d7dd16",
+        "head": "ed4e1c6040dfff8664b3506ac066e7c1e7359842",
+        "merge_commit": "10d7f24c993c7cbb7c34410b56abb0af14ae02c6",
+        "merged": true,
+        "number": 793,
+        "state": "closed"
+      },
+      {
+        "base": "10d7f24c993c7cbb7c34410b56abb0af14ae02c6",
+        "head": "a5a80b67943a723c23041b1787d2384c91734265",
+        "merge_commit": "ee61778ba1bf8e21e9adff535c3ad910d13968cc",
+        "merged": true,
+        "number": 794,
+        "state": "closed"
+      },
+      {
+        "base": "ee61778ba1bf8e21e9adff535c3ad910d13968cc",
+        "head": "24aa106a91c37db807a9af62530d6e98d1f0fd6e",
+        "merge_commit": "308822b7119a9e1fdaf20e3df523c31b3a58b602",
+        "merged": true,
+        "number": 795,
+        "state": "closed"
+      },
+      {
+        "base": "308822b7119a9e1fdaf20e3df523c31b3a58b602",
+        "head": "4da3fd1db6991466d0b4ca55fefeaacf56de51c4",
+        "merge_commit": "e63abcbc0fb4469ebb1defc90c27368b4f4c70bf",
+        "merged": true,
+        "number": 796,
+        "state": "closed"
+      },
+      {
+        "base": "e63abcbc0fb4469ebb1defc90c27368b4f4c70bf",
+        "head": "119687d44e6f33be7bf31c7c0f2563aefe0a81d4",
+        "merge_commit": "6fe609c13e35de7ab164f6ccce2d7e7b8d22034c",
+        "merged": true,
+        "number": 797,
+        "state": "closed"
+      },
+      {
+        "base": "6fe609c13e35de7ab164f6ccce2d7e7b8d22034c",
+        "head": "abb868c322858a9b087c6ed424371fedc3078d3c",
+        "merge_commit": "9a09fb00ec71506e052d09fd7d749a073f249477",
+        "merged": true,
+        "number": 798,
+        "state": "closed"
+      },
+      {
+        "base": "9a09fb00ec71506e052d09fd7d749a073f249477",
+        "head": "36bf653a8f3c1abaa9c59e94f039aa85615640dd",
+        "merge_commit": "a10fdf06b8a2fdf6fdb20942894245bb663a3dba",
+        "merged": true,
+        "number": 799,
+        "state": "closed"
+      },
+      {
+        "base": "a10fdf06b8a2fdf6fdb20942894245bb663a3dba",
+        "head": "43b02df2f22ed8b15b24243c3c9973b69507eaf0",
+        "merge_commit": "e3b31fa1c9425eecfb5f7cdada2d5456b575b610",
+        "merged": true,
+        "number": 800,
+        "state": "closed"
+      },
+      {
+        "base": "e3b31fa1c9425eecfb5f7cdada2d5456b575b610",
+        "head": "5277db8a9cd4fc05cb010736500774ab54088bba",
+        "merge_commit": "b1c2e10f69bc504ab6a4991c31d31dd98b1cc770",
+        "merged": true,
+        "number": 801,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -1200,7 +1280,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-20T22:18:27.884921Z",
+  "observed_at": "2026-11-21T07:16:58.423751Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1328,7 +1408,7 @@
             {
               "kind": "file",
               "note": "D3200 蓝牙广播识别与自动重连",
-              "ref": "platforms/macos/Sources/Koe/BluetoothBridge.swift"
+              "ref": "platforms/apple-shared/Sources/KoeAppleCore/BluetoothBridge.swift"
             }
           ],
           "id": "native-flow",
@@ -2002,7 +2082,7 @@
             {
               "kind": "file",
               "note": "按变更频率切分的 Equatable 宿主视图切片。",
-              "ref": "platforms/apple-shared/Sources/KoeAppleShared/HostSessionSlices.swift"
+              "ref": "platforms/apple-shared/Sources/KoeAppleCore/HostSessionSlices.swift"
             },
             {
               "kind": "file",
@@ -2395,7 +2475,7 @@
             {
               "kind": "file",
               "note": "强类型 Swift HostCommand 单向命令编码。",
-              "ref": "platforms/apple-shared/Sources/KoeAppleShared/HostCommand.swift"
+              "ref": "platforms/apple-shared/Sources/KoeAppleCore/HostCommand.swift"
             },
             {
               "kind": "file",
@@ -2902,10 +2982,79 @@
             }
           ],
           "id": "ios-native-adapters",
-          "next": "按 #775 完成物理 iPhone 与实体 D3200 真机验收，后续补齐 Apple 本机语音识别、ActivityKit 灵动岛、iPad 分屏适配与签名发行。",
+          "next": "Apple 本机语音识别、iPad 分栏、三模式齐平与后台/锁屏能力已在 ios-full-parity-and-background 合入主线并通过模拟器验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与实体 D3200 真机验收及签名发行继续由 #775 追踪。",
           "status": "in_progress",
-          "summary": "PR #786 至 #790 已全部合并主线，完成 iOS Phase 3A–3E 核心原生宿主适配层并通过模拟器端到端验收，物理真机硬件验收与扩展能力尚未完成。PR #786（eb94470）落地 4 Hz IOSHostCoordinator、前后台常亮同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。PR #787（898716f）将 NativeCapture、CapturedPCM、AudioCallbackFence 与 HostAudioClock 提炼进 KoeAppleCore 共享，并落地 AVAudioSession（.playAndRecord + [.defaultToSpeaker, .allowBluetoothHFP]）与 AVAudioEngine 麦克风采集及 IOSAudioInputMonitor。PR #788（ebb7449）将 NativePlayback 与 NativePlaybackItem 提炼进 KoeAppleCore 共享，新增 IOSAudioSession 按持有者协调会话，并实现后台播放 EOF、失败与中断即时回传。PR #789（8b119e8）将 D3200 BluetoothBridge 与 BleTransportModels 提炼进 KoeAppleCore 共享，补齐 5 秒有界停录帧 ACK、背压及 Rust crates/koe-runtime/src/device.rs 扫描态连接 ID 复位修复，同时修复 IOSDeviceSheetView 的 connect_guide 主按钮与断连扫描入口。PR #790（5e14581）落地 IOSFileActions 与 IOSFilePicker，支持 .wav/.txt/.md/.koepack 安全作用域流式导入（256 MiB 上限与源 mtime 保留）、单条/全天/多选批量 Markdown 导出以及 HostSessionStore.sendReturningError 错误隔离。已实测验证包含 36/36 项 iOS XCTest、真实 iPhone 17/17e 模拟器实录 WAV、后台播放 EOF、BLE 面板与文件导入导出界面实测、verify-ui-principles.py 全仓零违规、macOS Swift Testing 46/46、全量 ./scripts/check 与托管 macos-26 CI 全绿。尚未完成物理 iPhone 与真实 D3200 硬件验收（#775），也尚未实现 Apple 本机语音识别、ActivityKit 灵动岛、iPad 分屏适配与签装发行。",
+          "summary": "PR #786 至 #790 已全部合并主线，完成 iOS Phase 3A–3E 核心原生宿主适配层并通过模拟器端到端验收，物理真机硬件验收与签装发行尚未完成。PR #786（eb94470）落地 4 Hz IOSHostCoordinator、前后台常亮同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。PR #787（898716f）将 NativeCapture、CapturedPCM、AudioCallbackFence 与 HostAudioClock 提炼进 KoeAppleCore 共享，并落地 AVAudioSession（.playAndRecord + [.defaultToSpeaker, .allowBluetoothHFP]）与 AVAudioEngine 麦克风采集及 IOSAudioInputMonitor。PR #788（ebb7449）将 NativePlayback 与 NativePlaybackItem 提炼进 KoeAppleCore 共享，新增 IOSAudioSession 按持有者协调会话，并实现后台播放 EOF、失败与中断即时回传。PR #789（8b119e8）将 D3200 BluetoothBridge 与 BleTransportModels 提炼进 KoeAppleCore 共享，补齐 5 秒有界停录帧 ACK、背压及 Rust crates/koe-runtime/src/device.rs 扫描态连接 ID 复位修复，同时修复 IOSDeviceSheetView 的 connect_guide 主按钮与断连扫描入口。PR #790（5e14581）落地 IOSFileActions 与 IOSFilePicker，支持 .wav/.txt/.md/.koepack 安全作用域流式导入（256 MiB 上限与源 mtime 保留）、单条/全天/多选批量 Markdown 导出以及 HostSessionStore.sendReturningError 错误隔离。已实测验证包含 36/36 项 iOS XCTest、真实 iPhone 17/17e 模拟器实录 WAV、后台播放 EOF、BLE 面板与文件导入导出界面实测、verify-ui-principles.py 全仓零违规、macOS Swift Testing 46/46、全量 ./scripts/check 与托管 macos-26 CI 全绿。后续 Apple 本机语音识别、iPad 分栏与后台/锁屏能力已转入 ios-full-parity-and-background 交付并通过模拟器九旅程验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与真实 D3200 硬件验收及 Developer 签装发行继续归口 #775。",
           "title": "iOS 原生宿主适配层（Phase 3A–3E：采集、回放、BLE GATT、文件导入导出与设置）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash c3afe36 已合并（M1）：强类型 ReviewDecision（accept/dismiss/reset）、proposed 待办隐藏完成勾选、将 NativeLocalTranscription 上移至 KoeAppleCore 并接入 iOS、修复 NativePlayback 缺 WAV 报错。",
+              "ref": 792
+            },
+            {
+              "kind": "pull",
+              "note": "squash 10d7f24 已合并（M2）：全局 IOSMiniPlayerBar 与 navigation.notice、.playback/.playAndRecord 音频会话分流、beginBackgroundTask(\"KoeSaveRecording\")、冷启动零 BLE 弹窗、回收站二次确认与防误滑、设备内嵌错误条、防抖拖拽、异步 traceQueue 与 [S1] 跳转原文定位。",
+              "ref": 793
+            },
+            {
+              "kind": "pull",
+              "note": "squash 308822b 已合并（M4）：实时纪要/随心闪记/全天听记三模式完整工作区、IOSCaptureSourceSheet 与固定 ViewInspector 0.10.5 视图单测。",
+              "ref": 795
+            },
+            {
+              "kind": "pull",
+              "note": "squash e63abcb 已合并（M5）：记录详情全套编辑表单、共享 IOSReviewCards、IOSRecordBatchMenu、IOSItemEditorSheet、IOSAskComposer、IOSModelPresets、设备进度/存储/已同步跳转、iPad 双栏实时纪要与底部操作栏修复。",
+              "ref": 796
+            },
+            {
+              "kind": "pull",
+              "note": "squash 6fe609c 已合并（M6）：CoreBluetooth 后台状态恢复（BluetoothBridge+Restoration.swift、IOSAppDelegate）与锁屏/控制中心 IOSNowPlayingController（MPNowPlayingInfoCenter + 6 项 MPRemoteCommandCenter 指令）。",
+              "ref": 797
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单，追踪物理 iPhone/iPad 签装、Keychain、真实 D3200 BLE、CoreBluetooth 后台唤醒、锁屏实机媒控与 Apple 本机语音实测。",
+              "ref": 775
+            },
+            {
+              "kind": "file",
+              "note": "上移至 KoeAppleCore 供 macOS 与 iOS 共享的 Apple 本机语音识别适配层。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleCore/NativeLocalTranscription.swift"
+            },
+            {
+              "kind": "file",
+              "note": "iOS 全局常驻迷你播放器 IOSMiniPlayerBar 与防抖进度条。",
+              "ref": "platforms/ios/App/Sources/IOSPlayerBarView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "iOS 录音输入源选择面板与三模式工作区入口。",
+              "ref": "platforms/ios/App/Sources/IOSCaptureSourceSheet.swift"
+            },
+            {
+              "kind": "file",
+              "note": "iOS 记录详情标题、正文与说话人编辑表单。",
+              "ref": "platforms/ios/App/Sources/IOSRecordDetailEditors.swift"
+            },
+            {
+              "kind": "file",
+              "note": "CoreBluetooth 两阶段后台状态恢复（willRestoreState 至 .poweredOn）实现。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleCore/BluetoothBridge+Restoration.swift"
+            },
+            {
+              "kind": "file",
+              "note": "锁屏与控制中心 MPNowPlayingInfoCenter 及 6 项 MPRemoteCommandCenter 媒控接入。",
+              "ref": "platforms/ios/App/Sources/IOSNowPlayingController.swift"
+            }
+          ],
+          "id": "ios-full-parity-and-background",
+          "next": "双端九旅程轻量 E2E 实测见 mobile-lightweight-e2e-verification；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与实体 D3200 真机验收及 Developer 签装发行继续由 #775 追踪。",
+          "status": "done",
+          "summary": "PR #792、#793、#795、#796、#797 已全部合并主线，完成 iOS 三模式业务齐平、iPad 分栏适配、Apple 本机语音识别、CoreBluetooth 后台状态恢复与锁屏/控制中心媒控的代码实现、单测及 iOS Simulator 验证闭环。PR #792（c3afe36）强类型化 ReviewDecision（accept/dismiss/reset），对 proposed 待办隐藏完成勾选，将 NativeLocalTranscription 上移至 KoeAppleCore 接入 iOS，并修复 NativePlayback 缺 WAV 报错。PR #793（10d7f24）落地全局 IOSMiniPlayerBar 与 navigation.notice、拆分 .playback/.playAndRecord 音频会话、新增 beginBackgroundTask(\"KoeSaveRecording\")、保证冷启动零 BLE 弹窗、补齐回收站二次确认与防误滑、设备内嵌错误条、防抖拖拽、异步 traceQueue 及 [S1] 跳转原文定位。PR #795（308822b）补齐 LiveMinutes/QuickNote/AllDay 三模式完整工作区、IOSCaptureSourceSheet 与固定 ViewInspector 0.10.5。PR #796（e63abcb）补齐记录详情全套编辑表单、共享 IOSReviewCards、IOSRecordBatchMenu、IOSItemEditorSheet、IOSAskComposer、IOSModelPresets、设备进度/存储/已同步跳转及 iPad 双栏实时纪要与底部操作栏修复。PR #797（6fe609c）落地 CoreBluetooth 后台状态恢复（BluetoothBridge+Restoration.swift、IOSAppDelegate）与锁屏/控制中心 IOSNowPlayingController.swift（MPNowPlayingInfoCenter 与 6 项 MPRemoteCommandCenter 指令）。ActivityKit 灵动岛明确延后；本项仅覆盖代码、单测与模拟器闭环，物理 iPhone/iPad 与真实 D3200 硬件验收及 Developer 签装发行仍归口 #775。",
+          "title": "iOS 三模式全功能齐平、iPad 适配、本机语音与后台/锁屏能力（M1/M2/M4–M6，代码与模拟器闭环）"
         },
         {
           "evidence": [
@@ -3024,10 +3173,177 @@
             }
           ],
           "id": "android-native-adapters",
-          "next": "按 #777 完成物理 Android 真机与实体 D3200 验收，并推进 Release 签名分发。",
+          "next": "三模式全功能齐平、D3200 会话内暂停、宽屏适配与 Release 环境变量签名钩子已在 android-full-parity-and-adaptive 合入主线并通过仿真器九旅程验证；物理 Android 15/16 与 API 29–30 真机硬件验收及正式 Release Keystore 签名分发继续由 #777 追踪。",
           "status": "in_progress",
-          "summary": "PR #780 至 #784 已全部合并主线，完成 Android Phase 3A–3E 原生宿主适配层，并在无头模拟器通过端到端冒烟，物理真机硬件验收与签名发行尚未完成。PR #780（1acd627）落地 4 Hz AndroidHostCoordinator、HostBridgeActions 与可编辑模型/凭据设置页。PR #781（2a15f74）落地 AudioRecord 单调时钟采集、AudioFocus、KoeCaptureForegroundService 及 Rust capture_asset.rs Android SELinux 原子写回退修复。PR #782（a820e4a）落地分段 TimelineWavReader、AudioTrack 流式回放及后台播完或失败即时回调释放 AudioFocus。PR #783（554087f）落地 Soundcore Work（D3200）BLE GATT 适配层，包含单在途写、300 ms 节流、5 s 超时恢复、停录帧串行排空、API 29-36 权限分桶、DeviceSheet 扫描入口与 connect_guide 对齐。PR #784（ea1e9aa）落地 SAF content:// 导入导出，支持 256 MiB 上限与源文档 mtime 保留、单条/当日/目录批量 Markdown 导出以及旋转与进程重建 savedInstanceState 恢复。已实测验证包含 21 个测试套件共 108/108 项 JVM/Robolectric 单测、严格 NewApi/InlinedApi Release Lint 零警告、verify-ui-principles.py 169 个文件零违规、无头 koe-test-api35 smoke.sh（live/fixture/fail-probe）通过，以及本机全量 ./scripts/check 与托管 macos-26 CI 全绿。尚未完成物理 Android 15/16 与 API 29-30 真机硬件验收（#777，涵盖实体 D3200 BLE、真麦克风与扬声器、真实 DocumentsUI 与 Release Keystore），也未完成 Release 签名分发。",
+          "summary": "PR #780 至 #784 已全部合并主线，完成 Android Phase 3A–3E 原生宿主适配层，并在无头模拟器通过端到端冒烟，物理真机硬件验收与签名发行尚未完成。PR #780（1acd627）落地 4 Hz AndroidHostCoordinator、HostBridgeActions 与可编辑模型/凭据设置页。PR #781（2a15f74）落地 AudioRecord 单调时钟采集、AudioFocus、KoeCaptureForegroundService 及 Rust capture_asset.rs Android SELinux 原子写回退修复。PR #782（a820e4a）落地分段 TimelineWavReader、AudioTrack 流式回放及后台播完或失败即时回调释放 AudioFocus。PR #783（554087f）落地 Soundcore Work（D3200）BLE GATT 适配层，包含单在途写、300 ms 节流、5 s 超时恢复、停录帧串行排空、API 29-36 权限分桶、DeviceSheet 扫描入口与 connect_guide 对齐。PR #784（ea1e9aa）落地 SAF content:// 导入导出，支持 256 MiB 上限与源文档 mtime 保留、单条/当日/目录批量 Markdown 导出以及旋转与进程重建 savedInstanceState 恢复。已实测验证包含 21 个测试套件共 108/108 项 JVM/Robolectric 单测、严格 NewApi/InlinedApi Release Lint 零警告、verify-ui-principles.py 169 个文件零违规、无头 koe-test-api35 smoke.sh（live/fixture/fail-probe）通过，以及本机全量 ./scripts/check 与托管 macos-26 CI 全绿。后续三模式全功能齐平、D3200 会话内暂停、宽屏适配与 Release 环境变量签名钩子已转入 android-full-parity-and-adaptive 交付并通过仿真器九旅程验证；物理 Android 15/16 与 API 29-30 真机硬件验收（#777，涵盖实体 D3200 BLE、真麦克风与扬声器、真实 DocumentsUI 与 Release Keystore）及正式签名分发仍未完成。",
           "title": "Android 原生宿主适配层（Phase 3A–3E：采集、回放、BLE GATT、SAF 与设置）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash c3afe36 已合并（M1）：强类型 ReviewDecision、proposed 待办隐藏完成勾选、Rust HostPlatformProfile.supports_native_speech 将 Android 新装默认语音引擎归一至 cloud、Android sendReturningError 错误隔离。",
+              "ref": 792
+            },
+            {
+              "kind": "pull",
+              "note": "squash ee61778 已合并（M3）：BackHandler 与 tabStackSaver、全局 AndroidMiniPlayerBar 与 navigation.notice、FLAG_KEEP_SCREEN_ON、.imePadding()、回收站确认与防误滑、1-based 连接引导、Rust D3200 会话内暂停/恢复（RealtimePause）与前台通知栏控豆动作及 API 33+ POST_NOTIFICATIONS、密钥字段排除出 SaveableStateRegistry、[S1] 原文定位、自适应图标、DayNight 主题与 Release 环境变量签名钩子。",
+              "ref": 794
+            },
+            {
+              "kind": "pull",
+              "note": "squash 9a09fb0 已合并（M7）：实时纪要/随心闪记/全天听记三模式完整工作区、CaptureSourceSheet、SAF WorkspaceExportOptions 跨进程重建持久化与顶部活跃采集条去重。",
+              "ref": 798
+            },
+            {
+              "kind": "pull",
+              "note": "squash a10fdf0 已合并（M8）：记录详情全套编辑表单、共享 ReviewCards、RecordBatchControls、SettingsExtrasCards（GitHub/Play 自更新、脱敏诊断、LifecycleResumeEffect 权限）、DeviceFilesSection、600dp 以上宽屏双栏与横屏输入栏避让。",
+              "ref": 799
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单，追踪物理 Android 15/16（16 KB 页大小）与 API 29-30 真机验证、实体 D3200 BLE、DocumentsUI 与 Release Keystore 签名分发。",
+              "ref": 777
+            },
+            {
+              "kind": "file",
+              "note": "Rust 平台能力画像 HostPlatformProfile.supports_native_speech 与 Android 默认 cloud 归一。",
+              "ref": "crates/koe-runtime/src/platform.rs"
+            },
+            {
+              "kind": "file",
+              "note": "Rust D3200 实时录音会话内暂停/恢复状态机（RealtimePause）。",
+              "ref": "crates/koe-engine/src/session/transfer.rs"
+            },
+            {
+              "kind": "file",
+              "note": "Android 根容器返回栈、tabStackSaver、全局迷你播放器与 600dp 宽屏双栏适配。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/screens/KoeRootScreen.kt"
+            },
+            {
+              "kind": "file",
+              "note": "Android 录音输入源选择面板与三模式工作区切换入口。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/screens/CaptureSourceSheet.kt"
+            },
+            {
+              "kind": "file",
+              "note": "Android 记录详情标题、原文与说话人编辑弹窗。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/screens/RecordDetailEditors.kt"
+            },
+            {
+              "kind": "file",
+              "note": "Android 设置扩展卡片（GitHub/Play 自更新、脱敏诊断与 LifecycleResumeEffect 权限状态刷新）。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/screens/SettingsExtrasCards.kt"
+            }
+          ],
+          "id": "android-full-parity-and-adaptive",
+          "next": "双端九旅程轻量 E2E 实测见 mobile-lightweight-e2e-verification；物理 Android 15/16 与 API 29–30 真机硬件验收、实体 D3200 与 Release Keystore 签装发行继续由 #777 追踪。",
+          "status": "done",
+          "summary": "PR #792、#794、#798、#799 已全部合并主线，完成 Android 三模式业务齐平、系统安全交互、D3200 会话内暂停与宽屏横屏自适应的代码实现、单测及 Android API 35 仿真器验证闭环。PR #792（c3afe36）强类型化 ReviewDecision，对 proposed 待办隐藏完成勾选，在 Rust HostPlatformProfile.supports_native_speech 将 Android 新装默认语音引擎归一至 cloud，并落地 Android sendReturningError。PR #794（ee61778）落地 BackHandler 与 tabStackSaver、全局 AndroidMiniPlayerBar 与 navigation.notice、FLAG_KEEP_SCREEN_ON、.imePadding()、回收站确认弹窗与防误滑、1-based 连接引导、Rust D3200 会话内暂停/恢复（RealtimePause）与前台通知栏控豆操作及 API 33+ POST_NOTIFICATIONS、密钥字段排除出 SaveableStateRegistry、[S1] 原文滚定位、自适应图标、DayNight 主题及 Release 环境变量签名钩子。PR #798（9a09fb0）补齐三模式完整工作区、CaptureSourceSheet、SAF WorkspaceExportOptions 跨进程重建持久化与顶部活跃采集条去重。PR #799（a10fdf0）补齐记录详情全套编辑表单、共享 ReviewCards、RecordBatchControls、SettingsExtrasCards（GitHub/Play 自更新、脱敏诊断、LifecycleResumeEffect 权限刷新）、DeviceFilesSection 及 >= 600dp 宽屏双栏与横屏输入栏避让。本项仅覆盖代码、单测与仿真器闭环，物理 Android 15/16（16 KB 页大小）与 API 29–30 硬件验收、实体 D3200 及 Release Keystore 签名发行仍归口 #777。",
+          "title": "Android 三模式全功能齐平、安全交互、D3200 会话内暂停与宽屏自适应（M1/M3/M7/M8，代码与仿真器闭环）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash e3b31fa 已合并（M9）：iOS simslim-koe.json + verify-simulator.sh --slim、Android stage-golden-avd.py（APFS 克隆 + --with-audio）+ verify-emulator.sh --slim/--with-audio、模块化 9 旅程 Maestro 用例、scripts/run_mobile_e2e.py 与严格四维校验 scripts/verify_mobile_e2e.py。",
+              "ref": 800
+            },
+            {
+              "kind": "pull",
+              "note": "squash b1c2e10 已合并（M10）：双端九旅程实测暴露的窄屏与交互修复（Android 详情头部 FlowRow、iOS 窄屏采集条 ViewThatFits、Toggle.labelsHidden() 命中区、编辑弹层 .large、问答收起键盘、已归档滑动取消归档、回收站 .alert/原生工具栏 Button、verify-simulator.sh 并发启动 149 竞态修复与 docs/agents/lessons.md 更新）。",
+              "ref": 801
+            },
+            {
+              "kind": "issue",
+              "note": "模拟/仿真器 E2E 不等同于物理机验收，iOS 真机与 D3200 硬件验收仍由 #775 追踪。",
+              "ref": 775
+            },
+            {
+              "kind": "issue",
+              "note": "模拟/仿真器 E2E 不等同于物理机验收，Android 真机与 D3200 硬件验收仍由 #777 追踪。",
+              "ref": 777
+            },
+            {
+              "kind": "file",
+              "note": "iOS 模拟器 simslim 服务精简配置清单。",
+              "ref": "platforms/ios/simslim-koe.json"
+            },
+            {
+              "kind": "file",
+              "note": "支持 --slim 精简启动与并发启动 149 竞态修复的 iOS 模拟器校验脚本。",
+              "ref": "platforms/ios/verify-simulator.sh"
+            },
+            {
+              "kind": "file",
+              "note": "iOS 9 旅程模块化 Maestro E2E 入口流。",
+              "ref": "platforms/ios/Tests/maestro/e2e-design-purpose-ios.yaml"
+            },
+            {
+              "kind": "file",
+              "note": "使用 ViewThatFits 适配窄屏布局的 iOS 顶部活跃采集条。",
+              "ref": "platforms/ios/App/Sources/IOSActiveCaptureBar.swift"
+            },
+            {
+              "kind": "file",
+              "note": "Android Golden AVD APFS 克隆与 --with-audio 暂存脚本。",
+              "ref": "platforms/android/stage-golden-avd.py"
+            },
+            {
+              "kind": "file",
+              "note": "支持 --slim 与 --with-audio 的 Android 仿真器 E2E 执行与取证脚本。",
+              "ref": "platforms/android/verify-emulator.sh"
+            },
+            {
+              "kind": "file",
+              "note": "Android 9 旅程模块化 Maestro E2E 入口流。",
+              "ref": "platforms/android/tests/maestro/e2e-design-purpose-android.yaml"
+            },
+            {
+              "kind": "file",
+              "note": "改用 FlowRow 防止窄屏隐藏导出与归档按钮的 Android 记录详情页。",
+              "ref": "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/screens/RecordDetailScreen.kt"
+            },
+            {
+              "kind": "file",
+              "note": "双端统一轻量 E2E 执行入口脚本。",
+              "ref": "scripts/run_mobile_e2e.py"
+            },
+            {
+              "kind": "file",
+              "note": "严格四维移动端 E2E 产物校验器（退出码 0）。",
+              "ref": "scripts/verify_mobile_e2e.py"
+            },
+            {
+              "kind": "file",
+              "note": "沉淀双端模拟器/仿真器实测与排障经验。",
+              "ref": "docs/agents/lessons.md"
+            }
+          ],
+          "id": "mobile-lightweight-e2e-verification",
+          "next": "双端轻量验证底座与模拟/仿真器九旅程 E2E 闭环已完成；后续继续按 #775 与 #777 推进物理设备与实体 D3200 真机验收。",
+          "status": "done",
+          "summary": "PR #800（e3b31fa，M9）与 PR #801（b1c2e10，M10）已合并主线，完成双端轻量验证底座建设、9 旅程模拟/仿真器实测闭环与实测暴露的窄屏及交互修复。PR #800 落地 iOS simslim-koe.json 与 verify-simulator.sh --slim、Android stage-golden-avd.py（APFS 克隆与 --with-audio）与 verify-emulator.sh --slim/--with-audio、模块化 9 旅程 Maestro 用例、统一入口 scripts/run_mobile_e2e.py 及严格四维校验器 scripts/verify_mobile_e2e.py。PR #801 修复 Android 详情页头部 FlowRow 换行、iOS 窄屏采集条 ViewThatFits、iOS Toggle.labelsHidden() 命中区、iOS 编辑弹层 .large 高度、iOS 问答收起键盘工具栏、已归档滑动取消归档、回收站 .alert 与原生工具栏 Button、verify-simulator.sh 并发启动 149 竞态并更新 docs/agents/lessons.md。已在精简版 iPhone 17 Simulator（停用 119 项服务、重启耗时 29s 降至 2s，实录生成 1.2 MB WAV，人工目检 14 张 PNG 截图）与 avdslim Golden Snapshot koe-test-api35（3–4s 恢复、Metal -gpu host、1536 MB 低内存、实录生成 520 KB WAV，人工目检 14 张 PNG 截图）完整跑通 4 阶段 9 旅程，verify_mobile_e2e.py 四维校验退出码 0。本项仅覆盖模拟/仿真器自动化闭环，不等同于物理机或实体硬件验收；物理 iPhone/iPad、Android 与实体 D3200 验收继续由 #775 与 #777 追踪。",
+          "title": "双端轻量验证底座、九旅程模拟/仿真器 E2E 实测与交互打磨（M9–M10）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "开放真机验收单：iOS 物理 iPhone/iPad Developer 签装、Keychain 升级保留、实体 D3200 BLE、CoreBluetooth 杀进程后台唤醒、锁屏与 AirPods 媒控、Apple 本机语音与 iCloud Drive 文件验证。",
+              "ref": 775
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单：物理 Android 15/16（16 KB 页大小）与 API 29-30 签名 Release APK 安装与 GitHub 自更新、Keystore 持久化、实体 D3200 BLE 与前台通知栏控豆、真实 DocumentsUI 与外网云服务验证。",
+              "ref": 777
+            }
+          ],
+          "id": "mobile-physical-device-acceptance",
+          "next": "接入物理 iPhone/iPad、Android 15/16 与 API 29–30 设备及实体 D3200 后，按 #775 与 #777 逐项完成硬件验收并推进双端签名发行。",
+          "status": "unverified",
+          "summary": "双端功能齐平代码、单测与模拟/仿真器 9 旅程 E2E 均已通过，但物理移动设备硬件验收与双端正式签装发行尚未执行。iOS 侧（#775）待真机验证 Developer 签装与 Keychain 升级保留、真实 soundcore Work（D3200）BLE 发现/实时录停/离线取回、杀进程后 CoreBluetooth willRestoreState 后台唤醒、锁屏与控制中心/AirPods 媒控按键、物理麦克风与 Apple 本机语音识别、iCloud Drive 文件提供商以及真实外网 Qwen/DeepSeek 调用；Android 侧（#777）待真机验证 Android 15/16（16 KB 页大小）与 API 29–30 的 Release Keystore 签装与 GitHub 自更新、Android Keystore AES-256-GCM 凭据保留、实体 D3200 BLE 与前台通知栏暂停续录、物理麦克风/蓝牙路由与 AudioFocus 打断、真实 DocumentsUI 跨目录读写以及真实外网 Qwen/DeepSeek 调用。",
+          "title": "移动端物理真机硬件验收与签装发行（iOS #775 / Android #777）"
         }
       ],
       "title": "移动端原生宿主（iOS 与 Android）"
@@ -3044,9 +3360,9 @@
             }
           ],
           "id": "later-platforms",
-          "next": "先完成 iOS 与 Android 物理真机验收（#775/#777）、iOS 本机语音/ActivityKit/iPad 适配及移动端签名发行，再推进跨端直传互通、屏幕采集、Google 写回与 ACP。",
+          "next": "先完成 iOS 与 Android 物理真机验收（#775/#777）及双端签名发行，再按需评估明确延后的 iOS ActivityKit 灵动岛，并推进跨端直传互通、屏幕采集、Google 写回与 ACP。",
           "status": "planned",
-          "summary": "iOS 与 Android 的 Phase 0 至 Phase 2 跨端基础与原生界面骨架，以及双端 Phase 3A–3E 核心原生宿主适配层均已转入「移动端原生宿主（iOS 与 Android）」分组单独追踪。物理真机验收（#775/#777）、iOS Apple 本机语音识别/ActivityKit/iPad 分屏适配以及移动端签名发行仍未完成。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。",
+          "summary": "iOS 与 Android 的 Phase 0 至 Phase 2 跨端底座与原生骨架、双端 Phase 3A–3E 核心适配层、M1–M8 全功能齐平与后台/自适应能力（含 iOS Apple 本机语音识别、iPad 分栏、CoreBluetooth 后台状态恢复、锁屏媒控与 Android 宽屏双栏）以及 M9–M10 双端轻量九旅程模拟/仿真器 E2E 闭环均已转入「移动端原生宿主（iOS 与 Android）」分组追踪。移动端尚未完成项为物理真机硬件验收（#775/#777）、明确延后的 iOS ActivityKit 灵动岛以及双端签名发行。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。",
           "title": "移动端与尚未接入能力"
         }
       ],
@@ -3213,7 +3529,17 @@
       787,
       788,
       789,
-      790
+      790,
+      792,
+      793,
+      794,
+      795,
+      796,
+      797,
+      798,
+      799,
+      800,
+      801
     ]
   },
   "visibility": "PUBLIC"
