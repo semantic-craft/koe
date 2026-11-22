@@ -327,7 +327,7 @@
         "updated_at": "2026-11-21T07:09:20Z"
       }
     ],
-    "main": "4cf8b4d4fe5adeba171a632bd37b663a3b69f9c6",
+    "main": "3e2d60cce4de981f03eebb1e066cc384ce75a49a",
     "open_pulls": [],
     "pulls": [
       {
@@ -1241,9 +1241,32 @@
         "merged": true,
         "number": 804,
         "state": "closed"
+      },
+      {
+        "base": "9f4ddcbc31f0726e8a5315d9580c19b865ca3d59",
+        "head": "955ec7704ce328d4ed44c79c3093b8788ff88293",
+        "merge_commit": "9c75e92c403a27b33efbe857f768377984be75bd",
+        "merged": true,
+        "number": 806,
+        "state": "closed"
+      },
+      {
+        "base": "9c75e92c403a27b33efbe857f768377984be75bd",
+        "head": "83c9fde715171e8076d92ab0397b32e1c86853df",
+        "merge_commit": "3e2d60cce4de981f03eebb1e066cc384ce75a49a",
+        "merged": true,
+        "number": 807,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 454201837,
+        "prerelease": false,
+        "published_at": "2026-11-22T04:31:37Z",
+        "tag": "v2.7.1"
+      },
       {
         "draft": false,
         "id": 453641451,
@@ -1303,7 +1326,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-21T11:34:55.357699Z",
+  "observed_at": "2026-11-22T04:42:28.207197Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2931,10 +2954,59 @@
             }
           ],
           "id": "public-release-270",
-          "next": "在 App Store Connect 为 com.semanticcraft.koe.ios 创建 App 记录后上传 KoeiOSApp.xcarchive 至 TestFlight；将 Android Release Keystore 归档至 1Password；双端物理设备硬件验收继续保持 unverified 并按 #775 与 #777 推进。",
+          "next": "已被公开三端补丁发行版 v2.7.1（构建 17）接替；App Store Connect App ID 6837671016 与 TestFlight Internal Team（hasAccessToAllBuilds=true）已就绪并已上传 Build 16 与 Build 17；双端物理设备硬件验收继续保持 unverified 并按 #775 与 #777 推进。",
           "status": "done",
           "summary": "2026-11-21 已在公开仓库 semantic-craft/koe 发布 Koe v2.7.0（构建 16，tag 指向 4cf8b4d）。PR #803（00322b9）将 macOS、Android 与 iOS 三端同步至 2.7.0（构建 16），新增 1024x1024 不透明 iOS AppIcon 并补齐三端锁步门禁与 docs/releases/v2.7.0.md；PR #804（4cf8b4d）修复 macOS SwiftPM 静态链接 libkoe_host_api.a 并补充 otool -L 门禁与真实 Mach-O 回归测试。macOS 产物 Koe-2.7.0-macos-arm64.zip（sha256 9af9c0129cac71037fea3d56e916bd316f325d6510dd5b9301df848a65100483，8167440 bytes，CDHash c57042425cb2e8910286ba9294b69f747f122dc4）已通过 otool -L 校验、Developer ID 签名加时间戳、xw-notary 公证（提交 ad96503b-3f39-4262-a2ff-854359f0f1fc Accepted）、票据装订、Gatekeeper（Notarized Developer ID）、--verify-self 与 --smoke-test，并已升级安装至本机 /Applications/Koe.app。Android 产物 Koe-2.7.0-android-arm64.apk（sha256 3d8485f6a5c2efab23aa36968daa0bfc77e5ad9220bdee61ab0a7b744a23167c，49834913 bytes，github 渠道）已用 RSA-4096 v2 Release Keystore 签名，通过 apksigner verify 与全部 arm64-v8a .so 的 16 KB ZIP_STORED 对齐校验并随 v2.7.0 发布。iOS 2.7.0（构建 16，com.semanticcraft.koe.ios）已签名并直接安装至真机 Hermes（iPhone 17 Pro Max），同时产出 Release arm64 KoeiOSApp.xcarchive 准备上传 TestFlight。iOS TestFlight 上传待在 App Store Connect 创建 App 记录，Android Release Keystore 待归档至 1Password，双端物理设备硬件验收仍保持 unverified 并由 #775 与 #777 追踪。",
           "title": "Koe 2.7.0 公开三端发行包（macOS 公证、Android 签名 APK、iOS 真机签装与归档）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "公开 GitHub Release v2.7.1（构建 17，https://github.com/semantic-craft/koe/releases/tag/v2.7.1，tag 指向 3e2d60c）已发布，附 Koe-2.7.1-macos-arm64.zip（8167514 bytes，sha256 5be1ec59b15ddc7b1d693ad9fc288807ee6d0370bfdadf0faf70bb2aa53ed157）、Koe-2.7.1-android-arm64.apk（50471125 bytes，sha256 a5c441e8c1243efeda13971987dfe2337e39bfed80fbc2be9cb9543d139809eb）、Koe-2.7.1-release-receipt.json 与 SHA256SUMS.txt。",
+              "ref": "v2.7.1"
+            },
+            {
+              "kind": "pull",
+              "note": "以官方原图替换 Android 占位矢量启动图标，补齐 5 密度自适应前景与 Material You 单色 PNG、#FFD9BB 底色及 adaptive-icon XML，将 scripts/generate-app-icons.swift 扩展为三端统一生成入口并补充跨平台图标契约门禁，经全量 ./scripts/check、Android 单测/Release Lint 与托管 CI 通过后 squash 合并进 main（9c75e92）。",
+              "ref": 806
+            },
+            {
+              "kind": "pull",
+              "note": "同步升级 macOS、iOS 与 Android 三端版本号与构建号至 2.7.1（构建 17），刷新 Cargo.lock、xcodegen 工程与各端实时默认夹具，更新 CHANGELOG.md 并新增 docs/releases/v2.7.1.md，经全量 ./scripts/check、13/13 安装锁步测试、Android 24 套件 143 项单测与 Release Lint 及托管 CI 通过后 squash 合并进 main（3e2d60c）。",
+              "ref": 807
+            },
+            {
+              "kind": "file",
+              "note": "2.7.1（构建 17）公开补丁发行说明、三端产物与物理真机验收边界。",
+              "ref": "docs/releases/v2.7.1.md"
+            },
+            {
+              "kind": "file",
+              "note": "从官方原图统一生成 macOS、iOS 与 Android 5 密度自适应前景及 Material You 单色图标的单一脚本。",
+              "ref": "scripts/generate-app-icons.swift"
+            },
+            {
+              "kind": "file",
+              "note": "含三端 2.7.1/17 版本构建号锁步、iOS AppIcon、Android 官方自适应图标契约与 Mach-O 静态链接回归门禁（13/13）。",
+              "ref": "scripts/test_install_macos.py"
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单，追踪 iOS 物理真机硬件验收与 TestFlight Build 17 真机安装实测。",
+              "ref": 775
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单，追踪 Android 物理真机硬件验收、16 KB 页大小真机验证与 Pixel 11 Pro 覆盖安装。",
+              "ref": 777
+            }
+          ],
+          "id": "public-release-271",
+          "next": "本机 /Applications/Koe.app 已就地升级至公证版 2.7.1（构建 17）；Android 设备可通过应用内 GitHub Release 检查或 adb install -r Koe-2.7.1-android-arm64.apk 升级；iOS 可通过 TestFlight Internal Team 安装 Build 17；双端物理真机硬件验收继续保持 unverified 并按 #775 与 #777 推进。",
+          "status": "done",
+          "summary": "2026-11-22 已在公开仓库 semantic-craft/koe 发布补丁版 Koe v2.7.1（构建 17，https://github.com/semantic-craft/koe/releases/tag/v2.7.1，tag 指向 3e2d60c），附带 Koe-2.7.1-macos-arm64.zip（8167514 bytes，sha256 5be1ec59b15ddc7b1d693ad9fc288807ee6d0370bfdadf0faf70bb2aa53ed157）、Koe-2.7.1-android-arm64.apk（50471125 bytes，sha256 a5c441e8c1243efeda13971987dfe2337e39bfed80fbc2be9cb9543d139809eb）、Koe-2.7.1-release-receipt.json 与 SHA256SUMS.txt。PR #806（9c75e92）统一 Android 官方自适应与 Material You 单色启动图标、扩展 scripts/generate-app-icons.swift 为三端单一生成入口并在 scripts/test_install_macos.py 增加跨平台图标契约门禁；PR #807（3e2d60c）将三端版本与构建号锁步至 2.7.1（构建 17）并发布 docs/releases/v2.7.1.md。macOS 产物经 xw-notary 公证通过（submission_id b91ecf0b-f0d4-4784-b67a-c599b1f79a96，Accepted，CDHash 5fabe6569d1610eb2fb3c3726e91df4307de66d7，Timestamp Nov 22, 2026 at 10:15:55 AM），解压包通过 spctl --assess、xcrun stapler validate、otool -L（仅系统库）、--verify-self 与 --smoke-test，本机 /Applications/Koe.app 已就地升级至 2.7.1（17）并保留 Keychain 签名要求。Android github 渠道 APK 使用 RSA-4096 APK Signature Scheme v2 签名（cert_sha256 d5a040db0e163e5a8558e6a313e98e98bbba4746d6d0d2efd0060534d1cd86ff，apksigner verify PASS），全部 arm64-v8a .so 均为 ZIP_STORED 且 16 KB 对齐，aapt2 验证包名 com.semanticcraft.koe、versionCode=17、versionName=2.7.1 及自适应图标三层（#ffffd9bb 底色 + 5 密度前景与单色 PNG）；发布构建时 Pixel 11 Pro 未通过 USB 连接（可通过应用内 GitHub Release 检查或 adb install -r 升级）。iOS com.semanticcraft.koe.ios（App Store Connect App ID 6837671016）Build 17（2.7.1）已成功上传至 TestFlight（EXPORT SUCCEEDED，Internal Team 组 hasAccessToAllBuilds=true）。双端物理真机硬件验收仍保持 unverified 并继续追踪在 #775 与 #777。",
+          "title": "Koe 2.7.1 公开三端补丁发行包（macOS 公证、Android 官方图标签名 APK、iOS TestFlight Build 17）"
         }
       ],
       "title": "验收与交付"
@@ -3417,24 +3489,29 @@
           "evidence": [
             {
               "kind": "release",
+              "note": "v2.7.1（构建 17）已发布签名 Android APK（Koe-2.7.1-android-arm64.apk，含官方自适应图标）并将 iOS Build 17（com.semanticcraft.koe.ios，App Store Connect App ID 6837671016）上传至 TestFlight Internal Team；物理硬件验收仍待执行。",
+              "ref": "v2.7.1"
+            },
+            {
+              "kind": "release",
               "note": "v2.7.0（构建 16）已发布签名 Android APK（Koe-2.7.0-android-arm64.apk）并完成 iOS 2.7.0（16）直装真机 Hermes（iPhone 17 Pro Max）与 KoeiOSApp.xcarchive 归档；物理硬件验收仍待执行。",
               "ref": "v2.7.0"
             },
             {
               "kind": "issue",
-              "note": "开放真机验收单：iOS 物理 iPhone/iPad Developer 签装、Keychain 升级保留、实体 D3200 BLE、CoreBluetooth 杀进程后台唤醒、锁屏与 AirPods 媒控、Apple 本机语音、iCloud Drive 文件验证及 TestFlight 上传（待 App Store Connect 创建记录）。",
+              "note": "开放真机验收单：iOS 物理 iPhone/iPad TestFlight Build 17 安装、Keychain 升级保留、实体 D3200 BLE、CoreBluetooth 杀进程后台唤醒、锁屏与 AirPods 媒控、Apple 本机语音与 iCloud Drive 文件验证。",
               "ref": 775
             },
             {
               "kind": "issue",
-              "note": "开放真机验收单：物理 Android 15/16（16 KB 页大小）与 API 29-30 签名 Release APK 安装与 GitHub 自更新、Keystore 持久化、实体 D3200 BLE 与前台通知栏控豆、真实 DocumentsUI、外网云服务验证及 Release Keystore 归档至 1Password。",
+              "note": "开放真机验收单：物理 Android 15/16（16 KB 页大小）与 API 29-30 签名 Release APK（含 v2.7.1 官方自适应图标）安装与 GitHub 自更新、Keystore 持久化、实体 D3200 BLE 与前台通知栏控豆、真实 DocumentsUI 与外网云服务验证。",
               "ref": 777
             }
           ],
           "id": "mobile-physical-device-acceptance",
-          "next": "按 #775 在 App Store Connect 创建 com.semanticcraft.koe.ios App 记录后上传 TestFlight 并完成物理 iPhone/iPad 硬件验收；按 #777 将 Android Release Keystore 归档至 1Password 并完成物理 Android 15/16 与 API 29–30 硬件验收。",
+          "next": "按 #775 通过 TestFlight（App ID 6837671016，Internal Team Build 17）完成物理 iPhone/iPad 硬件验收；按 #777 在物理 Android 15/16 与 API 29–30 设备（含 Pixel 11 Pro）升级安装 Koe-2.7.1-android-arm64.apk 并完成硬件验收。",
           "status": "unverified",
-          "summary": "双端功能齐平代码、单测与模拟/仿真器 9 旅程 E2E 均已通过，v2.7.0（构建 16）已完成 Android RSA-4096 v2 签名 APK 发布（Koe-2.7.0-android-arm64.apk）与 iOS 2.7.0（16）签名直装真机 Hermes（iPhone 17 Pro Max）并产出 KoeiOSApp.xcarchive，但物理移动设备硬件验收仍未执行（保持 unverified）。iOS 侧（#775）待在 App Store Connect 创建 com.semanticcraft.koe.ios App 记录后完成 TestFlight 上传，并在真机核对 Keychain 升级保留、真实 soundcore Work（D3200）BLE 发现/实时录停/离线取回、杀进程后 CoreBluetooth willRestoreState 后台唤醒、锁屏与控制中心/AirPods 媒控按键、物理麦克风与 Apple 本机语音识别、iCloud Drive 文件提供商以及真实外网 Qwen/DeepSeek 调用；Android 侧（#777）待将 Release Keystore 归档至 1Password，并在物理 Android 15/16（16 KB 页大小）与 API 29–30 设备验证已发布签名 APK 安装与 GitHub 自更新、Android Keystore AES-256-GCM 凭据保留、实体 D3200 BLE 与前台通知栏暂停续录、物理麦克风/蓝牙路由与 AudioFocus 打断、真实 DocumentsUI 跨目录读写以及真实外网 Qwen/DeepSeek 调用。",
+          "summary": "双端功能齐平代码、单测与模拟/仿真器 9 旅程 E2E 均已通过，最新公开版 v2.7.1（构建 17）已完成 Android RSA-4096 v2 签名 APK 发布（Koe-2.7.1-android-arm64.apk，含官方自适应与 Material You 单色图标）与 iOS TestFlight 上传（App Store Connect App ID 6837671016，Build 16 与 Build 17 已推送至 Internal Team），但物理移动设备硬件验收仍未执行（保持 unverified）。iOS 侧（#775）待在物理 iPhone/iPad 验证 TestFlight Build 17 安装与 Keychain 升级保留、真实 soundcore Work（D3200）BLE 发现/实时录停/离线取回、杀进程后 CoreBluetooth willRestoreState 后台唤醒、锁屏与控制中心/AirPods 媒控按键、物理麦克风与 Apple 本机语音识别、iCloud Drive 文件提供商以及真实外网 Qwen/DeepSeek 调用；Android 侧（#777）待在物理 Android 15/16（16 KB 页大小，含构建时未 USB 连接的 Pixel 11 Pro）与 API 29–30 设备验证已发布签名 APK 安装与 GitHub 自更新、Android Keystore AES-256-GCM 凭据保留、实体 D3200 BLE 与前台通知栏暂停续录、物理麦克风/蓝牙路由与 AudioFocus 打断、真实 DocumentsUI 跨目录读写以及真实外网 Qwen/DeepSeek 调用。",
           "title": "移动端物理真机硬件验收与签装发行（iOS #775 / Android #777）"
         }
       ],
@@ -3452,9 +3529,9 @@
             }
           ],
           "id": "later-platforms",
-          "next": "先完成 iOS TestFlight 上传（待 App Store Connect 创建记录）、Android Release Keystore 1Password 归档与双端物理真机硬件验收（#775/#777），再按需评估明确延后的 iOS ActivityKit 灵动岛，并推进跨端直传互通、屏幕采集、Google 写回与 ACP。",
+          "next": "先完成双端物理真机硬件验收（#775/#777），再按需评估明确延后的 iOS ActivityKit 灵动岛，并推进跨端直传互通、屏幕采集、Google 写回与 ACP。",
           "status": "planned",
-          "summary": "iOS 与 Android 的 Phase 0 至 Phase 2 跨端底座与原生骨架、双端 Phase 3A–3E 核心适配层、M1–M8 全功能齐平与后台/自适应能力（含 iOS Apple 本机语音识别、iPad 分栏、CoreBluetooth 后台状态恢复、锁屏媒控与 Android 宽屏双栏）、M9–M10 双端轻量九旅程模拟/仿真器 E2E 闭环以及 v2.7.0（构建 16）三端发布交付（Android 签名 APK 已发布、iOS 2.7.0 已直装真机 Hermes 并产出 xcarchive）均已转入对应分组追踪。移动端尚未完成项为物理真机硬件验收（#775/#777）、iOS TestFlight 上传（待 App Store Connect 创建 App 记录）、Android Release Keystore 1Password 归档以及明确延后的 iOS ActivityKit 灵动岛。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。",
+          "summary": "iOS 与 Android 的 Phase 0 至 Phase 2 跨端底座与原生骨架、双端 Phase 3A–3E 核心适配层、M1–M8 全功能齐平与后台/自适应能力（含 iOS Apple 本机语音识别、iPad 分栏、CoreBluetooth 后台状态恢复、锁屏媒控与 Android 宽屏双栏）、M9–M10 双端轻量九旅程模拟/仿真器 E2E 闭环以及 v2.7.0/v2.7.1（构建 16/17）三端发布交付（Android 签名 APK 已发布并统一官方自适应图标、iOS TestFlight App ID 6837671016 Internal Team 已上传 Build 16 与 Build 17）均已转入对应分组追踪。移动端尚未完成项为物理真机硬件验收（#775/#777）以及明确延后的 iOS ActivityKit 灵动岛。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。",
           "title": "移动端与尚未接入能力"
         }
       ],
@@ -3633,7 +3710,9 @@
       800,
       801,
       803,
-      804
+      804,
+      806,
+      807
     ]
   },
   "visibility": "PUBLIC"
