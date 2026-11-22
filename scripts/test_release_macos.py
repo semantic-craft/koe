@@ -321,7 +321,8 @@ class ReleaseMacosScriptTest(unittest.TestCase):
         events = self._read_spy()
         install_calls = [e for e in events if e[0] == "install-macos.sh"]
         self.assertEqual(len(install_calls), 1)
-        self.assertIn("--keep-legacy", install_calls[0])
+        self.assertIn("--skip-self-check", install_calls[0])
+        self.assertNotIn("--keep-legacy", install_calls[0])
         self.assertIn("--skip-build", install_calls[0])
         staged_app = install_calls[0][1]
 

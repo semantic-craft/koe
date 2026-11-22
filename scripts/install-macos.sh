@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
-# Install with a stable Developer ID identity so upgrades can read Keychain.
 set -euo pipefail
 export MACOSX_DEPLOYMENT_TARGET=14.0
 CALLER_PWD="$(pwd -P)"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-TEAM_ID="${TEAM_ID:-LQAVR62TK2}"
 TARGET="${MACOS_INSTALL_PATH:-/Applications/Koe.app}"
 APP_NAME="Koe"
-KEEP_LEGACY=0
 SKIP_BUILD=0
+SKIP_SELF_CHECK=0
 VALIDATE_PATHS_ONLY=0
 DUMP_INFO_PLIST=0
 IDENTITY="${MACOS_SIGN_IDENTITY:-}"
 
 usage() {
-  echo 'Usage: scripts/install-macos.sh [--skip-build] [--identity NAME] [--keep-legacy] [--dump-info-plist] [--validate-paths-only]'
+  echo 'Usage: scripts/install-macos.sh [--skip-build] [--skip-self-check] [--identity NAME] [--dump-info-plist] [--validate-paths-only]'
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1 ;;
-    --keep-legacy) KEEP_LEGACY=1 ;;
+    --skip-self-check) SKIP_SELF_CHECK=1 ;;
     --validate-paths-only) VALIDATE_PATHS_ONLY=1 ;;
     --dump-info-plist) DUMP_INFO_PLIST=1 ;;
     --identity) IDENTITY="${2:?--identity requires a certificate name}"; shift ;;
@@ -72,16 +70,6 @@ write_info_plist() {
   <string>Koe 需要音频采集权限以同步录制会议与系统音频。</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>Koe 需要语音识别权限以提供端侧离线语音转写。</string>
-  <key>NSLocalNetworkUsageDescription</key>
-  <string>Koe 需要本地网络权限以连接录音豆 Wi-Fi SoftAP 快传热点与局域网 MCP 服务。</string>
-  <key>NSCalendarsUsageDescription</key>
-  <string>Koe 需要日历权限以关联顺带会议与 21 天日历待办。</string>
-  <key>NSCalendarsFullAccessUsageDescription</key>
-  <string>Koe 需要完整日历访问权限以同步会议议程与待办截止时间。</string>
-  <key>NSRemindersUsageDescription</key>
-  <string>Koe 需要提醒事项权限以双向同步随心记待办。</string>
-  <key>NSRemindersFullAccessUsageDescription</key>
-  <string>Koe 需要完整提醒事项访问权限以创建与勾选随心记待办。</string>
 </dict>
 </plist>
 PLIST
@@ -133,9 +121,8 @@ if [[ "$(uname -s)" == "Darwin" && ! -x "$LSREGISTER" ]]; then
   exit 1
 fi
 
-designated_requirement() {
-  { codesign -d -r- "$1" 2>/dev/null || true; } | sed -n 's/^designated => //p'
-}
+# shellcheck source=scripts/lib/macos-signing.sh
+source "$ROOT/scripts/lib/macos-signing.sh"
 
 ensure_target_not_running() {
   if ! python3 - "$ROOT" "$TARGET" "$APP_NAME" <<'PY'
@@ -247,11 +234,7 @@ if offenders:
 PY
 }
 
-# Do not replace files while an installed executable is running.
 ensure_target_not_running
-if [[ -x "$ROOT/scripts/retire-legacy-macos-app.sh" ]]; then
-  MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh" --check-running
-fi
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   mkdir -p "$ROOT/build"
@@ -335,8 +318,6 @@ else
   "$SIGN_SCRIPT" "$APP"
 fi
 
-# A build with a different code requirement cannot reuse an existing Keychain
-# authorization. macOS asks the user once when the item is first read.
 NEXT="$(designated_requirement "$APP")"
 if [[ -e "$TARGET" ]]; then
   PREVIOUS="$(designated_requirement "$TARGET")"
@@ -369,16 +350,20 @@ TARGET_STAGE="$(mktemp -d "$TARGET_PARENT/.${APP_NAME}.stage.XXXXXX")"
 : > "$TARGET_STAGE/.metadata_never_index"
 ditto "$APP" "$TARGET_STAGE/${APP_NAME}.app"
 "$SIGN_SCRIPT" --verify-only "$TARGET_STAGE/${APP_NAME}.app"
-"$TARGET_STAGE/${APP_NAME}.app/Contents/MacOS/$APP_NAME" --verify-self
-"$TARGET_STAGE/${APP_NAME}.app/Contents/MacOS/$APP_NAME" --smoke-test
+if [[ "$SKIP_SELF_CHECK" -eq 0 ]]; then
+  "$TARGET_STAGE/${APP_NAME}.app/Contents/MacOS/$APP_NAME" --verify-self
+  "$TARGET_STAGE/${APP_NAME}.app/Contents/MacOS/$APP_NAME" --smoke-test
+fi
 
 ensure_target_not_running
 ROLLBACK_MODE="$(atomic_swap_or_move "$TARGET_STAGE/${APP_NAME}.app" "$TARGET")"
 
 "$SIGN_SCRIPT" --verify-only "$TARGET"
 "$LSREGISTER" -f "$TARGET"
-"$TARGET/Contents/MacOS/$APP_NAME" --verify-self
-"$TARGET/Contents/MacOS/$APP_NAME" --smoke-test
+if [[ "$SKIP_SELF_CHECK" -eq 0 ]]; then
+  "$TARGET/Contents/MacOS/$APP_NAME" --verify-self
+  "$TARGET/Contents/MacOS/$APP_NAME" --smoke-test
+fi
 
 ROLLBACK_MODE=""
 if [[ "$TARGET" == "/Applications/${APP_NAME}.app" || "$TARGET" == "$HOME/Applications/${APP_NAME}.app" ]]; then
@@ -386,10 +371,6 @@ if [[ "$TARGET" == "/Applications/${APP_NAME}.app" || "$TARGET" == "$HOME/Applic
   if [[ -n "$DARWIN_CACHE" && -d "$DARWIN_CACHE" ]]; then
     rm -f "${DARWIN_CACHE%/}"/com.apple.dock.iconcache* || true
   fi
-fi
-if [[ "$TARGET" == "/Applications/Koe.app" && -d "/Applications/KoeSwiftUI.app" ]]; then
-  "$LSREGISTER" -u "/Applications/KoeSwiftUI.app" >/dev/null 2>&1 || true
-  rm -rf "/Applications/KoeSwiftUI.app"
 fi
 if [[ -d "$TARGET_STAGE/${APP_NAME}.app" ]]; then
   "$LSREGISTER" -u "$TARGET_STAGE/${APP_NAME}.app" >/dev/null 2>&1 || true
@@ -400,9 +381,4 @@ if [[ "$SOURCE" != "$STAGING"/* ]]; then
   python3 "$ROOT/scripts/cleanup_app_registrations.py" "$SOURCE"
 fi
 
-if [[ "$KEEP_LEGACY" -eq 1 ]]; then
-  echo 'NOTE: --keep-legacy left the old Soundcore Manager.app in place; it shares the Bundle ID and may still be launched.'
-elif [[ -x "$ROOT/scripts/retire-legacy-macos-app.sh" ]]; then
-  MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh"
-fi
 echo 'Installed signed macOS Release; existing app data retained.'

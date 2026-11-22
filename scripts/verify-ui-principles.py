@@ -48,101 +48,33 @@ ANDROID_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE = {
 }
 
 
-def strip_kotlin_comments_and_strings(text: str) -> str:
+def mask_source(
+    text: str,
+    *,
+    strip_strings: bool = False,
+    language: str = "swift",
+) -> str:
     out: list[str] = []
     idx = 0
     n = len(text)
-    in_string = False
-    in_raw_string = False
-    escaped = False
-    block_depth = 0
     in_line_comment = False
+    block_depth = 0
+    in_string = False
+    in_multiline = False
+    in_char = False
+    raw_hashes = 0
+    escaped = False
+
+    def masked(ch: str) -> str:
+        return ("\n" if ch == "\n" else " ") if strip_strings else ch
 
     while idx < n:
         ch = text[idx]
         if in_line_comment:
-            if ch == "\n":
-                in_line_comment = False
-                out.append("\n")
-            else:
-                out.append(" ")
-            idx += 1
-            continue
-        if block_depth > 0:
-            if text.startswith("/*", idx):
-                block_depth += 1
-                out.append("  ")
-                idx += 2
-            elif text.startswith("*/", idx):
-                block_depth -= 1
-                out.append("  ")
-                idx += 2
-            else:
-                out.append("\n" if ch == "\n" else " ")
-                idx += 1
-            continue
-        if in_raw_string:
-            if text.startswith('"""', idx):
-                in_raw_string = False
-                out.append("   ")
-                idx += 3
-            else:
-                out.append("\n" if ch == "\n" else " ")
-                idx += 1
-            continue
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
+            in_line_comment = ch != "\n"
             out.append("\n" if ch == "\n" else " ")
             idx += 1
-            continue
-        if text.startswith("//", idx):
-            in_line_comment = True
-            out.append("  ")
-            idx += 2
-        elif text.startswith("/*", idx):
-            block_depth = 1
-            out.append("  ")
-            idx += 2
-        elif text.startswith('"""', idx):
-            in_raw_string = True
-            out.append("   ")
-            idx += 3
-        elif ch == '"':
-            in_string = True
-            out.append(" ")
-            idx += 1
-        else:
-            out.append(ch)
-            idx += 1
-    return "".join(out)
-
-
-def strip_swift_comments_and_strings(text: str) -> str:
-    out: list[str] = []
-    idx = 0
-    n = len(text)
-    in_string = False
-    in_multiline_string = False
-    escaped = False
-    block_depth = 0
-    in_line_comment = False
-
-    while idx < n:
-        ch = text[idx]
-        if in_line_comment:
-            if ch == "\n":
-                in_line_comment = False
-                out.append("\n")
-            else:
-                out.append(" ")
-            idx += 1
-            continue
-        if block_depth > 0:
+        elif block_depth > 0:
             if text.startswith("/*", idx):
                 block_depth += 1
                 out.append("  ")
@@ -154,254 +86,156 @@ def strip_swift_comments_and_strings(text: str) -> str:
             else:
                 out.append("\n" if ch == "\n" else " ")
                 idx += 1
-            continue
-        if in_multiline_string:
-            if escaped:
-                escaped = False
-                out.append("\n" if ch == "\n" else " ")
-                idx += 1
-            elif ch == "\\":
-                escaped = True
-                out.append(" ")
-                idx += 1
-            elif text.startswith('"""', idx):
-                in_multiline_string = False
-                out.append("   ")
-                idx += 3
-            else:
-                out.append("\n" if ch == "\n" else " ")
-                idx += 1
-            continue
-        if in_string:
+        elif in_char:
             if escaped:
                 escaped = False
             elif ch == "\\":
                 escaped = True
-            elif ch == '"':
-                in_string = False
-            out.append("\n" if ch == "\n" else " ")
+            elif ch in ("'", "\n"):
+                in_char = False
+            out.append(masked(ch))
             idx += 1
-            continue
-        if text.startswith("//", idx):
-            in_line_comment = True
-            out.append("  ")
-            idx += 2
-        elif text.startswith("/*", idx):
-            block_depth = 1
-            out.append("  ")
-            idx += 2
-        elif text.startswith('"""', idx):
-            in_multiline_string = True
-            out.append("   ")
-            idx += 3
-        elif ch == '"':
-            in_string = True
-            out.append(" ")
-            idx += 1
-        else:
-            out.append(ch)
-            idx += 1
-    return "".join(out)
-
-
-def strip_swift_comments(text: str) -> str:
-    out: list[str] = []
-    idx = 0
-    n = len(text)
-    in_string = False
-    escaped = False
-    block_depth = 0
-    in_line_comment = False
-
-    while idx < n:
-        ch = text[idx]
-        if in_line_comment:
-            if ch == "\n":
-                in_line_comment = False
-                out.append("\n")
-            else:
-                out.append(" ")
-            idx += 1
-            continue
-        if block_depth > 0:
-            if text.startswith("/*", idx):
-                block_depth += 1
-                out.append("  ")
-                idx += 2
-            elif text.startswith("*/", idx):
-                block_depth -= 1
-                out.append("  ")
-                idx += 2
-            else:
-                out.append("\n" if ch == "\n" else " ")
-                idx += 1
-            continue
-        if in_string:
-            out.append(ch)
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            idx += 1
-            continue
-        if text.startswith("//", idx):
-            in_line_comment = True
-            out.append("  ")
-            idx += 2
-        elif text.startswith("/*", idx):
-            block_depth = 1
-            out.append("  ")
-            idx += 2
-        elif ch == '"':
-            in_string = True
-            out.append(ch)
-            idx += 1
-        else:
-            out.append(ch)
-            idx += 1
-    return "".join(out)
-
-
-def extract_blocks_by_pattern(text: str, pattern: str) -> list[str]:
-    blocks: list[str] = []
-    n = len(text)
-    for match in re.finditer(pattern, text):
-        start = match.end() - 1
-        depth = 0
-        in_string = False
-        escaped = False
-        in_line_comment = False
-        block_depth = 0
-        idx = start
-        while idx < n:
-            ch = text[idx]
-            if in_line_comment:
-                if ch == "\n":
-                    in_line_comment = False
-                idx += 1
-                continue
-            if block_depth > 0:
-                if text.startswith("/*", idx):
-                    block_depth += 1
-                    idx += 2
-                elif text.startswith("*/", idx):
-                    block_depth -= 1
-                    idx += 2
+        elif in_multiline:
+            if language == "kotlin":
+                if text.startswith('"""', idx):
+                    run_len = 0
+                    while idx + run_len < n and text[idx + run_len] == '"':
+                        run_len += 1
+                    in_multiline = False
+                    out.append(" " * run_len if strip_strings else '"' * run_len)
+                    idx += run_len
                 else:
+                    out.append(masked(ch))
                     idx += 1
-                continue
-            if in_string:
+            else:
+                esc_seq = "\\" + "#" * raw_hashes
+                close_seq = '"""' + "#" * raw_hashes
                 if escaped:
                     escaped = False
-                elif ch == "\\":
+                    out.append(masked(ch))
+                    idx += 1
+                elif text.startswith(esc_seq, idx):
                     escaped = True
-                elif ch == '"':
-                    in_string = False
+                    out.append(" " * len(esc_seq) if strip_strings else esc_seq)
+                    idx += len(esc_seq)
+                elif text.startswith(close_seq, idx):
+                    in_multiline = False
+                    raw_hashes = 0
+                    out.append(" " * len(close_seq) if strip_strings else close_seq)
+                    idx += len(close_seq)
+                else:
+                    out.append(masked(ch))
+                    idx += 1
+        elif in_string:
+            esc_seq = "\\" + "#" * raw_hashes
+            close_seq = '"' + "#" * raw_hashes
+            if escaped:
+                escaped = False
+                out.append(masked(ch))
                 idx += 1
-                continue
-            if text.startswith("//", idx):
-                in_line_comment = True
-                idx += 2
-            elif text.startswith("/*", idx):
-                block_depth = 1
-                idx += 2
-            elif ch == '"':
-                in_string = True
-                idx += 1
-            elif ch == "{":
-                depth += 1
-                idx += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    blocks.append(text[start : idx + 1])
-                    break
-                idx += 1
+            elif text.startswith(esc_seq, idx):
+                escaped = True
+                out.append(" " * len(esc_seq) if strip_strings else esc_seq)
+                idx += len(esc_seq)
+            elif text.startswith(close_seq, idx):
+                in_string = False
+                raw_hashes = 0
+                out.append(" " * len(close_seq) if strip_strings else close_seq)
+                idx += len(close_seq)
             else:
+                out.append(masked(ch))
                 idx += 1
+        elif text.startswith("//", idx):
+            in_line_comment = True
+            out.append("  ")
+            idx += 2
+        elif text.startswith("/*", idx):
+            block_depth = 1
+            out.append("  ")
+            idx += 2
+        elif language == "swift" and ch == "#":
+            k = 0
+            while idx + k < n and text[idx + k] == "#":
+                k += 1
+            if text.startswith('"""', idx + k):
+                in_multiline = True
+                raw_hashes = k
+                open_seq = text[idx : idx + k + 3]
+                out.append(" " * len(open_seq) if strip_strings else open_seq)
+                idx += len(open_seq)
+            elif idx + k < n and text[idx + k] == '"':
+                in_string = True
+                raw_hashes = k
+                open_seq = text[idx : idx + k + 1]
+                out.append(" " * len(open_seq) if strip_strings else open_seq)
+                idx += len(open_seq)
+            else:
+                out.append("#")
+                idx += 1
+        elif text.startswith('"""', idx):
+            in_multiline = True
+            raw_hashes = 0
+            out.append("   " if strip_strings else '"""')
+            idx += 3
+        elif ch == '"':
+            in_string = True
+            raw_hashes = 0
+            out.append(" " if strip_strings else ch)
+            idx += 1
+        elif language == "kotlin" and ch == "'":
+            in_char = True
+            out.append(" " if strip_strings else ch)
+            idx += 1
+        else:
+            out.append(ch)
+            idx += 1
+    return "".join(out)
+
+
+def find_balanced_end(code_only: str, start: int, open_ch: str, close_ch: str) -> int | None:
+    depth = 0
+    for idx in range(start, len(code_only)):
+        ch = code_only[idx]
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return idx + 1
+    return None
+
+
+def extract_blocks(source: str, code_only: str, pattern: str) -> list[str]:
+    blocks: list[str] = []
+    for match in re.finditer(pattern, code_only):
+        start = match.end() - 1
+        end = find_balanced_end(code_only, start, "{", "}")
+        if end is not None:
+            blocks.append(source[start:end])
     return blocks
 
 
-def extract_swiftui_type_blocks(text: str) -> list[str]:
-    return extract_blocks_by_pattern(text, r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{")
-
-
-def extract_app_delegate_blocks(text: str) -> list[str]:
-    return extract_blocks_by_pattern(
-        text,
-        r"\b(?:(?:class|extension)\s+KoeAppDelegate|(?:enum|extension)\s+KoeWindowPresenter)\b[^{]*\{",
-    )
-
-
-def has_unfiltered_windows_first(comment_stripped: str) -> bool:
-    n = len(comment_stripped)
-    for match in re.finditer(r"\bNSApp\??\.windows\.first\b", comment_stripped):
+def has_unfiltered_windows_first(code_only: str) -> bool:
+    n = len(code_only)
+    for match in re.finditer(r"\bNSApp\??\.windows\.first\b", code_only):
         idx = match.end()
-        while idx < n and comment_stripped[idx].isspace():
+        while idx < n and code_only[idx].isspace():
             idx += 1
-        if idx >= n or comment_stripped[idx] not in "({":
+        if idx >= n or code_only[idx] not in "({":
             return True
-        open_ch = comment_stripped[idx]
-        close_ch = ")" if open_ch == "(" else "}"
-        depth = 0
-        in_string = False
-        escaped = False
-        start = idx
-        end = None
-        while idx < n:
-            ch = comment_stripped[idx]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    in_string = False
-            elif ch == '"':
-                in_string = True
-            elif ch == open_ch:
-                depth += 1
-            elif ch == close_ch:
-                depth -= 1
-                if depth == 0:
-                    end = idx + 1
-                    break
-            idx += 1
-        if end is None or "isWorkspaceWindow" not in comment_stripped[start:end]:
+        open_ch = code_only[idx]
+        end = find_balanced_end(code_only, idx, open_ch, ")" if open_ch == "(" else "}")
+        if end is None or "isWorkspaceWindow" not in code_only[idx:end]:
             return True
     return False
 
 
-def find_foreach_offset_churn(comment_stripped: str) -> bool:
-    n = len(comment_stripped)
-    for match in re.finditer(r"\bForEach\s*\(", comment_stripped):
-        open_idx = match.end() - 1
-        depth = 0
-        in_string = False
-        escaped = False
-        idx = open_idx
-        while idx < n:
-            ch = comment_stripped[idx]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    in_string = False
-            elif ch == '"':
-                in_string = True
-            elif ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-                if depth == 0:
-                    if re.search(r",\s*id:\s*\\\.offset\b", comment_stripped[open_idx : idx + 1]):
-                        return True
-                    break
-            idx += 1
+def find_foreach_offset_churn(code_only: str) -> bool:
+    for match in re.finditer(r"\bForEach\s*\(", code_only):
+        start = match.end() - 1
+        end = find_balanced_end(code_only, start, "(", ")")
+        if end is not None and re.search(r",\s*id:\s*\\\.offset\b", code_only[start:end]):
+            return True
     return False
 
 
@@ -436,51 +270,77 @@ def hue_sat_val(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
     return h * 360.0, s, v
 
 
-def check_palette(theme_text: str) -> dict[str, Any]:
-    violations: list[str] = []
-    tokens: dict[str, str] = {}
-    for m in re.finditer(
-        r"public\s+static\s+let\s+(\w+)\s*=\s*Color\(hex:\s*(0x[0-9A-Fa-f]{6})\)",
-        theme_text,
-    ):
-        tokens[m.group(1)] = m.group(2)
+NEUTRAL_PALETTE_KEYS = (
+    "surface0",
+    "bgPanel",
+    "surface1",
+    "bgSubtle",
+    "border",
+    "textPrimary",
+    "textSecondary",
+    "textMuted",
+)
 
+APPROVED_LIGHT_SURFACES = (
+    ("surface0", "0XFFFFFF"),
+    ("bgPanel", "0XF7F7F8"),
+    ("surface1", "0XFFFFFF"),
+)
+
+
+def _rgb_hex(hex_str: str) -> str:
+    r, g, b = parse_hex_color(hex_str)
+    return f"0X{r:02X}{g:02X}{b:02X}"
+
+
+def _check_palette_tokens(
+    tokens: dict[str, str],
+    *,
+    label: str = "",
+    expected_accent: str | None = None,
+    expected_surfaces: tuple[tuple[str, str], ...] = (),
+) -> tuple[dict[str, Any], list[str]]:
+    violations: list[str] = []
+    suffix = f" ({label})" if label else ""
     accent_hex = tokens.get("accent")
     accent_info: dict[str, Any] = {}
     if not accent_hex:
-        violations.append("missing AppColors.accent token")
+        violations.append(f"missing {label or 'AppColors'}.accent token")
     else:
         rgb = parse_hex_color(accent_hex)
         hue, sat, val = hue_sat_val(rgb)
         foreground_hex = tokens.get("onAccent")
-        if accent_hex.upper() != "0X242426":
-            violations.append("Palette violation: accent must use approved charcoal 0x242426")
+        if expected_accent is not None and _rgb_hex(accent_hex) != expected_accent:
+            violations.append(f"Palette violation: accent{suffix} must use approved charcoal {expected_accent}")
         if foreground_hex is None:
-            violations.append("Palette violation: missing onAccent foreground")
+            violations.append(f"Palette violation: missing onAccent foreground{suffix}")
         else:
             foreground_contrast = round(contrast_ratio(rgb, parse_hex_color(foreground_hex)), 2)
             accent_info = {
-                "hex": accent_hex, "hue_deg": round(hue, 1),
-                "saturation": round(sat, 3), "value": round(val, 3),
+                "hex": accent_hex,
+                "hue_deg": round(hue, 1),
+                "saturation": round(sat, 3),
+                "value": round(val, 3),
                 "foreground_contrast": foreground_contrast,
             }
             if foreground_contrast < 4.5:
-                violations.append(f"Contrast violation: onAccent contrast is {foreground_contrast}:1 (< 4.5:1)")
+                violations.append(
+                    f"Contrast violation: onAccent{suffix} contrast is {foreground_contrast}:1 (< 4.5:1)"
+                )
 
-    for key, approved in (("surface0", "0XFFFFFF"), ("bgPanel", "0XF7F7F8"), ("surface1", "0XFFFFFF")):
-        if tokens.get(key, "").upper() != approved:
-            violations.append(f"Palette violation: {key} must use approved light surface {approved}")
+    for key, approved in expected_surfaces:
+        value = tokens.get(key)
+        if value is None or _rgb_hex(value) != approved:
+            violations.append(f"Palette violation: {key}{suffix} must use approved light surface {approved}")
 
-    neutral_keys = ["surface0", "bgPanel", "surface1", "bgSubtle",
-                    "border", "textPrimary", "textSecondary", "textMuted"]
-    for key in neutral_keys:
+    for key in NEUTRAL_PALETTE_KEYS:
         value = tokens.get(key)
         if value is None:
-            violations.append(f"Palette violation: missing neutral token {key}")
+            violations.append(f"Palette violation: missing neutral token {key}{suffix}")
             continue
         channels = parse_hex_color(value)
         if max(channels) - min(channels) > 20:
-            violations.append(f"Palette violation: {key} is not a neutral surface or text color")
+            violations.append(f"Palette violation: {key}{suffix} is not a neutral surface or text color")
 
     for surf_key in ("surface0", "surface1", "bgPanel"):
         if surf_key not in tokens:
@@ -488,21 +348,141 @@ def check_palette(theme_text: str) -> dict[str, Any]:
         for text_key in ("textPrimary", "textSecondary", "textMuted"):
             if text_key not in tokens:
                 continue
-            ratio = round(contrast_ratio(parse_hex_color(tokens[surf_key]), parse_hex_color(tokens[text_key])), 2)
+            ratio = round(
+                contrast_ratio(parse_hex_color(tokens[surf_key]), parse_hex_color(tokens[text_key])),
+                2,
+            )
             if ratio < 4.5:
-                violations.append(f"Contrast violation: {text_key} on {surf_key} contrast is {ratio}:1 (< 4.5:1)")
+                violations.append(
+                    f"Contrast violation: {text_key} on {surf_key}{suffix} contrast is {ratio}:1 (< 4.5:1)"
+                )
 
-    if "public enum AppFontSizes" not in theme_text:
+    return accent_info, violations
+
+
+def check_theme_file(theme_text: str) -> dict[str, Any]:
+    code_only = mask_source(theme_text, strip_strings=True, language="swift")
+    tokens = {
+        m.group(1): m.group(2)
+        for m in re.finditer(
+            r"public\s+static\s+let\s+(\w+)\s*=\s*Color\(hex:\s*(0x[0-9A-Fa-f]{6})\)",
+            code_only,
+        )
+    }
+    accent_info, violations = _check_palette_tokens(
+        tokens,
+        expected_accent="0X242426",
+        expected_surfaces=APPROVED_LIGHT_SURFACES,
+    )
+    if "public enum AppFontSizes" not in code_only:
         violations.append("Principle 7 violation: missing AppFontSizes 4-size scale in theme file")
+    return {"accent": accent_info, "violations": violations}
+
+
+def _extract_kotlin_palette_tokens(
+    code_only: str, palette_name: str, label: str
+) -> tuple[dict[str, str] | None, list[str]]:
+    match = re.search(
+        rf"\b{re.escape(palette_name)}\s*(?::\s*[\w.]+\s*)?=\s*KoePalette\s*\(",
+        code_only,
+    )
+    if match is None:
+        return None, []
+    start = match.end() - 1
+    end = find_balanced_end(code_only, start, "(", ")")
+    if end is None:
+        return None, []
+    block = code_only[start:end]
+    tokens: dict[str, str] = {}
+    violations: list[str] = []
+    for m in re.finditer(r"(\w+)\s*=\s*Color\(\s*(0[xX][0-9A-Fa-f]+[lL]?)\s*\)", block):
+        name, raw_hex = m.group(1), m.group(2)
+        if not re.fullmatch(r"0[xX][fF]{2}[0-9A-Fa-f]{6}[lL]?", raw_hex):
+            violations.append(
+                f"Palette violation: {name} ({label}) must use opaque 8-digit ARGB 0xFFRRGGBB (got {raw_hex})"
+            )
+            continue
+        tokens[name] = raw_hex.rstrip("lL")
+    return tokens, violations
+
+
+def check_android_theme_file(theme_text: str) -> dict[str, Any]:
+    code_only = mask_source(theme_text, strip_strings=True, language="kotlin")
+    violations: list[str] = []
+    light_accent: dict[str, Any] = {}
+
+    light_tokens, light_parse_violations = _extract_kotlin_palette_tokens(
+        code_only, "LightKoePalette", "Android LightKoePalette"
+    )
+    violations.extend(light_parse_violations)
+    if light_tokens is None:
+        violations.append("Palette violation: missing LightKoePalette in Android KoeTheme.kt")
+    else:
+        light_accent, light_violations = _check_palette_tokens(
+            light_tokens,
+            label="Android LightKoePalette",
+            expected_accent="0X242426",
+            expected_surfaces=APPROVED_LIGHT_SURFACES,
+        )
+        violations.extend(light_violations)
+
+    dark_tokens, dark_parse_violations = _extract_kotlin_palette_tokens(
+        code_only, "DarkKoePalette", "Android DarkKoePalette"
+    )
+    violations.extend(dark_parse_violations)
+    if dark_tokens is None:
+        violations.append("Palette violation: missing DarkKoePalette in Android KoeTheme.kt")
+    else:
+        _, dark_violations = _check_palette_tokens(dark_tokens, label="Android DarkKoePalette")
+        violations.extend(dark_violations)
+
+    font_match = re.search(r"\bobject\s+KoeFontSizes\s*\{", code_only)
+    if font_match is None:
+        violations.append("Principle 7 violation: missing KoeFontSizes 4-size scale in Android theme file")
+    else:
+        end = find_balanced_end(code_only, font_match.end() - 1, "{", "}")
+        block = code_only[font_match.end() - 1 : end] if end is not None else ""
+        kt_sizes = {float(m.group(1)) for m in re.finditer(r"=\s*([0-9.]+)\.sp\b", block)}
+        if kt_sizes != ALLOWED_FONT_SIZES:
+            violations.append(
+                f"Principle 7 violation: KoeFontSizes defines {sorted(kt_sizes)} (expected {sorted(ALLOWED_FONT_SIZES)})"
+            )
 
     return {
-        "accent": accent_info,
+        "accent": light_accent,
         "violations": violations,
     }
 
 
-def check_theme_file(theme_text: str) -> dict[str, Any]:
-    return check_palette(theme_text)
+def _check_scoped_observation(
+    path_str: str,
+    source: str,
+    *,
+    slice_kind: str,
+    allowed_prop: str | None = None,
+    check_snapshot: bool = True,
+    check_high_frequency: bool = True,
+) -> list[str]:
+    violations: list[str] = []
+    if check_snapshot and re.search(r"\bstore\??\.snapshot\b", source):
+        violations.append(
+            f"Observation violation: {path_str} reads store.snapshot directly; use a scoped {slice_kind} slice instead"
+        )
+    if check_high_frequency:
+        hf_props = sorted(
+            set(
+                re.findall(
+                    r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
+                    source,
+                )
+            )
+        )
+        disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
+        if disallowed:
+            violations.append(
+                f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
+            )
+    return violations
 
 
 def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[str, Any]:
@@ -517,11 +497,17 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
             f"Architecture violation: {path_str} has {line_count} lines (max is 500 lines)"
         )
 
+    language = "kotlin" if path_str.endswith(".kt") else ("swift" if path_str.endswith(".swift") else "rust")
+    comment_stripped = mask_source(text, strip_strings=False, language=language)
+    code_only = mask_source(text, strip_strings=True, language=language)
+
     raw_sizes = [
-        float(m.group(1)) for m in re.finditer(r"\.font\(\.system\(size:\s*([0-9.]+)", text)
+        float(m.group(1))
+        for m in re.finditer(r"\.font\(\.system\(size:\s*([0-9.]+)", comment_stripped)
     ]
     swift_size_exprs = [
-        m.group(1).strip() for m in re.finditer(r"\.font\(\.system\(size:\s*([^,\n)]+)", text)
+        m.group(1).strip()
+        for m in re.finditer(r"\.font\(\.system\(size:\s*([^,\n)]+)", comment_stripped)
     ]
     token_sizes = [
         TOKEN_FONT_SIZES[t.lower()]
@@ -545,7 +531,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         m.group(1)
         for m in re.finditer(
             r"\.font\(\.system\(size:\s*AppFontSizes(?:\.|::)([a-zA-Z0-9_]+)",
-            text,
+            comment_stripped,
         )
         if m.group(1).lower() not in TOKEN_FONT_SIZES
     ]
@@ -567,40 +553,46 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 f"Principle 7 violation: {path_str} uses off-scale font sizes {off_scale} (allowed: {sorted(ALLOWED_FONT_SIZES)})"
             )
 
-    middle_dots = text.count("·")
+    middle_dots = comment_stripped.count("·")
     if middle_dots > 0:
         violations.append(
             f"Principle 8 violation: {path_str} contains {middle_dots} middle dot '·' connector(s)"
         )
 
-    italics = len(re.findall(r"\.italic\(\)", text))
+    italics = len(re.findall(r"\.italic\(\)", comment_stripped))
     if italics > 0:
         violations.append(
             f"Principle 8 violation: {path_str} contains {italics} .italic() usage(s)"
         )
 
     uppercases = len(
-        re.findall(r"\.(?:uppercased|uppercase|to_uppercase|to_ascii_uppercase)\(", text)
+        re.findall(
+            r"\.(?:uppercased|uppercase|to_uppercase|to_ascii_uppercase)\(",
+            comment_stripped,
+        )
     )
     if uppercases > 0:
         violations.append(
             f"Principle 8 violation: {path_str} contains {uppercases} .uppercased()/.uppercase() call(s)"
         )
 
-    pushy_verbs = re.findall(r"立即(?:购买|体验|开启|升级|绑定|转写|同步|隐藏|执行|前往)", text)
+    pushy_verbs = re.findall(
+        r"立即(?:购买|体验|开启|升级|绑定|转写|同步|隐藏|执行|前往)",
+        comment_stripped,
+    )
     if pushy_verbs:
         violations.append(
             f"Principle 8 violation: {path_str} contains pushy marketing verb(s): {pushy_verbs}"
         )
 
-    if "移到回收站？" in text:
+    if "移到回收站？" in comment_stripped:
         violations.append(
             f"Principle 5 violation: {path_str} prompts confirmation dialog '移到回收站？' for a reversible 30-day trash operation"
         )
 
     legacy_palette_hits = re.findall(
         r"0x[fF]{2}(?:b66c50|f0d9cc|a4472b|f6ebe6)\b",
-        text,
+        comment_stripped,
         re.IGNORECASE,
     )
     if legacy_palette_hits:
@@ -609,9 +601,12 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         )
 
     if path_str.endswith(".swift"):
-        plain_count = text.count(".buttonStyle(.plain)")
+        plain_count = comment_stripped.count(".buttonStyle(.plain)")
         inner_shape_before_plain = len(
-            re.findall(r"\.contentShape\(Rectangle\(\)\)\s*\}\s*\.buttonStyle\(\.plain\)", text)
+            re.findall(
+                r"\.contentShape\(Rectangle\(\)\)\s*\}\s*\.buttonStyle\(\.plain\)",
+                comment_stripped,
+            )
         )
         if plain_count > 0 and inner_shape_before_plain < plain_count:
             violations.append(
@@ -619,40 +614,41 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 f"but only {inner_shape_before_plain} wrap .contentShape(Rectangle()) inside the label closure before .buttonStyle(.plain)"
             )
 
-        textfield_count = len(re.findall(r"\bTextField\s*\(", text))
-        onsubmit_count = len(re.findall(r"\.onSubmit\b", text))
+        textfield_count = len(re.findall(r"\bTextField\s*\(", comment_stripped))
+        onsubmit_count = len(re.findall(r"\.onSubmit\b", comment_stripped))
         if textfield_count > onsubmit_count:
             violations.append(
                 f"UX violation: {path_str} has {textfield_count} TextField(s) but only {onsubmit_count} .onSubmit handler(s)"
             )
 
-        if path_str.endswith("AskView.swift") and "ask.messages" not in text:
+        if path_str.endswith("AskView.swift") and "ask.messages" not in comment_stripped:
             violations.append(
                 f"UX violation: {path_str} must render ask.messages so submitted prompts display sourced answers"
             )
 
-        comment_stripped = strip_swift_comments(text)
         if (
             Path(path_str.replace("\\", "/")).name in ("KoeMacApp.swift", "KoeWindowPresenter.swift")
-            and has_unfiltered_windows_first(comment_stripped)
+            and has_unfiltered_windows_first(code_only)
         ):
             violations.append(
                 f"UX violation: {path_str} must filter workspace windows via isWorkspaceWindow instead of falling back to NSApp?.windows.first (which matches NSStatusBarWindow)"
             )
 
-        if path_str.endswith("PlayerBarView.swift") and re.search(r"durationMs\s*\+\s*1000", text):
+        if path_str.endswith("PlayerBarView.swift") and re.search(
+            r"durationMs\s*\+\s*1000", comment_stripped
+        ):
             violations.append(
                 f"UX violation: {path_str} must mark playheadMs instead of inflating durationMs + 1000 on add_slice_mark"
             )
 
-        if find_foreach_offset_churn(comment_stripped):
+        if find_foreach_offset_churn(code_only):
             violations.append(
                 f"Observation violation: {path_str} uses ForEach(..., id: \\.offset); use stable item identity instead"
             )
 
         norm_path = "/" + path_str.replace("\\", "/").lstrip("/")
+        filename = Path(norm_path).name
         if "/platforms/apple-shared/Sources/KoeAppleCore/" in norm_path:
-            code_only = strip_swift_comments_and_strings(text)
             forbidden_imports = sorted(
                 set(
                     re.findall(
@@ -665,96 +661,67 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 violations.append(
                     f"Architecture violation: {path_str} imports forbidden UI framework(s) {forbidden_imports} inside platform-neutral KoeAppleCore"
                 )
-            filename = Path(norm_path).name
             if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
-                if re.search(r"\bstore\??\.snapshot\b", comment_stripped):
-                    violations.append(
-                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
-                    )
-                hf_props = sorted(
-                    set(
-                        re.findall(
-                            r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
-                            comment_stripped,
-                        )
-                    )
+                violations.extend(
+                    _check_scoped_observation(path_str, comment_stripped, slice_kind="@Observable")
                 )
-                if hf_props:
-                    disallowed = [f"store.{p}" for p in hf_props]
-                    violations.append(
-                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
-                    )
         elif "/platforms/apple-shared/Sources/KoeAppleShared/" in norm_path:
-            filename = Path(norm_path).name
             if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
-                if re.search(r"\bstore\.snapshot\b", comment_stripped):
-                    violations.append(
-                        f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
-                    )
-                allowed_prop = HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename)
-                hf_props = sorted(
-                    set(
-                        re.findall(
-                            r"\bstore\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
-                            comment_stripped,
-                        )
+                violations.extend(
+                    _check_scoped_observation(
+                        path_str,
+                        comment_stripped,
+                        slice_kind="@Observable",
+                        allowed_prop=HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename),
                     )
                 )
-                disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
-                if disallowed:
-                    violations.append(
-                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
-                    )
         elif "/platforms/macos/Sources/Koe/" in norm_path:
-            swiftui_blocks = "\n".join(extract_swiftui_type_blocks(comment_stripped))
+            swiftui_blocks = "\n".join(
+                extract_blocks(comment_stripped, code_only, r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{")
+            )
             snapshot_guarded_blocks = swiftui_blocks
-            if Path(norm_path).name in ("KoeMacApp.swift", "KoeWindowPresenter.swift"):
-                delegate_blocks = "\n".join(extract_app_delegate_blocks(comment_stripped))
-                snapshot_guarded_blocks = "\n".join(
-                    b for b in (swiftui_blocks, delegate_blocks) if b
+            if filename in ("KoeMacApp.swift", "KoeWindowPresenter.swift"):
+                delegate_blocks = "\n".join(
+                    extract_blocks(
+                        comment_stripped,
+                        code_only,
+                        r"\b(?:(?:class|extension)\s+KoeAppDelegate|(?:enum|extension)\s+KoeWindowPresenter)\b[^{]*\{",
+                    )
                 )
-            if snapshot_guarded_blocks and re.search(r"\bstore\??\.snapshot\b", snapshot_guarded_blocks):
-                violations.append(
-                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
+                snapshot_guarded_blocks = "\n".join(b for b in (swiftui_blocks, delegate_blocks) if b)
+            if snapshot_guarded_blocks:
+                violations.extend(
+                    _check_scoped_observation(
+                        path_str,
+                        snapshot_guarded_blocks,
+                        slice_kind="@Observable",
+                        check_high_frequency=False,
+                    )
                 )
             if swiftui_blocks:
-                hf_hits = sorted(
-                    set(
-                        re.findall(
-                            r"\bstore\.(?:playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
-                            swiftui_blocks,
-                        )
+                violations.extend(
+                    _check_scoped_observation(
+                        path_str,
+                        swiftui_blocks,
+                        slice_kind="@Observable",
+                        check_snapshot=False,
                     )
                 )
-                if hf_hits:
-                    violations.append(
-                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {hf_hits} outside designated leaf views"
-                    )
         elif "/platforms/ios/App/Sources/" in norm_path:
-            swiftui_blocks = "\n".join(extract_swiftui_type_blocks(comment_stripped))
-            if swiftui_blocks and re.search(r"\bstore\??\.snapshot\b", swiftui_blocks):
-                violations.append(
-                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped @Observable slice instead"
-                )
+            swiftui_blocks = "\n".join(
+                extract_blocks(comment_stripped, code_only, r"\bstruct\s+\w+\s*:[^{]*\b(?:View|App)\b[^{]*\{")
+            )
             if swiftui_blocks:
-                filename = Path(norm_path).name
-                allowed_prop = IOS_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename)
-                hf_props = sorted(
-                    set(
-                        re.findall(
-                            r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
-                            swiftui_blocks,
-                        )
+                violations.extend(
+                    _check_scoped_observation(
+                        path_str,
+                        swiftui_blocks,
+                        slice_kind="@Observable",
+                        allowed_prop=IOS_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename),
                     )
                 )
-                disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
-                if disallowed:
-                    violations.append(
-                        f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
-                    )
     elif path_str.endswith(".kt"):
         norm_path = "/" + path_str.replace("\\", "/").lstrip("/")
-        code_only = strip_kotlin_comments_and_strings(text)
         if "/com/semanticcraft/koe/core/" in norm_path:
             forbidden_imports = sorted(
                 set(
@@ -769,25 +736,14 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                     f"Architecture violation: {path_str} imports forbidden UI framework(s) {forbidden_imports} inside platform-neutral com.semanticcraft.koe.core"
                 )
         elif "/com/semanticcraft/koe/ui/" in norm_path:
-            if re.search(r"\bstore\??\.snapshot\b", code_only):
-                violations.append(
-                    f"Observation violation: {path_str} reads store.snapshot directly; use a scoped StateFlow slice instead"
-                )
-            filename = Path(norm_path).name
-            allowed_prop = ANDROID_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(filename)
-            hf_props = sorted(
-                set(
-                    re.findall(
-                        r"\bstore\??\.(playback|activeCapture|liveCaption|liveMinutesCoverage)\b",
-                        code_only,
-                    )
+            violations.extend(
+                _check_scoped_observation(
+                    path_str,
+                    comment_stripped,
+                    slice_kind="StateFlow",
+                    allowed_prop=ANDROID_HIGH_FREQUENCY_SLICE_OWNER_BY_FILE.get(Path(norm_path).name),
                 )
             )
-            disallowed = [f"store.{p}" for p in hf_props if p != allowed_prop]
-            if disallowed:
-                violations.append(
-                    f"Observation violation: {path_str} reads 4 Hz high-frequency slice(s) {disallowed} outside designated leaf views"
-                )
 
     return {
         "file": path_str,
@@ -795,7 +751,6 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         "middle_dots": middle_dots,
         "italics": italics,
         "uppercases": uppercases,
-        "full_red_buttons": 0,
         "violations": violations,
     }
 
@@ -808,11 +763,6 @@ REQUIRED_INSTALL_PLIST_KEYS = (
     "NSMicrophoneUsageDescription",
     "NSAudioCaptureUsageDescription",
     "NSSpeechRecognitionUsageDescription",
-    "NSLocalNetworkUsageDescription",
-    "NSCalendarsUsageDescription",
-    "NSCalendarsFullAccessUsageDescription",
-    "NSRemindersUsageDescription",
-    "NSRemindersFullAccessUsageDescription",
     "--verify-self",
     "--smoke-test",
 )
@@ -898,6 +848,30 @@ def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
         }
     )
 
+    android_theme_path = (
+        root
+        / "platforms"
+        / "android"
+        / "gradle-app"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "semanticcraft"
+        / "koe"
+        / "ui"
+        / "theme"
+        / "KoeTheme.kt"
+    )
+    android_gradle_path = root / "platforms" / "android" / "gradle-app" / "app" / "build.gradle.kts"
+    if android_theme_path.exists():
+        android_theme_res = check_android_theme_file(android_theme_path.read_text(encoding="utf-8"))
+    elif android_gradle_path.exists():
+        android_theme_res = {"accent": {}, "violations": ["missing Android KoeTheme.kt"]}
+    else:
+        android_theme_res = {"accent": {}, "violations": []}
+
     rel_files: list[str] = []
     host_api_lib = root / "crates" / "koe-host-api" / "src" / "lib.rs"
     if host_api_lib.exists():
@@ -923,7 +897,7 @@ def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
         )
 
     file_reports: list[dict[str, Any]] = []
-    all_violations: list[str] = list(theme_res["violations"])
+    all_violations: list[str] = list(theme_res["violations"]) + list(android_theme_res["violations"])
 
     install_script = root / "scripts" / "install-macos.sh"
     if install_script.exists():
@@ -946,13 +920,13 @@ def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
         "mode": mode,
         "checked_files_count": len(file_reports),
         "theme": theme_res,
+        "android_theme": android_theme_res,
         "summary": {
             "total_violations": len(all_violations),
             "total_middle_dots": total_middle_dots,
             "files_over_4_font_sizes": files_over_4_sizes,
             "total_uppercases": sum(r["uppercases"] for r in file_reports),
             "total_italics": sum(r["italics"] for r in file_reports),
-            "total_full_red_buttons": 0,
         },
         "violations": all_violations,
         "files": file_reports,
