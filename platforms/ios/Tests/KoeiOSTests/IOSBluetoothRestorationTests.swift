@@ -56,6 +56,107 @@ final class IOSBluetoothRestorationTests: XCTestCase {
                        ["com.semanticcraft.koe.ios.central"])
     }
 
+    func testLaunchRestorationWithSavedPeripheralRestoresOnceWithoutSpuriousScan() throws {
+        let key = BluetoothBridge.savedPeripheralKey
+        let previous = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        UserDefaults.standard.set(UUID().uuidString, forKey: key)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let central = TestCentral()
+        let bridge = BluetoothBridge()
+        bridge.makeIOSCentral = { _, options in
+            central.options.append(options)
+            return central
+        }
+
+        let delegate = IOSAppDelegate()
+        delegate.makeSession = { restoreIdentifiers in
+            IOSLaunchSession(
+                bridgeActions: HostBridgeActions(),
+                arguments: ["Koe", "-koe-workspace", root.path],
+                environment: [:],
+                source: TestMicrophone(),
+                allowsCoreBluetooth: true,
+                bluetoothBridge: bridge,
+                restoreIdentifiers: restoreIdentifiers
+            )
+        }
+        defer { delegate.session.shutdown() }
+
+        XCTAssertTrue(delegate.application(.shared, didFinishLaunchingWithOptions: [
+            .bluetoothCentrals: [BluetoothBridge.iosRestoreIdentifier]
+        ]))
+        XCTAssertTrue(bridge.central === central)
+        XCTAssertEqual(central.options.count, 1)
+        XCTAssertEqual(
+            central.options.compactMap { $0[CBCentralManagerOptionRestoreIdentifierKey] as? String },
+            [BluetoothBridge.iosRestoreIdentifier]
+        )
+        XCTAssertEqual(bridge.scanStartCount, 0)
+        XCTAssertFalse(bridge.isScanRequested)
+        XCTAssertTrue(central.scans.isEmpty)
+        XCTAssertEqual(delegate.session.store.snapshot.device.phase, "disconnected")
+
+        let peer = TestPeer(notifying: true)
+        bridge.stageRestoration(peripherals: [peer], scanServices: [])
+        bridge.centralStateDidChange(.poweredOn)
+        XCTAssertTrue(bridge.peripheral === peer)
+        XCTAssertTrue(bridge.reportedReady)
+        XCTAssertEqual(bridge.scanStartCount, 0)
+        XCTAssertTrue(central.scans.isEmpty)
+    }
+
+    func testRestorationWithDisconnectedPeerFallsBackToKnownReconnect() throws {
+        let key = BluetoothBridge.savedPeripheralKey
+        let previous = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        let savedPeer = TestPeer(notifying: false)
+        savedPeer.state = .disconnected
+        UserDefaults.standard.set(savedPeer.identifier.uuidString, forKey: key)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let central = TestCentral()
+        central.known = [savedPeer]
+        let bridge = BluetoothBridge()
+        bridge.makeIOSCentral = { _, options in
+            central.options.append(options)
+            return central
+        }
+
+        let delegate = IOSAppDelegate()
+        delegate.makeSession = { restoreIdentifiers in
+            IOSLaunchSession(
+                bridgeActions: HostBridgeActions(),
+                arguments: ["Koe", "-koe-workspace", root.path],
+                environment: [:],
+                source: TestMicrophone(),
+                allowsCoreBluetooth: true,
+                bluetoothBridge: bridge,
+                restoreIdentifiers: restoreIdentifiers
+            )
+        }
+        defer { delegate.session.shutdown() }
+
+        XCTAssertTrue(delegate.application(.shared, didFinishLaunchingWithOptions: [
+            .bluetoothCentrals: [BluetoothBridge.iosRestoreIdentifier]
+        ]))
+        XCTAssertEqual(bridge.scanStartCount, 0)
+        XCTAssertTrue(central.scans.isEmpty)
+
+        bridge.stageRestoration(peripherals: [savedPeer], scanServices: [])
+        bridge.centralStateDidChange(.poweredOn)
+        XCTAssertEqual(bridge.scanStartCount, 1)
+        XCTAssertTrue(bridge.isScanRequested)
+        XCTAssertEqual(central.connections, [savedPeer.identifier])
+        XCTAssertEqual(central.scans.count, 1)
+        XCTAssertEqual(delegate.session.store.snapshot.device.phase, "scanning")
+    }
+
     func testPoweredOnAdoptsCachedChannelsAndWritesRustHandshake() throws {
         try withBridge { bridge, central, _ in
             let peer = TestPeer(notifying: true)
@@ -188,11 +289,14 @@ private final class TestCentral: BleCentral {
     var isScanning = false
     weak var delegate: CBCentralManagerDelegate?
     var available: [any BlePeripheral] = []
+    var known: [any BlePeripheral] = []
     var connections: [UUID] = []
     var cancelled: [UUID] = []
     var scans: [(services: [CBUUID]?, options: [String: Any]?)] = []
     func connectedPeripherals(withServices services: [CBUUID]) -> [any BlePeripheral] { available }
-    func knownPeripherals(withIdentifiers ids: [UUID]) -> [any BlePeripheral] { [] }
+    func knownPeripherals(withIdentifiers ids: [UUID]) -> [any BlePeripheral] {
+        known.filter { ids.contains($0.identifier) }
+    }
     func connectPeer(_ peer: any BlePeripheral) { connections.append(peer.identifier) }
     func cancelPeer(_ peer: any BlePeripheral) { cancelled.append(peer.identifier) }
     func stopScan() { isScanning = false }

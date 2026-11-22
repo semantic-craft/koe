@@ -47,7 +47,9 @@ final class IOSLaunchSession {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         source: MicrophoneSource? = nil,
-        allowsCoreBluetooth: Bool = true
+        allowsCoreBluetooth: Bool = true,
+        bluetoothBridge: BluetoothBridge? = nil,
+        restoreIdentifiers: [String] = []
     ) {
         let config = IOSLaunchConfig.parse(arguments: arguments, environment: environment)
         let credentials = NativeCredentialsiOS(
@@ -73,7 +75,9 @@ final class IOSLaunchSession {
         #endif
         let audioSession = IOSAudioSession()
         coordinator = IOSHostCoordinator(store: store, actions: bridgeActions, source: source,
-                                         audioSession: audioSession, allowsCoreBluetooth: useRadio, allowsLocalSpeech: config.snapshotFixturePath == nil)
+                                         audioSession: audioSession, allowsCoreBluetooth: useRadio,
+                                         bluetoothBridge: bluetoothBridge, restoreIdentifiers: restoreIdentifiers,
+                                         allowsLocalSpeech: config.snapshotFixturePath == nil)
         inputMonitor = IOSAudioInputMonitor(store: store, audioSession: audioSession)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.7.1"

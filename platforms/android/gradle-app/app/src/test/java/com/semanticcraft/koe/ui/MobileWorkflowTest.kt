@@ -269,7 +269,12 @@ class MobileWorkflowTest {
 
     @Test fun settingsRespectDistributionAndLaunchSystemDestinations() {
         val store = store(fixture.copy(platform = fixture.platform.copy(supportsSelfUpdate = BuildConfig.ALLOW_SELF_UPDATE),
-            appUpdate = fixture.appUpdate.copy(availableVersion = "2.7", releaseNotes = "新增会议编辑"),
+            appUpdate = fixture.appUpdate.copy(
+                phase = "available",
+                latestVersion = "2.8.0",
+                releaseNotes = "新增会议编辑",
+                message = "发现新版本 v2.8.0",
+            ),
             provider = fixture.provider.copy(model = "private-provider-data")))
         val permissionState = shadowOf(ui.activity.application)
         permissionState.grantPermissions(Manifest.permission.RECORD_AUDIO)
@@ -335,5 +340,98 @@ class MobileWorkflowTest {
         ui.runOnIdle { width.value = 599.dp }
         ui.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("实时原文"))
         assertTrue(ui.onNodeWithText("实时原文").fetchSemanticsNode().boundsInRoot.left < right.left)
+    }
+
+    @Test fun duplicateSummarySectionsRenderWithoutKeyCollision() {
+        val duplicated = listOf(
+            SummarySnapshot("要点", "重复内容"),
+            SummarySnapshot("要点", "重复内容"),
+            SummarySnapshot("要点", "重复内容#2"),
+        )
+        val store = store(fixture.copy(detail = detail.copy(summary = duplicated)))
+        ui.setContent { KoeTheme { RecordDetailScreen(store, detail.id) } }
+        ui.onAllNodesWithText("重复内容").assertCountEquals(2)
+        ui.onNodeWithText("重复内容#2").assertExists()
+    }
+
+    @Test fun settingsRendersRealRustAppUpdateAvailableAndFailedStates() {
+        val availableJson = """
+            {
+              "currentVersion": "2.7.1",
+              "currentBuild": "17",
+              "phase": "available",
+              "checkedAtEpochSec": 1800000000,
+              "latestVersion": "2.8.0",
+              "releaseTitle": "Koe 2.8.0",
+              "publishedAt": "2026-11-22T00:00:00Z",
+              "releaseNotes": "修复更新卡片字段对齐",
+              "releaseUrl": "https://github.com/semantic-craft/koe/releases/tag/v2.8.0",
+              "downloadUrl": "https://github.com/semantic-craft/koe/releases/download/v2.8.0/Koe-2.8.0.apk",
+              "assetName": "Koe-2.8.0.apk",
+              "assetSizeBytes": 12345678,
+              "message": "发现新版本 v2.8.0"
+            }
+        """.trimIndent()
+        val decodedAvailable = HostJson.json.decodeFromString(AppUpdateSnapshot.serializer(), availableJson)
+        assertTrue(decodedAvailable.isUpdateAvailable)
+        assertEquals("2.8.0", decodedAvailable.latestVersion)
+        assertEquals("修复更新卡片字段对齐", decodedAvailable.releaseNotes)
+        assertEquals(
+            "https://github.com/semantic-craft/koe/releases/download/v2.8.0/Koe-2.8.0.apk",
+            decodedAvailable.downloadUrl,
+        )
+        assertEquals("发现新版本 v2.8.0", decodedAvailable.message)
+        if (!BuildConfig.ALLOW_SELF_UPDATE) return
+        val availableStore = store(
+            fixture.copy(
+                platform = fixture.platform.copy(supportsSelfUpdate = true),
+                appUpdate = decodedAvailable,
+            ),
+        )
+        ui.setContent { KoeTheme { SettingsSheet(availableStore, {}) } }
+        ui.onNodeWithText("新版本 2.8.0").assertExists()
+        ui.onNodeWithText("修复更新卡片字段对齐").assertExists()
+        click("下载更新")
+        val downloadIntent = shadowOf(ui.activity).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, downloadIntent.action)
+        assertEquals(
+            "https://github.com/semantic-craft/koe/releases/download/v2.8.0/Koe-2.8.0.apk",
+            downloadIntent.data?.toString(),
+        )
+    }
+
+    @Test fun settingsRendersFailedAppUpdateMessageWithoutDownloadButton() {
+        val failedJson = """
+            {
+              "currentVersion": "2.7.1",
+              "currentBuild": "17",
+              "phase": "failed",
+              "checkedAtEpochSec": 1800000001,
+              "latestVersion": null,
+              "releaseTitle": null,
+              "publishedAt": null,
+              "releaseNotes": null,
+              "releaseUrl": "https://github.com/semantic-craft/koe/releases",
+              "downloadUrl": null,
+              "assetName": null,
+              "assetSizeBytes": null,
+              "message": "检查更新失败：服务返回 500"
+            }
+        """.trimIndent()
+        val decodedFailed = HostJson.json.decodeFromString(AppUpdateSnapshot.serializer(), failedJson)
+        assertEquals("failed", decodedFailed.phase)
+        assertFalse(decodedFailed.isUpdateAvailable)
+        assertNull(decodedFailed.latestVersion)
+        assertEquals("检查更新失败：服务返回 500", decodedFailed.message)
+        if (!BuildConfig.ALLOW_SELF_UPDATE) return
+        val failedStore = store(
+            fixture.copy(
+                platform = fixture.platform.copy(supportsSelfUpdate = true),
+                appUpdate = decodedFailed,
+            ),
+        )
+        ui.setContent { KoeTheme { SettingsSheet(failedStore, {}) } }
+        ui.onNodeWithText("检查更新失败：服务返回 500").assertExists()
+        ui.onNodeWithText("下载更新").assertDoesNotExist()
     }
 }

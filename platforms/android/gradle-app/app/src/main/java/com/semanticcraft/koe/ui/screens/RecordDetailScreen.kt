@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.RecordDetailSnapshot
+import com.semanticcraft.koe.core.SummarySectionItem
 import com.semanticcraft.koe.core.TimeLabel
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
@@ -157,7 +158,8 @@ fun RecordDetailScreen(
                                 )
                             }
                         } else {
-                            items(detail.summary, key = { it.id }) { item ->
+                            items(SummarySectionItem.keyed(detail.summary), key = { it.id }) { keyed ->
+                                val item = keyed.section
                                 KoeCard {
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text(

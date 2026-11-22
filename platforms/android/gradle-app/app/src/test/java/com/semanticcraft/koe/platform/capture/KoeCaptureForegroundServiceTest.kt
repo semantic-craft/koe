@@ -1,14 +1,17 @@
 package com.semanticcraft.koe.platform.capture
 
 import android.Manifest
+import android.app.Notification
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import com.semanticcraft.koe.KoeApplication
 import com.semanticcraft.koe.core.ActiveCaptureSnapshot
 import com.semanticcraft.koe.core.CaptureMode
 import com.semanticcraft.koe.core.HostSnapshot
-import android.app.Notification
-import android.content.Intent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -93,5 +96,74 @@ class KoeCaptureForegroundServiceTest {
         )
         val titles = notification.actions?.map { it.title.toString() }.orEmpty()
         assertEquals(listOf("继续", "结束"), titles)
+    }
+
+    @Test
+    fun failedForegroundServiceStartDoesNotSuppressRetryForSameTarget() {
+        var failNext = true
+        var startAttempts = 0
+        val app = object : KoeApplication() {
+            init {
+                attachBaseContext(ApplicationProvider.getApplicationContext())
+            }
+
+            override fun getApplicationContext(): Context = this
+
+            override fun startForegroundService(service: Intent?): ComponentName? {
+                startAttempts += 1
+                if (failNext) {
+                    throw SecurityException("simulated FGS start blocked")
+                }
+                return super.startForegroundService(service)
+            }
+        }
+        val activeState = CaptureForegroundState(active = true, paused = false, modeTitle = "实时纪要")
+
+        assertFalse(KoeCaptureForegroundService.sync(app, activeState, KoeCaptureForegroundService.FGS_FLAG_MICROPHONE))
+        assertEquals(1, startAttempts)
+
+        app.updateCaptureForegroundState(activeState)
+        assertEquals(2, startAttempts)
+
+        failNext = false
+        app.setForegroundActive(true)
+        assertEquals(3, startAttempts)
+
+        app.updateCaptureForegroundState(activeState)
+        assertEquals(3, startAttempts)
+        assertTrue(KoeCaptureForegroundService.sync(app, CaptureForegroundState(active = false, paused = false, modeTitle = null)))
+    }
+
+    @Test
+    fun asyncStartForegroundFailureAndServiceDestroyInvalidateSyncCacheForRetry() {
+        val app = ApplicationProvider.getApplicationContext<KoeApplication>()
+        val shadowApp = Shadows.shadowOf(app)
+        val activeState = CaptureForegroundState(active = true, paused = false, modeTitle = "实时纪要")
+
+        app.updateCaptureForegroundState(activeState)
+        val firstIntent = checkNotNull(shadowApp.nextStartedService)
+        app.updateCaptureForegroundState(activeState)
+        assertEquals(null, shadowApp.nextStartedService)
+
+        val failingService = Robolectric.buildService(SecurityFailingForegroundService::class.java).create().get()
+        failingService.onStartCommand(firstIntent, 0, 1)
+        assertTrue(Shadows.shadowOf(failingService).isStoppedBySelf)
+
+        app.updateCaptureForegroundState(activeState)
+        val retriedAfterFailure = shadowApp.nextStartedService
+        assertNotNull(retriedAfterFailure)
+
+        val normalService = Robolectric.buildService(KoeCaptureForegroundService::class.java).create().get()
+        normalService.onStartCommand(retriedAfterFailure, 0, 2)
+        normalService.onDestroy()
+
+        app.updateCaptureForegroundState(activeState)
+        assertNotNull(shadowApp.nextStartedService)
+    }
+
+    class SecurityFailingForegroundService : KoeCaptureForegroundService() {
+        override fun promoteToForeground(notification: Notification, types: Int?) {
+            throw SecurityException("simulated Android 14+ FGS type rejection")
+        }
     }
 }

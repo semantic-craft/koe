@@ -196,6 +196,27 @@ data class SummarySnapshot(
     val id: String get() = "$title\u001F$text"
 }
 
+data class SummarySectionItem(
+    val id: String,
+    val section: SummarySnapshot,
+) {
+    companion object {
+        fun keyed(sections: List<SummarySnapshot>): List<SummarySectionItem> {
+            val used = HashSet<String>(sections.size)
+            return sections.map { section ->
+                val base = "${section.title}\u0000${section.text}"
+                var occurrence = 1
+                var candidate = "$base#$occurrence"
+                while (!used.add(candidate)) {
+                    occurrence += 1
+                    candidate = "$base#$occurrence"
+                }
+                SummarySectionItem(id = candidate, section = section)
+            }
+        }
+    }
+}
+
 @Serializable
 data class RecordDetailSnapshot(
     val id: String,

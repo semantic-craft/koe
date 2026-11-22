@@ -121,6 +121,42 @@ final class IOSLockScreenIntegrationTests: XCTestCase {
             XCTAssertTrue(sent.isEmpty)
         }
     }
+
+    func testOffMainThreadRemoteCommandDoesNotDeadlockAndDispatchesOnMainActor() async throws {
+        var boundHandlers: [ObjectIdentifier: @Sendable (Double?) -> MPRemoteCommandHandlerStatus] = [:]
+        let center = IOSSystemMediaCenter { remote, invoke in
+            boundHandlers[ObjectIdentifier(remote)] = invoke
+            return UUID()
+        }
+        var dispatched: [(HostCommand, Bool)] = []
+        let controller = IOSNowPlayingController(center: center) { command in
+            dispatched.append((command, Thread.isMainThread))
+        }
+        defer { controller.shutdown() }
+        controller.sync(try snapshot())
+
+        let seekInvoke = try XCTUnwrap(boundHandlers[ObjectIdentifier(MPRemoteCommandCenter.shared().changePlaybackPositionCommand)])
+        let backgroundCompleted = DispatchSemaphore(value: 0)
+        final class StatusBox: @unchecked Sendable { var status: MPRemoteCommandHandlerStatus? }
+        let box = StatusBox()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            box.status = seekInvoke(4.125)
+            backgroundCompleted.signal()
+        }
+
+        let waitResult = backgroundCompleted.wait(timeout: .now() + 0.5)
+        XCTAssertEqual(waitResult, .success, "Off-main-thread remote command must not block waiting for the main thread")
+        XCTAssertEqual(box.status, .success)
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while dispatched.isEmpty, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(dispatched.count, 1)
+        XCTAssertEqual(dispatched.first?.0, .seek(positionMs: 4125))
+        XCTAssertEqual(dispatched.first?.1, true)
+    }
 }
 
 @MainActor

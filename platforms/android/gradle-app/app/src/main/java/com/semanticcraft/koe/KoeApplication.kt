@@ -28,7 +28,7 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-class KoeApplication : Application() {
+open class KoeApplication : Application() {
     private val sessionLock = Any()
     private val foregroundLock = Any()
     private var currentStore: HostSessionStore? = null
@@ -81,7 +81,7 @@ class KoeApplication : Application() {
         hostCoordinator.registerAdapter(fileActions)
     }
 
-    private fun updateCaptureForegroundState(state: CaptureForegroundState) {
+    internal fun updateCaptureForegroundState(state: CaptureForegroundState) {
         synchronized(foregroundLock) {
             captureForegroundState = state
             syncForegroundServiceLocked()
@@ -118,12 +118,30 @@ class KoeApplication : Application() {
         }
         val target = combinedState to fgsFlags
         if (lastSyncedForeground == target) return
-        lastSyncedForeground = target
-        KoeCaptureForegroundService.sync(this, combinedState, fgsFlags)
+        lastSyncedForeground = if (KoeCaptureForegroundService.sync(this, combinedState, fgsFlags)) {
+            target
+        } else {
+            null
+        }
+    }
+
+    internal fun invalidateForegroundServiceSync() {
+        synchronized(foregroundLock) {
+            if (lastSyncedForeground?.first?.active == true) {
+                lastSyncedForeground = null
+            }
+        }
     }
 
     fun setForegroundActive(active: Boolean) {
         hostCoordinator.setForegroundActive(active)
+        if (active) {
+            synchronized(foregroundLock) {
+                if (captureForegroundState.active || bleForegroundActivity != BleForegroundActivity.IDLE) {
+                    syncForegroundServiceLocked()
+                }
+            }
+        }
     }
 
     fun performNotificationCaptureAction(action: CaptureAction) {

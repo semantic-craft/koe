@@ -180,4 +180,24 @@ final class NativeSystemAudioTests: XCTestCase {
         XCTAssertFalse(SystemPermissionPrompt.visible(in: [[owner: "UserNotificationCenter", layer: NSNumber(value: 0)]]))
         XCTAssertFalse(SystemPermissionPrompt.visible(in: [[owner: "Safari", layer: NSNumber(value: 8)]]))
     }
+
+    func testCoreAudioCFStringQueriesHandleRetainedOwnershipSafely() throws {
+        XCTAssertThrowsError(try SystemAudioHAL.deviceUID(AudioObjectID(kAudioObjectUnknown)))
+        for _ in 0..<8 {
+            let inputs = NativeAudioSource.inputs()
+            for input in inputs {
+                XCTAssertFalse(input.id.isEmpty)
+                XCTAssertFalse(input.name.isEmpty)
+            }
+        }
+        if let output = try? SystemAudioHAL.defaultOutputDevice() {
+            var uids: Set<String> = []
+            for _ in 0..<8 {
+                let uid = try SystemAudioHAL.deviceUID(output)
+                XCTAssertFalse(uid.isEmpty)
+                uids.insert(uid)
+            }
+            XCTAssertEqual(uids.count, 1)
+        }
+    }
 }

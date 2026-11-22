@@ -15,7 +15,7 @@ import com.semanticcraft.koe.KoeApplication
 import com.semanticcraft.koe.MainActivity
 import com.semanticcraft.koe.core.CaptureAction
 
-class KoeCaptureForegroundService : Service() {
+open class KoeCaptureForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -49,7 +49,12 @@ class KoeCaptureForegroundService : Service() {
 
     override fun onDestroy() {
         stopForeground(STOP_FOREGROUND_REMOVE)
+        notifyForegroundSyncInvalidated()
         super.onDestroy()
+    }
+
+    private fun notifyForegroundSyncInvalidated() {
+        (application as? KoeApplication ?: applicationContext as? KoeApplication)?.invalidateForegroundServiceSync()
     }
 
     private fun ensureChannel() {
@@ -120,6 +125,14 @@ class KoeCaptureForegroundService : Service() {
         )
     }
 
+    internal open fun promoteToForeground(notification: Notification, types: Int?) {
+        if (types != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            startForeground(NOTIFICATION_ID, notification, types)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
     private fun startForegroundCompat(notification: Notification, fgsFlags: Int) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -133,16 +146,18 @@ class KoeCaptureForegroundService : Service() {
                 if (types == 0) {
                     types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 }
-                startForeground(NOTIFICATION_ID, notification, types)
+                promoteToForeground(notification, types)
             } else {
-                startForeground(NOTIFICATION_ID, notification)
+                promoteToForeground(notification, null)
             }
         } catch (_: SecurityException) {
+            notifyForegroundSyncInvalidated()
             stopSelf()
         } catch (error: RuntimeException) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 error is ForegroundServiceStartNotAllowedException
             ) {
+                notifyForegroundSyncInvalidated()
                 stopSelf()
             } else {
                 throw error
@@ -173,13 +188,13 @@ class KoeCaptureForegroundService : Service() {
             context: Context,
             state: CaptureForegroundState,
             fgsFlags: Int = FGS_FLAG_MICROPHONE,
-        ) {
+        ): Boolean {
             val appContext = context.applicationContext
             if (!state.active) {
                 runCatching {
                     appContext.stopService(Intent(appContext, KoeCaptureForegroundService::class.java))
                 }
-                return
+                return true
             }
             val intent = Intent(appContext, KoeCaptureForegroundService::class.java).apply {
                 action = ACTION_SYNC
@@ -188,13 +203,17 @@ class KoeCaptureForegroundService : Service() {
                 putExtra(EXTRA_MODE_TITLE, state.modeTitle)
                 putExtra(EXTRA_FGS_TYPES, fgsFlags)
             }
-            try {
+            return try {
                 appContext.startForegroundService(intent)
+                true
             } catch (_: SecurityException) {
+                false
             } catch (error: RuntimeException) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                    error !is ForegroundServiceStartNotAllowedException
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    error is ForegroundServiceStartNotAllowedException
                 ) {
+                    false
+                } else {
                     throw error
                 }
             }

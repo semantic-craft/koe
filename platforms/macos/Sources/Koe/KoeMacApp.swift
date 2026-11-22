@@ -58,7 +58,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private let playback: NativePlayback
     private let audioInputMonitor: CoreAudioInputMonitor
     private let defaultInputsProvider: () -> [MicrophoneInput]
-    private let capture = NativeCapture(source: NativeAudioSource(), systemSource: NativeSystemAudioSource())
+    private let capture: NativeCapture
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
@@ -76,11 +76,13 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
 
     init(
         playback: NativePlayback,
+        capture: NativeCapture? = nil,
         audioInputMonitor: CoreAudioInputMonitor = CoreAudioInputMonitor(),
         defaultInputsProvider: @escaping () -> [MicrophoneInput] = NativeAudioSource.inputs,
         makeDefaultStore: @escaping @MainActor () -> HostSessionStore = { KoeAppDelegate.createDefaultStore() }
     ) {
         self.playback = playback
+        self.capture = capture ?? NativeCapture(source: NativeAudioSource(), systemSource: NativeSystemAudioSource())
         self.audioInputMonitor = audioInputMonitor
         self.defaultInputsProvider = defaultInputsProvider
         self.makeDefaultStore = makeDefaultStore
@@ -324,6 +326,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         timer?.invalidate()
         timer = nil
         audioInputMonitor.stop()
+        capture.shutdown()
         playback.stop()
         bluetoothBridge.shutdown()
         lifecycle.shutdown()

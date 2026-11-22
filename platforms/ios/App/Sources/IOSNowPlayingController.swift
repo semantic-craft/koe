@@ -2,7 +2,7 @@ import KoeAppleCore
 import MediaPlayer
 
 enum IOSRemoteCommand: CaseIterable { case play, pause, toggle, seek, skipBackward, skipForward }
-typealias IOSRemoteHandler = @MainActor (Double?) -> MPRemoteCommandHandlerStatus
+typealias IOSRemoteHandler = @MainActor @Sendable (Double?) -> MPRemoteCommandHandlerStatus
 
 @MainActor
 protocol IOSMediaCenter: AnyObject {
@@ -14,6 +14,17 @@ protocol IOSMediaCenter: AnyObject {
 
 @MainActor
 final class IOSSystemMediaCenter: IOSMediaCenter {
+    typealias TargetBinder = (MPRemoteCommand, @escaping @Sendable (Double?) -> MPRemoteCommandHandlerStatus) -> Any
+    private let bindTarget: TargetBinder
+
+    init(bindTarget: @escaping TargetBinder = { remote, invoke in
+        remote.addTarget { @Sendable event in
+            invoke((event as? MPChangePlaybackPositionCommandEvent)?.positionTime)
+        }
+    }) {
+        self.bindTarget = bindTarget
+    }
+
     var nowPlayingInfo: [String: Any]? {
         get { MPNowPlayingInfoCenter.default().nowPlayingInfo }
         set { MPNowPlayingInfoCenter.default().nowPlayingInfo = newValue }
@@ -38,10 +49,10 @@ final class IOSSystemMediaCenter: IOSMediaCenter {
     func addTarget(for command: IOSRemoteCommand, handler: @escaping IOSRemoteHandler) -> Any {
         let remote = remote(command)
         if let skip = remote as? MPSkipIntervalCommand { skip.preferredIntervals = [15] }
-        return remote.addTarget { @Sendable event in
-            let seconds = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
+        return bindTarget(remote) { @Sendable seconds in
             if Thread.isMainThread { return MainActor.assumeIsolated { handler(seconds) } }
-            return DispatchQueue.main.sync { handler(seconds) }
+            Task { @MainActor in _ = handler(seconds) }
+            return .success
         }
     }
 

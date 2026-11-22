@@ -151,6 +151,36 @@ struct LifecycleTests {
         store2.shutdown()
     }
 
+    @Test("applicationWillTerminate shuts down active capture before tearing down the store")
+    func applicationWillTerminateShutsDownActiveCapture() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("koe-term-cap-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = HostSessionStore(workspacePath: root.path)
+        defer { store.shutdown() }
+        let mic = TerminationSpyMicrophone()
+        let capture = NativeCapture(source: mic)
+        let delegate = KoeAppDelegate(
+            playback: NativePlayback(),
+            capture: capture,
+            defaultInputsProvider: { [] },
+            makeDefaultStore: { store }
+        )
+        delegate.store = store
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while mic.starts == 0, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(mic.starts == 1)
+        #expect(store.snapshot.microphone?.phase == "recording")
+
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        #expect(mic.stops >= 1)
+        #expect(capture.store == nil)
+        #expect(store.handle == 0)
+    }
+
     private func frame(group: UInt8, command: UInt8, payload: [UInt8]) -> Data {
         let count = UInt16(payload.count + 10)
         var bytes: [UInt8] = [0x09, 0xff, 0, 0, 1, group, command, UInt8(count & 0xff), UInt8(count >> 8)] + payload
@@ -158,4 +188,27 @@ struct LifecycleTests {
         return Data(bytes)
     }
 }
+}
+
+private final class TerminationSpyMicrophone: MicrophoneSource, @unchecked Sendable {
+    var starts = 0
+    var stops = 0
+
+    func requestPermission(_ completion: @escaping @Sendable (Bool) -> Void) {
+        completion(true)
+    }
+
+    func start(
+        inputID: String,
+        expectedSampleRate: UInt32?,
+        receive: @escaping @Sendable (CapturedPCM) -> Void,
+        failed: @escaping @Sendable (String) -> Void
+    ) throws -> UInt32 {
+        starts += 1
+        return expectedSampleRate ?? 16_000
+    }
+
+    func stop() {
+        stops += 1
+    }
 }
