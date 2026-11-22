@@ -60,6 +60,9 @@ note "test: rust workspace"
 cargo test --workspace ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
 cargo test -p koe-host-api -p koe-runtime -p koe-client-providers --no-default-features ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
 
+note "formal state-machine models: koe-runtime"
+cargo test -p koe-runtime --test formal_models ${cargo_offline_args[@]+"${cargo_offline_args[@]}"}
+
 if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && "$(uname -s)" == "Darwin" ]]; then
   note "native host: platforms/apple-shared & platforms/macos"
   swift scripts/generate-app-icons.swift
