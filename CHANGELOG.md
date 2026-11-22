@@ -1,5 +1,11 @@
 # 更新日志
 
+## [2.7.1] - 2026-11-22
+
+- 准备 `2.7.1`（构建 17）公开补丁 Release，将 macOS、iOS 与 Android 三端版本号与构建号同步锁步至 `2.7.1`（构建 17），范围与验收边界见[发行说明](docs/releases/v2.7.1.md)。
+- Android 官方自适应启动图标统一（`#806`）：以仓库官方原图 `assets/artwork/koe-schoolgirl-b-cheerful.png` 替换临时黑白波形占位矢量，补齐 `mdpi`–`xxxhdpi` 五密度 8/9 居中前景 PNG、Rec.709 亮度映射的 Material You 单色层（`ic_launcher_monochrome.png`）、`#FFD9BB` 背景色（`values/colors.xml`）及完整 `mipmap-anydpi-v26` 自适应图标 XML，并移除旧占位矢量文件。
+- 统一三端图标生成入口与门禁（`#806`）：将 `scripts/generate-app-icons.swift` 扩展为 macOS、iOS 与 Android 三端统一图标生成脚本，并在 `scripts/test_install_macos.py` 增加 `test_android_official_adaptive_launcher_icon_contract` 跨平台图标契约门禁。
+
 ## [2.7.0] - 2026-11-21
 
 - 准备 `2.7.0`（构建 16）公开 GitHub Release，实现 macOS、iOS 与 Android 三端同步发版并落地三端版本/构建号结构化锁步校验，范围与验收边界见[发行说明](docs/releases/v2.7.0.md)。

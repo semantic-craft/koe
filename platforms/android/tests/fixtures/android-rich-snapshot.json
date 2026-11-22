@@ -264,8 +264,8 @@
     "appleMessage": "Android 本机语音识别已就绪"
   },
   "appUpdate": {
-    "currentVersion": "2.7.0",
-    "currentBuild": "16",
+    "currentVersion": "2.7.1",
+    "currentBuild": "17",
     "phase": "idle",
     "availableVersion": null,
     "releaseNotes": null,

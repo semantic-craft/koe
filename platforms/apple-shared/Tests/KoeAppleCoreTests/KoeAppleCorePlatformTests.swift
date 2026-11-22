@@ -35,8 +35,8 @@ struct KoeAppleCorePlatformTests {
 
         store.send(
             .syncAppMetadata(
-                version: "2.7.0",
-                build: "16",
+                version: "2.7.1",
+                build: "17",
                 platform: "ios",
                 hostDisplayName: "iPhone",
                 supportsSystemAudio: false,
@@ -108,8 +108,8 @@ struct KoeAppleCorePlatformTests {
         defer { sourceStore.shutdown() }
         sourceStore.send(
             .syncAppMetadata(
-                version: "2.7.0",
-                build: "16",
+                version: "2.7.1",
+                build: "17",
                 platform: "ios",
                 hostDisplayName: "iPhone",
                 supportsSystemAudio: false,
