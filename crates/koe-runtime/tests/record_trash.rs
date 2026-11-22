@@ -599,15 +599,15 @@ fn active_microphone_ble_and_cloud_guards_block_trash_and_preserve_staging_asset
             }),
             NOW,
         );
-        let receipt = runtime.ingest_microphone_pcm(
-            &mic_id,
-            &mic_session,
+        let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+            record_id: &mic_id,
+            session_id: &mic_session,
             lane,
-            0,
-            &vec![42; 320],
-            None,
-            NOW,
-        );
+            sequence: 0,
+            samples: &vec![42; 320],
+            timing: None,
+            now: NOW,
+        });
         assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     }
     let mic_staging = dir.0.join("audio").join(format!("{mic_id}.capture"));
@@ -836,15 +836,15 @@ fn permanent_purge_empty_trash_and_30_day_expiry_unlink_assets_and_survive_reope
         );
     }
     for lane in ["microphone", "system"] {
-        let receipt = runtime.ingest_microphone_pcm(
-            &r1,
-            &s1,
+        let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+            record_id: &r1,
+            session_id: &s1,
             lane,
-            0,
-            &vec![9; 320],
-            None,
-            NOW,
-        );
+            sequence: 0,
+            samples: &vec![9; 320],
+            timing: None,
+            now: NOW,
+        });
         assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     }
     for lane in ["microphone", "system"] {
@@ -1363,15 +1363,15 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
         json!({"type": "microphone_started", "recordId": meeting_id, "sessionId": meeting_session, "lane": "microphone", "sampleRate": 16000}),
         NOW,
     );
-    let receipt = runtime.ingest_microphone_pcm(
-        &meeting_id,
-        &meeting_session,
-        "microphone",
-        0,
-        &vec![42; 320],
-        None,
-        NOW,
-    );
+    let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &meeting_id,
+        session_id: &meeting_session,
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![42; 320],
+        timing: None,
+        now: NOW,
+    });
     assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     dispatch_ok(
         &mut runtime,
@@ -1414,15 +1414,15 @@ fn trashing_ended_meeting_or_idle_all_day_clears_zombie_live_minutes_scope() {
         json!({"type": "microphone_started", "recordId": ad_id, "sessionId": ad_session, "lane": "microphone", "sampleRate": 16000}),
         NOW + 3,
     );
-    let receipt = runtime.ingest_microphone_pcm(
-        &ad_id,
-        &ad_session,
-        "microphone",
-        0,
-        &vec![42; 320],
-        None,
-        NOW + 3,
-    );
+    let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &ad_id,
+        session_id: &ad_session,
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![42; 320],
+        timing: None,
+        now: NOW + 3,
+    });
     assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     dispatch_ok(
         &mut runtime,

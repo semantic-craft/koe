@@ -27,6 +27,9 @@ pub(crate) fn now(value: u64) -> u64 {
 }
 
 pub(crate) fn guarded<T: Default>(operation: impl FnOnce() -> T) -> T {
+    if crate::credentials::in_credential_callback() {
+        return T::default();
+    }
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).unwrap_or_default()
 }
 
@@ -34,6 +37,7 @@ pub(crate) fn string(value: String) -> *mut c_char {
     CString::new(value).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+#[allow(unsafe_code)]
 pub(crate) unsafe fn read_string(pointer: *const c_char) -> Option<String> {
     if pointer.is_null() {
         None
@@ -67,6 +71,9 @@ pub(crate) fn with_session<R>(
     handle: u64,
     op: impl FnOnce(&mut KoeRuntime) -> R,
 ) -> Option<R> {
+    if crate::credentials::in_credential_callback() {
+        return None;
+    }
     let entry = {
         let table = lock_sessions();
         Arc::clone(table.entries.get(&handle)?)
@@ -102,6 +109,9 @@ pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
 }
 
 pub(crate) fn remove_session(handle: u64) -> bool {
+    if crate::credentials::in_credential_callback() {
+        return false;
+    }
     #[cfg(feature = "local-bridge")]
     let (removed_entry, removed_bridge) = {
         let mut table = lock_sessions();
@@ -122,6 +132,7 @@ pub(crate) fn remove_session(handle: u64) -> bool {
     true
 }
 
+#[allow(unsafe_code)]
 unsafe fn take_owned_string(pointer: *mut c_char) -> Option<String> {
     if pointer.is_null() {
         return None;
@@ -131,6 +142,7 @@ unsafe fn take_owned_string(pointer: *mut c_char) -> Option<String> {
     owned.into_string().ok()
 }
 
+#[allow(unsafe_code)]
 unsafe fn take_owned_bytes(bytes: KoeOwnedBytes) -> Vec<u8> {
     if bytes.ptr.is_null() || bytes.len == 0 {
         // SAFETY: Caller passes an owned `KoeOwnedBytes` returned by this crate.
@@ -145,6 +157,25 @@ unsafe fn take_owned_bytes(bytes: KoeOwnedBytes) -> Vec<u8> {
     out
 }
 
+/// Borrowed PCM16 audio chunk passed through [`HostSessionGuard::ingest_pcm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PcmIngestInput<'a> {
+    /// Active recording identifier.
+    pub record_id: &'a str,
+    /// Active capture session identifier.
+    pub session_id: &'a str,
+    /// Audio lane name (`"microphone"` or `"system"`).
+    pub lane: &'a str,
+    /// Monotonic per-lane chunk sequence number.
+    pub sequence: u64,
+    /// Optional `(epoch, captured_start_ns)` capture clock timestamp.
+    pub timing: Option<(u64, u64)>,
+    /// PCM16 sample slice.
+    pub samples: &'a [i16],
+    /// Wall-clock timestamp in Unix epoch seconds.
+    pub now: u64,
+}
+
 /// Safe RAII wrapper around an active host session handle and its local Unix socket bridge.
 pub struct HostSessionGuard(u64);
 
@@ -155,6 +186,7 @@ impl HostSessionGuard {
         let text = path.to_str()?;
         let c_path = CString::new(text).ok()?;
         // SAFETY: `c_path` is a valid NUL-terminated UTF-8 C string for the duration of the call.
+        #[allow(unsafe_code)]
         let handle = unsafe { koe_host_session_create(c_path.as_ptr()) };
         (handle != 0).then_some(Self(handle))
     }
@@ -169,6 +201,7 @@ impl HostSessionGuard {
     #[must_use]
     pub fn snapshot_json(&self, now: u64) -> Option<String> {
         // SAFETY: `koe_host_session_snapshot_json` returns null or an owned `CString::into_raw` pointer.
+        #[allow(unsafe_code)]
         unsafe { take_owned_string(koe_host_session_snapshot_json(self.0, now)) }
     }
 
@@ -177,6 +210,7 @@ impl HostSessionGuard {
     pub fn dispatch_json(&self, command_json: &str, now: u64) -> Option<String> {
         let c_cmd = CString::new(command_json).ok()?;
         // SAFETY: `c_cmd` is valid NUL-terminated UTF-8 and `koe_host_session_dispatch_json` returns an owned C string or null.
+        #[allow(unsafe_code)]
         unsafe { take_owned_string(koe_host_session_dispatch_json(self.0, c_cmd.as_ptr(), now)) }
     }
 
@@ -189,49 +223,41 @@ impl HostSessionGuard {
             bytes.as_ptr()
         };
         // SAFETY: `ptr` addresses `bytes.len()` initialized bytes (or is null when length is zero).
+        #[allow(unsafe_code)]
         unsafe { koe_host_session_ingest_ble(self.0, ptr, bytes.len(), now) }
     }
 
     /// Feeds one PCM16 microphone/system audio chunk through the fast-path C ABI.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn ingest_pcm(
-        &self,
-        record_id: &str,
-        session_id: &str,
-        lane: &str,
-        sequence: u64,
-        timing: Option<(u64, u64)>,
-        samples: &[i16],
-        now: u64,
-    ) -> KoePcmReceipt {
+    pub fn ingest_pcm(&self, chunk: PcmIngestInput<'_>) -> KoePcmReceipt {
         let (Ok(c_record), Ok(c_session), Ok(c_lane)) = (
-            CString::new(record_id),
-            CString::new(session_id),
-            CString::new(lane),
+            CString::new(chunk.record_id),
+            CString::new(chunk.session_id),
+            CString::new(chunk.lane),
         ) else {
             return KoePcmReceipt::default();
         };
-        let (epoch, captured_start_ns) = timing.unwrap_or((0, 0));
-        let ptr = if samples.is_empty() {
+        let (epoch, captured_start_ns) = chunk.timing.unwrap_or((0, 0));
+        let ptr = if chunk.samples.is_empty() {
             std::ptr::null()
         } else {
-            samples.as_ptr()
+            chunk.samples.as_ptr()
         };
-        // SAFETY: C strings are valid NUL-terminated UTF-8 and `ptr` addresses `samples.len()` aligned `i16` values (or is null when empty).
+        // SAFETY: C strings are valid NUL-terminated UTF-8 and `ptr` addresses `chunk.samples.len()` aligned `i16` values (or is null when empty).
+        #[allow(unsafe_code)]
         unsafe {
             koe_host_session_ingest_pcm(
                 self.0,
                 c_record.as_ptr(),
                 c_session.as_ptr(),
                 c_lane.as_ptr(),
-                sequence,
+                chunk.sequence,
                 epoch,
                 captured_start_ns,
-                timing.is_some(),
+                chunk.timing.is_some(),
                 ptr,
-                samples.len(),
-                now,
+                chunk.samples.len(),
+                chunk.now,
             )
         }
     }
@@ -251,6 +277,7 @@ impl HostSessionGuard {
             return KoePlaybackReceipt::default();
         };
         // SAFETY: `c_record` is a valid NUL-terminated UTF-8 C string for the duration of the call.
+        #[allow(unsafe_code)]
         unsafe {
             koe_host_session_report_playback_progress(
                 self.0,
@@ -274,6 +301,7 @@ impl HostSessionGuard {
     #[must_use]
     pub fn drain_ble_tx(&self) -> Vec<Vec<u8>> {
         // SAFETY: `koe_host_session_drain_ble_tx` returns an owned `KoeOwnedBytes` buffer from this crate.
+        #[allow(unsafe_code)]
         let raw = unsafe { take_owned_bytes(koe_host_session_drain_ble_tx(self.0)) };
         let mut frames = Vec::new();
         let mut cursor = 0;
@@ -301,6 +329,7 @@ impl HostSessionGuard {
     #[must_use]
     pub fn drain_local_asr_binary(&self) -> Vec<u8> {
         // SAFETY: `koe_host_session_drain_local_asr` returns an owned `KoeOwnedBytes` buffer from this crate.
+        #[allow(unsafe_code)]
         unsafe { take_owned_bytes(koe_host_session_drain_local_asr(self.0)) }
     }
 }

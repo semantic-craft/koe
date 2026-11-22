@@ -193,7 +193,6 @@ fn check_app_update_detects_newer_semver_and_reconciles_when_bundle_metadata_adv
     .expect("parse checking snapshot");
     assert_eq!(checking_snap["appUpdate"]["phase"], "checking");
 
-    // Duplicate click while checking must be idempotent and never set global error.
     let dup_snap: Value = serde_json::from_str(
         &runtime.dispatch_json(r#"{"type":"check_app_update"}"#, 1_800_000_106),
     )
@@ -214,8 +213,6 @@ fn check_app_update_detects_newer_semver_and_reconciles_when_bundle_metadata_adv
         .as_str()
         .is_some_and(|s| s.contains("v2.10.0")));
 
-    // Advancing bundle metadata to 2.10.0 immediately transitions cached Available -> UpToDate
-    // and clears the stale update-available notice.
     let upgraded: Value = serde_json::from_str(
         &runtime.dispatch_json(
             &json!({
@@ -239,8 +236,6 @@ fn check_app_update_detects_newer_semver_and_reconciles_when_bundle_metadata_adv
         .as_str()
         .is_some_and(|m| m.contains("已是最新版本")));
 
-    // A subsequent failed check on the same endpoint must clear cached last_remote so
-    // sync_app_metadata cannot resurrect UpToDate/Available over Failed.
     let _ = runtime.dispatch_json(r#"{"type":"check_app_update"}"#, 1_800_000_125);
     let failed_snap = poll_until_settled(&mut runtime, 1_800_000_130);
     let raw_requests = server.join().expect("server thread");
@@ -280,7 +275,6 @@ fn private_repo_404_reports_unavailable_without_global_error_and_quit_cancels_in
     let root = temp_workspace("unavailable-and-quit");
     let mut runtime = KoeRuntime::open(&root).expect("open runtime");
 
-    // 1. Private repository HTTP 404 yields phase="unavailable" and keeps global error null.
     let listener_404 = TcpListener::bind("127.0.0.1:0").expect("bind 404");
     listener_404.set_nonblocking(true).expect("nonblocking");
     let endpoint_404 = format!(
@@ -315,7 +309,6 @@ fn private_repo_404_reports_unavailable_without_global_error_and_quit_cancels_in
     assert!(!msg.contains("should-never-echo"));
     assert!(msg.contains("发行页面"));
 
-    // 2. Hanging update check never asserts keepAwake and cancels immediately on request_quit.
     let hanging_listener = TcpListener::bind("127.0.0.1:0").expect("bind hanging");
     hanging_listener
         .set_nonblocking(true)
@@ -401,7 +394,6 @@ fn non_semver_or_prerelease_bundle_metadata_never_sets_global_error_or_clobbers_
     let root = temp_workspace("custom-bundle-metadata");
     let mut runtime = KoeRuntime::open(&root).expect("open runtime");
 
-    // Seed an existing runtime error (for example from credential or invalid user input).
     let seeded: Value = serde_json::from_str(
         &runtime.dispatch_json(r#"{"type":"unknown_command"}"#, 1_800_000_400),
     )
@@ -411,7 +403,6 @@ fn non_semver_or_prerelease_bundle_metadata_never_sets_global_error_or_clobbers_
         .expect("expected seeded error")
         .to_owned();
 
-    // 1. Prerelease CFBundleShortVersionString + underscore CFBundleVersion extracts core version without clearing or overwriting runtime.error.
     let prerelease_snap: Value = serde_json::from_str(
         &runtime.dispatch_json(
             &json!({
@@ -431,7 +422,6 @@ fn non_semver_or_prerelease_bundle_metadata_never_sets_global_error_or_clobbers_
     assert_eq!(prerelease_snap["appUpdate"]["currentVersion"], "2.4.0");
     assert_eq!(prerelease_snap["appUpdate"]["currentBuild"], "12_qa+1");
 
-    // Clear error, then feed completely non-SemVer Info.plist strings: must fall back to compiled defaults and keep error null.
     let _ = runtime.dispatch_json(r#"{"type":"clear_error"}"#, 1_800_000_402);
     let fallback_snap: Value = serde_json::from_str(
         &runtime.dispatch_json(
@@ -452,7 +442,6 @@ fn non_semver_or_prerelease_bundle_metadata_never_sets_global_error_or_clobbers_
     );
     assert_eq!(fallback_snap["appUpdate"]["currentBuild"], KOE_APP_BUILD);
 
-    // Explicit invalid updateEndpoint still reports an error.
     let bad_endpoint_snap: Value = serde_json::from_str(
         &runtime.dispatch_json(
             &json!({

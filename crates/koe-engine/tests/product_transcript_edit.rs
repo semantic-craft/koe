@@ -129,14 +129,30 @@ fn repeated_segment_edits_preserve_asr_provenance_citations_and_collapse_on_reve
 
     let mut live_spine = UtteranceSpine::new("stream-1");
     let live_id = live_spine
-        .accept_final("stream-1", "k1", "初稿文本", "zh", None, None, "qwen")
+        .accept_final(koe_engine::FinalUtterance {
+            session: "stream-1",
+            stream_key: "k1",
+            text: "初稿文本",
+            source_language: "zh",
+            translation: None,
+            target_language: None,
+            provider: "qwen",
+        })
         .unwrap();
     assert!(live_spine.update_segment_text(live_id, "人工暂改"));
     assert_eq!(
         live_spine.get(live_id).unwrap().original_text.as_deref(),
         Some("初稿文本")
     );
-    live_spine.accept_final("stream-1", "k1", "初稿文本", "zh", None, None, "qwen");
+    live_spine.accept_final(koe_engine::FinalUtterance {
+        session: "stream-1",
+        stream_key: "k1",
+        text: "初稿文本",
+        source_language: "zh",
+        translation: None,
+        target_language: None,
+        provider: "qwen",
+    });
     assert_eq!(live_spine.get(live_id).unwrap().original_text, None);
 
     assert!(live_spine.update_segment_text(live_id, "二次人工暂改"));

@@ -2,6 +2,46 @@ use super::*;
 use crate::domain::{MeetingMinutes, UtteranceSpine};
 use crate::minutes::{validate_minutes_citations, validate_minutes_grounding};
 
+/// Finalized provider transcript segment accepted into a pending transcription attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TranscriptFinal<'a> {
+    /// Provider delivery identifier deduplicated within the transcription attempt.
+    pub final_id: &'a str,
+    /// Transcript text content.
+    pub text: &'a str,
+    /// Segment start offset in milliseconds.
+    pub start_ms: u64,
+    /// Segment end offset in milliseconds.
+    pub end_ms: u64,
+    /// Speech provider identifier.
+    pub provider: &'a str,
+    /// Optional diarized speaker label.
+    pub speaker: Option<&'a str>,
+}
+
+/// Persisted fields used to reconstruct and validate a [`ProductRecord`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoredProductRecord {
+    /// Core recording aggregate containing identity, spine, minutes, and bookmarks.
+    pub aggregate: RecordingAggregate,
+    /// Display title of the record.
+    pub title: String,
+    /// Source origin of the record.
+    pub origin: RecordOrigin,
+    /// Persisted analysis lifecycle state.
+    pub analysis: AnalysisState,
+    /// Monotonic revision of transcript and content mutations.
+    pub content_revision: u64,
+    /// Content revision at which persisted minutes were generated, if any.
+    pub minutes_revision: Option<u64>,
+    /// Highlighted segment identifiers validated against the spine.
+    pub highlighted_segments: BTreeSet<SegmentId>,
+    /// Deduplicated delivery-key to segment-id map.
+    pub final_keys: BTreeMap<String, SegmentId>,
+    /// Most recently completed request key, if any.
+    pub completed_request: Option<RequestKey>,
+}
+
 impl ProductWorkspace {
     /// Updates factual duration and marks after a capture has been safely persisted.
     pub fn finish_capture(
@@ -266,29 +306,33 @@ impl ProductWorkspace {
         end_ms: u64,
         provider: &str,
     ) -> Result<SegmentId, ProductError> {
-        self.accept_transcript_with_speaker(key, final_id, text, start_ms, end_ms, provider, None)
+        self.accept_transcript_with_speaker(
+            key,
+            TranscriptFinal {
+                final_id,
+                text,
+                start_ms,
+                end_ms,
+                provider,
+                speaker: None,
+            },
+        )
     }
 
     /// Commits a provider final with an optional diarized speaker label to its fixed recording/attempt.
-    #[allow(clippy::too_many_arguments)]
     pub fn accept_transcript_with_speaker(
         &mut self,
         key: &RequestKey,
-        final_id: &str,
-        text: &str,
-        start_ms: u64,
-        end_ms: u64,
-        provider: &str,
-        speaker: Option<&str>,
+        input: TranscriptFinal<'_>,
     ) -> Result<SegmentId, ProductError> {
-        let final_id = nonempty(final_id)?;
-        let clean = nonempty(text)?;
-        if end_ms < start_ms {
+        let final_id = nonempty(input.final_id)?;
+        let clean = nonempty(input.text)?;
+        if input.end_ms < input.start_ms {
             return Err(ProductError::InvalidInput(
                 "片段结束时间早于开始时间".to_string(),
             ));
         }
-        let sanitized_speaker = speaker.and_then(super::sanitize_speaker_lossy);
+        let sanitized_speaker = input.speaker.and_then(super::sanitize_speaker_lossy);
         let record = self
             .records
             .get_mut(&key.record_id)
@@ -300,17 +344,18 @@ impl ProductWorkspace {
             if let Some(&id) = record.final_keys.get(&delivery) {
                 if record.aggregate.spine.get(id).is_some_and(|s| {
                     s.text == clean
-                        && s.start_ms == start_ms
-                        && s.end_ms == end_ms
+                        && s.start_ms == input.start_ms
+                        && s.end_ms == input.end_ms
                         && (sanitized_speaker.is_none() || s.speaker == sanitized_speaker)
                 }) {
                     return Ok(id);
                 }
-                if !record
-                    .aggregate
-                    .spine
-                    .update_segment(id, clean, start_ms, end_ms)
-                {
+                if !record.aggregate.spine.update_segment(
+                    id,
+                    clean,
+                    input.start_ms,
+                    input.end_ms,
+                ) {
                     return Err(ProductError::InvalidSource);
                 }
                 if let Some(sp) = sanitized_speaker {
@@ -326,7 +371,7 @@ impl ProductWorkspace {
                 let id = record
                     .aggregate
                     .spine
-                    .append_segment(clean, start_ms, end_ms, "auto", provider)
+                    .append_segment(clean, input.start_ms, input.end_ms, "auto", input.provider)
                     .ok_or_else(|| ProductError::InvalidInput("无法保存文字片段".to_string()))?;
                 if let Some(sp) = sanitized_speaker {
                     record.aggregate.spine.set_speaker(id, Some(sp));
@@ -334,7 +379,7 @@ impl ProductWorkspace {
                 record.final_keys.insert(delivery, id);
                 id
             };
-        record.aggregate.duration_ms = record.aggregate.duration_ms.max(end_ms);
+        record.aggregate.duration_ms = record.aggregate.duration_ms.max(input.end_ms);
         record.content_changed();
         self.changed();
         Ok(segment)
@@ -666,18 +711,18 @@ impl ProductRecord {
     }
 
     /// Reconstructs a pure record from persisted values, validating all local references.
-    #[allow(clippy::too_many_arguments)]
-    pub fn restore(
-        aggregate: RecordingAggregate,
-        title: String,
-        origin: RecordOrigin,
-        analysis: AnalysisState,
-        content_revision: u64,
-        minutes_revision: Option<u64>,
-        highlighted_segments: BTreeSet<SegmentId>,
-        final_keys: BTreeMap<String, SegmentId>,
-        completed_request: Option<RequestKey>,
-    ) -> Result<Self, ProductError> {
+    pub fn restore(state: RestoredProductRecord) -> Result<Self, ProductError> {
+        let RestoredProductRecord {
+            aggregate,
+            title,
+            origin,
+            analysis,
+            content_revision,
+            minutes_revision,
+            highlighted_segments,
+            final_keys,
+            completed_request,
+        } = state;
         nonempty(&aggregate.recording_id)?;
         let title = nonempty(&title)?;
         if aggregate.recording_id != aggregate.spine.session_id()

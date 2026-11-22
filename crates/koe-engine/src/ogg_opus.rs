@@ -28,6 +28,9 @@ pub const OGG_SERIAL: u32 = 0x4152_4B52;
 /// Maximum frames bundled into a single OggS data page.
 pub const FRAMES_PER_PAGE: usize = 50;
 
+/// OpusHead pre-skip sample count at 48 kHz (`3840` samples = 80 ms).
+pub const OPUS_PRE_SKIP_SAMPLES: usize = 3840;
+
 const OGG_CRC_POLY: u32 = 0x04C1_1DB7;
 
 const fn build_ogg_crc_table() -> [u32; 256] {
@@ -178,23 +181,27 @@ impl OggOpus {
         Self::append_page(
             &mut out,
             &[&head],
-            OGG_SERIAL,
-            seq,
-            0,
-            true,
-            false,
-            fast_crc,
+            OggPageSpec {
+                serial: OGG_SERIAL,
+                sequence: seq,
+                granule: 0,
+                bos: true,
+                eos: false,
+                fast_crc,
+            },
         );
         seq += 1;
         Self::append_page(
             &mut out,
             &[&tags],
-            OGG_SERIAL,
-            seq,
-            0,
-            false,
-            false,
-            fast_crc,
+            OggPageSpec {
+                serial: OGG_SERIAL,
+                sequence: seq,
+                granule: 0,
+                bos: false,
+                eos: false,
+                fast_crc,
+            },
         );
         seq += 1;
 
@@ -205,12 +212,14 @@ impl OggOpus {
             Self::append_page(
                 &mut out,
                 &[trimmed],
-                OGG_SERIAL,
-                seq,
-                granule,
-                false,
-                true,
-                fast_crc,
+                OggPageSpec {
+                    serial: OGG_SERIAL,
+                    sequence: seq,
+                    granule,
+                    bos: false,
+                    eos: true,
+                    fast_crc,
+                },
             );
             return out;
         }
@@ -230,12 +239,14 @@ impl OggOpus {
             Self::append_page(
                 &mut out,
                 &packets[..count],
-                OGG_SERIAL,
-                seq,
-                granule,
-                false,
-                eos,
-                fast_crc,
+                OggPageSpec {
+                    serial: OGG_SERIAL,
+                    sequence: seq,
+                    granule,
+                    bos: false,
+                    eos,
+                    fast_crc,
+                },
             );
             seq += 1;
         }
@@ -243,7 +254,7 @@ impl OggOpus {
     }
 
     fn opus_head(channels: u8, sample_rate: u32) -> [u8; 19] {
-        let skip = 3840u16.to_le_bytes();
+        let skip = (OPUS_PRE_SKIP_SAMPLES as u16).to_le_bytes();
         let sr = sample_rate.to_le_bytes();
         [
             b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, channels, skip[0], skip[1], sr[0],
@@ -258,23 +269,13 @@ impl OggOpus {
         ]
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn append_page(
-        out: &mut Vec<u8>,
-        packets: &[&[u8]],
-        serial: u32,
-        sequence: u32,
-        granule: u64,
-        bos: bool,
-        eos: bool,
-        fast_crc: bool,
-    ) {
+    fn append_page(out: &mut Vec<u8>, packets: &[&[u8]], spec: OggPageSpec) {
         let page_start = out.len();
         let mut header_type = 0u8;
-        if bos {
+        if spec.bos {
             header_type |= 0x02;
         }
-        if eos {
+        if spec.eos {
             header_type |= 0x04;
         }
 
@@ -286,9 +287,9 @@ impl OggOpus {
         out.extend_from_slice(b"OggS");
         out.push(0);
         out.push(header_type);
-        out.extend_from_slice(&granule.to_le_bytes());
-        out.extend_from_slice(&serial.to_le_bytes());
-        out.extend_from_slice(&sequence.to_le_bytes());
+        out.extend_from_slice(&spec.granule.to_le_bytes());
+        out.extend_from_slice(&spec.serial.to_le_bytes());
+        out.extend_from_slice(&spec.sequence.to_le_bytes());
         out.extend_from_slice(&[0, 0, 0, 0]);
         out.push(num_segs as u8);
 
@@ -304,7 +305,7 @@ impl OggOpus {
             out.extend_from_slice(pkt);
         }
 
-        let crc = if fast_crc {
+        let crc = if spec.fast_crc {
             Self::ogg_crc(&out[page_start..])
         } else {
             Self::ogg_crc_bitwise(&out[page_start..])
@@ -312,6 +313,16 @@ impl OggOpus {
         let crc_bytes = crc.to_le_bytes();
         out[page_start + 22..page_start + 26].copy_from_slice(&crc_bytes);
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OggPageSpec {
+    serial: u32,
+    sequence: u32,
+    granule: u64,
+    bos: bool,
+    eos: bool,
+    fast_crc: bool,
 }
 
 #[cfg(test)]

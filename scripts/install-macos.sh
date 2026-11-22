@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Install with a stable Developer ID identity so upgrades can read Keychain.
 set -euo pipefail
 export MACOSX_DEPLOYMENT_TARGET=14.0
 CALLER_PWD="$(pwd -P)"
@@ -247,7 +246,6 @@ if offenders:
 PY
 }
 
-# Do not replace files while an installed executable is running.
 ensure_target_not_running
 if [[ -x "$ROOT/scripts/retire-legacy-macos-app.sh" ]]; then
   MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh" --check-running
@@ -335,8 +333,6 @@ else
   "$SIGN_SCRIPT" "$APP"
 fi
 
-# A build with a different code requirement cannot reuse an existing Keychain
-# authorization. macOS asks the user once when the item is first read.
 NEXT="$(designated_requirement "$APP")"
 if [[ -e "$TARGET" ]]; then
   PREVIOUS="$(designated_requirement "$TARGET")"

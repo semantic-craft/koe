@@ -93,7 +93,6 @@ fn slices(sequences: std::ops::Range<u32>) -> Vec<u8> {
 }
 
 fn prepare_capture(runtime: &mut KoeRuntime, file_id: u32, realtime: bool) {
-    // Fixture starts after authentication/header exchange; all audio uses the public ingest path.
     runtime.device.session.active_file_id = Some(file_id);
     runtime.device.session.active_is_realtime = realtime;
 }
@@ -251,7 +250,6 @@ fn live_words_are_durable_before_stop_and_keep_their_owner_after_selection_chang
         "Unrelated violet calendar."
     );
 
-    // Disable subsequent paid analysis; the already-owned live session still completes.
     command(
         &mut runtime,
         json!({"type":"configure_provider","apiKey":"","model":"fixture"}),
@@ -327,15 +325,15 @@ fn accepted_bean_start_replaces_prior_scope_before_the_file_header() {
         &mut runtime,
         json!({"type":"microphone_started","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sampleRate":16000}),
     );
-    let receipt = runtime.ingest_microphone_pcm(
-        ticket["recordId"].as_str().unwrap(),
-        ticket["sessionId"].as_str().unwrap(),
-        "microphone",
-        0,
-        &vec![100i16; 320],
-        None,
-        NOW,
-    );
+    let receipt = runtime.ingest_microphone_pcm(MicrophonePcmChunk {
+        record_id: ticket["recordId"].as_str().unwrap(),
+        session_id: ticket["sessionId"].as_str().unwrap(),
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![100i16; 320],
+        timing: None,
+        now: NOW,
+    });
     assert_eq!(receipt.status, PcmIngestStatus::Accepted);
     command(&mut runtime, json!({"type":"stop_microphone"}));
     let stopped = command(
@@ -1353,15 +1351,15 @@ fn ordinary_microphone_start_defaults_to_quick_note_after_explicit_meeting() {
         &mut runtime,
         json!({"type":"microphone_started","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sampleRate":16000}),
     );
-    let receipt = runtime.ingest_microphone_pcm(
-        ticket["recordId"].as_str().unwrap(),
-        ticket["sessionId"].as_str().unwrap(),
-        "microphone",
-        0,
-        &vec![100i16; 320],
-        None,
-        NOW,
-    );
+    let receipt = runtime.ingest_microphone_pcm(MicrophonePcmChunk {
+        record_id: ticket["recordId"].as_str().unwrap(),
+        session_id: ticket["sessionId"].as_str().unwrap(),
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![100i16; 320],
+        timing: None,
+        now: NOW,
+    });
     assert_eq!(receipt.status, PcmIngestStatus::Accepted);
     command(&mut runtime, json!({"type":"stop_microphone"}));
     command(&mut runtime, json!({"type":"microphone_stopped","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sequence":1}));

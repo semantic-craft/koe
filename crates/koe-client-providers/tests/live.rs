@@ -278,3 +278,171 @@ fn disconnect_reports_failure_and_drop_cancels_socket() {
         server.join().unwrap();
     }
 }
+
+#[test]
+fn burst_sentences_right_before_finish_arrive_in_fifo_order_before_finished() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                let (mut socket, id) = ready(stream).await;
+                assert!(matches!(
+                    socket.next().await.unwrap().unwrap(),
+                    Message::Binary(_)
+                ));
+                let finish: Value =
+                    serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                        .unwrap();
+                assert_eq!(finish["header"]["action"], "finish-task");
+                for seq in 1..=80u64 {
+                    socket
+                        .send(Message::Text(
+                            json!({
+                                "header": {"task_id": id, "event": "result-generated"},
+                                "payload": {"output": {"sentence": {
+                                    "sentence_id": seq,
+                                    "sentence_end": true,
+                                    "begin_time": seq * 10,
+                                    "end_time": seq * 10 + 5,
+                                    "text": format!("sentence-{seq}")
+                                }}}
+                            })
+                            .to_string()
+                            .into(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+                socket.send(event(&id, "task-finished")).await.unwrap();
+                done_tx.send(()).unwrap();
+            });
+    });
+
+    let mut live = LiveTranscription::start(config(endpoint)).unwrap();
+    live.push_audio(vec![1; 3200]).unwrap();
+    live.finish().unwrap();
+    done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    let mut collected = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        collected.extend(live.poll());
+        if collected.last() == Some(&LiveEvent::Finished) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "did not observe LiveEvent::Finished");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(collected.len(), 81);
+    for (idx, event) in collected[..80].iter().enumerate() {
+        let expected_seq = (idx + 1) as u64;
+        match event {
+            LiveEvent::Final { sequence, segment } => {
+                assert_eq!(*sequence, expected_seq);
+                assert_eq!(segment.text, format!("sentence-{expected_seq}"));
+            }
+            other => panic!("expected Final #{expected_seq} before Finished, got {other:?}"),
+        }
+    }
+    assert_eq!(collected[80], LiveEvent::Finished);
+    assert!(live.poll().is_empty(), "terminal event must be delivered only once");
+    assert!(live.push_audio(vec![0; 640]).is_err());
+    server.join().unwrap();
+}
+
+#[test]
+fn unpolled_server_flood_applies_backpressure() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let sent_count = Arc::new(AtomicUsize::new(0));
+    let sent_for_server = Arc::clone(&sent_count);
+    let (flushed_tx, flushed_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                let (mut socket, id) = ready(stream).await;
+                assert!(matches!(
+                    socket.next().await.unwrap().unwrap(),
+                    Message::Binary(_)
+                ));
+                let payload_text = "a".repeat(60 * 1024);
+                let mut sent = 0usize;
+                for seq in 1..=256u64 {
+                    let msg = Message::Text(
+                        json!({
+                            "header": {"task_id": id, "event": "result-generated"},
+                            "payload": {"output": {"sentence": {
+                                "sentence_id": seq,
+                                "sentence_end": true,
+                                "begin_time": seq * 10,
+                                "end_time": seq * 10 + 5,
+                                "text": payload_text
+                            }}}
+                        })
+                        .to_string()
+                        .into(),
+                    );
+                    match tokio::time::timeout(Duration::from_secs(5), socket.send(msg)).await {
+                        Ok(Ok(())) => {
+                            sent += 1;
+                            sent_for_server.store(sent, Ordering::Release);
+                        }
+                        _ => break,
+                    }
+                }
+                let _ = flushed_tx.send(sent);
+                sent
+            })
+    });
+
+    let live = LiveTranscription::start(config(endpoint)).unwrap();
+    live.push_audio(vec![1; 3200]).unwrap();
+
+    let fill_deadline = Instant::now() + Duration::from_secs(5);
+    while sent_count.load(Ordering::Acquire) < 64 {
+        assert!(
+            Instant::now() < fill_deadline,
+            "server did not fill initial bounded channel"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    assert!(
+        flushed_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+        "server flushed all {} frames without polling; receive backpressure is missing",
+        sent_count.load(Ordering::Acquire)
+    );
+    assert!(sent_count.load(Ordering::Acquire) < 256);
+
+    let drop_started = Instant::now();
+    drop(live);
+    assert!(
+        drop_started.elapsed() < Duration::from_secs(2),
+        "drop(live) blocked on full bounded event channel"
+    );
+
+    let total_sent = server.join().unwrap();
+    assert!(
+        (64..256).contains(&total_sent),
+        "unexpected total_sent={total_sent}"
+    );
+}

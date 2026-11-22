@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Canonical macOS release packaging and notarization entrypoint for Koe.
 set -euo pipefail
 
 export MACOSX_DEPLOYMENT_TARGET=14.0

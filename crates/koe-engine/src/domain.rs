@@ -154,6 +154,25 @@ impl UtteranceSegment {
     }
 }
 
+/// Finalized streaming utterance payload accepted into an [`UtteranceSpine`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FinalUtterance<'a> {
+    /// Session identifier grouping streaming utterances.
+    pub session: &'a str,
+    /// Provider-scoped stream key uniquely identifying the utterance within `session`.
+    pub stream_key: &'a str,
+    /// Finalized utterance text.
+    pub text: &'a str,
+    /// Detected or configured source language code.
+    pub source_language: &'a str,
+    /// Optional translated utterance text.
+    pub translation: Option<&'a str>,
+    /// Optional translation target language code.
+    pub target_language: Option<&'a str>,
+    /// Provider identifier that produced this utterance.
+    pub provider: &'a str,
+}
+
 /// Append-only, revision-tracked utterance spine (`S1..Sn`) for a recording or live session.
 ///
 /// Editing a segment's text increments both the segment's `revision` and the spine's
@@ -260,27 +279,19 @@ impl UtteranceSpine {
     ///
     /// If the composite key `"session#stream_key"` already exists, updates that segment's
     /// text/translation in place when changed; otherwise appends a new `S{n}` segment.
-    #[allow(clippy::too_many_arguments)]
-    pub fn accept_final(
-        &mut self,
-        session: &str,
-        stream_key: &str,
-        text: &str,
-        source_language: &str,
-        translation: Option<&str>,
-        target_language: Option<&str>,
-        provider: &str,
-    ) -> Option<SegmentId> {
-        let clean = text.trim();
+    pub fn accept_final(&mut self, input: FinalUtterance<'_>) -> Option<SegmentId> {
+        let clean = input.text.trim();
         if clean.is_empty() {
             return None;
         }
-        let composite_key = format!("{session}#{stream_key}");
-        let clean_trans = translation
+        let composite_key = format!("{}#{}", input.session, input.stream_key);
+        let clean_trans = input
+            .translation
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned);
-        let clean_target = target_language
+        let clean_target = input
+            .target_language
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned);
@@ -319,10 +330,10 @@ impl UtteranceSpine {
             original_text: None,
             revision: 1,
             is_final: true,
-            source_language: source_language.trim().to_string(),
+            source_language: input.source_language.trim().to_string(),
             translation: clean_trans,
             target_language: clean_target,
-            provider: provider.trim().to_string(),
+            provider: input.provider.trim().to_string(),
         });
         self.key_to_id.insert(composite_key, id);
         self.revision = self.revision.saturating_add(1);
@@ -777,26 +788,26 @@ mod tests {
     fn spine_accept_final_updates_in_place_by_composite_key() {
         let mut spine = UtteranceSpine::new("live-session");
         let id1 = spine
-            .accept_final(
-                "s1",
-                "utt-0",
-                "第一句初稿",
-                "zh",
-                Some("Draft one"),
-                Some("en"),
-                "fun-asr",
-            )
+            .accept_final(FinalUtterance {
+                session: "s1",
+                stream_key: "utt-0",
+                text: "第一句初稿",
+                source_language: "zh",
+                translation: Some("Draft one"),
+                target_language: Some("en"),
+                provider: "fun-asr",
+            })
             .unwrap();
         let id1_again = spine
-            .accept_final(
-                "s1",
-                "utt-0",
-                "第一句定稿",
-                "zh",
-                Some("Final one"),
-                Some("en"),
-                "fun-asr",
-            )
+            .accept_final(FinalUtterance {
+                session: "s1",
+                stream_key: "utt-0",
+                text: "第一句定稿",
+                source_language: "zh",
+                translation: Some("Final one"),
+                target_language: Some("en"),
+                provider: "fun-asr",
+            })
             .unwrap();
         assert_eq!(id1, id1_again);
         assert_eq!(spine.len(), 1);

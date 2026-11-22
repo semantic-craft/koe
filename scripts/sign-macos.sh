@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Sign a built .app with the stable Developer ID identity, then verify the trust
-# boundary the login keychain records in its access control list.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEAM_ID="${TEAM_ID:-LQAVR62TK2}"
@@ -39,8 +37,6 @@ done
 
 REQUIREMENT="=identifier \"$BUNDLE_ID\" and anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\""
 
-# The requirement macOS stores when the user authorizes a Keychain item. Two
-# builds share it exactly when an existing authorization keeps working.
 requirement_of() {
   codesign -d -r- "$1" 2>/dev/null | sed -n 's/^designated => //p'
 }

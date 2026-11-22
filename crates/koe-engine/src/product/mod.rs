@@ -14,6 +14,7 @@ pub use migration::{ImportedSummary, MigrationReceipt};
 mod capture;
 mod record;
 pub use capture::CaptureLaneRecord;
+pub use record::{RestoredProductRecord, TranscriptFinal};
 mod capture_timeline;
 pub use capture_timeline::{CaptureSpan, place_capture_span};
 mod state;

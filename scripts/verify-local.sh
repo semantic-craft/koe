@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Local verification gate for Koe (aligned with metasequoiaime/msime).
-#
-# Usage:
-#   scripts/verify-local.sh --quick   compile, lint, and fast contract checks
-#   scripts/verify-local.sh           full verification including workspace tests
-
 set -euo pipefail
 export MACOSX_DEPLOYMENT_TARGET=14.0
 

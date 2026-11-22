@@ -30,15 +30,15 @@ fn send(r: &mut KoeRuntime, v: Value) -> Value {
 }
 fn audio(r: &mut KoeRuntime, t: &Value, sequence: u64, n: usize) -> Value {
     let samples = vec![100i16; n];
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
-        "microphone",
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
+        lane: "microphone",
         sequence,
-        &samples,
-        None,
-        100,
-    );
+        samples: &samples,
+        timing: None,
+        now: 100,
+    });
     r.snapshot(100)
 }
 #[test]
@@ -297,15 +297,15 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         }
     ));
     let next_day = 100 + 86_400;
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
-        "microphone",
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
+        lane: "microphone",
         sequence,
-        &vec![100i16; 320],
-        None,
-        next_day,
-    );
+        samples: &vec![100i16; 320],
+        timing: None,
+        now: next_day,
+    });
     let s: Value = r.snapshot(next_day);
     assert!(s["error"].is_null(), "{s}");
     sequence += 1;
@@ -599,15 +599,15 @@ fn timed_all_day_pause_after_rotation_keeps_one_clock_coordinate() {
     while n < 4_800_320 {
         let count = 8192.min(4_800_320 - n);
         let samples = vec![10i16; count];
-        r.ingest_microphone_pcm(
-            t["recordId"].as_str().unwrap(),
-            t["sessionId"].as_str().unwrap(),
-            "microphone",
+        r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+            record_id: t["recordId"].as_str().unwrap(),
+            session_id: t["sessionId"].as_str().unwrap(),
+            lane: "microphone",
             sequence,
-            &samples,
-            Some((0, clock + n as u64 * 62500 + 10_000_000)),
-            100,
-        );
+            samples: &samples,
+            timing: Some((0, clock + n as u64 * 62500 + 10_000_000)),
+            now: 100,
+        });
         let s = r.snapshot(100);
         assert!(s["error"].is_null(), "{s}");
         accept_windows(&mut r, "已识别");
@@ -625,15 +625,15 @@ fn timed_all_day_pause_after_rotation_keeps_one_clock_coordinate() {
         json!({"type":"resume_microphone","clockNs":resumed_at}),
     );
     assert!(s["error"].is_null(), "{s}");
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
-        "microphone",
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
+        lane: "microphone",
         sequence,
-        &vec![20i16; 320],
-        Some((1, resumed_at)),
-        100,
-    );
+        samples: &vec![20i16; 320],
+        timing: Some((1, resumed_at)),
+        now: 100,
+    });
     let s = r.snapshot(100);
     assert!(s["error"].is_null(), "{s}");
     assert_eq!(s["microphone"]["nextSequence"], sequence + 1);

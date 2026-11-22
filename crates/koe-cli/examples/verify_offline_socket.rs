@@ -121,7 +121,15 @@ impl MicDriver {
             let n = rem.min(8_000);
             let chunk: Vec<i16> = (self.cursor..self.cursor + n).map(|i| samples[i % samples.len()]).collect();
             let start_ns = self.clock_ns + self.epoch_samples * 1_000_000_000 / 16_000;
-            let receipt = s.ingest_pcm(&self.record_id, &self.session_id, "microphone", self.seq, Some((self.epoch, start_ns)), &chunk, now());
+            let receipt = s.ingest_pcm(koe_host_api::PcmIngestInput {
+                record_id: &self.record_id,
+                session_id: &self.session_id,
+                lane: "microphone",
+                sequence: self.seq,
+                timing: Some((self.epoch, start_ns)),
+                samples: &chunk,
+                now: now(),
+            });
             if receipt.status != 0 {
                 return Err(format!("ingest_pcm failed with status {}", receipt.status));
             }

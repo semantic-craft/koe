@@ -60,15 +60,15 @@ fn chunk(
     count: usize,
 ) -> Value {
     let samples = vec![7i16; count];
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
         lane,
-        seq,
-        &samples,
-        Some((epoch, ns)),
-        100,
-    );
+        sequence: seq,
+        samples: &samples,
+        timing: Some((epoch, ns)),
+        now: 100,
+    });
     r.snapshot(100)
 }
 fn stop(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64) -> Value {
@@ -85,7 +85,6 @@ fn common_clock_preserves_start_delay_rates_gap_tail_and_two_reopens() {
     let p = Sandbox::new();
     let mut r = KoeRuntime::open(&p.0).unwrap();
     let t = begin(&mut r);
-    // Later wall-clock callback is delivered first, independent of lane delivery order.
     let live = ok(chunk(&mut r, &t, "system", 0, 0, 1_050_000_000, 480));
     assert_eq!(live["microphone"]["durationMs"], 60);
     ok(chunk(&mut r, &t, "microphone", 0, 0, 1_000_000_000, 160));
@@ -146,7 +145,6 @@ fn pause_waits_for_both_fences_and_rejects_old_epoch_without_consuming_sequence(
         json!({"type":"resume_microphone","clockNs":2_000_000_000u64}),
     ));
     assert!(chunk(&mut r, &t, "microphone", 1, 0, 1_010_000_000, 160)["error"].is_string());
-    // An old source may report termination after its pause fence and after resume.
     ok(event(
         &mut r,
         &t,
@@ -227,7 +225,6 @@ fn fractional_rate_long_stream_survives_pause_save_retry_and_reopen() {
         "microphone",
         json!({"type":"microphone_started","sampleRate":44100}),
     ));
-    // More than a minute of actual PCM, with fractional nanoseconds per block.
     let blocks = 4200u64;
     for seq in 0..blocks {
         ok(chunk(

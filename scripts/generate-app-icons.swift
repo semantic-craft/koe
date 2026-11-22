@@ -1,9 +1,11 @@
 import AppKit
 
-// Package the approved artwork into macOS, iOS, and Android app icons without changing the illustration.
-// Run from the repository root: swift scripts/generate-app-icons.swift
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let source = root.appendingPathComponent("assets/artwork/koe-schoolgirl-b-cheerful.png")
+let macArtworkInsetRatio: CGFloat = 100.0 / 1024.0
+let androidAdaptiveForegroundMarginRatio: CGFloat = 1.0 / 18.0
+let monochromeOpaqueLuminance = 0.25
+let monochromeTransparentLuminance = 0.55
 guard let image = NSImage(contentsOf: source),
       let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
     fatalError("Cannot read approved icon artwork: \(source.path)")
@@ -41,8 +43,8 @@ func renderMacIcon(pixels: Int) -> Data {
     let context = makeContext(pixels: pixels, alpha: .premultipliedLast)
     let side = CGFloat(pixels)
     let canvas = CGRect(x: 0, y: 0, width: side, height: side)
-    // Match the legacy macOS 824 px artwork frame on a 1024 px canvas.
-    let bounds = canvas.insetBy(dx: side * 100 / 1024, dy: side * 100 / 1024)
+    let inset = side * macArtworkInsetRatio
+    let bounds = canvas.insetBy(dx: inset, dy: inset)
     context.addPath(
         CGPath(
             roundedRect: bounds,
@@ -66,12 +68,11 @@ func renderIOSIcon(pixels: Int) -> Data {
 func renderAndroidAdaptiveIcons(pixels: Int) -> (foreground: Data, monochrome: Data) {
     let context = makeContext(pixels: pixels, alpha: .premultipliedLast)
     let side = CGFloat(pixels)
-    // Android adaptive foreground keeps a 1/18 transparent margin so artwork fills the centered 8/9 square.
-    let bounds = CGRect(x: 0, y: 0, width: side, height: side).insetBy(dx: side / 18, dy: side / 18)
+    let margin = side * androidAdaptiveForegroundMarginRatio
+    let bounds = CGRect(x: 0, y: 0, width: side, height: side).insetBy(dx: margin, dy: margin)
     context.draw(cgImage, in: bounds)
     let foreground = pngData(from: context)
 
-    // Material You themed monochrome mask maps Rec.709 luminance [0.25, 0.55] onto opaque-to-transparent white.
     let monoRep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
         pixelsWide: pixels,
@@ -88,6 +89,7 @@ func renderAndroidAdaptiveIcons(pixels: Int) -> (foreground: Data, monochrome: D
 
     let fgBytes = context.data!.assumingMemoryBound(to: UInt8.self)
     let monoBytes = monoRep.bitmapData!
+    let monochromeLuminanceRange = monochromeTransparentLuminance - monochromeOpaqueLuminance
     for idx in 0..<(pixels * pixels) {
         let off = idx * 4
         guard fgBytes[off + 3] > 0 else {
@@ -98,7 +100,7 @@ func renderAndroidAdaptiveIcons(pixels: Int) -> (foreground: Data, monochrome: D
             continue
         }
         let lum = (0.2126 * Double(fgBytes[off]) + 0.7152 * Double(fgBytes[off + 1]) + 0.0722 * Double(fgBytes[off + 2])) / 255.0
-        let t = max(0.0, min(1.0, (0.55 - lum) / 0.30))
+        let t = max(0.0, min(1.0, (monochromeTransparentLuminance - lum) / monochromeLuminanceRange))
         let alpha = UInt8((t * 255.0).rounded())
         if alpha == 0 {
             monoBytes[off] = 0

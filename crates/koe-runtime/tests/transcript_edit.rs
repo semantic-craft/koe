@@ -699,15 +699,15 @@ fn custody_guards_reject_edits_across_trash_archive_mic_ble_and_cloud_transcript
         }),
         NOW,
     );
-    let receipt = runtime.ingest_microphone_pcm(
-        &mic_id,
-        &mic_session,
-        "microphone",
-        0,
-        &vec![12; 320],
-        None,
-        NOW,
-    );
+    let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &mic_id,
+        session_id: &mic_session,
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![12; 320],
+        timing: None,
+        now: NOW,
+    });
     assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     let mic_rejected = dispatch_raw(
         &mut runtime,
@@ -1252,7 +1252,6 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_summary_lane_preserves_record_s
     );
     wait_req2.recv_timeout(Duration::from_secs(5)).unwrap();
 
-    // Ask lane is busy, but Summary lane must accept rec3 independently.
     dispatch_ok(
         &mut runtime,
         json!({"type": "summarize", "recordId": rec3}),
@@ -1260,7 +1259,6 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_summary_lane_preserves_record_s
     );
     wait_req3.recv_timeout(Duration::from_secs(5)).unwrap();
 
-    // Summary lane is now busy with rec3, so rec2 summarize must reject cleanly without corrupting rec2 state.
     let busy = dispatch_raw(
         &mut runtime,
         json!({"type": "summarize", "recordId": rec2}),

@@ -53,8 +53,8 @@ pub use context::{
     ASK_MAX_CORPUS_CHARS, ASK_SYSTEM_PROMPT, ASK_TOP_K_LIMIT, DELEGATION_CLOSED_NOTICE,
 };
 pub use domain::{
-    MeetingMinutes, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
-    MinuteTermAdoption, MinuteTopic, RecordingAggregate, SegmentId, UtteranceSegment,
+    FinalUtterance, MeetingMinutes, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint,
+    MinuteTerm, MinuteTermAdoption, MinuteTopic, RecordingAggregate, SegmentId, UtteranceSegment,
     UtteranceSpine,
 };
 pub use hash::{is_valid_sha256_hex, sha256_hex};

@@ -567,7 +567,6 @@ fn provider_pool_isolates_lanes_and_cancels_stale_summary_without_blocking() {
     .unwrap();
     wait_ask.recv_timeout(Duration::from_secs(3)).unwrap();
 
-    // Ask lane is busy, so a second Ask must fail, while Summary lane remains free.
     assert!(pool
         .submit(
             ProviderLane::Ask,
@@ -600,7 +599,6 @@ fn provider_pool_isolates_lanes_and_cancels_stale_summary_without_blocking() {
     .unwrap();
     wait_sum1.recv_timeout(Duration::from_secs(3)).unwrap();
 
-    // Cancel stale Summary without blocking, and verify Ask is untouched while Summary slot reopens.
     let cancel_started = Instant::now();
     pool.cancel(ProviderLane::Summary, 3);
     assert!(cancel_started.elapsed() < Duration::from_millis(50));
@@ -694,7 +692,6 @@ fn update_lane_validates_endpoints_redirects_payloads_and_sanitizes_untrusted_ur
         );
     }
 
-    // Untrusted html_url and browser_download_url are stripped or replaced with canonical GitHub URL.
     let arch = if cfg!(target_arch = "aarch64") {
         "arm64"
     } else {
@@ -727,7 +724,6 @@ fn update_lane_validates_endpoints_redirects_payloads_and_sanitizes_untrusted_ur
         other => panic!("expected Release, got {other:?}"),
     }
 
-    // Draft and prerelease payloads resolve to Unavailable.
     let prerelease_json = serde_json::json!({
         "tag_name": "v2.5.0",
         "prerelease": true
@@ -751,7 +747,6 @@ fn update_lane_validates_endpoints_redirects_payloads_and_sanitizes_untrusted_ur
         }
     }
 
-    // Loopback 302 redirect to final release payload succeeds on ProviderLane::Update.
     let redirect_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     redirect_listener.set_nonblocking(true).unwrap();
     let target_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -855,7 +850,6 @@ fn update_lane_blocks_dot_segment_traversal_matches_universal_fallback_and_caps_
         "x86_64"
     };
 
-    // 1. Dot-segment path traversal in html_url and browser_download_url must be rejected.
     let traversal_json = serde_json::json!({
         "tag_name": "v2.4.0",
         "name": "Koe 2.4.0",
@@ -888,7 +882,6 @@ fn update_lane_blocks_dot_segment_traversal_matches_universal_fallback_and_caps_
         other => panic!("expected Release, got {other:?}"),
     }
 
-    // 2. Universal zip matches as fallback, while exact arch takes priority when both exist.
     let universal_only = serde_json::json!({
         "tag_name": "v2.4.0",
         "assets": [
@@ -948,7 +941,6 @@ fn update_lane_blocks_dot_segment_traversal_matches_universal_fallback_and_caps_
         }
     }
 
-    // 3. Chunked transfer encoding without Content-Length exceeding 512 KiB is rejected.
     let chunked_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     chunked_listener.set_nonblocking(true).unwrap();
     let chunked_url = format!("http://{}/chunked", chunked_listener.local_addr().unwrap());
@@ -1008,7 +1000,6 @@ fn update_lane_blocks_dot_segment_traversal_matches_universal_fallback_and_caps_
     );
     chunked_srv.join().unwrap();
 
-    // 4. Redirect loop (> 3 hops) is rejected cleanly.
     let loop_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     loop_listener.set_nonblocking(true).unwrap();
     let loop_addr = loop_listener.local_addr().unwrap();
@@ -1107,7 +1098,6 @@ fn deepseek_asr_auto_splits_over_120s_at_silence_and_stitches_segments() {
             assert!(head.starts_with("POST /v1/tools/asr HTTP/1.1"));
             assert!(head.contains("authorization: Bearer ds-test-key") || head.contains("Authorization: Bearer ds-test-key"));
             assert!(head.to_ascii_lowercase().contains("multipart/form-data; boundary="));
-            // Verify multipart body contains valid RIFF WAVE header
             assert!(body.windows(4).any(|w| w == b"RIFF"));
             assert!(body.windows(4).any(|w| w == b"WAVE"));
             assert!(body.len() < 8 * 1024 * 1024);
@@ -1124,7 +1114,6 @@ fn deepseek_asr_auto_splits_over_120s_at_silence_and_stitches_segments() {
         received_chunks
     });
 
-    // 140s of loud audio with a 1-second silent gap at 95..96s
     let total_samples = 140 * 16_000;
     let mut pcm16 = Vec::with_capacity(total_samples * 2);
     for i in 0..total_samples {
@@ -1162,7 +1151,6 @@ fn deepseek_asr_auto_splits_over_120s_at_silence_and_stitches_segments() {
 #[test]
 fn qwen_flash_and_filetrans_http_asr_parse_diarized_speakers() {
     use std::io::Write;
-    // 1. Qwen Flash HTTP ASR
     let flash_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let flash_url = format!(
         "http://{}/api/v1/services/aigc/multimodal-generation/generation",
@@ -1224,14 +1212,12 @@ fn qwen_flash_and_filetrans_http_asr_parse_diarized_speakers() {
     assert_eq!(segments[1].speaker.as_deref(), Some("说话人 2"));
     flash_srv.join().unwrap();
 
-    // 2. Qwen Filetrans 5-step async HTTP ASR
     let ft_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = ft_listener.local_addr().unwrap();
     let origin = format!("http://{addr}");
     let ft_url = format!("{origin}/api/v1/services/audio/asr/transcription");
     let origin_srv = origin.clone();
     let ft_srv = std::thread::spawn(move || {
-        // Step 1: getPolicy
         let (mut s1, _) = ft_listener.accept().unwrap();
         let (h1, _) = read_http_request(&mut s1);
         assert!(h1.starts_with("GET /api/v1/uploads?action=getPolicy&model=qwen-audio-3.1-asr-flash-filetrans"));
@@ -1255,14 +1241,12 @@ fn qwen_flash_and_filetrans_http_asr_parse_diarized_speakers() {
         )
         .unwrap();
 
-        // Step 2: OSS upload
         let (mut s2, _) = ft_listener.accept().unwrap();
         let (h2, b2) = read_http_request(&mut s2);
         assert!(h2.starts_with("POST /oss-upload"));
         assert!(b2.windows(4).any(|w| w == b"RIFF"));
         write!(s2, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
 
-        // Step 3: Submit async job
         let (mut s3, _) = ft_listener.accept().unwrap();
         let (h3, b3) = read_http_request(&mut s3);
         assert!(h3.to_ascii_lowercase().contains("x-dashscope-async: enable"));
@@ -1279,7 +1263,6 @@ fn qwen_flash_and_filetrans_http_asr_parse_diarized_speakers() {
         )
         .unwrap();
 
-        // Step 4a: Poll -> RUNNING, Step 4b: Poll -> SUCCEEDED
         for (status, url) in [
             ("RUNNING", None),
             ("SUCCEEDED", Some(format!("{origin_srv}/result.json"))),
@@ -1301,7 +1284,6 @@ fn qwen_flash_and_filetrans_http_asr_parse_diarized_speakers() {
             .unwrap();
         }
 
-        // Step 5: Download result JSON without Authorization header
         let (mut s5, _) = ft_listener.accept().unwrap();
         let (h5, _) = read_http_request(&mut s5);
         assert!(h5.starts_with("GET /result.json"));

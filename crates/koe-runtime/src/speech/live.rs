@@ -72,12 +72,14 @@ impl KoeRuntime {
         self.store.transact(|w| {
             w.accept_transcript_with_speaker(
                 key,
-                delivery,
-                &segment.text,
-                segment.start_ms,
-                segment.end_ms,
-                provider,
-                segment.speaker.as_deref(),
+                TranscriptFinal {
+                    final_id: delivery,
+                    text: &segment.text,
+                    start_ms: segment.start_ms,
+                    end_ms: segment.end_ms,
+                    provider,
+                    speaker: segment.speaker.as_deref(),
+                },
             )
         })
     }

@@ -49,26 +49,26 @@ fn recording(r: &mut KoeRuntime, system_only: bool) -> String {
     }
     if !system_only {
         for (seq, ns) in [(0, 1_000_000_000u64), (1, 1_100_000_000)] {
-            r.ingest_microphone_pcm(
-                t["recordId"].as_str().unwrap(),
-                t["sessionId"].as_str().unwrap(),
-                "microphone",
-                seq,
-                &vec![700; 160],
-                Some((0, ns)),
-                100,
-            );
+            r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+                record_id: t["recordId"].as_str().unwrap(),
+                session_id: t["sessionId"].as_str().unwrap(),
+                lane: "microphone",
+                sequence: seq,
+                samples: &vec![700; 160],
+                timing: Some((0, ns)),
+                now: 100,
+            });
         }
     }
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
-        "system",
-        0,
-        &vec![900; 480],
-        Some((0, 1_050_000_000u64)),
-        100,
-    );
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
+        lane: "system",
+        sequence: 0,
+        samples: &vec![900; 480],
+        timing: Some((0, 1_050_000_000u64)),
+        now: 100,
+    });
     send(r, json!({"type":"stop_microphone"}));
     event(
         r,

@@ -672,9 +672,7 @@ fn real_sigkill_after_create_reclaims_orphan_without_touching_other_workspace_or
         let status = child.status().unwrap();
         assert_eq!(status.signal(), Some(libc::SIGKILL), "{status:?}");
     };
-    // Configured workspace: explicit replacement killed after the item exists.
     crash(&ws_a, Some("new-secret"));
-    // Unconfigured workspace: first-launch legacy import killed the same way.
     crash(&ws_c, None);
     let orphaned = vault.items();
     assert!(orphaned.values().any(|v| v == "new-secret"));
@@ -711,7 +709,6 @@ fn dual_provider_credentials_and_hybrid_qwen_deepseek_config_persist_independent
     let vault = Adapter::default();
     let mut runtime = KoeRuntime::open_with_credentials(&root.0, Box::new(vault.clone())).unwrap();
 
-    // Default setup is Qwen streaming ASR + DeepSeek 4.1 Flash LLM
     let initial = runtime.snapshot(100);
     assert_eq!(initial["provider"]["model"], "deepseek-flash");
     assert_eq!(initial["provider"]["asrModel"], "qwen-audio-3.1-asr-flash-streaming");
@@ -721,7 +718,6 @@ fn dual_provider_credentials_and_hybrid_qwen_deepseek_config_persist_independent
     assert_eq!(initial["provider"]["enableThinking"], false);
     assert_eq!(initial["provider"]["asrIsRealtime"], true);
 
-    // Save Qwen streaming ASR (with workspace ID) + DeepSeek LLM independently
     let saved = send(
         &mut runtime,
         json!({
@@ -747,7 +743,6 @@ fn dual_provider_credentials_and_hybrid_qwen_deepseek_config_persist_independent
     assert_eq!(saved["provider"]["qwenWorkspaceId"], "ws-bj-123");
     drop(runtime);
 
-    // Reopen and verify both credentials + settings survive restart
     let mut reopened = KoeRuntime::open_with_credentials(&root.0, Box::new(vault.clone())).unwrap();
     let snap = reopened.snapshot(101);
     assert_eq!(snap["provider"]["qwenConfigured"], true);
@@ -756,7 +751,6 @@ fn dual_provider_credentials_and_hybrid_qwen_deepseek_config_persist_independent
     assert_eq!(snap["provider"]["model"], "deepseek-flash");
     assert_eq!(snap["provider"]["enableThinking"], true);
 
-    // Clear DeepSeek key only; Qwen key stays ready and active LLM shows unconfigured
     let cleared_ds = send(
         &mut reopened,
         json!({"type": "clear_provider_credential", "provider": "deepseek"}),
@@ -768,8 +762,6 @@ fn dual_provider_credentials_and_hybrid_qwen_deepseek_config_persist_independent
     assert_eq!(cleared_ds["provider"]["asrConfigured"], true);
     assert_eq!(cleared_ds["provider"]["configured"], false);
 
-    // Switching ASR to Qwen filetrans marks asrIsRealtime = false and computes filetrans endpoint,
-    // while chatEndpoint remains DeepSeek official (qwenWorkspaceId only scopes Qwen ASR).
     let ft_snap = send(
         &mut reopened,
         json!({
@@ -858,7 +850,6 @@ fn non_realtime_deepseek_asr_defers_live_capture_and_transcribes_saved_audio() {
     assert!(cfg["error"].is_null(), "{cfg}");
     assert_eq!(cfg["provider"]["asrIsRealtime"], false);
 
-    // Start Mac microphone recording, feed 1s audio, stop, and wait for deferred DeepSeek ASR completion
     let started = send(&mut runtime, json!({"type": "start_microphone", "inputId": ""}));
     assert!(started["error"].is_null(), "{started}");
     let rec_id = started["microphone"]["recordId"].as_str().unwrap().to_owned();
@@ -868,7 +859,15 @@ fn non_realtime_deepseek_asr_defers_live_capture_and_transcribes_saved_audio() {
         json!({"type": "microphone_started", "recordId": rec_id, "sessionId": sess_id, "lane": "microphone", "sampleRate": 16000}),
     );
     let samples = vec![1000i16; 8000];
-    let r1 = runtime.ingest_microphone_pcm(&rec_id, &sess_id, "microphone", 0, &samples, None, 100);
+    let r1 = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &rec_id,
+        session_id: &sess_id,
+        lane: "microphone",
+        sequence: 0,
+        samples: &samples,
+        timing: None,
+        now: 100,
+    });
     assert_eq!(r1.status, koe_runtime::PcmIngestStatus::Accepted);
     let cap_snap = runtime.snapshot(100);
     assert!(cap_snap["liveCaption"]["status"].as_str().unwrap().contains("非实时"));
@@ -916,7 +915,6 @@ fn dual_key_retry_authorizes_both_slots_and_custom_provider_validation_is_strict
     );
     assert!(saved["error"].is_null(), "{saved}");
 
-    // Switching back from DeepSeek ASR to Qwen ASR with empty asrModel defaults to streaming model
     let back_to_qwen = send(
         &mut runtime,
         json!({
@@ -933,7 +931,6 @@ fn dual_key_retry_authorizes_both_slots_and_custom_provider_validation_is_strict
         "qwen-audio-3.1-asr-flash-streaming"
     );
 
-    // Custom LLM with empty chatEndpoint must be rejected rather than falling back to DashScope
     let bad_custom = send(
         &mut runtime,
         json!({
@@ -950,7 +947,6 @@ fn dual_key_retry_authorizes_both_slots_and_custom_provider_validation_is_strict
         "{bad_custom}"
     );
 
-    // Substring in path must NOT misclassify a custom host as DeepSeek
     let custom_path_trick = send(
         &mut runtime,
         json!({
@@ -963,7 +959,6 @@ fn dual_key_retry_authorizes_both_slots_and_custom_provider_validation_is_strict
     assert_eq!(custom_path_trick["provider"]["llmProvider"], "custom");
     drop(runtime);
 
-    // Reopen with locked vault -> both slots unavailable -> single retry(authorize: true) authorizes BOTH slots
     vault.0.lock().unwrap().fail_read = true;
     let mut locked = KoeRuntime::open_with_credentials(&root.0, Box::new(vault.clone())).unwrap();
     let locked_snap = locked.snapshot(101);
@@ -998,8 +993,6 @@ fn deepseek_only_queued_work_holds_keep_awake() {
         json!({"type": "set_meeting_audio_policy", "policy": "cloud_allowed"}),
     );
     send(&mut runtime, json!({"type": "configure_speech", "engine": "cloud"}));
-    // Configure DeepSeek ONLY (Qwen key remains empty) with a non-listening loopback endpoint
-    // so queued auto_transcribe stays pending before poll_timers fires or holds keepAwake while queued.
     let cfg = send(
         &mut runtime,
         json!({
@@ -1022,10 +1015,16 @@ fn deepseek_only_queued_work_holds_keep_awake() {
         &mut runtime,
         json!({"type": "microphone_started", "recordId": rec_id, "sessionId": sess_id, "lane": "microphone", "sampleRate": 16000}),
     );
-    let _ = runtime.ingest_microphone_pcm(&rec_id, &sess_id, "microphone", 0, &[800i16; 4000], None, 100);
+    let _ = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &rec_id,
+        session_id: &sess_id,
+        lane: "microphone",
+        sequence: 0,
+        samples: &[800i16; 4000],
+        timing: None,
+        now: 100,
+    });
     send(&mut runtime, json!({"type": "stop_microphone"}));
-    // Immediately after microphone_stopped saves the audio, deferred_batch queues auto_transcribe
-    // before poll_timers submits it to the network pool. keepAwake MUST be true even though Qwen key is empty!
     let after_stop = send(
         &mut runtime,
         json!({"type": "microphone_stopped", "recordId": rec_id, "sessionId": sess_id, "lane": "microphone", "sequence": 1}),
@@ -1056,7 +1055,6 @@ fn legacy_qwen_llm_workspace_migrates_to_deepseek_flash_while_preserving_qwen_as
     );
     drop(initial);
 
-    // Simulate a persisted v2.5.0 workspace whose LLM was configured to Qwen (`qwen3.8-flash`).
     let path = root.0.join("product-workspace.json");
     let mut disk: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     disk["provider"]["llm_provider"] = json!("qwen");
@@ -1088,7 +1086,6 @@ fn legacy_qwen_llm_workspace_migrates_to_deepseek_flash_while_preserving_qwen_as
     assert_eq!(snap["provider"]["configured"], true);
     drop(reopened);
 
-    // Also simulate a pre-v2.5.0 workspace with omitted `llm_provider` and legacy DashScope chat endpoint.
     disk["provider"]
         .as_object_mut()
         .unwrap()
@@ -1109,7 +1106,6 @@ fn legacy_qwen_llm_workspace_migrates_to_deepseek_flash_while_preserving_qwen_as
     assert_eq!(snap2["provider"]["asrProvider"], "qwen");
     drop(pre_v25);
 
-    // Also simulate a legacy workspace with empty-string `llm_provider` and legacy DashScope chat endpoint.
     disk["provider"]["llm_provider"] = json!("   ");
     disk["provider"]["model"] = json!("qwen-plus");
     disk["provider"]["chat_endpoint"] =
@@ -1169,7 +1165,6 @@ fn qwen_llm_is_rejected_and_qwen_workspace_id_only_affects_asr_endpoint() {
         "https://api.deepseek.com/chat/completions"
     );
 
-    // Updating qwenWorkspaceId while DeepSeek ASR has a custom endpoint must not clobber DeepSeek's asrEndpoint.
     let ds_custom_asr = send(
         &mut runtime,
         json!({
@@ -1270,7 +1265,6 @@ fn hybrid_qwen_asr_and_deepseek_flash_llm_route_distinct_keys_and_thinking_wire_
     );
     let record_id = note["selectedRecordId"].as_str().unwrap().to_owned();
 
-    // Configure hybrid Qwen ASR key + DeepSeek LLM key with default thinking=false
     let cfg = send(
         &mut runtime,
         json!({
@@ -1303,7 +1297,6 @@ fn hybrid_qwen_asr_and_deepseek_flash_llm_route_distinct_keys_and_thinking_wire_
     }
     assert_eq!(runtime.snapshot(200)["ask"]["phase"], "ready");
 
-    // Enable deep thinking and verify wire payload switches to thinking: {"type":"enabled"}
     let cfg2 = send(
         &mut runtime,
         json!({

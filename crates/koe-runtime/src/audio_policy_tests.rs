@@ -582,7 +582,6 @@ fn refused_audio_submission_does_not_cancel_the_active_text_request() {
     );
     chat_ready.recv_timeout(Duration::from_secs(5)).unwrap();
 
-    // Ask lane is busy, so Audio lane still accepts audio1; a second audio submission is refused.
     let accepted = dispatch(&mut runtime, json!({"type":"transcribe","recordId":audio1}));
     assert!(accepted["error"].is_null(), "{accepted}");
     asr_ready.recv_timeout(Duration::from_secs(5)).unwrap();

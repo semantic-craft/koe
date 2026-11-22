@@ -730,17 +730,17 @@ impl RecordDto {
             .into_iter()
             .map(|id| SegmentId::new(id).ok_or_else(|| invalid("invalid highlight segment id")))
             .collect::<Result<_, _>>()?;
-        let mut record = ProductRecord::restore(
-            a,
-            self.title,
+        let mut record = ProductRecord::restore(RestoredProductRecord {
+            aggregate: a,
+            title: self.title,
             origin,
             analysis,
-            self.content_revision,
+            content_revision: self.content_revision,
             minutes_revision,
             highlighted_segments,
             final_keys,
-            self.completed_request.map(KeyDto::into_key),
-        )
+            completed_request: self.completed_request.map(KeyDto::into_key),
+        })
         .map_err(|e| invalid(e.to_string()))?;
         record
             .restore_live_summary(

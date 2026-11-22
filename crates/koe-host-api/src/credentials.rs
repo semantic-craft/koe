@@ -1,13 +1,43 @@
 use koe_runtime::credentials::{CredentialError, CredentialStore};
+use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::atomic::{Ordering, compiler_fence};
+
+thread_local! {
+    static IN_CREDENTIAL_CALLBACK: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn in_credential_callback() -> bool {
+    IN_CREDENTIAL_CALLBACK.with(Cell::get)
+}
+
+struct CallbackReentrancyGuard;
+
+impl CallbackReentrancyGuard {
+    fn enter() -> Result<Self, CredentialError> {
+        IN_CREDENTIAL_CALLBACK.with(|active| {
+            if active.replace(true) {
+                Err(CredentialError)
+            } else {
+                Ok(Self)
+            }
+        })
+    }
+}
+
+impl Drop for CallbackReentrancyGuard {
+    fn drop(&mut self) {
+        IN_CREDENTIAL_CALLBACK.with(|active| active.set(false));
+    }
+}
 
 /// Synchronous platform credential callback. Operations are read=0, create=1,
 /// delete=2, read legacy=3, authorize=4, prepare=5. Prepare returns a fresh
 /// reference without storage I/O; create writes the item at that reference and
 /// echoes it. Return 0 on success, 1 when missing, or -1 on failure. Successful
 /// reads/prepares/creates write a terminated UTF-8 result.
-/// The callback must not reenter the host API or retain borrowed pointers.
+/// Borrowed pointers are valid only for the duration of the call; reentrant
+/// host-API or credential calls on the same thread are rejected.
 pub type KoeCredentialCallback =
     unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *mut c_char, usize) -> i32;
 
@@ -49,6 +79,7 @@ impl Drop for ZeroizingBuf {
     fn drop(&mut self) {
         for byte in &mut self.0 {
             // SAFETY: `byte` is a valid, aligned, uniquely borrowed mutable reference inside `self.0`.
+            #[allow(unsafe_code)]
             unsafe { std::ptr::write_volatile(byte, 0) };
         }
         compiler_fence(Ordering::SeqCst);
@@ -63,6 +94,7 @@ pub(crate) struct PlatformCredentials {
 
 // SAFETY: `koe_host_session_create_with_credentials` requires the caller to guarantee
 // that `context` remains valid until session destruction and supports serialized calls on any thread.
+#[allow(unsafe_code)]
 unsafe impl Send for PlatformCredentials {}
 
 impl PlatformCredentials {
@@ -72,11 +104,13 @@ impl PlatformCredentials {
         reference: &str,
         value: &str,
     ) -> Result<Option<String>, CredentialError> {
+        let _reentrancy_guard = CallbackReentrancyGuard::enter()?;
         let reference = CString::new(reference).map_err(|_| CredentialError)?;
         let value = ZeroizingBuf::c_string(value)?;
         let mut output = ZeroizingBuf::zeroed(65_537);
         // SAFETY: Session creation requires the callback/context to outlive the session.
         // Buffers are valid for this synchronous call and output capacity is explicit.
+        #[allow(unsafe_code)]
         let status = unsafe {
             (self.callback)(
                 self.context,
