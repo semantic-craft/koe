@@ -10,8 +10,7 @@ use std::{
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+        .map_or(0, |d| d.as_secs())
 }
 
 fn dispatch(runtime: &mut KoeRuntime, command: Value) -> Result<Value, String> {
@@ -170,8 +169,13 @@ fn run() -> Result<(), String> {
         let result = verify_all_day(&mut runtime, &audio)?;
         drop(runtime);
         let mut reopened = KoeRuntime::open(&workspace)?;
-        for record in result["records"].as_array().unwrap() {
-            let id = record["recordId"].as_str().unwrap();
+        let records = result["records"]
+            .as_array()
+            .ok_or("all-day result missing records array")?;
+        for record in records {
+            let id = record["recordId"]
+                .as_str()
+                .ok_or("all-day record missing recordId")?;
             let actual = dispatch(&mut reopened, json!({"type":"select_record","recordId":id}))?;
             if actual["detail"]["segments"] != record["segments"] {
                 return Err("all-day transcript changed across reopen".into());

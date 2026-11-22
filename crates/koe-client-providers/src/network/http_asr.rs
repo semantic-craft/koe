@@ -97,13 +97,7 @@ fn find_quietest_cut(pcm: &[u8], search_start: usize, search_end: usize) -> usiz
 }
 
 fn build_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|_| "无法初始化 HTTPS 客户端".to_string())
+    crate::http_client::cloud_api_client().map_err(|_| "无法初始化 HTTPS 客户端".to_string())
 }
 
 fn pcm16_to_wav(pcm16: &[u8]) -> Result<Vec<u8>, String> {
@@ -245,7 +239,7 @@ fn is_non_global_ip(ip: IpAddr) -> bool {
     }
 }
 
-fn validate_remote_http_url_parsed(
+pub(crate) fn validate_remote_http_url_parsed(
     raw: &str,
     allow_loopback_http: bool,
 ) -> Result<reqwest::Url, String> {

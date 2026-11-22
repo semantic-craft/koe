@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use koe_engine::domain::{MeetingMinutes, SegmentId};
 use koe_engine::minutes::parse_meeting_minutes_json;
 use koe_engine::product::*;

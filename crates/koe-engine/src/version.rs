@@ -43,13 +43,9 @@ impl SemanticVersion {
     }
 
     /// Returns the compiled [`KOE_APP_VERSION`] as a [`SemanticVersion`].
-    ///
-    /// # Panics
-    ///
-    /// Panics only if `CARGO_PKG_VERSION` is not valid `MAJOR.MINOR.PATCH`.
     #[must_use]
-    pub fn current() -> Self {
-        Self::parse(KOE_APP_VERSION).expect("CARGO_PKG_VERSION must be valid MAJOR.MINOR.PATCH")
+    pub const fn current() -> Self {
+        CURRENT_VERSION
     }
 
     /// Parses a stable `MAJOR.MINOR.PATCH` version string with an optional single `v`/`V` prefix.
@@ -103,6 +99,39 @@ impl SemanticVersion {
         Ok(Self::new(major, minor, patch))
     }
 }
+
+const fn parse_const_u32(raw: &str) -> u32 {
+    let bytes = raw.as_bytes();
+    assert!(!bytes.is_empty(), "CARGO_PKG_VERSION component must not be empty");
+    let mut value: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        assert!(b.is_ascii_digit(), "CARGO_PKG_VERSION component must be ASCII digits");
+        let digit = (b - b'0') as u32;
+        value = match value.checked_mul(10) {
+            Some(v) => match v.checked_add(digit) {
+                Some(next) => next,
+                None => panic!("CARGO_PKG_VERSION component overflows u32"),
+            },
+            None => panic!("CARGO_PKG_VERSION component overflows u32"),
+        };
+        i += 1;
+    }
+    value
+}
+
+const CURRENT_VERSION: SemanticVersion = {
+    assert!(
+        env!("CARGO_PKG_VERSION_PRE").is_empty(),
+        "CARGO_PKG_VERSION must be a stable MAJOR.MINOR.PATCH release"
+    );
+    SemanticVersion::new(
+        parse_const_u32(env!("CARGO_PKG_VERSION_MAJOR")),
+        parse_const_u32(env!("CARGO_PKG_VERSION_MINOR")),
+        parse_const_u32(env!("CARGO_PKG_VERSION_PATCH")),
+    )
+};
 
 fn parse_numeric_part(part: Option<&str>, original: &str) -> Result<u32, String> {
     let Some(part) = part.filter(|s| !s.is_empty()) else {

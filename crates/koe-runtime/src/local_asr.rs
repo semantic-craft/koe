@@ -67,7 +67,9 @@ impl LocalAsrEffect {
                 locale,
             } => {
                 let bytes = locale.as_bytes();
-                let len = u32::try_from(bytes.len()).expect("locale fits u32");
+                let Ok(len) = u32::try_from(bytes.len()) else {
+                    return;
+                };
                 out.push(1);
                 out.extend_from_slice(&operation_id.to_le_bytes());
                 out.extend_from_slice(&len.to_le_bytes());
@@ -77,7 +79,9 @@ impl LocalAsrEffect {
                 operation_id,
                 pcm16_le,
             } => {
-                let len = u32::try_from(pcm16_le.len()).expect("audio chunk fits u32");
+                let Ok(len) = u32::try_from(pcm16_le.len()) else {
+                    return;
+                };
                 out.push(2);
                 out.extend_from_slice(&operation_id.to_le_bytes());
                 out.extend_from_slice(&len.to_le_bytes());
@@ -167,8 +171,10 @@ impl LocalAsr {
             if pcm_bytes + bytes > DRAIN_PCM_BYTES {
                 break;
             }
-            pcm_bytes += bytes;
-            batch.push(self.effects.pop_front().unwrap());
+            if let Some(effect) = self.effects.pop_front() {
+                pcm_bytes += bytes;
+                batch.push(effect);
+            }
         }
         self.pcm_bytes -= pcm_bytes;
         batch

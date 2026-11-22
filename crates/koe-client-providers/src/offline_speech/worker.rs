@@ -109,11 +109,12 @@ impl OfflineSpeechWorker {
             .enable_all()
             .build()
             .map_err(|error| format!("create model download runtime: {error}"))?;
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .read_timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|error| format!("create model download client: {error}"))?;
+        let client = crate::http_client::validated_download_client(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(30),
+            false,
+        )
+        .map_err(|error| format!("create model download client: {error}"))?;
         let (commands, receiver) = mpsc::sync_channel::<Command>(MAX_OUTSTANDING);
         let control = Arc::new(Control::new());
         let events = Arc::new(Mutex::new(Events::default()));

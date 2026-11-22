@@ -134,17 +134,14 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         "parity" => {
-            println!(
-                "[{}]",
-                (0..20)
-                    .map(protocol::run_parity_seed)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
+            let vectors = (0..20)
+                .map(protocol::run_parity_seed)
+                .collect::<Result<Vec<_>, _>>()?;
+            println!("[{}]", vectors.join(","));
             return Ok(());
         }
         "benchmark" => {
-            protocol::run_benchmark(!options.safe);
+            protocol::run_benchmark(!options.safe)?;
             return Ok(());
         }
         "status" | "doctor" | "search" | "ask" | "edit-segment" | "set-speaker"

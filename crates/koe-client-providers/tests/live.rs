@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};

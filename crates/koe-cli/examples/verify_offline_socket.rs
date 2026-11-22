@@ -300,7 +300,10 @@ fn run() -> Result<(), String> {
     for (idx, exp) in persisted.iter().enumerate() {
         let is_all_day_mic = all_day && idx < mic_ids.len();
         let exp_ms = is_all_day_mic.then_some(if idx == 0 { 300_000 } else { 3_000 });
-        let act = check_record(&reopened, exp["recordId"].as_str().unwrap(), exp_ms, is_all_day_mic)?;
+        let record_id = exp["recordId"]
+            .as_str()
+            .ok_or("persisted record missing recordId")?;
+        let act = check_record(&reopened, record_id, exp_ms, is_all_day_mic)?;
         if act["segments"] != exp["segments"] {
             return Err("segments changed across reopen".into());
         }

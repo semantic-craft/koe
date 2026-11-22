@@ -7,13 +7,7 @@ pub(super) async fn complete(
     system: &str,
     user: &str,
 ) -> Result<ProviderOutput, String> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .no_proxy()
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|_| "无法初始化 HTTPS 客户端")?;
+    let client = crate::http_client::cloud_api_client().map_err(|_| "无法初始化 HTTPS 客户端")?;
     let mut request = client.post(&config.endpoint);
     if !config.api_key.trim().is_empty() {
         request = request.bearer_auth(&config.api_key);

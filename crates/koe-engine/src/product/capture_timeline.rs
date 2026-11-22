@@ -49,23 +49,28 @@ pub fn place_capture_span(
     {
         return Err(ProductError::InvalidEvidence);
     }
-    let merge = previous.is_some_and(|s| s.epoch == epoch && start_ns.abs_diff(end) <= tolerance);
-    let span = if merge {
-        let mut s = previous.unwrap().clone();
-        s.sample_count = s
-            .sample_count
-            .checked_add(count as u64)
-            .ok_or(ProductError::InvalidEvidence)?;
-        s
-    } else {
-        if spans.len() >= MAX_CAPTURE_SPANS {
-            return Err(ProductError::InvalidEvidence);
+    let (span, merge) = match previous {
+        Some(prev) if prev.epoch == epoch && start_ns.abs_diff(end) <= tolerance => {
+            let mut s = prev.clone();
+            s.sample_count = s
+                .sample_count
+                .checked_add(count as u64)
+                .ok_or(ProductError::InvalidEvidence)?;
+            (s, true)
         }
-        CaptureSpan {
-            epoch,
-            start_ns: start_ns.max(end),
-            sample_offset: previous.map_or(0, |s| s.sample_offset + s.sample_count),
-            sample_count: count as u64,
+        _ => {
+            if spans.len() >= MAX_CAPTURE_SPANS {
+                return Err(ProductError::InvalidEvidence);
+            }
+            (
+                CaptureSpan {
+                    epoch,
+                    start_ns: start_ns.max(end),
+                    sample_offset: previous.map_or(0, |s| s.sample_offset + s.sample_count),
+                    sample_count: count as u64,
+                },
+                false,
+            )
         }
     };
     if span.end_ns(rate).is_none_or(|e| e > MAX_TIME_NS) {
