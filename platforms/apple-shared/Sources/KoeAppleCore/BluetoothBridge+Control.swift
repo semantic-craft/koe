@@ -3,6 +3,36 @@ import Foundation
 import os
 import OSLog
 
+public protocol BluetoothDefaultsStore: Sendable {
+    func string(forKey defaultName: String) -> String?
+    func set(_ value: String, forKey defaultName: String)
+    func removeObject(forKey defaultName: String)
+}
+
+public struct SystemBluetoothDefaultsStore: BluetoothDefaultsStore {
+    private let suiteName: String?
+
+    public init(suiteName: String? = nil) {
+        self.suiteName = suiteName
+    }
+
+    private var defaults: UserDefaults {
+        suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
+    }
+
+    public func string(forKey defaultName: String) -> String? {
+        defaults.string(forKey: defaultName)
+    }
+
+    public func set(_ value: String, forKey defaultName: String) {
+        defaults.set(value, forKey: defaultName)
+    }
+
+    public func removeObject(forKey defaultName: String) {
+        defaults.removeObject(forKey: defaultName)
+    }
+}
+
 struct BleTeardownResources {
     var central: (any BleCentral)?
     var peripheral: (any BlePeripheral)?
@@ -46,6 +76,16 @@ final class GattWriteLink: BleWriteLink {
 }
 
 extension BluetoothBridge {
+    var activeDiagnostics: HostDiagnosticLog { store?.diagnostics ?? .shared }
+
+    func logBleError(_ message: String, error: (any Error)?) {
+        if let error {
+            activeDiagnostics.error(category: "ble", event: "ble_error", detailPrefix: "\(message) ", error: error)
+        } else {
+            activeDiagnostics.error(category: "ble", event: "ble_error", detail: message, errorCode: "ble_error")
+        }
+    }
+
     nonisolated static func releaseTeardownResources(_ box: OSAllocatedUnfairLock<BleTeardownResources>) {
         let cleanup: @MainActor @Sendable () -> Void = {
             let resources = box.withLockUnchecked { state -> BleTeardownResources in
@@ -74,7 +114,7 @@ extension BluetoothBridge {
         lastObservedAutoConnect = device.autoConnect
         let hasLocalLink = reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil
 
-        if !device.autoConnect { UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey) }
+        if !device.autoConnect { defaultsStore.removeObject(forKey: Self.savedPeripheralKey) }
         if teardownPending {
             if !device.autoConnect {
                 scanAfterTeardown = false

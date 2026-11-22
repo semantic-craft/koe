@@ -184,9 +184,12 @@ public final class NativeLocalTranscription {
         }
     }
 
+    private var activeDiagnostics: HostDiagnosticLog { store?.diagnostics ?? .shared }
+
     private func finishPrepare(epoch currentEpoch: UInt64, prepareGeneration currentPrepare: UInt64, error: (any Error)?) {
         guard epoch == currentEpoch, prepareGeneration == currentPrepare else { return }
         if let error {
+            activeDiagnostics.warning(category: "local_asr", event: "prepare_unavailable", error: error)
             send(.localAsrReadiness(state: "unavailable", message: error.localizedDescription))
         } else {
             send(.localAsrReadiness(state: "ready", message: "中文离线转写已就绪。"))
@@ -197,6 +200,12 @@ public final class NativeLocalTranscription {
         guard worker == nil else {
             if let deadline, now() >= deadline {
                 if let operation {
+                    activeDiagnostics.warning(
+                        category: "local_asr",
+                        event: "operation_timeout",
+                        detail: "operation=\(operation)",
+                        errorCode: "timeout"
+                    )
                     send(.localAsrFailed(operationId: operation, message: "离线转写等待系统响应超时；原始录音仍会保存。"))
                 }
                 interrupt()
@@ -214,6 +223,7 @@ public final class NativeLocalTranscription {
                 worker = nil
             }
         } catch {
+            activeDiagnostics.error(category: "local_asr", event: "drain_effects_failed", error: error)
             store?.reportNativeError("无法读取离线转写任务。")
         }
     }
@@ -277,6 +287,12 @@ public final class NativeLocalTranscription {
                 let failed = operation
                 operation = nil
                 if !Task.isCancelled, epoch == currentEpoch, let failed {
+                    activeDiagnostics.error(
+                        category: "local_asr",
+                        event: "process_failed",
+                        detailPrefix: "operation=\(failed) ",
+                        error: error
+                    )
                     send(.localAsrFailed(operationId: failed, message: error.localizedDescription))
                 }
                 await cancelSession()
@@ -300,6 +316,12 @@ public final class NativeLocalTranscription {
                 isFinal: result.isFinal
             ))
         case let .failure(error):
+            activeDiagnostics.error(
+                category: "local_asr",
+                event: "stream_failed",
+                detailPrefix: "operation=\(id) ",
+                error: error
+            )
             interrupt()
             send(.localAsrFailed(operationId: id, message: error.localizedDescription))
         }

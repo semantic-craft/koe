@@ -76,23 +76,30 @@ class HostSessionStore(
     }
 
     fun openSession(): Boolean {
-        synchronized(stateLock) {
+        var pendingLog: KoeLogger.PendingError? = null
+        val opened = synchronized(stateLock) {
             if (handle != 0L) return true
-            if (bridge.apiVersion() != EXPECTED_ABI_VERSION) {
+            val actualVersion = bridge.apiVersion()
+            if (actualVersion != EXPECTED_ABI_VERSION) {
+                pendingLog = KoeLogger.PendingError("KoeSession", "open_session", "expected=$EXPECTED_ABI_VERSION actual=$actualVersion", "abi_mismatch")
                 setNativeErrorLocked("应用与数据引擎版本不一致，请重新构建应用。")
-                return false
-            }
-            val opened = if (credentials != null) {
-                bridge.sessionCreateWithCredentials(workspacePath, credentials, isolatedCredentials)
+                false
             } else {
-                bridge.sessionCreate(workspacePath)
+                val created = credentials?.let {
+                    bridge.sessionCreateWithCredentials(workspacePath, it, isolatedCredentials)
+                } ?: bridge.sessionCreate(workspacePath)
+                if (created == 0L) {
+                    pendingLog = KoeLogger.PendingError("KoeSession", "open_session", "isolated=$isolatedCredentials returned 0", "session_open_failed")
+                    setNativeErrorLocked("无法打开工作区，请检查文件夹的访问权限。")
+                    false
+                } else {
+                    handle = created
+                    true
+                }
             }
-            if (opened == 0L) {
-                setNativeErrorLocked("无法打开工作区，请检查文件夹的访问权限。")
-                return false
-            }
-            handle = opened
         }
+        pendingLog?.emit()
+        if (!opened) return false
         refreshSnapshot()
         return true
     }
@@ -140,7 +147,8 @@ class HostSessionStore(
                     result.completeExceptionally(error)
                 }
             }
-        } catch (_: RejectedExecutionException) {
+        } catch (error: RejectedExecutionException) {
+            KoeLogger.w("KoeSession", "send_command_async", "command=${command.commandType}", "executor_rejected", error)
             result.complete("工作区正在关闭。")
         }
         return result.await()
@@ -149,11 +157,12 @@ class HostSessionStore(
     fun sendReturningError(command: HostCommand, nowEpochSec: Long = 0L): String? {
         val json = try {
             command.toJsonString()
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            val detail = KoeLogger.e("KoeSession", "encode_command", "command=${command.commandType}", "encode_failed", error)
             val message = "无法发送这次操作，请重试。"
             synchronized(stateLock) {
                 setNativeErrorLocked(message)
-                recordTraceLocked(kind = "command", name = command.commandType)
+                recordTraceLocked(kind = "command", name = command.commandType, errorDetail = detail)
             }
             onTraceUpdated?.invoke()
             return message
@@ -171,10 +180,11 @@ class HostSessionStore(
     fun sendEventSync(event: HostAdapterEvent, nowEpochSec: Long = 0L) {
         val json = try {
             event.toJsonString()
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            val detail = KoeLogger.e("KoeSession", "encode_event", "event=${event.eventType}", "encode_failed", error)
             synchronized(stateLock) {
                 setNativeErrorLocked("无法发送这次操作，请重试。")
-                recordTraceLocked(kind = "event", name = event.eventType)
+                recordTraceLocked(kind = "event", name = event.eventType, errorDetail = detail)
             }
             onTraceUpdated?.invoke()
             return
@@ -220,7 +230,8 @@ class HostSessionStore(
         } else {
             try {
                 executor.execute(task)
-            } catch (_: RejectedExecutionException) {
+            } catch (error: RejectedExecutionException) {
+                KoeLogger.w("KoeSession", "enqueue_command", "executor rejected task", "executor_rejected", error)
             }
         }
     }
@@ -228,25 +239,31 @@ class HostSessionStore(
     fun refreshSnapshot(nowEpochSec: Long = 0L) {
         var traced = false
         var applied: ApplySnapshotResult? = null
+        var pendingLog: KoeLogger.PendingError? = null
         synchronized(stateLock) {
             if (handle == 0L) return
+            var traceErrorDetail: String? = null
             try {
                 val effectiveNow = resolveNowEpochSec(nowEpochSec)
                 val raw = bridge.sessionSnapshotJson(handle, effectiveNow)
                 if (raw == null) {
+                    val diag = KoeLogger.PendingError("KoeSession", "refresh_snapshot", "bridge returned null", "snapshot_null")
+                    pendingLog = diag
+                    traceErrorDetail = diag.detail
                     setNativeErrorLocked("无法读取工作区状态。")
-                    return
+                } else {
+                    applied = applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false)
+                    pendingLog = applied?.diagnostic
+                    traceErrorDetail = applied?.diagnostic?.detail
                 }
-                applied = applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false)
             } finally {
-                recordTraceLocked(kind = "snapshot", name = "snapshot")
+                recordTraceLocked(kind = "snapshot", name = "snapshot", errorDetail = traceErrorDetail)
                 traced = true
             }
         }
+        pendingLog?.emit()
         applied?.let { notifySnapshotPublished(it.changed, it.publishSequence) }
-        if (traced) {
-            onTraceUpdated?.invoke()
-        }
+        if (traced) onTraceUpdated?.invoke()
     }
 
     fun refreshSnapshotIfNeeded(minGeneration: Long, nowEpochSec: Long = 0L) {
@@ -255,30 +272,16 @@ class HostSessionStore(
     }
 
     fun ingestMicrophonePcm(
-        recordId: String,
-        sessionId: String,
-        lane: String,
-        sequence: Long,
-        epoch: Long,
-        capturedStartNs: Long?,
-        samples: ShortArray,
-        sampleCount: Int = samples.size,
-        nowEpochSec: Long = 0L,
+        recordId: String, sessionId: String, lane: String, sequence: Long, epoch: Long,
+        capturedStartNs: Long?, samples: ShortArray, sampleCount: Int = samples.size, nowEpochSec: Long = 0L,
     ): PcmIngestReceipt = synchronized(stateLock) {
         if (handle == 0L) return PcmIngestReceipt(0L, 0L, PcmIngestStatus.REJECTED)
         setNativeErrorLocked(null)
-        bridge.sessionIngestPcm(
-            handle, recordId, sessionId, lane, sequence, epoch,
-            capturedStartNs, samples, sampleCount, nowEpochSec,
-        )
+        bridge.sessionIngestPcm(handle, recordId, sessionId, lane, sequence, epoch, capturedStartNs, samples, sampleCount, nowEpochSec)
     }
 
     fun reportPlaybackProgress(
-        recordId: String,
-        requestId: Long,
-        positionMs: Long,
-        isPlaying: Boolean,
-        nowEpochSec: Long = 0L,
+        recordId: String, requestId: Long, positionMs: Long, isPlaying: Boolean, nowEpochSec: Long = 0L,
     ) {
         var needsFullRefresh = false
         var minRefreshGeneration: Long? = null
@@ -333,13 +336,19 @@ class HostSessionStore(
         refreshSnapshotIfNeeded(nextGeneration, nowEpochSec)
     }
 
-    fun drainOutboundBleFrames(): List<ByteArray> = synchronized(stateLock) {
-        if (handle == 0L) return emptyList()
-        val raw = bridge.sessionDrainBleTx(handle) ?: return emptyList()
-        parseLengthPrefixedBleFrames(raw) ?: run {
-            setNativeErrorLocked("无法读取设备发送队列。")
-            emptyList()
+    fun drainOutboundBleFrames(): List<ByteArray> {
+        var invalidBytes: Int? = null
+        val frames = synchronized(stateLock) {
+            if (handle == 0L) return emptyList()
+            val raw = bridge.sessionDrainBleTx(handle) ?: return emptyList()
+            parseLengthPrefixedBleFrames(raw) ?: run {
+                invalidBytes = raw.size
+                setNativeErrorLocked("无法读取设备发送队列。")
+                emptyList()
+            }
         }
+        invalidBytes?.let { KoeLogger.e("KoeBle", "drain_tx", "invalid framing bytes=$it", "ble_tx_framing") }
+        return frames
     }
 
     fun drainLocalAsrEffects(): ByteArray = synchronized(stateLock) {
@@ -350,14 +359,17 @@ class HostSessionStore(
     fun loadDebugSnapshotFixtureJson(json: String, resumeLiveOnCommand: Boolean = false): Boolean {
         if (!allowDebugFixture) return false
         val result = synchronized(stateLock) {
+            var errorDetail: String? = null
             try {
                 applySnapshotJsonLocked(json, projectedNowSec = 0L, resetGate = true).also {
+                    errorDetail = it.diagnostic?.detail
                     this.resumeLiveOnCommand = it.accepted && resumeLiveOnCommand
                 }
             } finally {
-                recordTraceLocked(kind = "fixture", name = "fixture")
+                recordTraceLocked(kind = "fixture", name = "fixture", errorDetail = errorDetail)
             }
         }
+        result.diagnostic?.emit()
         notifySnapshotPublished(result.changed, result.publishSequence)
         onTraceUpdated?.invoke()
         return result.accepted
@@ -367,6 +379,7 @@ class HostSessionStore(
         val result = synchronized(stateLock) {
             applySnapshotJsonLocked(json, projectedNowSec = projectedNowSec, resetGate = false)
         }
+        result.diagnostic?.emit()
         notifySnapshotPublished(result.changed, result.publishSequence)
         return result.accepted
     }
@@ -385,13 +398,15 @@ class HostSessionStore(
             val effectiveNow = resolveNowEpochSec(nowEpochSec)
             val response = bridge.sessionDispatchJson(handle, json, effectiveNow)
             val applied = if (response == null) {
-                snapshotFailureLocked("操作未能完成，请重试。工作区数据仍然保留。")
+                val diag = KoeLogger.PendingError("KoeSession", "dispatch_json", "$traceKind=$commandType returned null", "dispatch_null")
+                snapshotFailureLocked("操作未能完成，请重试。工作区数据仍然保留。", diag)
             } else {
                 applySnapshotJsonLocked(response, projectedNowSec = effectiveNow, resetGate = false)
             }
-            recordTraceLocked(kind = traceKind, name = commandType)
+            recordTraceLocked(kind = traceKind, name = commandType, errorDetail = applied.diagnostic?.detail)
             applied
         }
+        result.diagnostic?.emit()
         notifySnapshotPublished(result.changed, result.publishSequence)
         onTraceUpdated?.invoke()
         return result.error
@@ -403,26 +418,31 @@ class HostSessionStore(
         onSnapshotChanged?.invoke(snapshot)
     }
 
-    private data class ApplySnapshotResult(
+    private class ApplySnapshotResult(
         val accepted: Boolean,
         val changed: HostSnapshot? = null,
         val publishSequence: Long = 0L,
         val error: String? = null,
+        val diagnostic: KoeLogger.PendingError? = null,
     )
 
-    private fun snapshotFailureLocked(message: String): ApplySnapshotResult {
+    private fun snapshotFailureLocked(message: String, diagnostic: KoeLogger.PendingError? = null): ApplySnapshotResult {
         setNativeErrorLocked(message)
-        return ApplySnapshotResult(false, error = message)
+        return ApplySnapshotResult(false, error = message, diagnostic = diagnostic)
     }
 
     private fun applySnapshotJsonLocked(json: String, projectedNowSec: Long, resetGate: Boolean): ApplySnapshotResult {
         val decoded = try {
             HostJson.json.decodeFromString(HostSnapshot.serializer(), json)
-        } catch (_: Exception) {
-            return snapshotFailureLocked("无法读取数据引擎的回应，请重新打开应用。")
+        } catch (error: Exception) {
+            val op = if (resetGate) "decode_fixture" else "decode_snapshot"
+            val diag = KoeLogger.PendingError("KoeSession", op, "snapshot decode failed", error.javaClass.simpleName, error)
+            return snapshotFailureLocked("无法读取数据引擎的回应，请重新打开应用。", diag)
         }
         if (decoded.version != EXPECTED_ABI_VERSION) {
-            return snapshotFailureLocked("数据引擎返回了不兼容的版本。")
+            val op = if (resetGate) "fixture_version" else "snapshot_version"
+            val diag = KoeLogger.PendingError("KoeSession", op, "expected=$EXPECTED_ABI_VERSION actual=${decoded.version}", "snapshot_version_mismatch")
+            return snapshotFailureLocked("数据引擎返回了不兼容的版本。", diag)
         }
         if (resetGate) {
             nativeError = null
@@ -446,7 +466,7 @@ class HostSessionStore(
         slices.updateNavigation(currentSnapshot, nativeError)
     }
 
-    private fun recordTraceLocked(kind: String, name: String) {
+    private fun recordTraceLocked(kind: String, name: String, errorDetail: String? = null) {
         if (verificationTrace && kind == "snapshot" && nativeError == null && currentSnapshot.error == null) return
         traceBuffer.append(
             HostTraceEntry(
@@ -456,6 +476,7 @@ class HostSessionStore(
                 section = currentSnapshot.section,
                 hasError = (nativeError ?: currentSnapshot.error) != null,
                 timestampEpochMs = clockEpochMs().coerceAtLeast(0L),
+                errorDetail = errorDetail?.let(KoeLogger::redact),
             ),
         )
     }

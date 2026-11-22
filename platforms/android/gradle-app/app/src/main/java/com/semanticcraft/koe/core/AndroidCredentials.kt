@@ -93,6 +93,7 @@ class KeystoreAesGcmBackend(
                 )
             }
         } catch (ex: Exception) {
+            KoeLogger.e("KoeCred", "keystore_write", "credential blob write failed", ex.javaClass.simpleName)
             tempFile.delete()
             throw ex
         }

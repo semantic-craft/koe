@@ -13,6 +13,7 @@ import android.media.AudioTimestamp
 import android.media.MediaRecorder
 import android.os.Process
 import android.os.SystemClock
+import com.semanticcraft.koe.core.KoeLogger
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AndroidAudioRecordSource(
@@ -65,11 +66,13 @@ class AndroidAudioRecordSource(
         try {
             record.startRecording()
         } catch (error: Throwable) {
-            runCatching { record.release() }
+            KoeLogger.e("KoeCapture", "start_recording", "AudioRecord.startRecording failed", error.javaClass.simpleName, error)
+            releaseSafely(record, "start_recording_rollback")
             throw error
         }
         if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-            runCatching { record.release() }
+            KoeLogger.e("KoeCapture", "start_recording", "recordingState=${record.recordingState}", "record_not_recording")
+            releaseSafely(record, "start_recording_state_rollback")
             throw IllegalStateException("无法启动麦克风录音。")
         }
 
@@ -113,7 +116,8 @@ class AndroidAudioRecordSource(
         stopFlag?.set(true)
         try {
             record?.stop()
-        } catch (_: IllegalStateException) {
+        } catch (error: IllegalStateException) {
+            KoeLogger.w("KoeCapture", "stop_recording", "AudioRecord.stop failed", "illegal_state", error)
         }
         thread?.interrupt()
         if (thread != null && thread !== Thread.currentThread()) {
@@ -123,9 +127,16 @@ class AndroidAudioRecordSource(
                 Thread.currentThread().interrupt()
             }
         }
+        if (record != null) {
+            releaseSafely(record, "stop_release")
+        }
+    }
+
+    private fun releaseSafely(record: AudioRecord, operation: String) {
         try {
-            record?.release()
-        } catch (_: Throwable) {
+            record.release()
+        } catch (error: Throwable) {
+            KoeLogger.w("KoeCapture", operation, "AudioRecord.release failed", error.javaClass.simpleName, error)
         }
     }
 
@@ -142,13 +153,15 @@ class AndroidAudioRecordSource(
                     .setAudioFormat(format)
                     .setBufferSizeInBytes(bufferBytes)
                     .build()
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                KoeLogger.w("KoeCapture", "create_audio_record", "source=$source build failed", error.javaClass.simpleName, error)
                 null
             } ?: continue
             if (candidate.state == AudioRecord.STATE_INITIALIZED) {
                 return candidate
             }
-            runCatching { candidate.release() }
+            KoeLogger.w("KoeCapture", "create_audio_record", "source=$source state=${candidate.state}", "not_initialized")
+            releaseSafely(candidate, "create_audio_record_cleanup")
         }
         return null
     }
@@ -173,12 +186,14 @@ class AndroidAudioRecordSource(
         val timestamp = AudioTimestamp()
         var totalFramesRead = 0L
         var minNextStartNs = startClockNs
+        var timestampErrorLogged = false
 
         while (!stopFlag.get()) {
             val readCount = try {
                 record.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
             } catch (error: Throwable) {
                 if (!stopFlag.get()) {
+                    KoeLogger.e("KoeCapture", "read_audio", "AudioRecord.read threw", error.javaClass.simpleName, error)
                     onFailure("麦克风读取失败：${error.message ?: "未知错误"}")
                 }
                 break
@@ -194,6 +209,12 @@ class AndroidAudioRecordSource(
                     startClockNs = startClockNs,
                     nowNs = nowNs,
                     chunkDurationNs = chunkDurationNs,
+                    onTimestampError = { err ->
+                        if (!timestampErrorLogged) {
+                            timestampErrorLogged = true
+                            KoeLogger.w("KoeCapture", "audio_timestamp", "getTimestamp unsupported", err.javaClass.simpleName, err)
+                        }
+                    },
                 )
                 val capturedStartNs = maxOf(candidateStartNs, minNextStartNs)
                 minNextStartNs = capturedStartNs + chunkDurationNs
@@ -210,6 +231,7 @@ class AndroidAudioRecordSource(
                 }
             } else if (readCount < 0) {
                 if (!stopFlag.get()) {
+                    KoeLogger.e("KoeCapture", "read_audio", "AudioRecord.read code=$readCount", "audio_read_$readCount")
                     onFailure("麦克风读取失败（错误码 $readCount）。")
                 }
                 break
@@ -225,10 +247,12 @@ class AndroidAudioRecordSource(
         startClockNs: Long,
         nowNs: Long,
         chunkDurationNs: Long,
+        onTimestampError: (Throwable) -> Unit,
     ): Long {
         val status = try {
             record.getTimestamp(timestamp, AudioTimestamp.TIMEBASE_BOOTTIME)
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            onTimestampError(error)
             AudioRecord.ERROR_INVALID_OPERATION
         }
         if (status == AudioRecord.SUCCESS && timestamp.nanoTime > 0L) {

@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.platform.capture.PermissionRequester
 import com.semanticcraft.koe.platform.files.DocumentPickerHost
 import com.semanticcraft.koe.core.WorkspaceExportOptions
@@ -91,7 +92,8 @@ class MainActivity : ComponentActivity() {
             } else {
                 try {
                     launch()
-                } catch (_: ActivityNotFoundException) {
+                } catch (error: ActivityNotFoundException) {
+                    KoeLogger.w("KoeFiles", "picker_activity_not_found", "no document picker activity", "activity_not_found", error)
                     onLaunchFailed(PickerLaunchFailure.NO_PICKER_APP)
                 }
             }

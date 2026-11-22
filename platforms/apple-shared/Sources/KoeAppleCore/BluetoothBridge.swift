@@ -72,9 +72,12 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     private var pendingServices = 0
     var reportedReady = false
     var connectionID = ""
+    let defaultsStore: any BluetoothDefaultsStore
     private var discoveredName: String?
 
-    public init(store: HostSessionStore? = nil) { self.store = store; super.init() }
+    public init(store: HostSessionStore? = nil, defaultsStore: any BluetoothDefaultsStore = SystemBluetoothDefaultsStore()) {
+        self.store = store; self.defaultsStore = defaultsStore; super.init()
+    }
     deinit { Self.releaseTeardownResources(teardownBox) }
 
     public func activateHost(allowsCoreBluetooth: Bool = true) {
@@ -84,7 +87,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
             syncWithRuntimeDevice(device)
             #if os(iOS)
             if awaitingStateRestoration || pendingRestoration != nil { return }
-            guard let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+            guard let saved = defaultsStore.string(forKey: Self.savedPeripheralKey),
                   UUID(uuidString: saved) != nil else { return }
             #endif
             if device.autoConnect && !device.connected && !reportedReady && !isScanRequested && peripheral == nil && reconnectingPeripheral == nil {
@@ -129,7 +132,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
 
     public func reconnectKnownIfAvailable() {
         guard store?.runtimeDevice.autoConnect != false, !reportedReady, peripheral == nil, reconnectingPeripheral == nil,
-              let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey), UUID(uuidString: saved) != nil else { return }
+              let saved = defaultsStore.string(forKey: Self.savedPeripheralKey), UUID(uuidString: saved) != nil else { return }
         startScanningIfPoweredOn()
     }
 
@@ -196,7 +199,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         guard pendingServices == 0, notifyReady, let characteristic = writeCharacteristic, let peripheral, let central,
               !reportedReady else { return }
         writeLink = GattWriteLink(central, peripheral, characteristic)
-        UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.savedPeripheralKey)
+        defaultsStore.set(peripheral.identifier.uuidString, forKey: Self.savedPeripheralKey)
         reportedReady = true
         emit("ready")
         flushOutboundFrames()
@@ -232,7 +235,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     }
 
     func reportError(_ message: String, error: (any Error)? = nil) {
-        Self.logger.error("\(message, privacy: .public) \(error?.localizedDescription ?? "", privacy: .public)")
+        logBleError(message, error: error)
         store?.reportNativeError(message)
     }
 

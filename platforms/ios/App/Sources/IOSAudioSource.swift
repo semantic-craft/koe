@@ -60,6 +60,7 @@ final class IOSAudioSource: MicrophoneSource {
             guard engine.isRunning else { throw CaptureError("麦克风采集引擎未能保持运行。") }
             return rate
         } catch {
+            HostDiagnosticLog.shared.error(category: "ios_capture", event: "engine_start_failed", error: error)
             stop()
             throw error
         }
@@ -76,8 +77,8 @@ final class IOSAudioSource: MicrophoneSource {
         do {
             try audioSession.setActive(false, for: .microphone)
         } catch {
+            HostDiagnosticLog.shared.error(category: "ios_capture", event: "session_deactivate_failed", error: error)
             let message = "停用麦克风音频会话失败：\(error.localizedDescription)"
-            Self.logger.error("\(message, privacy: .public)")
             reportError(message)
         }
     }

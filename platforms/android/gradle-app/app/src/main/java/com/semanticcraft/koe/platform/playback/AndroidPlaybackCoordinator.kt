@@ -3,6 +3,7 @@ package com.semanticcraft.koe.platform.playback
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.core.PlaybackAssetSnapshot
 import com.semanticcraft.koe.platform.AndroidHostAdapter
 import com.semanticcraft.koe.platform.capture.AudioFocusController
@@ -122,13 +123,15 @@ class AndroidPlaybackCoordinator(
             val sinkToken = Any()
             val opened = try {
                 sinkFactory.open(plan) { notifySinkStateChanged(sinkToken) }
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                KoeLogger.e("KoePlayback", "open_sink", "recordId=$recordId", error.javaClass.simpleName, error)
                 fail(store, recordId, plan, desired.requestId, desired.positionMs)
                 return
             }
             val latest = store.playback.value
             if (latest.recordId != recordId || latest.asset != plan) {
                 runCatching { opened.close() }
+                    .onFailure { KoeLogger.w("KoePlayback", "close_stale_sink", "stale sink close failed", error = it) }
                 synchronized(lock) { reapplyRequested = true }
                 return
             }
@@ -198,7 +201,8 @@ class AndroidPlaybackCoordinator(
         if (focusHeld) return true
         val granted = try {
             focusController.requestFocus(::handleAudioFocusLost)
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            KoeLogger.w("KoePlayback", "request_focus", "audio focus request failed", error.javaClass.simpleName, error)
             false
         }
         if (granted) focusHeld = true
@@ -256,6 +260,7 @@ class AndroidPlaybackCoordinator(
         lastReportedPositionMs = null
         if (active != null) {
             runCatching { active.sink.close() }
+                .onFailure { KoeLogger.w("KoePlayback", "close_sink", "sink close failed", error = it) }
         }
     }
 
@@ -263,6 +268,7 @@ class AndroidPlaybackCoordinator(
         if (!focusHeld) return
         focusHeld = false
         runCatching { focusController.abandonFocus() }
+            .onFailure { KoeLogger.w("KoePlayback", "abandon_focus", "abandonFocus failed", error = it) }
     }
 
     companion object {

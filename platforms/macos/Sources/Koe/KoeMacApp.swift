@@ -55,8 +55,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             }
         }
     }
-    public let bluetoothBridge = BluetoothBridge()
-    let files = NativeFileActions()
+    public let bluetoothBridge: BluetoothBridge
+    let files: NativeFileActions
     private let playback: NativePlayback
     private let audioInputMonitor: CoreAudioInputMonitor
     private let defaultInputsProvider: () -> [MicrophoneInput]
@@ -79,10 +79,14 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     init(
         playback: NativePlayback,
         capture: NativeCapture? = nil,
+        bluetoothBridge: BluetoothBridge = BluetoothBridge(),
+        files: NativeFileActions = NativeFileActions(),
         audioInputMonitor: CoreAudioInputMonitor = CoreAudioInputMonitor(),
         defaultInputsProvider: @escaping () -> [MicrophoneInput] = NativeAudioSource.inputs,
         makeDefaultStore: @escaping @MainActor () -> HostSessionStore = { KoeAppDelegate.createDefaultStore() }
     ) {
+        self.bluetoothBridge = bluetoothBridge
+        self.files = files
         self.playback = playback
         self.capture = capture ?? NativeCapture(source: NativeAudioSource(), systemSource: NativeSystemAudioSource())
         self.audioInputMonitor = audioInputMonitor
