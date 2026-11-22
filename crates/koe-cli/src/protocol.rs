@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 use std::time::Instant;
 
 pub(crate) fn verify() -> Result<Value, String> {
-    use koe_client_providers::{decode_ws_frame, encode_masked_ws_frame, WsFrameOpcode};
     let mut left_key = [0u8; 32];
     left_key[31] = 1;
     let mut right_key = [0u8; 32];
@@ -33,18 +32,13 @@ pub(crate) fn verify() -> Result<Value, String> {
             return Err("BLE frame decode differs".into());
         }
     }
-    let bytes = encode_masked_ws_frame(WsFrameOpcode::Binary, &[1, 2, 3, 4], [7, 8, 9, 10]);
-    let (frame, count) = decode_ws_frame(&bytes)?;
-    if count != bytes.len() || !frame.masked || frame.payload != [1, 2, 3, 4] {
-        return Err("WebSocket frame roundtrip differs".into());
-    }
     let mut decoder = koe_opus::create_libopus_decoder(16000).ok_or("libopus unavailable")?;
     let mut pcm = Vec::new();
     if !decoder.decode_trimmed_packet(&[0xf8, 0xff, 0xfe], &mut pcm) || pcm.len() != 640 {
         return Err("libopus silence vector differs".into());
     }
     Ok(json!({"status":"ok","scope":"in_memory_protocol_vectors",
-        "checks":["p256_ecdh","aes_known_answer","ble_frames_20_seeds","websocket_mask","libopus_16khz"],
+        "checks":["p256_ecdh","aes_known_answer","ble_frames_20_seeds","libopus_16khz"],
         "hardwareVerified":false,"cloudVerified":false}))
 }
 

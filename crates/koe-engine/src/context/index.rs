@@ -77,6 +77,109 @@ fn stem_latin_token(token: &str) -> &str {
     token
 }
 
+fn for_each_cjk_bigram(text: &str, mut on_bigram: impl FnMut(u32)) -> u32 {
+    let mut char_len = 0u32;
+    let mut prev_han: Option<char> = None;
+    for ch in text.chars() {
+        char_len = char_len.saturating_add(1);
+        if is_cjk_ideograph(ch) {
+            if let Some(prev) = prev_han {
+                let key = pack_pair(prev, ch);
+                if !is_stop_pair_key(key) {
+                    on_bigram(key);
+                }
+            }
+            prev_han = Some(ch);
+        } else {
+            prev_han = None;
+        }
+    }
+    char_len
+}
+
+fn for_each_latin_term_with_scratch(
+    text: &str,
+    scratch: &mut String,
+    mut on_term: impl FnMut(&str),
+) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphanumeric() {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+                i += 1;
+            }
+            if i - start >= 2 {
+                let raw = &text[start..i];
+                let tok = if raw.bytes().all(|b| !b.is_ascii_uppercase()) {
+                    raw
+                } else {
+                    scratch.clear();
+                    scratch.push_str(raw);
+                    scratch.make_ascii_lowercase();
+                    scratch.as_str()
+                };
+                on_term(tok);
+                let stem = stem_latin_token(tok);
+                if stem != tok {
+                    on_term(stem);
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn for_each_latin_term(text: &str, on_term: impl FnMut(&str)) {
+    let mut scratch = String::new();
+    for_each_latin_term_with_scratch(text, &mut scratch, on_term);
+}
+
+fn extract_query_terms(query: &str) -> (BTreeSet<u32>, BTreeSet<String>) {
+    let mut cjk_keys = BTreeSet::new();
+    let _ = for_each_cjk_bigram(query, |key| {
+        cjk_keys.insert(key);
+    });
+    let mut latin_keys = BTreeSet::new();
+    for_each_latin_term(query, |term| {
+        if !latin_keys.contains(term) {
+            latin_keys.insert(term.to_owned());
+        }
+    });
+    (cjk_keys, latin_keys)
+}
+
+fn collect_ranked_hits(scores: &[f64], touched: Vec<usize>, limit: usize) -> Vec<SearchHit> {
+    let mut hits: Vec<SearchHit> = touched
+        .into_iter()
+        .filter_map(|idx| {
+            let s = scores[idx];
+            if s > 0.0 {
+                Some(SearchHit {
+                    doc_index: idx,
+                    score: s,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.doc_index.cmp(&b.doc_index))
+    });
+    if hits.len() > limit {
+        hits.truncate(limit);
+    }
+    hits
+}
+
 /// Scoring mode for [`ContextSearchIndex::search`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScoringMode {
@@ -107,7 +210,7 @@ pub struct SearchHit {
 }
 
 /// Inverted index over Chinese 2-character bigrams (`u32` packed keys) and Latin tokens/stems
-/// for sub-millisecond offline Q&A retrieval over 400,000-character corpora.
+/// for offline Q&A retrieval.
 #[derive(Debug, Clone, Default)]
 pub struct ContextSearchIndex {
     doc_count: usize,
@@ -147,25 +250,11 @@ impl ContextSearchIndex {
         let doc_id = self.doc_count as u32;
         self.doc_count += 1;
 
-        let mut char_len = 0u32;
         let mut cjk_tf: BTreeMap<u32, u16> = BTreeMap::new();
-        let mut prev_han: Option<char> = None;
-
-        for ch in text.chars() {
-            char_len = char_len.saturating_add(1);
-            if is_cjk_ideograph(ch) {
-                if let Some(p) = prev_han {
-                    let key = pack_pair(p, ch);
-                    if !is_stop_pair_key(key) {
-                        let count = cjk_tf.entry(key).or_insert(0);
-                        *count = count.saturating_add(1);
-                    }
-                }
-                prev_han = Some(ch);
-            } else {
-                prev_han = None;
-            }
-        }
+        let char_len = for_each_cjk_bigram(text, |key| {
+            let count = cjk_tf.entry(key).or_insert(0);
+            *count = count.saturating_add(1);
+        });
 
         self.total_chars = self.total_chars.saturating_add(char_len as usize);
         self.doc_char_lens.push(char_len.max(1));
@@ -174,30 +263,14 @@ impl ContextSearchIndex {
             self.cjk_postings.entry(key).or_default().push((doc_id, tf));
         }
 
-        let bytes = text.as_bytes();
         let mut latin_tf: BTreeMap<String, u16> = BTreeMap::new();
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i].is_ascii_alphanumeric() {
-                let start = i;
-                i += 1;
-                while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
-                    i += 1;
-                }
-                if i - start >= 2 {
-                    let tok = text[start..i].to_ascii_lowercase();
-                    let stem = stem_latin_token(&tok).to_string();
-                    let count = latin_tf.entry(tok.clone()).or_insert(0);
-                    *count = count.saturating_add(1);
-                    if stem != tok {
-                        let stem_count = latin_tf.entry(stem).or_insert(0);
-                        *stem_count = stem_count.saturating_add(1);
-                    }
-                }
+        for_each_latin_term(text, |term| {
+            if let Some(count) = latin_tf.get_mut(term) {
+                *count = count.saturating_add(1);
             } else {
-                i += 1;
+                latin_tf.insert(term.to_owned(), 1);
             }
-        }
+        });
 
         for (term, tf) in latin_tf {
             self.latin_postings
@@ -241,45 +314,7 @@ impl ContextSearchIndex {
             return Vec::new();
         }
 
-        let mut cjk_keys = BTreeSet::new();
-        let mut prev_han: Option<char> = None;
-        for ch in query.chars() {
-            if is_cjk_ideograph(ch) {
-                if let Some(p) = prev_han {
-                    let key = pack_pair(p, ch);
-                    if !is_stop_pair_key(key) {
-                        cjk_keys.insert(key);
-                    }
-                }
-                prev_han = Some(ch);
-            } else {
-                prev_han = None;
-            }
-        }
-
-        let mut latin_keys = BTreeSet::new();
-        let bytes = query.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i].is_ascii_alphanumeric() {
-                let start = i;
-                i += 1;
-                while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
-                    i += 1;
-                }
-                if i - start >= 2 {
-                    let tok = query[start..i].to_ascii_lowercase();
-                    let stem = stem_latin_token(&tok).to_string();
-                    latin_keys.insert(tok.clone());
-                    if stem != tok {
-                        latin_keys.insert(stem);
-                    }
-                }
-            } else {
-                i += 1;
-            }
-        }
-
+        let (cjk_keys, latin_keys) = extract_query_terms(query);
         if cjk_keys.is_empty() && latin_keys.is_empty() {
             return Vec::new();
         }
@@ -324,31 +359,7 @@ impl ContextSearchIndex {
             }
         }
 
-        let mut hits: Vec<SearchHit> = touched
-            .into_iter()
-            .filter_map(|idx| {
-                let s = scores[idx];
-                if s > 0.0 {
-                    Some(SearchHit {
-                        doc_index: idx,
-                        score: s,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.doc_index.cmp(&b.doc_index))
-        });
-        if hits.len() > limit {
-            hits.truncate(limit);
-        }
-        hits
+        collect_ranked_hits(&scores, touched, limit)
     }
 
     /// Searches using default BM25 scoring, updates `last_hit_count`, and returns matching document indices.
@@ -367,198 +378,77 @@ pub fn rank_texts(query: &str, texts: &[&str], limit: usize) -> Vec<usize> {
         return Vec::new();
     }
 
-    let mut cjk_patterns: Vec<[u8; 6]> = Vec::new();
-    let mut cjk_seen: Vec<u32> = Vec::new();
-    let mut prev_han: Option<char> = None;
-    for ch in query.chars() {
-        if is_cjk_ideograph(ch) {
-            if let Some(p) = prev_han {
-                let key = pack_pair(p, ch);
-                if !is_stop_pair_key(key) && !cjk_seen.contains(&key) {
-                    cjk_seen.push(key);
-                    let mut buf = [0u8; 6];
-                    let _ = p.encode_utf8(&mut buf[0..3]);
-                    let _ = ch.encode_utf8(&mut buf[3..6]);
-                    cjk_patterns.push(buf);
-                }
-            }
-            prev_han = Some(ch);
-        } else {
-            prev_han = None;
-        }
-    }
-
-    let mut latin_terms: Vec<Vec<u8>> = Vec::new();
-    let q_bytes = query.as_bytes();
-    let mut i = 0;
-    while i < q_bytes.len() {
-        if q_bytes[i].is_ascii_alphanumeric() {
-            let start = i;
-            i += 1;
-            while i < q_bytes.len() && q_bytes[i].is_ascii_alphanumeric() {
-                i += 1;
-            }
-            if i - start >= 2 {
-                let tok: Vec<u8> = q_bytes[start..i]
-                    .iter()
-                    .map(u8::to_ascii_lowercase)
-                    .collect();
-                if !latin_terms.contains(&tok) {
-                    latin_terms.push(tok);
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    let cjk_len = cjk_patterns.len().min(64);
-    cjk_patterns.truncate(cjk_len);
-    let latin_len = latin_terms.len().min(64 - cjk_len);
-    latin_terms.truncate(latin_len);
-    let total_terms = cjk_len + latin_len;
-    if total_terms == 0 {
+    let (cjk_keys, latin_keys) = extract_query_terms(query);
+    if cjk_keys.is_empty() && latin_keys.is_empty() {
         return Vec::new();
     }
 
-    let mut b2_mask = [0u64; 256];
-    let mut b5_mask = [0u64; 256];
-    for (k, pat) in cjk_patterns.iter().enumerate() {
-        b2_mask[pat[2] as usize] |= 1u64 << k;
-        b5_mask[pat[5] as usize] |= 1u64 << k;
+    let mut cjk_term_ids: BTreeMap<u32, usize> = BTreeMap::new();
+    for key in cjk_keys {
+        let tid = cjk_term_ids.len();
+        cjk_term_ids.insert(key, tid);
     }
+    let cjk_count = cjk_term_ids.len();
 
-    let mut latin_b0_mask = [0u64; 256];
-    for (l_idx, pat) in latin_terms.iter().enumerate() {
-        let bit = 1u64 << l_idx;
-        let lo = pat[0];
-        latin_b0_mask[lo as usize] |= bit;
-        latin_b0_mask[lo.to_ascii_uppercase() as usize] |= bit;
+    let mut latin_term_ids: BTreeMap<String, usize> = BTreeMap::new();
+    for term in latin_keys {
+        let tid = cjk_count + latin_term_ids.len();
+        latin_term_ids.insert(term, tid);
     }
+    let total_terms = cjk_count + latin_term_ids.len();
 
-    let mut dfs = [0u32; 64];
-    let mut matched_docs: Vec<(u32, u64)> = Vec::new();
+    let mut postings: Vec<Vec<usize>> = vec![Vec::new(); total_terms];
+    let mut doc_seen = vec![usize::MAX; total_terms];
+    let mut scratch = String::new();
+    let mut any_match = false;
 
     for (doc_idx, &text) in texts.iter().enumerate() {
-        let mut mask = 0u64;
-        let bytes = text.as_bytes();
-        let len = bytes.len();
-
-        if cjk_len > 0 && len >= 6 {
-            let limit_bi = len - 6;
-            let mut bi = 0;
-            while bi <= limit_bi {
-                let b0 = bytes[bi];
-                if b0 < 0x80 {
-                    bi += 1;
-                } else if (0xE0..0xF0).contains(&b0) {
-                    let cand =
-                        b2_mask[bytes[bi + 2] as usize] & b5_mask[bytes[bi + 5] as usize] & !mask;
-                    if cand != 0 {
-                        let mut m = cand;
-                        while m != 0 {
-                            let k = m.trailing_zeros() as usize;
-                            let pat = &cjk_patterns[k];
-                            if b0 == pat[0]
-                                && bytes[bi + 1] == pat[1]
-                                && bytes[bi + 3] == pat[3]
-                                && bytes[bi + 4] == pat[4]
-                            {
-                                mask |= 1u64 << k;
-                            }
-                            m &= m - 1;
-                        }
+        if !cjk_term_ids.is_empty() {
+            let _ = for_each_cjk_bigram(text, |key| {
+                if let Some(&tid) = cjk_term_ids.get(&key) {
+                    if doc_seen[tid] != doc_idx {
+                        doc_seen[tid] = doc_idx;
+                        postings[tid].push(doc_idx);
+                        any_match = true;
                     }
-                    bi += 3;
-                } else if b0 < 0xE0 {
-                    bi += 2;
-                } else {
-                    bi += 4;
                 }
-            }
+            });
         }
-
-        if latin_len > 0 {
-            let mut bi = 0;
-            while bi < len {
-                let b0 = bytes[bi];
-                if b0 < 0x80 {
-                    let cand = latin_b0_mask[b0 as usize] & !(mask >> cjk_len);
-                    if cand != 0 {
-                        let mut m = cand;
-                        while m != 0 {
-                            let l_idx = m.trailing_zeros() as usize;
-                            let pat = &latin_terms[l_idx];
-                            let pat_len = pat.len();
-                            if bi + pat_len <= len {
-                                let mut ok = true;
-                                let mut j = 1;
-                                while j < pat_len {
-                                    if bytes[bi + j].to_ascii_lowercase() != pat[j] {
-                                        ok = false;
-                                        break;
-                                    }
-                                    j += 1;
-                                }
-                                if ok {
-                                    mask |= 1u64 << (cjk_len + l_idx);
-                                }
-                            }
-                            m &= m - 1;
-                        }
+        if !latin_term_ids.is_empty() {
+            for_each_latin_term_with_scratch(text, &mut scratch, |term| {
+                if let Some(&tid) = latin_term_ids.get(term) {
+                    if doc_seen[tid] != doc_idx {
+                        doc_seen[tid] = doc_idx;
+                        postings[tid].push(doc_idx);
+                        any_match = true;
                     }
-                    bi += 1;
-                } else if (0xE0..0xF0).contains(&b0) {
-                    bi += 3;
-                } else if b0 < 0xE0 {
-                    bi += 2;
-                } else {
-                    bi += 4;
                 }
-            }
-        }
-
-        if mask != 0 {
-            let mut m = mask;
-            while m != 0 {
-                let bit = m.trailing_zeros() as usize;
-                dfs[bit] += 1;
-                m &= m - 1;
-            }
-            matched_docs.push((doc_idx as u32, mask));
+            });
         }
     }
 
-    if matched_docs.is_empty() {
+    if !any_match {
         return Vec::new();
     }
 
-    let n_f64 = texts.len() as f64;
-    let mut weights = [0.0f64; 64];
-    for t in 0..total_terms {
-        if dfs[t] > 0 {
-            weights[t] = (1.0 + n_f64 / f64::from(dfs[t])).ln();
+    let n = texts.len() as f64;
+    let mut scores = vec![0.0f64; texts.len()];
+    let mut touched = Vec::new();
+    for doc_ids in &postings {
+        if doc_ids.is_empty() {
+            continue;
+        }
+        let idf = (1.0 + n / doc_ids.len() as f64).ln();
+        for &doc_idx in doc_ids {
+            if scores[doc_idx] == 0.0 {
+                touched.push(doc_idx);
+            }
+            scores[doc_idx] += idf;
         }
     }
 
-    let mut scored: Vec<(usize, f64)> = Vec::with_capacity(matched_docs.len());
-    for (doc_id, mask) in matched_docs {
-        let mut score = 0.0f64;
-        let mut m = mask;
-        while m != 0 {
-            let bit = m.trailing_zeros() as usize;
-            score += weights[bit];
-            m &= m - 1;
-        }
-        if score > 0.0 {
-            scored.push((doc_id as usize, score));
-        }
-    }
-
-    scored.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    scored.into_iter().take(limit).map(|(idx, _)| idx).collect()
+    collect_ranked_hits(&scores, touched, limit)
+        .into_iter()
+        .map(|hit| hit.doc_index)
+        .collect()
 }

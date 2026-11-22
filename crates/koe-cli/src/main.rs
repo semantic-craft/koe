@@ -151,86 +151,76 @@ fn run() -> Result<(), String> {
 
     let workspace_path = options.path()?;
     if let Some(mut client) = BridgeClient::try_connect(&workspace_path)? {
-        let output = match options.command.as_str() {
-            "status" => client.status()?,
-            "doctor" => client.doctor()?,
-            "search" => run_search(
-                &options.words.join(" "),
-                &options.scope(),
-                options.limit,
-                |name, args| client.call_tool_value(name, args),
-            )?,
-            "ask" => run_ask(&options.words.join(" "), &options.scope(), |name, args| {
-                client.call_tool_value(name, args)
-            })?,
-            "edit-segment" => {
-                run_edit_segment(options.record.as_deref(), &options.words, |name, args| {
-                    client.call_tool_value(name, args)
-                })?
-            }
-            "set-speaker" => {
-                run_set_speaker(options.record.as_deref(), &options.words, |name, args| {
-                    client.call_tool_value(name, args)
-                })?
-            }
-            "rename-speaker" => {
-                run_rename_speaker(options.record.as_deref(), &options.words, |name, args| {
-                    client.call_tool_value(name, args)
-                })?
-            }
-            "mcp-stdio" => {
-                return mcp::serve(McpBackend::Online {
-                    client: &mut client,
-                    workspace: &workspace_path,
-                });
-            }
-            _ => unreachable!(),
-        };
-        println!("{output}");
-        return Ok(());
+        return dispatch_workspace_command(
+            &options,
+            McpBackend::Online {
+                client: &mut client,
+                workspace: &workspace_path,
+            },
+        );
     }
 
     let mut runtime = KoeRuntime::open(workspace_path)?;
     runtime.poll_timers(0, now());
+    dispatch_workspace_command(&options, McpBackend::Offline(&mut runtime))
+}
+
+fn call_backend_tool(
+    backend: &mut McpBackend<'_>,
+    name: &str,
+    args: Value,
+) -> Result<Value, String> {
+    match backend {
+        McpBackend::Online { client, .. } => client.call_tool_value(name, args),
+        McpBackend::Offline(runtime) => match mcp::call_offline_tool(runtime, name, &args) {
+            Ok(result) => result,
+            Err(err) => Err(err.message),
+        },
+    }
+}
+
+fn dispatch_workspace_command(
+    options: &Options,
+    mut backend: McpBackend<'_>,
+) -> Result<(), String> {
     let output = match options.command.as_str() {
-        "status" => runtime.snapshot(now()),
-        "doctor" => runtime.doctor_snapshot(now()),
+        "status" => match &mut backend {
+            McpBackend::Online { client, .. } => client.status()?,
+            McpBackend::Offline(runtime) => runtime.snapshot(now()),
+        },
+        "doctor" => match &mut backend {
+            McpBackend::Online { client, .. } => client.doctor()?,
+            McpBackend::Offline(runtime) => runtime.doctor_snapshot(now()),
+        },
         "search" => run_search(
             &options.words.join(" "),
             &options.scope(),
             options.limit,
-            |name, args| call_offline_value(&mut runtime, name, args),
+            |name, args| call_backend_tool(&mut backend, name, args),
         )?,
         "ask" => run_ask(&options.words.join(" "), &options.scope(), |name, args| {
-            call_offline_value(&mut runtime, name, args)
+            call_backend_tool(&mut backend, name, args)
         })?,
         "edit-segment" => {
             run_edit_segment(options.record.as_deref(), &options.words, |name, args| {
-                call_offline_value(&mut runtime, name, args)
+                call_backend_tool(&mut backend, name, args)
             })?
         }
         "set-speaker" => {
             run_set_speaker(options.record.as_deref(), &options.words, |name, args| {
-                call_offline_value(&mut runtime, name, args)
+                call_backend_tool(&mut backend, name, args)
             })?
         }
         "rename-speaker" => {
             run_rename_speaker(options.record.as_deref(), &options.words, |name, args| {
-                call_offline_value(&mut runtime, name, args)
+                call_backend_tool(&mut backend, name, args)
             })?
         }
-        "mcp-stdio" => return mcp::serve(McpBackend::Offline(&mut runtime)),
-        _ => unreachable!(),
+        "mcp-stdio" => return mcp::serve(backend),
+        other => return Err(format!("未知命令：{other}；运行 koe --help 查看用法")),
     };
     println!("{output}");
     Ok(())
-}
-
-fn call_offline_value(runtime: &mut KoeRuntime, name: &str, args: Value) -> Result<Value, String> {
-    match mcp::call_offline_tool(runtime, name, &args) {
-        Ok(result) => result,
-        Err(err) => Err(err.message),
-    }
 }
 
 fn run_search(

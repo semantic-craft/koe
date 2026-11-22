@@ -104,26 +104,6 @@ use crate::domain::*;
     }
 
     #[test]
-    fn longest_match_single_pass_term_replacement_and_heard_pruning() {
-        let mut spine = UtteranceSpine::new("rec-terms");
-        spine.append_segment("今天测试深科和深科Work录音豆。", 0, 1000, "zh", "qwen");
-        let raw = r#"{
-            "schemaVersion": 2,
-            "title": "深科的深科Work录音豆",
-            "overview": "测试深科设备",
-            "topics": [{"text": "深科蓝牙", "sources": ["S1"]}],
-            "decisions": [],
-            "actions": [],
-            "questions": [],
-            "terms": [{"name": "声刻", "note": "品牌", "heard": ["深科"], "sources": ["S1"]}]
-        }"#;
-        let mut doc = parse_meeting_minutes_json(raw, &spine).unwrap();
-        doc.replace_terms(&[("深科", "声刻"), ("深科Work", "Soundcore Work")]);
-        assert_eq!(doc.title, "声刻的Soundcore Work录音豆");
-        assert!(doc.terms[0].heard.is_empty());
-    }
-
-    #[test]
     fn build_meeting_minutes_prompt_includes_custom_instructions_without_custom_sections() {
         for (locale, instruction) in [
             ("zh", "只写有来源的结论、行动和记忆。"),

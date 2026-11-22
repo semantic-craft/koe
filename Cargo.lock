@@ -564,7 +564,6 @@ dependencies = [
 name = "koe-cli"
 version = "2.7.1"
 dependencies = [
- "koe-client-providers",
  "koe-engine",
  "koe-host-api",
  "koe-opus",
@@ -582,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "koe-client-providers"
-version = "0.1.0"
+version = "2.7.1"
 dependencies = [
  "futures-util",
  "hound",
@@ -597,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "koe-client-services"
-version = "0.1.0"
+version = "2.7.1"
 dependencies = [
  "koe-client-base",
  "koe-engine",
@@ -628,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "koe-runtime"
-version = "0.1.0"
+version = "2.7.1"
 dependencies = [
  "chrono",
  "futures-util",
