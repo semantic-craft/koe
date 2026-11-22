@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "koe-cli"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "koe-client-providers",
  "koe-engine",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "koe-client-base"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "fs2",
  "libc",
@@ -607,11 +607,11 @@ dependencies = [
 
 [[package]]
 name = "koe-engine"
-version = "2.7.0"
+version = "2.7.1"
 
 [[package]]
 name = "koe-host-api"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "koe-runtime",
  "libc",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "koe-opus"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "audiopus_sys",
  "koe-engine",
