@@ -105,7 +105,7 @@ fn interim_sentences_stream_as_live_events_before_sentence_end() {
     let mut live = LiveTranscription::start(config(endpoint)).unwrap();
     live.push_audio(vec![1; 3200]).unwrap();
     match wait_event(&mut live) {
-        LiveEvent::Final { sequence, segment } => {
+        LiveEvent::Interim { sequence, segment } => {
             assert_eq!(sequence, 7);
             assert_eq!(segment.text, "partial words");
             assert_eq!(segment.start_ms, 0);

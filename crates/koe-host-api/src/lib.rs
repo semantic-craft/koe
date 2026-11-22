@@ -10,7 +10,7 @@ mod local_bridge;
 pub use credentials::KoeCredentialCallback;
 pub use guard::HostSessionGuard;
 pub(crate) use guard::{
-    guarded, lock_sessions, now, read_string, register_session, remove_session, string, with_session,
+    guarded, now, read_string, register_session, remove_session, string, with_session,
 };
 use koe_runtime::{KoeRuntime, PcmIngestStatus};
 use std::{
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn koe_host_session_create_with_credentials(
         };
         let adapter = credentials::PlatformCredentials {
             callback,
-            context: context as usize,
+            context,
             isolated,
         };
         let runtime = match KoeRuntime::open_with_credentials(&path, Box::new(adapter)) {
@@ -165,24 +165,15 @@ pub extern "C" fn koe_host_session_destroy(handle: u64) -> bool {
 /// Returns a session's current generation, or zero for an invalid handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_generation(handle: u64) -> u64 {
-    guarded(|| {
-        lock_sessions()
-            .entries
-            .get(&handle)
-            .map_or(0, |e| e.runtime.generation())
-    })
+    guarded(|| with_session(handle, |rt| rt.generation()).unwrap_or(0))
 }
 
 /// Returns immutable JSON; release the result with `koe_host_string_free`.
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_snapshot_json(handle: u64, epoch: u64) -> *mut c_char {
     guarded(|| {
-        lock_sessions()
-            .entries
-            .get(&handle)
-            .map_or(std::ptr::null_mut(), |e| {
-                string(e.runtime.snapshot_json(now(epoch)))
-            })
+        with_session(handle, |rt| string(rt.snapshot_json(now(epoch))))
+            .unwrap_or(std::ptr::null_mut())
     })
 }
 
@@ -237,6 +228,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_pcm(
         {
             return KoePcmReceipt::default();
         }
+        // SAFETY: Forwarded caller contract guarantees valid NUL-terminated UTF-8 strings or null.
         let (Some(record_id), Some(session_id), Some(lane)) = (unsafe {
             (
                 read_string(record_id),
@@ -246,6 +238,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_pcm(
         }) else {
             return KoePcmReceipt::default();
         };
+        // SAFETY: `samples` was checked non-null and aligned above, and caller guarantees `sample_count` initialized `i16` elements.
         let slice = unsafe { std::slice::from_raw_parts(samples, sample_count) };
         let timing = has_timing.then_some((epoch, captured_start_ns));
         let Some(receipt) = with_session(handle, |rt| {
@@ -284,6 +277,7 @@ pub unsafe extern "C" fn koe_host_session_report_playback_progress(
     now_epoch_sec: u64,
 ) -> KoePlaybackReceipt {
     guarded(|| {
+        // SAFETY: Forwarded caller contract guarantees `record_id` is valid NUL-terminated UTF-8 or null.
         let Some(record_id) = (unsafe { read_string(record_id) }) else {
             return KoePlaybackReceipt::default();
         };
@@ -329,6 +323,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
         let bytes = if length == 0 {
             &[]
         } else {
+            // SAFETY: `bytes` was checked non-null above and caller guarantees `length` initialized bytes.
             unsafe { std::slice::from_raw_parts(bytes, length) }
         };
         with_session(handle, |rt| {
@@ -344,15 +339,21 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_drain_ble_tx(handle: u64) -> KoeOwnedBytes {
     guarded(|| {
-        let mut table = lock_sessions();
-        let Some(entry) = table.entries.get_mut(&handle) else {
+        let Some(frames) = with_session(handle, |rt| rt.drain_outbound_ble_frames()) else {
             return KoeOwnedBytes::default();
         };
-        let frames = entry.runtime.drain_outbound_ble_frames();
         if frames.is_empty() {
             return KoeOwnedBytes::default();
         }
-        let total: usize = frames.iter().map(|f| 4 + f.len()).sum();
+        let Some(total) = frames
+            .iter()
+            .filter(|frame| u32::try_from(frame.len()).is_ok())
+            .try_fold(0usize, |acc, frame| {
+                acc.checked_add(4)?.checked_add(frame.len())
+            })
+        else {
+            return KoeOwnedBytes::default();
+        };
         let mut out = Vec::with_capacity(total);
         for frame in frames {
             let Ok(len) = u32::try_from(frame.len()) else {
@@ -370,11 +371,7 @@ pub extern "C" fn koe_host_session_drain_ble_tx(handle: u64) -> KoeOwnedBytes {
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_drain_local_asr(handle: u64) -> KoeOwnedBytes {
     guarded(|| {
-        let mut table = lock_sessions();
-        let Some(entry) = table.entries.get_mut(&handle) else {
-            return KoeOwnedBytes::default();
-        };
-        owned_bytes(entry.runtime.drain_local_asr_binary())
+        with_session(handle, |rt| owned_bytes(rt.drain_local_asr_binary())).unwrap_or_default()
     })
 }
 
@@ -383,8 +380,8 @@ pub extern "C" fn koe_host_session_drain_local_asr(handle: u64) -> KoeOwnedBytes
 /// Non-null `bytes` must be an unreleased buffer returned by this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_bytes_free(bytes: KoeOwnedBytes) {
-    if !bytes.ptr.is_null() && bytes.cap > 0 {
-        // SAFETY: Ownership is transferred back by the caller.
+    if !bytes.ptr.is_null() && bytes.cap > 0 && bytes.len <= bytes.cap {
+        // SAFETY: Caller transfers ownership of an unreleased `Vec<u8>` returned by `owned_bytes`, and `len <= cap` holds.
         drop(unsafe { Vec::from_raw_parts(bytes.ptr, bytes.len, bytes.cap) });
     }
 }

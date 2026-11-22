@@ -672,3 +672,163 @@ fn no_default_features_session_dispatches_and_reports_offline_speech_unavailable
         "当前平台构建未启用端侧离线语音模型"
     );
 }
+
+#[test]
+fn session_b_reads_succeed_while_session_a_blocks_in_credential_callback() {
+    use std::ffi::c_void;
+    use std::sync::{Mutex, mpsc};
+    use std::time::Duration;
+
+    struct BlockingCredentialContext {
+        entered: Mutex<Option<mpsc::Sender<()>>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    unsafe extern "C" fn blocking_credential_callback(
+        context: *mut c_void,
+        operation: u32,
+        reference: *const c_char,
+        _value: *const c_char,
+        output: *mut c_char,
+        output_cap: usize,
+    ) -> i32 {
+        // SAFETY: Test owns `BlockingCredentialContext` for the entire lifetime of Session A.
+        let ctx = unsafe { &*context.cast::<BlockingCredentialContext>() };
+        match operation {
+            0 | 3 => 1,
+            2 | 4 => 0,
+            5 => {
+                if let Some(tx) = ctx.entered.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+                let _ = ctx.release.lock().unwrap().recv_timeout(Duration::from_secs(5));
+                let prepared = b"cred-ref-1\0";
+                if prepared.len() > output_cap {
+                    return -1;
+                }
+                // SAFETY: `output` has capacity `output_cap >= prepared.len()`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(prepared.as_ptr(), output.cast::<u8>(), prepared.len());
+                }
+                0
+            }
+            1 => {
+                // SAFETY: `reference` is a valid NUL-terminated C string passed by `PlatformCredentials`.
+                let bytes = unsafe { CStr::from_ptr(reference) }.to_bytes_with_nul();
+                if bytes.len() > output_cap {
+                    return -1;
+                }
+                // SAFETY: `output` has capacity `output_cap >= bytes.len()`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), output.cast::<u8>(), bytes.len());
+                }
+                0
+            }
+            _ => -1,
+        }
+    }
+
+    let ws_a = TempWorkspace::new("concurrent-a");
+    let ws_b = TempWorkspace::new("concurrent-b");
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let ctx = Box::new(BlockingCredentialContext {
+        entered: Mutex::new(Some(entered_tx)),
+        release: Mutex::new(release_rx),
+    });
+    let ctx_ptr = (&raw const *ctx).cast_mut().cast::<c_void>();
+
+    let c_path_a = CString::new(ws_a.0.to_str().unwrap()).unwrap();
+    // SAFETY: `c_path_a` is NUL-terminated UTF-8 and `ctx` outlives Session A.
+    let handle_a = unsafe {
+        koe_host_session_create_with_credentials(
+            c_path_a.as_ptr(),
+            Some(blocking_credential_callback),
+            ctx_ptr,
+            true,
+        )
+    };
+    assert_ne!(handle_a, 0);
+
+    let session_b = HostSessionGuard::open(&ws_b.0).unwrap();
+    let handle_b = session_b.handle();
+    let now = 1_800_005_000u64;
+
+    let worker_a = std::thread::spawn(move || {
+        let cmd = CString::new(
+            json!({
+                "type": "configure_provider",
+                "apiKey": "sk-concurrent-test",
+                "model": "fixture"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // SAFETY: `cmd` is a valid NUL-terminated UTF-8 command JSON.
+        let out = unsafe { koe_host_session_dispatch_json(handle_a, cmd.as_ptr(), now) };
+        assert!(!out.is_null());
+        // SAFETY: `out` was returned by `koe_host_session_dispatch_json`.
+        unsafe { koe_host_string_free(out) };
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Session A did not enter credential callback");
+
+    let (b_tx, b_rx) = mpsc::channel();
+    let worker_b = std::thread::spawn(move || {
+        let gen_b = koe_host_session_generation(handle_b);
+        let snap_ptr = koe_host_session_snapshot_json(handle_b, now);
+        let snap_text = if snap_ptr.is_null() {
+            None
+        } else {
+            // SAFETY: `snap_ptr` was returned by `koe_host_session_snapshot_json`.
+            let owned = unsafe { CString::from_raw(snap_ptr) };
+            owned.into_string().ok()
+        };
+        let _ = b_tx.send((gen_b, snap_text));
+    });
+
+    let b_result = b_rx.recv_timeout(Duration::from_secs(1));
+    let _ = release_tx.send(());
+    worker_a.join().unwrap();
+    worker_b.join().unwrap();
+    assert!(koe_host_session_destroy(handle_a));
+    drop(ctx);
+
+    let (gen_b, snap_text) = b_result.expect(
+        "Session B generation/snapshot blocked while Session A waited inside credential callback",
+    );
+    assert!(gen_b > 0);
+    let snap: Value = serde_json::from_str(&snap_text.expect("valid snapshot JSON")).unwrap();
+    assert_eq!(snap["version"], KOE_HOST_API_VERSION);
+}
+
+#[test]
+fn koe_host_bytes_free_ignores_invalid_len_greater_than_cap() {
+    let mut stack_buf = [0x5Au8; 8];
+    let malformed = KoeOwnedBytes {
+        ptr: stack_buf.as_mut_ptr(),
+        len: 8,
+        cap: 4,
+    };
+    // SAFETY: `koe_host_bytes_free` rejects `len > cap` before touching `ptr`.
+    unsafe { koe_host_bytes_free(malformed) };
+    assert_eq!(stack_buf, [0x5Au8; 8]);
+}
+
+#[test]
+fn poisoned_session_returns_default_and_destroys_cleanly() {
+    let ws = TempWorkspace::new("poisoned");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
+    let handle = session.handle();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = with_session(handle, |_rt| -> () {
+            panic!("simulated runtime panic");
+        });
+    }));
+    assert!(panicked.is_err());
+    assert_eq!(koe_host_session_generation(handle), 0);
+    assert!(koe_host_session_snapshot_json(handle, 1_800_005_000).is_null());
+    drop(session);
+}

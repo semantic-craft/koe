@@ -1,3 +1,4 @@
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use koe_engine::wav::OpusWave;
@@ -204,29 +205,82 @@ async fn read_bounded_bytes(
     Ok(bytes)
 }
 
-fn is_loopback_host(url: &reqwest::Url) -> bool {
-    url.host_str().is_some_and(|host| {
-        host == "localhost"
-            || host
-                .trim_matches(['[', ']'])
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    })
+fn is_non_global_v4(v4: Ipv4Addr) -> bool {
+    let [a, b, ..] = v4.octets();
+    v4.is_private()
+        || v4.is_loopback()
+        || v4.is_link_local()
+        || v4.is_broadcast()
+        || v4.is_documentation()
+        || v4.is_unspecified()
+        || v4.is_multicast()
+        || a == 0
+        || (a == 100 && (b & 0xC0) == 64)
+        || (a == 198 && (b & 0xFE) == 18)
+        || a >= 240
 }
 
-fn validate_remote_http_url(raw: &str, allow_loopback_http: bool) -> Result<reqwest::Url, String> {
+fn is_non_global_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_non_global_v4(v4),
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_non_global_v4(v4);
+            }
+            let segs = v6.segments();
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (segs[0] & 0xFE00) == 0xFC00
+                || (segs[0] & 0xFFC0) == 0xFE80
+                || (segs[0] & 0xFFC0) == 0xFEC0
+                || segs[0] == 0x2002
+                || segs[..2] == [0x2001, 0x0DB8]
+                || segs[..3] == [0x0064, 0xFF9B, 0x0001]
+                || segs[..4] == [0x0100, 0, 0, 0]
+                || segs[..6] == [0; 6]
+                || segs[..6] == [0, 0, 0, 0, 0xFFFF, 0]
+                || segs[..6] == [0x0064, 0xFF9B, 0, 0, 0, 0]
+        }
+    }
+}
+
+fn validate_remote_http_url_parsed(
+    raw: &str,
+    allow_loopback_http: bool,
+) -> Result<reqwest::Url, String> {
     let url = reqwest::Url::parse(raw).map_err(|_| "语音服务返回的临时地址无效")?;
     if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
         return Err("语音服务返回的临时地址无效".into());
     }
-    let loopback = is_loopback_host(&url);
-    if url.scheme() == "https" && (!loopback || allow_loopback_http) {
-        return Ok(url);
+    let Some(host) = url.host_str() else {
+        return Err("语音服务返回的临时地址无效".into());
+    };
+    let loopback = super::is_loopback_host(&url);
+    if loopback {
+        if allow_loopback_http && matches!(url.scheme(), "http" | "https") {
+            return Ok(url);
+        }
+        return Err("语音服务返回了不安全或受限的临时地址".into());
     }
-    if allow_loopback_http && url.scheme() == "http" && loopback {
+    let trimmed = host.trim_end_matches('.');
+    if trimmed.to_ascii_lowercase().ends_with(".localhost")
+        || trimmed
+            .trim_matches(['[', ']'])
+            .parse::<IpAddr>()
+            .is_ok_and(is_non_global_ip)
+    {
+        return Err("语音服务返回了不安全或受限的临时地址".into());
+    }
+    if url.scheme() == "https" {
         return Ok(url);
     }
     Err("语音服务返回了不安全或受限的临时地址".into())
+}
+
+/// Validates a provider-supplied HTTP(S) upload or result URL against SSRF targets.
+pub fn validate_remote_http_url(raw: &str, allow_loopback_http: bool) -> Result<(), String> {
+    validate_remote_http_url_parsed(raw, allow_loopback_http).map(|_| ())
 }
 
 fn origin_and_loopback(endpoint: &str) -> Result<(String, bool), String> {
@@ -236,7 +290,7 @@ fn origin_and_loopback(endpoint: &str) -> Result<(String, bool), String> {
         Some(port) => format!("{}://{host}:{port}", url.scheme()),
         None => format!("{}://{host}", url.scheme()),
     };
-    let allow_loopback = url.scheme() == "http" && is_loopback_host(&url);
+    let allow_loopback = url.scheme() == "http" && super::is_loopback_host(&url);
     Ok((origin, allow_loopback))
 }
 
@@ -459,7 +513,7 @@ pub(super) async fn transcribe_qwen_filetrans(
         .get("upload_host")
         .and_then(Value::as_str)
         .ok_or("Qwen 上传凭据缺少 upload_host")?;
-    let validated_upload_host = validate_remote_http_url(upload_host, allow_loopback_http)?;
+    let validated_upload_host = validate_remote_http_url_parsed(upload_host, allow_loopback_http)?;
     let oss_access_key_id = data
         .get("oss_access_key_id")
         .and_then(Value::as_str)
@@ -655,7 +709,7 @@ pub(super) async fn transcribe_qwen_filetrans(
     };
 
     // Step 5: Download final transcription JSON from OSS result URL (no Bearer header).
-    let validated_result_url = validate_remote_http_url(&transcription_url, allow_loopback_http)?;
+    let validated_result_url = validate_remote_http_url_parsed(&transcription_url, allow_loopback_http)?;
     let dl_resp = client
         .get(validated_result_url)
         .send()
@@ -753,5 +807,43 @@ mod tests {
         assert!(validate_remote_http_url("http://127.0.0.1:8080/ssrf", false).is_err());
         assert!(validate_remote_http_url("https://localhost/ssrf", false).is_err());
         assert!(validate_remote_http_url("http://127.0.0.1:8080/mock", true).is_ok());
+    }
+
+    #[test]
+    fn remote_url_validator_rejects_fqdn_loopback_and_non_global_ip_literals() {
+        for blocked in [
+            "https://localhost./x",
+            "https://LOCALHOST./x",
+            "https://169.254.169.254/latest/meta-data",
+            "https://10.0.0.1/x",
+            "https://172.16.0.1/x",
+            "https://192.168.1.1/x",
+            "https://100.64.0.1/x",
+            "https://0.0.0.0/x",
+            "https://224.0.0.1/x",
+            "https://[::]/x",
+            "https://[::1]/x",
+            "https://[fc00::1]/x",
+            "https://[fe80::1]/x",
+            "https://[ff02::1]/x",
+            "https://[::ffff:127.0.0.1]/x",
+            "https://[::ffff:169.254.169.254]/x",
+            "https://[::ffff:10.0.0.1]/x",
+        ] {
+            assert!(
+                validate_remote_http_url(blocked, false).is_err(),
+                "expected remote URL validator to reject {blocked}"
+            );
+        }
+        for blocked_even_in_loopback_mode in [
+            "https://169.254.169.254/latest/meta-data",
+            "https://10.0.0.1/x",
+            "https://[::ffff:169.254.169.254]/x",
+        ] {
+            assert!(
+                validate_remote_http_url(blocked_even_in_loopback_mode, true).is_err(),
+                "expected loopback mode to still reject non-loopback non-global {blocked_even_in_loopback_mode}"
+            );
+        }
     }
 }

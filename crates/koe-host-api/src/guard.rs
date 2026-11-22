@@ -12,7 +12,7 @@ use std::{
     collections::BTreeMap,
     ffi::{CStr, CString, c_char},
     path::Path,
-    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -38,6 +38,7 @@ pub(crate) unsafe fn read_string(pointer: *const c_char) -> Option<String> {
     if pointer.is_null() {
         None
     } else {
+        // SAFETY: Caller guarantees `pointer` is a valid NUL-terminated C string.
         unsafe { CStr::from_ptr(pointer) }
             .to_str()
             .ok()
@@ -45,24 +46,20 @@ pub(crate) unsafe fn read_string(pointer: *const c_char) -> Option<String> {
     }
 }
 
-pub(crate) struct SessionEntry {
-    pub(crate) runtime: KoeRuntime,
-}
-
 #[derive(Default)]
-pub(crate) struct Sessions {
+struct Sessions {
     next: u64,
-    pub(crate) entries: BTreeMap<u64, SessionEntry>,
+    entries: BTreeMap<u64, Arc<Mutex<Option<KoeRuntime>>>>,
     #[cfg(feature = "local-bridge")]
-    pub(crate) bridges: BTreeMap<u64, local_bridge::BridgeServer>,
+    bridges: BTreeMap<u64, local_bridge::BridgeServer>,
 }
 
-pub(crate) fn sessions() -> &'static Mutex<Sessions> {
+fn sessions() -> &'static Mutex<Sessions> {
     static SESSIONS: OnceLock<Mutex<Sessions>> = OnceLock::new();
     SESSIONS.get_or_init(|| Mutex::new(Sessions::default()))
 }
 
-pub(crate) fn lock_sessions() -> MutexGuard<'static, Sessions> {
+fn lock_sessions() -> MutexGuard<'static, Sessions> {
     sessions().lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -70,9 +67,13 @@ pub(crate) fn with_session<R>(
     handle: u64,
     op: impl FnOnce(&mut KoeRuntime) -> R,
 ) -> Option<R> {
-    let mut table = lock_sessions();
-    let entry = table.entries.get_mut(&handle)?;
-    Some(op(&mut entry.runtime))
+    let entry = {
+        let table = lock_sessions();
+        Arc::clone(table.entries.get(&handle)?)
+    };
+    let mut guard = entry.lock().ok()?;
+    let runtime = guard.as_mut()?;
+    Some(op(runtime))
 }
 
 pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
@@ -80,7 +81,7 @@ pub(crate) fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
         let mut table = lock_sessions();
         table.next = table.next.saturating_add(1);
         let id = table.next;
-        table.entries.insert(id, SessionEntry { runtime });
+        table.entries.insert(id, Arc::new(Mutex::new(Some(runtime))));
         id
     };
     #[cfg(feature = "local-bridge")]
@@ -110,26 +111,36 @@ pub(crate) fn remove_session(handle: u64) -> bool {
     drop(removed_bridge);
     #[cfg(not(feature = "local-bridge"))]
     let removed_entry = lock_sessions().entries.remove(&handle);
-    let existed = removed_entry.is_some();
-    drop(removed_entry);
-    existed
+    let Some(entry) = removed_entry else {
+        return false;
+    };
+    let runtime = entry
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    drop(runtime);
+    true
 }
 
 unsafe fn take_owned_string(pointer: *mut c_char) -> Option<String> {
     if pointer.is_null() {
         return None;
     }
+    // SAFETY: Caller passes an owned, unreleased pointer allocated via `CString::into_raw`.
     let owned = unsafe { CString::from_raw(pointer) };
     owned.into_string().ok()
 }
 
 unsafe fn take_owned_bytes(bytes: KoeOwnedBytes) -> Vec<u8> {
     if bytes.ptr.is_null() || bytes.len == 0 {
+        // SAFETY: Caller passes an owned `KoeOwnedBytes` returned by this crate.
         unsafe { koe_host_bytes_free(bytes) };
         return Vec::new();
     }
+    // SAFETY: `bytes.ptr` is non-null and addresses `bytes.len` initialized bytes owned by this crate.
     let slice = unsafe { std::slice::from_raw_parts(bytes.ptr, bytes.len) };
     let out = slice.to_vec();
+    // SAFETY: `bytes` is an unreleased `KoeOwnedBytes` buffer owned by this crate.
     unsafe { koe_host_bytes_free(bytes) };
     out
 }
@@ -143,6 +154,7 @@ impl HostSessionGuard {
     pub fn open(path: &Path) -> Option<Self> {
         let text = path.to_str()?;
         let c_path = CString::new(text).ok()?;
+        // SAFETY: `c_path` is a valid NUL-terminated UTF-8 C string for the duration of the call.
         let handle = unsafe { koe_host_session_create(c_path.as_ptr()) };
         (handle != 0).then_some(Self(handle))
     }
@@ -156,6 +168,7 @@ impl HostSessionGuard {
     /// Captures an immutable JSON projection of the session at `now`.
     #[must_use]
     pub fn snapshot_json(&self, now: u64) -> Option<String> {
+        // SAFETY: `koe_host_session_snapshot_json` returns null or an owned `CString::into_raw` pointer.
         unsafe { take_owned_string(koe_host_session_snapshot_json(self.0, now)) }
     }
 
@@ -163,6 +176,7 @@ impl HostSessionGuard {
     #[must_use]
     pub fn dispatch_json(&self, command_json: &str, now: u64) -> Option<String> {
         let c_cmd = CString::new(command_json).ok()?;
+        // SAFETY: `c_cmd` is valid NUL-terminated UTF-8 and `koe_host_session_dispatch_json` returns an owned C string or null.
         unsafe { take_owned_string(koe_host_session_dispatch_json(self.0, c_cmd.as_ptr(), now)) }
     }
 
@@ -174,6 +188,7 @@ impl HostSessionGuard {
         } else {
             bytes.as_ptr()
         };
+        // SAFETY: `ptr` addresses `bytes.len()` initialized bytes (or is null when length is zero).
         unsafe { koe_host_session_ingest_ble(self.0, ptr, bytes.len(), now) }
     }
 
@@ -203,6 +218,7 @@ impl HostSessionGuard {
         } else {
             samples.as_ptr()
         };
+        // SAFETY: C strings are valid NUL-terminated UTF-8 and `ptr` addresses `samples.len()` aligned `i16` values (or is null when empty).
         unsafe {
             koe_host_session_ingest_pcm(
                 self.0,
@@ -234,6 +250,7 @@ impl HostSessionGuard {
         let Ok(c_record) = CString::new(record_id) else {
             return KoePlaybackReceipt::default();
         };
+        // SAFETY: `c_record` is a valid NUL-terminated UTF-8 C string for the duration of the call.
         unsafe {
             koe_host_session_report_playback_progress(
                 self.0,
@@ -256,17 +273,26 @@ impl HostSessionGuard {
     /// Drains queued outbound BLE frames through the binary C ABI.
     #[must_use]
     pub fn drain_ble_tx(&self) -> Vec<Vec<u8>> {
+        // SAFETY: `koe_host_session_drain_ble_tx` returns an owned `KoeOwnedBytes` buffer from this crate.
         let raw = unsafe { take_owned_bytes(koe_host_session_drain_ble_tx(self.0)) };
         let mut frames = Vec::new();
         let mut cursor = 0;
-        while cursor + 4 <= raw.len() {
-            let len = u32::from_le_bytes(raw[cursor..cursor + 4].try_into().unwrap()) as usize;
-            cursor += 4;
-            if cursor + len > raw.len() {
+        while let Some(header) = raw.get(cursor..).and_then(|rest| rest.get(..4)) {
+            let Ok(len_bytes) = <[u8; 4]>::try_from(header) else {
                 break;
-            }
-            frames.push(raw[cursor..cursor + len].to_vec());
-            cursor += len;
+            };
+            let len = u32::from_le_bytes(len_bytes) as usize;
+            let Some(payload_start) = cursor.checked_add(4) else {
+                break;
+            };
+            let Some(payload_end) = payload_start.checked_add(len) else {
+                break;
+            };
+            let Some(frame) = raw.get(payload_start..payload_end) else {
+                break;
+            };
+            frames.push(frame.to_vec());
+            cursor = payload_end;
         }
         frames
     }
@@ -274,6 +300,7 @@ impl HostSessionGuard {
     /// Drains queued outbound local speech effects as raw binary records through the C ABI.
     #[must_use]
     pub fn drain_local_asr_binary(&self) -> Vec<u8> {
+        // SAFETY: `koe_host_session_drain_local_asr` returns an owned `KoeOwnedBytes` buffer from this crate.
         unsafe { take_owned_bytes(koe_host_session_drain_local_asr(self.0)) }
     }
 }

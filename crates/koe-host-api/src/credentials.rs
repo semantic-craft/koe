@@ -1,5 +1,6 @@
 use koe_runtime::credentials::{CredentialError, CredentialStore};
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
+use std::sync::atomic::{Ordering, compiler_fence};
 
 /// Synchronous platform credential callback. Operations are read=0, create=1,
 /// delete=2, read legacy=3, authorize=4, prepare=5. Prepare returns a fresh
@@ -10,11 +11,60 @@ use std::ffi::{c_char, c_void, CStr, CString};
 pub type KoeCredentialCallback =
     unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *mut c_char, usize) -> i32;
 
+struct ZeroizingBuf(Vec<u8>);
+
+impl ZeroizingBuf {
+    fn c_string(input: &str) -> Result<Self, CredentialError> {
+        if input.as_bytes().contains(&0) {
+            return Err(CredentialError);
+        }
+        let mut bytes = Vec::with_capacity(input.len() + 1);
+        bytes.extend_from_slice(input.as_bytes());
+        bytes.push(0);
+        Ok(Self(bytes))
+    }
+
+    fn zeroed(len: usize) -> Self {
+        Self(vec![0u8; len])
+    }
+
+    fn as_c_ptr(&self) -> *const c_char {
+        self.0.as_ptr().cast()
+    }
+
+    fn as_mut_c_ptr(&mut self) -> *mut c_char {
+        self.0.as_mut_ptr().cast()
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl Drop for ZeroizingBuf {
+    fn drop(&mut self) {
+        for byte in &mut self.0 {
+            // SAFETY: `byte` is a valid, aligned, uniquely borrowed mutable reference inside `self.0`.
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        compiler_fence(Ordering::SeqCst);
+    }
+}
+
 pub(crate) struct PlatformCredentials {
     pub callback: KoeCredentialCallback,
-    pub context: usize,
+    pub context: *mut c_void,
     pub isolated: bool,
 }
+
+// SAFETY: `koe_host_session_create_with_credentials` requires the caller to guarantee
+// that `context` remains valid until session destruction and supports serialized calls on any thread.
+unsafe impl Send for PlatformCredentials {}
+
 impl PlatformCredentials {
     fn call(
         &mut self,
@@ -23,23 +73,23 @@ impl PlatformCredentials {
         value: &str,
     ) -> Result<Option<String>, CredentialError> {
         let reference = CString::new(reference).map_err(|_| CredentialError)?;
-        let value = CString::new(value).map_err(|_| CredentialError)?;
-        let mut output = vec![0u8; 65_537];
+        let value = ZeroizingBuf::c_string(value)?;
+        let mut output = ZeroizingBuf::zeroed(65_537);
         // SAFETY: Session creation requires the callback/context to outlive the session.
         // Buffers are valid for this synchronous call and output capacity is explicit.
         let status = unsafe {
             (self.callback)(
-                self.context as *mut c_void,
+                self.context,
                 operation,
                 reference.as_ptr(),
-                value.as_ptr(),
-                output.as_mut_ptr().cast(),
+                value.as_c_ptr(),
+                output.as_mut_c_ptr(),
                 output.len(),
             )
         };
         match status {
             1 => Ok(None),
-            0 => CStr::from_bytes_until_nul(&output)
+            0 => CStr::from_bytes_until_nul(output.as_slice())
                 .map_err(|_| CredentialError)?
                 .to_str()
                 .map(|s| Some(s.to_owned()))

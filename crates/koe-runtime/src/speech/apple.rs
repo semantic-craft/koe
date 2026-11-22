@@ -86,9 +86,11 @@ impl KoeRuntime {
             .results
             .iter()
             .map(|e| match e {
-                LiveEvent::Final { segment, .. } => segment.text.len(),
+                LiveEvent::Interim { segment, .. } | LiveEvent::Final { segment, .. } => {
+                    segment.text.len()
+                }
                 LiveEvent::Failed(error) => error.len(),
-                _ => 0,
+                LiveEvent::Finished => 0,
             })
             .sum();
         if text.len().saturating_add(queued_bytes) > MAX_MESSAGE_BYTES

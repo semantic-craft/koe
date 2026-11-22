@@ -16,6 +16,13 @@ const SESSION_TIMEOUT: Duration = Duration::from_secs(4 * 60 * 60);
 /// A live result for the recording bound to this stream by its caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveEvent {
+    /// An in-progress sentence draft that has not yet been finalized.
+    Interim {
+        /// Provider sentence identifier, stable within this stream.
+        sequence: u64,
+        /// Provider draft text and timing, transient until finalized.
+        segment: TranscriptSegment,
+    },
     /// A finalized sentence. A later event with the same sequence revises that sentence.
     Final {
         /// Provider sentence identifier, stable within this stream.
@@ -203,22 +210,24 @@ async fn stream(
             match message {
                 Message::Text(text) => {
                     // Results are released to the consumer; only each wire message is retained here.
-                    match asr::decode_event(&text, &task_id, &mut 0)? {
-                        asr::Event::Final { sequence, segment }
-                        | asr::Event::Interim(Some((sequence, segment))) => {
-                            tokio::time::timeout(
-                                IDLE_TIMEOUT,
-                                output.send(LiveEvent::Final { sequence, segment }),
-                            )
-                            .await
-                            .map_err(|_| "实时转写结果超过一分钟未被接收")?
-                            .map_err(|_| "实时转写结果接收者已关闭")?;
+                    let live_event = match asr::decode_event(&text, &task_id, &mut 0)? {
+                        asr::Event::Interim(Some((sequence, segment))) => {
+                            Some(LiveEvent::Interim { sequence, segment })
                         }
-                        asr::Event::Interim(None) => {}
+                        asr::Event::Final { sequence, segment } => {
+                            Some(LiveEvent::Final { sequence, segment })
+                        }
+                        asr::Event::Interim(None) => None,
                         asr::Event::Finished if finished_sending.load(Ordering::Acquire) => {
                             return Ok::<_, String>(())
                         }
                         _ => return Err("实时转写服务返回了不符合当前阶段的事件".into()),
+                    };
+                    if let Some(live_event) = live_event {
+                        tokio::time::timeout(IDLE_TIMEOUT, output.send(live_event))
+                            .await
+                            .map_err(|_| "实时转写结果超过一分钟未被接收")?
+                            .map_err(|_| "实时转写结果接收者已关闭")?;
                     }
                 }
                 Message::Ping(_) | Message::Pong(_) => {}

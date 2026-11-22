@@ -505,3 +505,40 @@ fn permanent_purge_expiry_and_empty_trash_maintain_restore_totality_and_bean_tom
         Err(ProductError::InvalidEvidence)
     );
 }
+
+#[test]
+fn pending_live_summary_blocks_trash_purge_empty_and_expiry() {
+    let mut ws = ProductWorkspace::new();
+    ws.insert_record(
+        "rec-live".into(),
+        "实时纪要进行中".into(),
+        RecordOrigin::Microphone,
+        0,
+        1_800_000_000,
+        2_000,
+    )
+    .unwrap();
+    ws.append_transcript("rec-live", "正在讨论下季度路线图", 0, 2_000, "asr")
+        .unwrap();
+    let live_key = ws.begin_live_summary("rec-live").unwrap();
+
+    assert_eq!(ws.trash_record("rec-live", 10_000), Err(ProductError::Busy));
+
+    let mut state = ws.export_state();
+    state.records[0].restore_retention(RecordRetention::from_persisted(false, Some(10_000)).unwrap());
+    let mut trashed_ws = ProductWorkspace::restore(state).unwrap();
+    let expires_at = 10_000 + TRASH_RETENTION_MS;
+
+    assert_eq!(trashed_ws.purge_record("rec-live"), Err(ProductError::Busy));
+    assert_eq!(trashed_ws.empty_trash(), Err(ProductError::Busy));
+    assert!(!trashed_ws.has_expired_trash(expires_at));
+    let expired = trashed_ws.purge_expired_trash(expires_at).unwrap();
+    assert!(expired.purged_record_ids.is_empty());
+    assert!(trashed_ws.record("rec-live").is_some());
+
+    ws.fail_live_summary(&live_key, "已取消").unwrap();
+    ws.trash_record("rec-live", 10_000).unwrap();
+    assert!(ws.has_expired_trash(expires_at));
+    let purged = ws.purge_expired_trash(expires_at).unwrap();
+    assert_eq!(purged.purged_record_ids, BTreeSet::from(["rec-live".into()]));
+}
