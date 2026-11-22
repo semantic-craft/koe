@@ -1,5 +1,6 @@
 import KoeAppleCore
 import MediaPlayer
+import os
 import XCTest
 @testable import KoeiOSApp
 
@@ -136,18 +137,9 @@ final class IOSLockScreenIntegrationTests: XCTestCase {
         controller.sync(try snapshot())
 
         let seekInvoke = try XCTUnwrap(boundHandlers[ObjectIdentifier(MPRemoteCommandCenter.shared().changePlaybackPositionCommand)])
-        let backgroundCompleted = DispatchSemaphore(value: 0)
-        final class StatusBox: @unchecked Sendable { var status: MPRemoteCommandHandlerStatus? }
-        let box = StatusBox()
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            box.status = seekInvoke(4.125)
-            backgroundCompleted.signal()
-        }
-
-        let waitResult = backgroundCompleted.wait(timeout: .now() + 0.5)
+        let (waitResult, status) = runOffMainThreadBlocking { seekInvoke(4.125) }
         XCTAssertEqual(waitResult, .success, "Off-main-thread remote command must not block waiting for the main thread")
-        XCTAssertEqual(box.status, .success)
+        XCTAssertEqual(status, .success)
 
         let deadline = ContinuousClock.now + .seconds(2)
         while dispatched.isEmpty, ContinuousClock.now < deadline {
@@ -156,6 +148,20 @@ final class IOSLockScreenIntegrationTests: XCTestCase {
         XCTAssertEqual(dispatched.count, 1)
         XCTAssertEqual(dispatched.first?.0, .seek(positionMs: 4125))
         XCTAssertEqual(dispatched.first?.1, true)
+    }
+
+    private nonisolated func runOffMainThreadBlocking(
+        _ work: @escaping @Sendable () -> MPRemoteCommandHandlerStatus
+    ) -> (DispatchTimeoutResult, MPRemoteCommandHandlerStatus?) {
+        let backgroundCompleted = DispatchSemaphore(value: 0)
+        let result = OSAllocatedUnfairLock<MPRemoteCommandHandlerStatus?>(initialState: nil)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let status = work()
+            result.withLock { $0 = status }
+            backgroundCompleted.signal()
+        }
+        let waitResult = backgroundCompleted.wait(timeout: .now() + 0.5)
+        return (waitResult, result.withLock { $0 })
     }
 }
 

@@ -45,8 +45,11 @@ public final class NativeAudioSource: MicrophoneSource {
         node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, when in
             guard fence.enter() else { return }
             defer { fence.leave() }
-            do { receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate)) }
-            catch { failed(error.localizedDescription) }
+            do {
+                receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate))
+            } catch {
+                failed(error.localizedDescription)
+            }
         }
         observer = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil

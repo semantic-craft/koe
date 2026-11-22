@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,9 +62,15 @@ import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeEmptyState
 import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeShapes
 import com.semanticcraft.koe.ui.theme.KoeTheme
+
+private val stringListSaver = listSaver<List<String>, String>(
+    save = { it },
+    restore = { it },
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,7 +93,7 @@ fun RecordsScreen(
     var sort by rememberSaveable { mutableStateOf(RecordSort.NEWEST) }
     var project by rememberSaveable { mutableStateOf<String?>(null) }
     var selecting by rememberSaveable { mutableStateOf(false) }
-    var selectedIds by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    var selectedIds by rememberSaveable(stateSaver = stringListSaver) { mutableStateOf(emptyList()) }
     val projects = records.mapNotNull { it.project?.takeIf(String::isNotBlank) }.distinct().sorted()
     val filteredRecords = records.filter {
         it.matches(filterCategory, searchQuery) && (project == null || it.project.orEmpty().ifBlank { "" } == project)
@@ -94,7 +101,7 @@ fun RecordsScreen(
     val sortedRecords = filteredRecords.sortedWith(sort.order)
     val selected = sortedRecords.filter { it.id in selectedIds }
     LaunchedEffect(filteredRecords) {
-        selectedIds = ArrayList(selected.map { it.id })
+        selectedIds = selected.map { it.id }
     }
 
     LazyColumn(
@@ -177,8 +184,8 @@ fun RecordsScreen(
                     }
                 }
 
-                RecordBatchControls(sort, { sort = it }, project, projects, { project = it },
-                    selecting, { selecting = !selecting; selectedIds = arrayListOf() }, selected, navigation.savingRecordId, store)
+                RecordBatchControls(sort, { sort = it }, project, StableList(projects), { project = it },
+                    selecting, { selecting = !selecting; selectedIds = emptyList() }, StableList(selected), navigation.savingRecordId, store)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -286,7 +293,7 @@ fun RecordsScreen(
                         selected = if (selecting) record.id in selectedIds else null,
                         onOpen = {
                             if (!selecting) onSelectRecord(record.id)
-                            else selectedIds = ArrayList(if (record.id in selectedIds) selectedIds - record.id else selectedIds + record.id)
+                            else selectedIds = if (record.id in selectedIds) selectedIds - record.id else selectedIds + record.id
                         },
                         onTrash = { store.send(HostCommand.TrashRecord(record.id)) },
                     )
@@ -297,7 +304,7 @@ fun RecordsScreen(
 
     if (showTrashSheet) {
         TrashSheet(
-            trashRecords = trashRecords,
+            trashRecords = StableList(trashRecords),
             onRestore = { id -> store.send(HostCommand.RestoreRecord(id)) },
             onPurge = { id -> store.send(HostCommand.PurgeRecord(id)) },
             onEmptyTrash = { store.send(HostCommand.EmptyTrash) },

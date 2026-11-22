@@ -1,13 +1,18 @@
 import Foundation
 import KoeAppleShared
+import os
 import Security
 
 final class NativeCredentials: HostCredentials {
     enum Failure: Error { case unavailable }
-    private enum Source {
+    private enum Source: Sendable {
         case productionKeychain
         case isolated
         case environment(qwen: String?, deepseek: String?)
+    }
+    private struct IsolatedState: Sendable {
+        var memory: [String: String] = [:]
+        var deleted: Set<String> = []
     }
     private static let lock = NSLock()
     private static let service = "com.semanticcraft.koe.provider.credentials"
@@ -15,8 +20,7 @@ final class NativeCredentials: HostCredentials {
     private static let environmentQwenReferencePrefix = "isolated-environment-qwen-"
     private static let environmentDeepSeekReferencePrefix = "isolated-environment-deepseek-"
     private let source: Source
-    private var memory: [String: String] = [:]
-    private var deleted: Set<String> = []
+    private let isolatedState = OSAllocatedUnfairLock(initialState: IsolatedState())
     var isolated: Bool {
         if case .productionKeychain = source { return false }
         return true
@@ -92,46 +96,54 @@ final class NativeCredentials: HostCredentials {
             return ""
         case 3: return try read("engines-v1", legacy: true)
         case 4:
-            if reference.isEmpty { _ = try read("engines-v1", legacy: true) }
-            else { _ = try read(reference) }
+            if reference.isEmpty {
+                _ = try read("engines-v1", legacy: true)
+            } else {
+                _ = try read(reference)
+            }
             return ""
         default: throw Failure.unavailable
         }
     }
 
     private func isolatedOperation(_ operation: UInt32, _ reference: String, _ value: String) throws -> String? {
-        switch operation {
-        case 0:
-            if let value = memory[reference] { return value }
-            guard case .environment(let qwen, let deepseek) = source,
-                  !deleted.contains(reference) else { return nil }
-            if reference.hasPrefix(Self.environmentQwenReferencePrefix),
-               UUID(uuidString: String(reference.dropFirst(Self.environmentQwenReferencePrefix.count))) != nil {
-                return qwen
+        try isolatedState.withLock { state in
+            switch operation {
+            case 0:
+                if let value = state.memory[reference] { return value }
+                guard case .environment(let qwen, let deepseek) = source,
+                      !state.deleted.contains(reference) else { return nil }
+                if reference.hasPrefix(Self.environmentQwenReferencePrefix),
+                   UUID(uuidString: String(reference.dropFirst(Self.environmentQwenReferencePrefix.count))) != nil {
+                    return qwen
+                }
+                if reference.hasPrefix(Self.environmentDeepSeekReferencePrefix),
+                   UUID(uuidString: String(reference.dropFirst(Self.environmentDeepSeekReferencePrefix.count))) != nil {
+                    return deepseek
+                }
+                return nil
+            case 1:
+                guard isValidIsolatedReference(reference, for: value) else { throw Failure.unavailable }
+                state.memory[reference] = value
+                return reference
+            case 2:
+                state.memory.removeValue(forKey: reference)
+                state.deleted.insert(reference)
+                return ""
+            case 3:
+                guard case .environment(let qwen, let deepseek) = source else { return nil }
+                var payload: [String: String] = [:]
+                if let qwen { payload["qwen"] = qwen }
+                if let deepseek { payload["deepseek"] = deepseek }
+                guard !payload.isEmpty else { return nil }
+                guard let encoded = String(bytes: try JSONEncoder().encode(payload), encoding: .utf8) else {
+                    throw Failure.unavailable
+                }
+                return encoded
+            case 4: return ""
+            case 5: return isolatedPrefix(value: value, slot: reference) + UUID().uuidString.lowercased()
+            default: throw Failure.unavailable
             }
-            if reference.hasPrefix(Self.environmentDeepSeekReferencePrefix),
-               UUID(uuidString: String(reference.dropFirst(Self.environmentDeepSeekReferencePrefix.count))) != nil {
-                return deepseek
-            }
-            return nil
-        case 1:
-            guard isValidIsolatedReference(reference, for: value) else { throw Failure.unavailable }
-            memory[reference] = value
-            return reference
-        case 2:
-            memory.removeValue(forKey: reference)
-            deleted.insert(reference)
-            return ""
-        case 3:
-            guard case .environment(let qwen, let deepseek) = source else { return nil }
-            var payload: [String: String] = [:]
-            if let qwen { payload["qwen"] = qwen }
-            if let deepseek { payload["deepseek"] = deepseek }
-            guard !payload.isEmpty else { return nil }
-            return String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)
-        case 4: return ""
-        case 5: return isolatedPrefix(value: value, slot: reference) + UUID().uuidString.lowercased()
-        default: throw Failure.unavailable
         }
     }
 

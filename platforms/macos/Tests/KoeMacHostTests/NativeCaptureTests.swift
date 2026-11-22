@@ -311,8 +311,8 @@ extension NativeCaptureIntegrationTests {
 final class FakeSystemAudio: SystemAudioSource {
     var authorization: (@Sendable (SystemAudioAuthResult) -> Void)?
     var shouldAbort: (@Sendable () -> Bool)?
-    var emit: ((CapturedPCM) -> Void)?
-    var failure: ((String) -> Void)?
+    var emit: (@Sendable (CapturedPCM) -> Void)?
+    var failure: (@Sendable (String) -> Void)?
     var clock: () -> UInt64 = { 1_000_000_000 }
     var firstOffsetNs: UInt64 = 0
     var nextSampleNs: UInt64 = 0
@@ -327,8 +327,8 @@ final class FakeSystemAudio: SystemAudioSource {
         self.shouldAbort = shouldAbort
         authorization = completion
     }
-    func start(expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
-               failed: @escaping (String) -> Void) throws -> UInt32 {
+    func start(expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
+               failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
         starts += 1
         emit = receive
         failure = failed

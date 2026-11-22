@@ -1,6 +1,7 @@
 import AVFoundation
 import KoeAppleCore
 import MediaPlayer
+import os
 import ViewInspector
 import XCTest
 @testable import KoeiOSApp
@@ -92,19 +93,19 @@ final class IOSPlaybackTests: XCTestCase {
         }
     }
 
-    private func seekItem(_ store: HostSessionStore, to position: UInt64) async throws -> AVPlayerItem {
-        var item: AVPlayerItem?
+    private func seekItem(_ store: HostSessionStore, host: IOSHostCoordinator, to position: UInt64) async throws -> AVPlayerItem {
+        var jumped = false
         let center = NotificationCenter.default
-        let token = center.addObserver(forName: .AVPlayerItemTimeJumped, object: nil, queue: .main) { note in
-            MainActor.assumeIsolated { item = note.object as? AVPlayerItem }
+        let token = center.addObserver(forName: .AVPlayerItemTimeJumped, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { jumped = true }
         }
         defer { center.removeObserver(token) }
         store.send(.seek(positionMs: position))
         try await until("AVPlayerItem must complete the requested seek") {
-            guard let item else { return false }
+            guard jumped, let item = host.currentPlaybackItem else { return false }
             return abs(item.currentTime().seconds - Double(position) / 1000) < 0.15
         }
-        return try XCTUnwrap(item)
+        return try XCTUnwrap(host.currentPlaybackItem)
     }
 
     private func enterBackground(_ host: IOSHostCoordinator, store: HostSessionStore) {
@@ -115,22 +116,22 @@ final class IOSPlaybackTests: XCTestCase {
     }
 
     func testSeekPauseResumeAndFinishWhileForegroundTimerIsStopped() async throws {
-        var sessionActive = false
-        let session = IOSAudioSession { sessionActive = $0 }
+        let sessionActive = OSAllocatedUnfairLock(initialState: false)
+        let session = IOSAudioSession { active in sessionActive.withLock { $0 = active } }
         try await fixture(audioSession: session) { store, host, _ in
             try await play(store)
-            XCTAssertTrue(sessionActive)
-            let item = try await seekItem(store, to: 2500)
+            XCTAssertTrue(sessionActive.withLock { $0 })
+            let item = try await seekItem(store, host: host, to: 2500)
             try await until("playback must advance after seeking") { store.snapshot.playback.positionMs > 2600 }
             store.send(.playback(isPlaying: false))
-            try await until("pause must stop the native timebase") { item.timebase?.rate == 0 && !sessionActive }
+            try await until("pause must stop the native timebase") { item.timebase?.rate == 0 && !sessionActive.withLock { $0 } }
             store.send(.playback(isPlaying: true))
-            try await until("resume must restart the native timebase") { item.timebase?.rate == 1 && sessionActive }
+            try await until("resume must restart the native timebase") { item.timebase?.rate == 1 && sessionActive.withLock { $0 } }
             enterBackground(host, store: store)
             try await until("EOF must publish the final position with foreground polling disabled") {
                 !store.snapshot.playback.isPlaying && store.snapshot.playback.positionMs == 4000
             }
-            XCTAssertFalse(sessionActive)
+            XCTAssertFalse(sessionActive.withLock { $0 })
             XCTAssertNil(store.nativeError)
         }
     }
@@ -139,7 +140,7 @@ final class IOSPlaybackTests: XCTestCase {
         let center = TestMediaCenter()
         try await fixture(mediaCenter: center) { store, host, _ in
             try await play(store)
-            let item = try await seekItem(store, to: 850)
+            let item = try await seekItem(store, host: host, to: 850)
             enterBackground(host, store: store)
             let frozenPosition = store.snapshot.playback.positionMs
             try await until("AVPlayer should advance while foreground polling sleeps") {
@@ -157,12 +158,12 @@ final class IOSPlaybackTests: XCTestCase {
     }
 
     func testFailedItemPublishesErrorWithForegroundTimerStopped() async throws {
-        var sessionActive = false
-        let session = IOSAudioSession { sessionActive = $0 }
+        let sessionActive = OSAllocatedUnfairLock(initialState: false)
+        let session = IOSAudioSession { active in sessionActive.withLock { $0 = active } }
         try await fixture(audioSession: session) { store, host, _ in
             try await play(store)
-            XCTAssertTrue(sessionActive)
-            let item = try await seekItem(store, to: 800)
+            XCTAssertTrue(sessionActive.withLock { $0 })
+            let item = try await seekItem(store, host: host, to: 800)
             try await until("playback must advance after seeking") { store.snapshot.playback.positionMs > 900 }
             enterBackground(host, store: store)
             let error = NSError(domain: "IOSPlaybackTests", code: 1,
@@ -172,16 +173,16 @@ final class IOSPlaybackTests: XCTestCase {
             try await until("failure notification must stop Rust playback and surface the native error") {
                 !store.snapshot.playback.isPlaying && store.nativeError?.contains(error.localizedDescription) == true
             }
-            XCTAssertFalse(sessionActive)
+            XCTAssertFalse(sessionActive.withLock { $0 })
         }
     }
 
     func testInterruptionPausesWithoutForegroundPolling() async throws {
-        var sessionActive = false
-        let session = IOSAudioSession { sessionActive = $0 }
+        let sessionActive = OSAllocatedUnfairLock(initialState: false)
+        let session = IOSAudioSession { active in sessionActive.withLock { $0 = active } }
         try await fixture(audioSession: session) { store, host, _ in
             try await play(store)
-            XCTAssertTrue(sessionActive)
+            XCTAssertTrue(sessionActive.withLock { $0 })
             enterBackground(host, store: store)
             NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
                 AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
@@ -189,7 +190,7 @@ final class IOSPlaybackTests: XCTestCase {
             try await until("interruption must stop playback before EOF") {
                 !store.snapshot.playback.isPlaying && store.snapshot.playback.positionMs < 4000
             }
-            XCTAssertFalse(sessionActive)
+            XCTAssertFalse(sessionActive.withLock { $0 })
         }
     }
 
@@ -219,8 +220,8 @@ final class IOSPlaybackTests: XCTestCase {
     }
 
     func testFinishingPlaybackWhileRecordingKeepsCaptureReceivingPCM() async throws {
-        var sessionActive = false
-        let session = IOSAudioSession { active in sessionActive = active }
+        let sessionActive = OSAllocatedUnfairLock(initialState: false)
+        let session = IOSAudioSession { active in sessionActive.withLock { $0 = active } }
         try await fixture(audioSession: session) { store, _, source in
             let id = try XCTUnwrap(store.snapshot.playback.recordId)
             store.send(.startMicrophone(inputId: "phone"))
@@ -232,14 +233,14 @@ final class IOSPlaybackTests: XCTestCase {
             try await until("EOF should settle playback during capture") {
                 !store.snapshot.playback.isPlaying && store.snapshot.playback.positionMs == 4000
             }
-            XCTAssertTrue(sessionActive, "Playback EOF must preserve the microphone’s audio session")
+            XCTAssertTrue(sessionActive.withLock { $0 }, "Playback EOF must preserve the microphone’s audio session")
             let write = try XCTUnwrap(source.receive)
             write(CapturedPCM(samples: [123], capturedStartNs: source.clockNs))
             try await until("capture should ingest PCM after EOF") { store.snapshot.microphone?.nextSequence == 1 }
             store.send(.stopMicrophone)
             try await until("recording must finalize") { store.snapshot.microphone == nil }
             try session.setActive(false, for: .microphone)
-            XCTAssertFalse(sessionActive, "Stopping the last audio source must release the session")
+            XCTAssertFalse(sessionActive.withLock { $0 }, "Stopping the last audio source must release the session")
         }
     }
 }

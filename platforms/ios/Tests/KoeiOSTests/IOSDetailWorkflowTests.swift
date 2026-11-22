@@ -9,12 +9,12 @@ final class IOSDetailWorkflowTests: XCTestCase {
     private var directory: URL!
     private var store: HostSessionStore!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         store = HostSessionStore(workspacePath: directory.path, credentials: NativeCredentialsiOS(forceIsolated: true))
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         store.shutdown()
         store = nil
         try? FileManager.default.removeItem(at: directory)

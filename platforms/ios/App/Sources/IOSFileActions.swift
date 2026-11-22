@@ -101,8 +101,11 @@ final class IOSFileActions {
         guard let directory = exportURLs.first?.deletingLastPathComponent() else { return }
         exportURLs = []
         remove(directory)
-        if delivered { Self.logger.info("Markdown 已交付到文件应用") }
-        else { Self.logger.info("已取消 Markdown 导出") }
+        if delivered {
+            Self.logger.info("Markdown 已交付到文件应用")
+        } else {
+            Self.logger.info("已取消 Markdown 导出")
+        }
     }
 
     private func makeDirectory() throws -> URL {
@@ -112,8 +115,11 @@ final class IOSFileActions {
     }
 
     private func remove(_ directory: URL) {
-        do { try FileManager.default.removeItem(at: directory) }
-        catch { report("无法清理暂存文件", error) }
+        do {
+            try FileManager.default.removeItem(at: directory)
+        } catch {
+            report("无法清理暂存文件", error)
+        }
     }
 
     private func dispatch(_ command: HostCommand) throws {
@@ -148,8 +154,11 @@ final class IOSFileActions {
         var coordinationError: NSError?
         var copyError: Error?
         NSFileCoordinator().coordinate(readingItemAt: source, options: [], error: &coordinationError) { readableURL in
-            do { try copyFile(readableURL, to: destination) }
-            catch { copyError = error }
+            do {
+                try copyFile(readableURL, to: destination)
+            } catch {
+                copyError = error
+            }
         }
         if let error = coordinationError ?? copyError { throw error }
         return destination
@@ -180,8 +189,9 @@ final class IOSFileActions {
 
     private nonisolated static func withOpenHandle(_ handle: FileHandle, perform: (FileHandle) throws -> Void) throws {
         let operation = Result { try perform(handle) }
-        do { try handle.close() }
-        catch {
+        do {
+            try handle.close()
+        } catch {
             if case .failure(let original) = operation {
                 throw FileActionError("\(original.localizedDescription)（关闭文件失败：\(error.localizedDescription)）")
             }

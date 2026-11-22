@@ -34,6 +34,7 @@ import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.components.KoeSourceLink
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
@@ -95,7 +96,7 @@ internal fun TaskItemCard(
 
             ReviewControls(store, task.id, task.text, task.state, task.due.orEmpty())
 
-            ReviewSources(task.sources, onOpenSource)
+            ReviewSources(StableList(task.sources), onOpenSource)
         }
     }
 }
@@ -125,7 +126,7 @@ internal fun MemoryItemCard(
 
             ReviewControls(store, memory.id, memory.text, memory.state, null)
 
-            ReviewSources(memory.sources, onOpenSource)
+            ReviewSources(StableList(memory.sources), onOpenSource)
         }
     }
 }
@@ -142,10 +143,10 @@ private fun ReviewStateBadge(state: String, accepted: String) {
 }
 
 @Composable
-private fun ReviewSources(sources: List<SourceSnapshot>, onOpenSource: (SourceSnapshot) -> Unit) {
-    if (sources.isEmpty()) return
+private fun ReviewSources(sources: StableList<SourceSnapshot>, onOpenSource: (SourceSnapshot) -> Unit) {
+    if (sources.items.isEmpty()) return
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        sources.forEach { source -> KoeSourceLink(source, { onOpenSource(source) }) }
+        sources.items.forEach { source -> KoeSourceLink(source, { onOpenSource(source) }) }
     }
 }
 

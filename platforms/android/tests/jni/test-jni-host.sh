@@ -138,9 +138,9 @@ cp "$HOST_LIB_SRC" "$BUILD_DIR/libkoe_host_api.$LIB_EXT"
 cxx_platform_flags=()
 if [[ "$OS_NAME" == "Darwin" ]]; then
   install_name_tool -id "@rpath/libkoe_host_api.dylib" "$BUILD_DIR/libkoe_host_api.dylib"
-  cxx_platform_flags+=(-Wl,-rpath,@loader_path)
+  cxx_platform_flags+=("-Wl,-rpath,@loader_path")
 else
-  cxx_platform_flags+=(-Wl,-rpath,'$ORIGIN' -pthread)
+  cxx_platform_flags+=('-Wl,-rpath,$ORIGIN' -pthread)
 fi
 
 "$CXX_BIN" \

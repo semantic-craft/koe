@@ -37,12 +37,13 @@ import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
 import com.semanticcraft.koe.ui.components.KoeSourceLink
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.leaves.WorkspaceCaptureActions
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
 @Composable
-internal fun WorkspaceList(modifier: Modifier, content: LazyListScope.() -> Unit) {
+internal fun WorkspaceList(modifier: Modifier = Modifier, content: LazyListScope.() -> Unit) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -101,8 +102,8 @@ private fun ExportSwitch(title: String, checked: Boolean, onChange: (Boolean) ->
 }
 
 @Composable
-internal fun WorkspaceSources(sources: List<SourceSnapshot>, onOpenSource: (SourceSnapshot) -> Unit, tag: String = "item") {
-    sources.forEach { source ->
+internal fun WorkspaceSources(sources: StableList<SourceSnapshot>, onOpenSource: (SourceSnapshot) -> Unit, tag: String = "item") {
+    sources.items.forEach { source ->
         KoeSourceLink(source, { onOpenSource(source) }, Modifier.testTag(tag + "-source-" + source.id))
     }
 }
@@ -119,7 +120,7 @@ internal fun WorkspaceReviewRow(store: HostSessionStore, item: WorkspaceSourcedI
         KoeBadge((if (item.kind == "task") "待办" else "记忆") + "  |  " + status)
         Text(item.text)
         item.due?.let { Text(it, color = KoeTheme.colors.textSecondary) }
-        WorkspaceSources(item.sources, onOpenSource)
+        WorkspaceSources(StableList(item.sources), onOpenSource)
         if (item.kind == "task" && item.state == "accepted") {
             Row(Modifier.testTag("complete-" + item.id).toggleable(item.completed, role = Role.Checkbox) {
                 store.send(HostCommand.CompleteTask(item.id, it))

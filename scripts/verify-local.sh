@@ -41,19 +41,20 @@ python3 scripts/test_mobile_e2e_verifier.py
 python3 scripts/test_run_with_secrets.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
-perf_check="${KOE_SWIFTUI_PERF_CHECK:-$HOME/Projects/agent-home/tools/swiftui-perf-check/scripts/check_swiftui_perf.py}"
-if [[ -f "$perf_check" ]]; then
-  python3 "$perf_check" "$root"
+if [[ -n "${KOE_SWIFTUI_PERF_CHECK:-}" && -f "${KOE_SWIFTUI_PERF_CHECK}" ]]; then
+  python3 "$KOE_SWIFTUI_PERF_CHECK" "$root"
 fi
-notary_check="${KOE_NOTARY_CHECK:-$HOME/Projects/agent-home/tools/notary-check/check_notary_policy.py}"
-if [[ -f "$notary_check" ]]; then
-  python3 "$notary_check" "$root"
+if [[ -n "${KOE_NOTARY_CHECK:-}" && -f "${KOE_NOTARY_CHECK}" ]]; then
+  python3 "$KOE_NOTARY_CHECK" "$root"
 fi
-python3 progress/progress.py check
+if [[ "${KOE_SKIP_PROGRESS_CHECK:-0}" != "1" ]]; then
+  python3 progress/progress.py check
+fi
 
 note "compile & clippy: rust workspace"
 cargo check --workspace --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
 cargo clippy --workspace --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} -- -D warnings
+cargo clippy --package koe-host-api --no-default-features --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} -- -D warnings
 
 if [[ "$quick" -eq 1 ]]; then
   echo "verify-local (--quick): all compile and contract gates passed."
@@ -65,7 +66,7 @@ cargo test --workspace ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --qui
 
 if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && "$(uname -s)" == "Darwin" ]]; then
   note "native host: platforms/apple-shared & platforms/macos"
-  swift scripts/generate-app-icons.swift
+  swift scripts/generate-app-icons.swift --check
   swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset
   cargo build --package koe-host-api ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
   cargo build --release --package koe-host-api ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
@@ -77,6 +78,9 @@ if [[ -x "$root/platforms/android/tests/jni/test-jni-host.sh" ]]; then
   note "native jni host: platforms/android/tests/jni"
   if "$root/platforms/android/tests/jni/test-jni-host.sh" --check-jdk >/dev/null 2>&1; then
     "$root/platforms/android/tests/jni/test-jni-host.sh"
+  elif [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "error: JDK 17+ not detected in GitHub Actions; desktop JVM JNI tests are required in CI." >&2
+    exit 1
   else
     echo "skip: JDK 17+ not detected; install openjdk@17 or set JAVA_HOME to run desktop JVM JNI tests."
   fi

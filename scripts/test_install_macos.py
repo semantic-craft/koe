@@ -332,7 +332,7 @@ class InstallMacosScriptTest(unittest.TestCase):
         self.assertEqual(colors.get("ic_launcher_background"), "#FFD9BB")
 
         for launcher_name in ("ic_launcher.xml", "ic_launcher_round.xml"):
-            xml_path = android_res / "mipmap-anydpi-v26" / launcher_name
+            xml_path = android_res / "mipmap-anydpi" / launcher_name
             self.assertTrue(xml_path.is_file(), f"missing adaptive icon XML: {xml_path}")
             root = ET.parse(xml_path).getroot()
             self.assertEqual(root.tag, "adaptive-icon")

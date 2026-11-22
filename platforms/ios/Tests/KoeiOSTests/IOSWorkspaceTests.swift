@@ -105,7 +105,7 @@ final class IOSWorkspaceTests: XCTestCase {
             var opened: SourceSnapshot?
             var record: String?
             let spans = store.allDayWorkspace.spans
-            func row(_ span: AllDaySpanSnapshot) -> IOSAllDaySpanRow {
+            @MainActor func row(_ span: AllDaySpanSnapshot) -> IOSAllDaySpanRow {
                 IOSAllDaySpanRow(span: span, onSelectRecord: { record = $0 }, onOpenSource: { opened = $0 })
             }
             let event = try XCTUnwrap(spans.first { $0.kind == "event" })

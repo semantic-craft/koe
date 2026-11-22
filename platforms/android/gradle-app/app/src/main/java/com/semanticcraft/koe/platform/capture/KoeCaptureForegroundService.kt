@@ -191,8 +191,9 @@ open class KoeCaptureForegroundService : Service() {
         ): Boolean {
             val appContext = context.applicationContext
             if (!state.active) {
+                val stopIntent = Intent(appContext, KoeCaptureForegroundService::class.java)
                 runCatching {
-                    appContext.stopService(Intent(appContext, KoeCaptureForegroundService::class.java))
+                    appContext.stopService(stopIntent)
                 }
                 return true
             }

@@ -330,7 +330,8 @@ if [[ -z "$REUSE_SERIAL" ]]; then
   EMULATOR_BIN="$(resolve_tool "${KOE_EMULATOR_BIN:-}" "emulator/emulator" "" "emulator")"
 fi
 
-export PATH="$JAVA_HOME/bin:$(dirname "$ADB_BIN"):$PATH"
+ADB_DIR="$(dirname "$ADB_BIN")"
+export PATH="$JAVA_HOME/bin:$ADB_DIR:$PATH"
 
 pid_alive() {
   local pid="$1"
@@ -499,7 +500,7 @@ else
     if [[ "$WITH_AUDIO" -eq 1 ]]; then
       # Emulator hardware.ini serializes enabled booleans as true on some SDK versions.
       for key in audioInput audioOutput; do
-        if [[ ! -f "$hardware" ]] || ! grep -Eiq "^[[:blank:]]*hw[.]$key[[:blank:]]*=[[:blank:]]*(yes|true)[[:space:]]*$" "$hardware"; then
+        if [[ ! -f "$hardware" ]] || ! grep -Eiq "^[[:blank:]]*hw[.]${key}[[:blank:]]*=[[:blank:]]*(yes|true)[[:space:]]*$" "$hardware"; then
           GOLDEN=0
           break
         fi

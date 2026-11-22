@@ -12,6 +12,10 @@ let hostApiLinkerSettings: [LinkerSetting] = [
     .linkedFramework("Accelerate"),
 ]
 
+let strictConcurrencySettings: [SwiftSetting] = [
+    .enableExperimentalFeature("StrictConcurrency"),
+]
+
 let package = Package(
     name: "KoeAppleShared",
     platforms: [
@@ -37,23 +41,27 @@ let package = Package(
         .target(
             name: "KoeAppleCore",
             dependencies: ["CKoeHostApi"],
-            path: "Sources/KoeAppleCore"
+            path: "Sources/KoeAppleCore",
+            swiftSettings: strictConcurrencySettings
         ),
         .target(
             name: "KoeAppleShared",
             dependencies: ["KoeAppleCore"],
-            path: "Sources/KoeAppleShared"
+            path: "Sources/KoeAppleShared",
+            swiftSettings: strictConcurrencySettings
         ),
         .testTarget(
             name: "KoeAppleCoreTests",
             dependencies: ["KoeAppleCore", "CKoeHostApi"],
             path: "Tests/KoeAppleCoreTests",
+            swiftSettings: strictConcurrencySettings,
             linkerSettings: hostApiLinkerSettings
         ),
         .testTarget(
             name: "KoeAppleSharedTests",
             dependencies: ["KoeAppleShared", "KoeAppleCore", "CKoeHostApi"],
             path: "Tests/KoeAppleSharedTests",
+            swiftSettings: strictConcurrencySettings,
             linkerSettings: hostApiLinkerSettings
         ),
     ]

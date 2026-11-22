@@ -16,6 +16,7 @@ import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.RecordSnapshot
 import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 
 internal enum class RecordSort(val label: String, val order: Comparator<RecordSnapshot>) {
     NEWEST("最新", compareByDescending { it.createdAtEpochSec }),
@@ -26,13 +27,13 @@ internal enum class RecordSort(val label: String, val order: Comparator<RecordSn
 @Composable
 internal fun RecordBatchControls(
     sort: RecordSort, onSort: (RecordSort) -> Unit,
-    project: String?, projects: List<String>, onProject: (String?) -> Unit,
-    selecting: Boolean, onToggle: () -> Unit, selected: List<RecordSnapshot>,
+    project: String?, projects: StableList<String>, onProject: (String?) -> Unit,
+    selecting: Boolean, onToggle: () -> Unit, selected: StableList<RecordSnapshot>,
     savingId: String?, store: HostSessionStore,
 ) {
     var menu by remember { mutableStateOf<String?>(null) }
     var newProject by rememberSaveable { mutableStateOf(false) }
-    val ids = selected.map { it.id }
+    val ids = selected.items.map { it.id }
     fun classify(name: String?) {
         store.send(HostCommand.BatchSetRecordProject(ids, name))
     }
@@ -51,7 +52,7 @@ internal fun RecordBatchControls(
             DropdownMenu(menu == "filter", { menu = null }) {
                 DropdownMenuItem({ Text("全部项目") }, { onProject(null); menu = null })
                 DropdownMenuItem({ Text("未归类") }, { onProject(""); menu = null })
-                projects.forEach { name -> DropdownMenuItem({ Text(name) }, { onProject(name); menu = null }) }
+                projects.items.forEach { name -> DropdownMenuItem({ Text(name) }, { onProject(name); menu = null }) }
             }
         }
         KoeFilterChip(if (selecting) "退出多选" else "多选", selecting, onToggle)
@@ -67,7 +68,7 @@ internal fun RecordBatchControls(
                         })
                     }
                     DropdownMenuItem({ Text("归类到项目") }, { menu = "classify" })
-                    val trashable = selected.filter { it.canTrash && it.id != savingId }
+                    val trashable = selected.items.filter { it.canTrash && it.id != savingId }
                     DropdownMenuItem({ Text("移入回收站") }, {
                         store.send(HostCommand.BatchTrashRecords(trashable.map { it.id }))
                         menu = null
@@ -75,7 +76,7 @@ internal fun RecordBatchControls(
                 }
                 DropdownMenu(menu == "classify", { menu = null }) {
                     DropdownMenuItem({ Text("移回收件箱") }, { classify(null); menu = null })
-                    projects.forEach { name -> DropdownMenuItem({ Text(name) }, { classify(name); menu = null }) }
+                    projects.items.forEach { name -> DropdownMenuItem({ Text(name) }, { classify(name); menu = null }) }
                     DropdownMenuItem({ Text("新建项目") }, { menu = null; newProject = true })
                 }
             }
