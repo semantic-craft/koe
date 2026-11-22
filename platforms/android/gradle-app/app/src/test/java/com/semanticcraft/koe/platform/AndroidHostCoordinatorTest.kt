@@ -141,6 +141,7 @@ class AndroidHostCoordinatorTest {
             tickIntervalMs = 250L,
             scheduler = scheduler,
             clockElapsedMs = { nowMs },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
 
         coordinator.registerAdapter(adapter)
@@ -172,6 +173,7 @@ class AndroidHostCoordinatorTest {
             tickIntervalMs = 250L,
             scheduler = scheduler,
             clockElapsedMs = { nowMs },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
 
         coordinator.registerAdapter(adapter)
@@ -214,6 +216,7 @@ class AndroidHostCoordinatorTest {
             tickIntervalMs = 250L,
             scheduler = scheduler,
             clockElapsedMs = { nowMs },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
         var resumed = false
 
@@ -227,6 +230,7 @@ class AndroidHostCoordinatorTest {
         coordinator.bind(store2)
         assertEquals(1, adapter.unboundCount)
         assertEquals(listOf(store1, store2), adapter.boundStores)
+        assertNull(store1.onSnapshotPublished)
         assertNull(store1.onSnapshotChanged)
         assertTrue(scheduler.isRunning)
 
@@ -234,6 +238,7 @@ class AndroidHostCoordinatorTest {
         coordinator.shutdown()
         assertFalse(scheduler.isRunning)
         assertEquals(2, adapter.unboundCount)
+        assertNull(store2.onSnapshotPublished)
         assertNull(store2.onSnapshotChanged)
 
         nowMs += 250L
@@ -258,5 +263,107 @@ class AndroidHostCoordinatorTest {
         val countAfterStop = count.get()
         Thread.sleep(80L)
         assertEquals(countAfterStop, count.get())
+    }
+
+    @Test
+    fun defaultCallbackExecutorDispatchesAdapterSnapshotsOffCallerThreadInOrder() {
+        val scheduler = FakeTickScheduler()
+        val bridge = RecordingBridgeClient()
+        val store = HostSessionStore(workspacePath = "/tmp/koe-coord-bg", bridge = bridge)
+        val callerThread = Thread.currentThread()
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val allDelivered = CountDownLatch(2)
+        val observedThreads = java.util.Collections.synchronizedList(mutableListOf<Thread>())
+        val observedGenerations = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        val adapter = object : AndroidHostAdapter {
+            override fun onSnapshotChanged(snapshot: HostSnapshot) {
+                observedThreads.add(Thread.currentThread())
+                observedGenerations.add(snapshot.generation)
+                if (snapshot.generation == 2L) {
+                    firstEntered.countDown()
+                    releaseFirst.await(2, TimeUnit.SECONDS)
+                }
+                allDelivered.countDown()
+            }
+        }
+        val coordinator = AndroidHostCoordinator(
+            tickIntervalMs = 250L,
+            scheduler = scheduler,
+            clockElapsedMs = { 0L },
+        )
+        try {
+            coordinator.registerAdapter(adapter)
+            coordinator.bind(store)
+
+            val snap2 = HostSnapshot.empty.copy(generation = 2L)
+            val snap3 = HostSnapshot.empty.copy(generation = 3L)
+            assertTrue(store.applySnapshotJson(HostJson.json.encodeToString(HostSnapshot.serializer(), snap2)))
+            assertTrue("expected adapter callback on background thread", firstEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(store.applySnapshotJson(HostJson.json.encodeToString(HostSnapshot.serializer(), snap3)))
+            releaseFirst.countDown()
+            assertTrue("expected serialized adapter deliveries", allDelivered.await(2, TimeUnit.SECONDS))
+            assertEquals(listOf(2L, 3L), observedGenerations)
+            assertTrue(observedThreads.all { it !== callerThread })
+        } finally {
+            releaseFirst.countDown()
+            coordinator.shutdown()
+        }
+    }
+
+    @Test
+    fun staleSnapshotArrivalCannotOverwriteKeepAwakeOrDeliverToAdaptersWhileFixtureResetDelivers() {
+        val scheduler = FakeTickScheduler()
+        val bridge = RecordingBridgeClient()
+        val store = HostSessionStore(
+            workspacePath = "/tmp/koe-coord-stale-order",
+            bridge = bridge,
+            allowDebugFixture = true,
+        )
+        val adapter = RecordingAdapter()
+        val coordinator = AndroidHostCoordinator(
+            tickIntervalMs = 250L,
+            scheduler = scheduler,
+            clockElapsedMs = { 0L },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
+        )
+        coordinator.registerAdapter(adapter)
+        coordinator.bind(store)
+
+        val original = requireNotNull(store.onSnapshotPublished)
+        val snap2Entered = CountDownLatch(1)
+        val releaseSnap2 = CountDownLatch(1)
+        store.onSnapshotPublished = { snap, sequence ->
+            if (snap.generation == 2L) {
+                snap2Entered.countDown()
+                releaseSnap2.await(2, TimeUnit.SECONDS)
+            }
+            original(snap, sequence)
+        }
+
+        val snap2 = HostSnapshot.empty.copy(generation = 2L, lifecycle = LifecycleSnapshot(keepAwake = true))
+        val snap3 = HostSnapshot.empty.copy(generation = 3L, lifecycle = LifecycleSnapshot(keepAwake = false))
+        val t1 = Thread {
+            store.applySnapshotJson(HostJson.json.encodeToString(HostSnapshot.serializer(), snap2))
+        }
+        t1.start()
+        assertTrue(snap2Entered.await(2, TimeUnit.SECONDS))
+
+        assertTrue(store.applySnapshotJson(HostJson.json.encodeToString(HostSnapshot.serializer(), snap3)))
+        assertFalse(scheduler.isRunning)
+        assertEquals(listOf(3L), adapter.snapshots.map { it.generation })
+
+        releaseSnap2.countDown()
+        t1.join(2_000L)
+
+        assertFalse("stale snapshot must not re-enable keepAwake ticker", scheduler.isRunning)
+        assertEquals("stale snapshot must not deliver to adapters", listOf(3L), adapter.snapshots.map { it.generation })
+
+        val fixtureSnap = HostSnapshot.empty.copy(generation = 1L, lifecycle = LifecycleSnapshot(keepAwake = true))
+        assertTrue(store.loadDebugSnapshotFixtureJson(HostJson.json.encodeToString(HostSnapshot.serializer(), fixtureSnap)))
+        assertTrue("debug fixture reset must still update keepAwake", scheduler.isRunning)
+        assertEquals(listOf(3L, 1L), adapter.snapshots.map { it.generation })
+
+        coordinator.shutdown()
     }
 }

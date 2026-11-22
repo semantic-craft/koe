@@ -407,4 +407,61 @@ class KoeComposeUiTest {
         assertTrue(traceJson.contains("configure_provider"))
         assertFalse("trace must not contain API secret", traceJson.contains(secretKey))
     }
+
+    @Test
+    fun asyncSubmitGuardsPreventDuplicateDispatchAndPreserveNewDraftEdits() {
+        val queued = ArrayDeque<Runnable>()
+        val bridge = FakeUiBridgeClient()
+        val store = HostSessionStore(
+            workspacePath = "/tmp/koe-ui-submit-guard",
+            bridge = bridge,
+            commandExecutor = java.util.concurrent.Executor { queued.addLast(it) },
+        )
+
+        composeRule.setContent {
+            KoeTheme {
+                KoeRootScreen(store = store)
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("quick-note-input").performTextInput("第一条想法")
+        composeRule.onNodeWithTag("quick-note-submit").performClick()
+        composeRule.onNodeWithTag("quick-note-submit").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("double-tapping QuickNote submit must queue only one command", 1, queued.size)
+
+        composeRule.onNodeWithTag("quick-note-input").performTextInput("补充内容")
+        composeRule.waitForIdle()
+
+        while (queued.isNotEmpty()) queued.removeFirst().run()
+        composeRule.waitForIdle()
+
+        assertEquals(1, bridge.dispatchedCommands.count { it["type"]?.jsonPrimitive?.content == "create_note" })
+        composeRule.onNodeWithTag("quick-note-input").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("第一条想法补充内容")),
+        )
+
+        composeRule.onNodeWithTag("tab-ask").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("ask-question-input").performTextInput("问题一")
+        composeRule.onNodeWithTag("ask-question-submit").performClick()
+        composeRule.onNodeWithTag("ask-question-submit").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("double-tapping Ask submit must queue only one command", 1, queued.size)
+
+        composeRule.onNodeWithTag("ask-question-input").performTextInput("追问")
+        composeRule.waitForIdle()
+
+        while (queued.isNotEmpty()) queued.removeFirst().run()
+        composeRule.waitForIdle()
+
+        assertEquals(1, bridge.dispatchedCommands.count { it["type"]?.jsonPrimitive?.content == "ask" })
+        composeRule.onNodeWithTag("ask-question-input").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("问题一追问")),
+        )
+    }
 }

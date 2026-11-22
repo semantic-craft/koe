@@ -2,12 +2,15 @@ package com.semanticcraft.koe
 
 import android.app.Application
 import android.content.Intent
+import com.semanticcraft.koe.bridge.KoeNativeBridge
 import com.semanticcraft.koe.core.AndroidCredentials
 import com.semanticcraft.koe.core.CaptureAction
 import com.semanticcraft.koe.core.HostAdapterEvent
 import com.semanticcraft.koe.core.HostBridgeActions
+import com.semanticcraft.koe.core.HostBridgeClient
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.JniHostBridgeClient
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.platform.AndroidHostCoordinator
 import com.semanticcraft.koe.platform.ble.AndroidBleCoordinator
 import com.semanticcraft.koe.platform.ble.BleForegroundActivity
@@ -32,8 +35,27 @@ open class KoeApplication : Application() {
     private val sessionLock = Any()
     private val foregroundLock = Any()
     private var currentStore: HostSessionStore? = null
+    @Volatile
+    internal var bridgeFactory: () -> HostBridgeClient = ::defaultBridgeFactory
+    @Volatile
+    internal var credentialsFactory: (Boolean) -> KoeNativeBridge.CredentialBridge = ::defaultCredentialsFactory
+
+    private fun defaultBridgeFactory(): HostBridgeClient = JniHostBridgeClient()
+
+    private fun defaultCredentialsFactory(isDebug: Boolean): KoeNativeBridge.CredentialBridge =
+        if (isDebug) {
+            AndroidCredentials.forIsolated()
+        } else {
+            AndroidCredentials.forKeystore(File(filesDir, CREDENTIALS_DIR_NAME))
+        }
     private var captureForegroundState = CaptureForegroundState(active = false, paused = false, modeTitle = null)
     private val traceWriter = Executors.newSingleThreadExecutor()
+    private val commandExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "koe-host-session").apply { isDaemon = true }
+    }
+    private val captureExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "koe-capture-work").apply { isDaemon = true }
+    }
     private var bleForegroundActivity = BleForegroundActivity.IDLE
     private var lastSyncedForeground: Pair<CaptureForegroundState, Int>? = null
     val hostCoordinator = AndroidHostCoordinator()
@@ -50,6 +72,7 @@ open class KoeApplication : Application() {
             onForegroundStateChanged = { state ->
                 updateCaptureForegroundState(state)
             },
+            workExecutor = captureExecutor,
         )
     }
     val playbackCoordinator: AndroidPlaybackCoordinator by lazy {
@@ -149,6 +172,20 @@ open class KoeApplication : Application() {
         store.performCaptureAction(action)
     }
 
+    internal fun resetSessionForTests() {
+        bridgeFactory = ::defaultBridgeFactory
+        credentialsFactory = ::defaultCredentialsFactory
+        val previous = synchronized(sessionLock) {
+            val existing = currentStore
+            currentStore = null
+            existing
+        }
+        previous?.onTraceUpdated = null
+        previous?.onSnapshotPublished = null
+        previous?.onSnapshotChanged = null
+        previous?.shutdown()
+    }
+
     fun applyLaunchIntent(intent: Intent?): HostSessionStore {
         val debugWorkspace = if (BuildConfig.DEBUG) {
             intent?.getStringExtra(EXTRA_WORKSPACE)
@@ -179,22 +216,19 @@ open class KoeApplication : Application() {
                 existing?.onTraceUpdated = null
                 existing?.shutdown()
                 workspaceDir.mkdirs()
-                val credentials = if (BuildConfig.DEBUG) {
-                    AndroidCredentials.forIsolated()
-                } else {
-                    AndroidCredentials.forKeystore(File(filesDir, CREDENTIALS_DIR_NAME))
-                }
+                val credentials = credentialsFactory(BuildConfig.DEBUG)
                 val created = HostSessionStore(
                     workspacePath = workspaceDir.absolutePath,
-                    bridge = JniHostBridgeClient(),
+                    bridge = bridgeFactory(),
                     credentials = credentials,
                     isolatedCredentials = BuildConfig.DEBUG,
                     allowDebugFixture = BuildConfig.DEBUG,
                     autoOpen = false,
                     verificationTrace = BuildConfig.DEBUG && debugWorkspace != null,
+                    commandExecutor = commandExecutor,
                 )
                 created.openSession()
-                created.send(
+                created.sendEventSync(
                     HostAdapterEvent.SyncAppMetadata(
                         version = BuildConfig.VERSION_NAME,
                         build = BuildConfig.VERSION_CODE.toString(),
@@ -247,7 +281,8 @@ open class KoeApplication : Application() {
                     val json = fixtureFile.readText(StandardCharsets.UTF_8)
                     store.loadDebugSnapshotFixtureJson(json, resumeLiveOnCommand =
                         intent?.getBooleanExtra("koe_fixture_to_live", false) == true)
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    KoeLogger.e("KoeApp", "load_debug_fixture", "failed to read debug fixture", error.javaClass.simpleName, error)
                     false
                 }
                 if (!loaded) {
@@ -262,6 +297,8 @@ open class KoeApplication : Application() {
 
     override fun onTerminate() {
         hostCoordinator.shutdown()
+        captureExecutor.shutdown()
+        commandExecutor.shutdown()
         synchronized(sessionLock) {
             currentStore?.onTraceUpdated = null
             currentStore?.shutdown()

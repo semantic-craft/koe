@@ -10,8 +10,10 @@ final class NativePlaybackIntegrationTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = HostSessionStore(workspacePath: root.path)
         defer { store.shutdown(); try? FileManager.default.removeItem(at: root) }
-        store.send(.startMicrophone(inputId: "fixture", includeSystem: true, clockNs: 1_000_000_000))
+        store.send(.setCaptureSystemAudio(enabled: true))
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
         let ticket = try XCTUnwrap(store.snapshot.microphone)
+        store.send(.microphonePrepared(recordId: ticket.recordId, sessionId: ticket.sessionId, epoch: 0, clockNs: 1_000_000_000))
         for lane in ["microphone", "system"] {
             store.send(.microphoneStarted(
                 recordId: ticket.recordId,
@@ -33,11 +35,12 @@ final class NativePlaybackIntegrationTests: XCTestCase {
             )
             XCTAssertEqual(receipt.status, .accepted)
         }
-        store.send(.stopMicrophone)
+        store.send(.captureAction(action: .end))
         store.send(.microphoneStopped(recordId: ticket.recordId, sessionId: ticket.sessionId, lane: "microphone", sequence: 2, epoch: 0))
         XCTAssertNil(store.snapshot.error)
         store.send(.microphoneStopped(recordId: ticket.recordId, sessionId: ticket.sessionId, lane: "system", sequence: 1, epoch: 0))
         XCTAssertNil(store.snapshot.error)
+        store.send(.selectRecord(recordId: ticket.recordId))
         try await body(store)
     }
 

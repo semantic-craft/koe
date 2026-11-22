@@ -10,7 +10,6 @@ ENTITLEMENTS="${MACOS_SIGN_ENTITLEMENTS:-$ROOT/platforms/macos/Release.entitleme
 INSTALL_SCRIPT="${KOE_INSTALL_SCRIPT:-$ROOT/scripts/install-macos.sh}"
 SIGN_SCRIPT="${KOE_SIGN_SCRIPT:-$ROOT/scripts/sign-macos.sh}"
 CODESIGN_BIN="${KOE_CODESIGN_BIN:-codesign}"
-SECURITY_BIN="${KOE_SECURITY_BIN:-security}"
 DITTO_BIN="${KOE_DITTO_BIN:-ditto}"
 MACOS_NOTARY_BIN="${MACOS_NOTARY_BIN:-macos-notary}"
 MACOS_NOTARY_PROFILE_BIN="${MACOS_NOTARY_PROFILE_BIN:-macos-notary-profile}"
@@ -106,25 +105,8 @@ if ! command -v "$MACOS_NOTARY_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-designated_requirement() {
-  { "$CODESIGN_BIN" -d -r- "$1" 2>&1 || true; } | sed -n 's/^designated => //p'
-}
-
-resolve_signing_identity() {
-  if [[ -n "$IDENTITY" ]]; then
-    return 0
-  fi
-  local identities=()
-  local value
-  while IFS= read -r value; do
-    [[ -z "$value" ]] || identities+=("$value")
-  done < <("$SECURITY_BIN" find-identity -v -p codesigning | sed -nE 's/.*"(Developer ID Application:[^"]*)".*/\1/p' | awk -v team="($TEAM_ID)" 'index($0,team)')
-  if [[ ${#identities[@]} -ne 1 ]]; then
-    echo 'error: a unique Developer ID Application certificate is required; pass --identity.' >&2
-    exit 1
-  fi
-  IDENTITY="${identities[0]}"
-}
+# shellcheck source=scripts/lib/macos-signing.sh
+source "$ROOT/scripts/lib/macos-signing.sh"
 
 resolve_notary_profile() {
   local resolved=""
@@ -209,7 +191,7 @@ staged_app="$STAGING/${APP_NAME}.app"
 if [[ -n "$APP_INPUT" ]]; then
   "$DITTO_BIN" "$APP_INPUT" "$staged_app"
 else
-  install_args=(--keep-legacy)
+  install_args=(--skip-self-check)
   if [[ "$SKIP_BUILD" -eq 1 ]]; then
     install_args+=(--skip-build)
   fi
@@ -222,7 +204,7 @@ fi
 [[ -d "$staged_app" ]] || { echo "error: staged app missing at $staged_app" >&2; exit 1; }
 
 pre_requirement="$(designated_requirement "$staged_app")"
-resolve_signing_identity
+IDENTITY="$(resolve_signing_identity "$IDENTITY" "$TEAM_ID")"
 
 while IFS= read -r target; do
   "$CODESIGN_BIN" --force --sign "$IDENTITY" --options runtime --timestamp "$target"

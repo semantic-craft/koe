@@ -24,6 +24,9 @@ public struct HostBridgeActions {
 }
 
 public struct HostAudioInputDescriptor: Encodable, Equatable, Sendable {
+    public static let maxCount = 64
+    public static let maxFieldUTF8Bytes = 256
+
     public let id: String
     public let name: String
     public let transport: String
@@ -34,6 +37,90 @@ public struct HostAudioInputDescriptor: Encodable, Equatable, Sendable {
         self.name = name
         self.transport = transport
         self.isDefault = isDefault
+    }
+
+    public static func normalized(_ inputs: [HostAudioInputDescriptor]) -> [HostAudioInputDescriptor] {
+        var deduped: [HostAudioInputDescriptor] = []
+        var indexByID: [String: Int] = [:]
+        deduped.reserveCapacity(min(inputs.count, maxCount))
+
+        for input in inputs {
+            let trimmedID = input.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedID.isEmpty, trimmedID.utf8.count <= maxFieldUTF8Bytes else {
+                continue
+            }
+            if let existingIndex = indexByID[trimmedID] {
+                if input.isDefault && !deduped[existingIndex].isDefault {
+                    let existing = deduped[existingIndex]
+                    deduped[existingIndex] = HostAudioInputDescriptor(
+                        id: existing.id,
+                        name: existing.name,
+                        transport: existing.transport,
+                        isDefault: true
+                    )
+                }
+                continue
+            }
+            let normalizedName = truncatedUTF8(
+                input.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                maxBytes: maxFieldUTF8Bytes
+            )
+            let trimmedTransport = input.transport.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedTransport = trimmedTransport.isEmpty
+                ? "external"
+                : truncatedUTF8(trimmedTransport, maxBytes: maxFieldUTF8Bytes)
+            indexByID[trimmedID] = deduped.count
+            deduped.append(
+                HostAudioInputDescriptor(
+                    id: trimmedID,
+                    name: normalizedName,
+                    transport: normalizedTransport,
+                    isDefault: input.isDefault
+                )
+            )
+        }
+
+        guard deduped.count > maxCount else { return deduped }
+        var limited = Array(deduped.prefix(maxCount))
+        if !limited.contains(where: \.isDefault),
+           let defaultInput = deduped[maxCount...].first(where: \.isDefault) {
+            limited[maxCount - 1] = defaultInput
+        }
+        return limited
+    }
+
+    public static func truncatedUTF8(_ value: String, maxBytes: Int = maxFieldUTF8Bytes) -> String {
+        value.truncatedToUTF8Bytes(maxBytes)
+    }
+}
+
+extension String {
+    func truncatedToUTF8Bytes(_ maxBytes: Int) -> String {
+        guard maxBytes > 0 else { return "" }
+        if utf8.count <= maxBytes {
+            return self
+        }
+        var byteCount = 0
+        var result = ""
+        result.reserveCapacity(maxBytes)
+        for character in self {
+            let charBytes = character.utf8.count
+            if byteCount + charBytes <= maxBytes {
+                result.append(character)
+                byteCount += charBytes
+            } else {
+                if result.isEmpty {
+                    for scalar in character.unicodeScalars {
+                        let scalarBytes = scalar.utf8.count
+                        guard byteCount + scalarBytes <= maxBytes else { break }
+                        result.unicodeScalars.append(scalar)
+                        byteCount += scalarBytes
+                    }
+                }
+                break
+            }
+        }
+        return result
     }
 }
 

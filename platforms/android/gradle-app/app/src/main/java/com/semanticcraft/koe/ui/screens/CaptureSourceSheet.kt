@@ -13,7 +13,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,9 +37,12 @@ internal fun CaptureSourceSheet(store: HostSessionStore, onDismiss: () -> Unit) 
     val studio = capture.studio
     val enabled = !capture.isRecordingLocked
     val effective = studio.activeSource ?: studio.selectedSource
+    val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
     fun select(key: String) {
-        error = store.sendReturningError(HostCommand.SelectCaptureSource(key))
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            error = store.sendReturningErrorAsync(HostCommand.SelectCaptureSource(key))
+        }
     }
 
     KoeModalSheet(onDismiss) {

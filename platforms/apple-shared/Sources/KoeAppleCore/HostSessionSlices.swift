@@ -202,3 +202,64 @@ extension LiveMinutesWorkspaceSnapshot {
         )
     }
 }
+
+extension HostSessionStore {
+    func syncNavigationErrorSlice() {
+        if isUISlicesActive {
+            let nextNav = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
+            if navigation != nextNav { navigation = nextNav }
+        } else {
+            hasDeferredSliceReconcile = true
+        }
+    }
+
+    public func reconcileMenuSlicesIfNeeded() {
+        guard hasDeferredSliceReconcile else { return }
+        if platform != snapshot.platform { platform = snapshot.platform }
+        let nextNavigation = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
+        if navigation != nextNavigation { navigation = nextNavigation }
+        let nextToday = TodaySlice(snapshot: snapshot)
+        if today != nextToday { today = nextToday }
+        if device != snapshot.device { device = snapshot.device }
+        let nextSettings = SettingsSlice(snapshot: snapshot)
+        if settings != nextSettings { settings = nextSettings }
+    }
+
+    func reconcileSlices() {
+        hasDeferredSliceReconcile = false
+        if platform != snapshot.platform { platform = snapshot.platform }
+        let nextNavigation = NavigationChromeSlice(snapshot: snapshot, nativeError: nativeError)
+        if navigation != nextNavigation { navigation = nextNavigation }
+        let nextSidebar = SidebarSlice(snapshot: snapshot)
+        if sidebar != nextSidebar { sidebar = nextSidebar }
+        let nextToday = TodaySlice(snapshot: snapshot)
+        if today != nextToday { today = nextToday }
+        let nextQuickNote = snapshot.workspaces?.quickNote ?? .empty
+        if quickNoteWorkspace != nextQuickNote { quickNoteWorkspace = nextQuickNote }
+        let nextAllDay = snapshot.workspaces?.allDay ?? .empty
+        if allDayWorkspace != nextAllDay { allDayWorkspace = nextAllDay }
+        let resolvedLive = snapshot.workspaces?.liveMinutes ?? .empty
+        let strippedLive = resolvedLive.withoutCoverage()
+        if liveMinutesWorkspace != strippedLive { liveMinutesWorkspace = strippedLive }
+        if liveMinutesCoverage != resolvedLive.coverage { liveMinutesCoverage = resolvedLive.coverage }
+        let nextDetail = RecordDetailSlice(snapshot: snapshot)
+        if recordDetail != nextDetail { recordDetail = nextDetail }
+        if records != snapshot.records { records = snapshot.records }
+        if tasks != snapshot.tasks { tasks = snapshot.tasks }
+        if memories != snapshot.memories { memories = snapshot.memories }
+        if trashRecords != snapshot.trashRecords { trashRecords = snapshot.trashRecords }
+        if ask != snapshot.ask { ask = snapshot.ask }
+        let nextCaptureStudio = CaptureStudioSlice(snapshot: snapshot)
+        if captureStudio != nextCaptureStudio { captureStudio = nextCaptureStudio }
+        if device != snapshot.device { device = snapshot.device }
+        let nextSettings = SettingsSlice(snapshot: snapshot)
+        if settings != nextSettings { settings = nextSettings }
+        if playback != snapshot.playback { playback = snapshot.playback }
+        if activeCapture != snapshot.activeCapture { activeCapture = snapshot.activeCapture }
+        let nextMode = snapshot.activeCapture?.mode
+        if activeCaptureMode != nextMode { activeCaptureMode = nextMode }
+        let nextActions = snapshot.activeCapture?.actions ?? []
+        if activeCaptureActions != nextActions { activeCaptureActions = nextActions }
+        if liveCaption != snapshot.liveCaption { liveCaption = snapshot.liveCaption }
+    }
+}

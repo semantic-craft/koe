@@ -4,6 +4,11 @@ import android.os.SystemClock
 import com.semanticcraft.koe.core.HostBridgeActions
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.core.KoeLogger
+import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +43,8 @@ class CoroutineTickScheduler(
                     onTick()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    KoeLogger.e("KoeHost", "tick", "periodic tick failed", error.javaClass.simpleName, error)
                 }
             }
         }
@@ -50,10 +56,23 @@ class AndroidHostCoordinator(
     private val tickIntervalMs: Long = 250L,
     private val scheduler: TickScheduler = CoroutineTickScheduler(),
     private val clockElapsedMs: () -> Long = { SystemClock.elapsedRealtime() },
+    callbackExecutor: Executor? = null,
 ) {
+    private val ownedExecutor: ExecutorService? = if (callbackExecutor == null) {
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "koe-android-adapters").apply { isDaemon = true }
+        }
+    } else {
+        null
+    }
+    private val adapterExecutor: Executor = callbackExecutor ?: requireNotNull(ownedExecutor)
     private val lock = Any()
     private val adapters = mutableListOf<AndroidHostAdapter>()
     private var boundStore: HostSessionStore? = null
+    private var bindEpoch = 0L
+    private var lastObservedPublishSequence = 0L
+    private var lastDeliveredPublishSequence = 0L
+    private var isShutdown = false
     private var foregroundActive = false
     private var keepAwake = false
     private var snapshotObservedForCurrentBind = false
@@ -84,17 +103,23 @@ class AndroidHostCoordinator(
                 previous = boundStore
                 adaptersToUnbind = if (previous != null) adapters.toList() else emptyList()
                 boundStore = store
+                bindEpoch += 1L
+                lastObservedPublishSequence = 0L
+                lastDeliveredPublishSequence = 0L
                 keepAwake = false
                 snapshotObservedForCurrentBind = false
                 adaptersToBind = adapters.toList()
             }
         }
         if (previous != null) {
+            previous.onSnapshotPublished = null
             previous.onSnapshotChanged = null
             adaptersToUnbind.forEach { it.onSessionUnbound() }
         }
         store.bridgeActions = bridgeActions
-        store.onSnapshotChanged = { snapshot -> handleSnapshotChanged(store, snapshot) }
+        store.onSnapshotPublished = { snapshot, publishSequence ->
+            handleSnapshotChanged(store, snapshot, publishSequence)
+        }
         val initialKeepAwake = store.currentLifecycle()?.keepAwake == true
         synchronized(lock) {
             if (boundStore === store && !snapshotObservedForCurrentBind) {
@@ -134,6 +159,10 @@ class AndroidHostCoordinator(
             previous = boundStore
             adaptersToUnbind = if (previous != null) adapters.toList() else emptyList()
             boundStore = null
+            bindEpoch += 1L
+            lastObservedPublishSequence = 0L
+            lastDeliveredPublishSequence = 0L
+            isShutdown = true
             foregroundActive = false
             keepAwake = false
             snapshotObservedForCurrentBind = false
@@ -145,20 +174,37 @@ class AndroidHostCoordinator(
         }
         handleToClose?.close()
         if (previous != null) {
+            previous.onSnapshotPublished = null
             previous.onSnapshotChanged = null
             adaptersToUnbind.forEach { it.onSessionUnbound() }
         }
+        ownedExecutor?.shutdown()
     }
 
-    private fun handleSnapshotChanged(source: HostSessionStore, snapshot: HostSnapshot) {
-        val adapterSnapshot = synchronized(lock) {
-            if (boundStore !== source) return
+    private fun handleSnapshotChanged(source: HostSessionStore, snapshot: HostSnapshot, publishSequence: Long) {
+        val (adapterSnapshot, epoch) = synchronized(lock) {
+            if (isShutdown || boundStore !== source || publishSequence <= lastObservedPublishSequence) return
+            lastObservedPublishSequence = publishSequence
             snapshotObservedForCurrentBind = true
             keepAwake = snapshot.lifecycle?.keepAwake == true
-            adapters.toList()
+            adapters.toList() to bindEpoch
         }
         reconcileTicker()
-        adapterSnapshot.forEach { it.onSnapshotChanged(snapshot) }
+        try {
+            adapterExecutor.execute {
+                val shouldDeliver = synchronized(lock) {
+                    if (isShutdown || boundStore !== source || bindEpoch != epoch || publishSequence <= lastDeliveredPublishSequence) {
+                        false
+                    } else {
+                        lastDeliveredPublishSequence = publishSequence
+                        true
+                    }
+                }
+                if (shouldDeliver) adapterSnapshot.forEach { it.onSnapshotChanged(snapshot) }
+            }
+        } catch (error: RejectedExecutionException) {
+            KoeLogger.w("KoeHost", "deliver_snapshot", "adapter executor rejected delivery", "executor_rejected", error)
+        }
     }
 
     private fun reconcileTicker() {

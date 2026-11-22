@@ -16,14 +16,12 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.edit
+import androidx.core.util.size
+import com.semanticcraft.koe.core.KoeLogger
 import java.util.UUID
 
-enum class BleAdapterState {
-    SUPPORTED_READY,
-    POWERED_OFF,
-    UNAUTHORIZED,
-    UNSUPPORTED,
-}
+enum class BleAdapterState { SUPPORTED_READY, POWERED_OFF, UNAUTHORIZED, UNSUPPORTED }
 
 interface BleTransportListener {
     fun onCandidateDiscovered(address: String, displayName: String)
@@ -53,14 +51,8 @@ class SharedPreferencesBleAddressStore(context: Context) : BleAddressStore {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     override fun read(): String? = prefs.getString(KEY_LAST_PERIPHERAL_ADDRESS, null)?.takeIf { it.isNotBlank() }
-
-    override fun write(address: String) {
-        prefs.edit().putString(KEY_LAST_PERIPHERAL_ADDRESS, address).apply()
-    }
-
-    override fun clear() {
-        prefs.edit().remove(KEY_LAST_PERIPHERAL_ADDRESS).apply()
-    }
+    override fun write(address: String) { prefs.edit { putString(KEY_LAST_PERIPHERAL_ADDRESS, address) } }
+    override fun clear() { prefs.edit { remove(KEY_LAST_PERIPHERAL_ADDRESS) } }
 
     companion object {
         const val PREFS_NAME = "koe_ble_prefs"
@@ -125,6 +117,7 @@ class SystemAndroidBleTransport(
             override fun onScanResult(callbackType: Int, result: ScanResult) = handleScanResult(result, savedAddress)
             override fun onBatchScanResults(results: MutableList<ScanResult>) = results.forEach { handleScanResult(it, savedAddress) }
             override fun onScanFailed(errorCode: Int) {
+                KoeLogger.e("KoeBle", "scan_failed", "BLE scan failed status=$errorCode", "scan_$errorCode")
                 stopScan()
                 transportListener?.onDisconnected("蓝牙扫描启动失败（错误码 $errorCode），请重试。")
             }
@@ -136,10 +129,12 @@ class SystemAndroidBleTransport(
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         try {
             scanner.startScan(null, settings, callback)
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            logBleWarning("start_scan", error)
             stopScan()
             transportListener?.onDisconnected(ERR_UNAUTHORIZED)
-        } catch (_: IllegalStateException) {
+        } catch (error: IllegalStateException) {
+            logBleWarning("start_scan", error)
             stopScan()
             transportListener?.onDisconnected(ERR_POWERED_OFF)
         }
@@ -155,8 +150,10 @@ class SystemAndroidBleTransport(
         if (scanner != null && callback != null) {
             try {
                 scanner.stopScan(callback)
-            } catch (_: SecurityException) {
-            } catch (_: IllegalStateException) {
+            } catch (error: SecurityException) {
+                logBleWarning("stop_scan", error)
+            } catch (error: IllegalStateException) {
+                logBleWarning("stop_scan", error)
             }
         }
     }
@@ -174,14 +171,16 @@ class SystemAndroidBleTransport(
         disconnect()
         val device = try {
             adapter.getRemoteDevice(address)
-        } catch (_: IllegalArgumentException) {
+        } catch (error: IllegalArgumentException) {
+            logBleWarning("connect", error)
             transportListener?.onDisconnected(ERR_CONNECT_FAILED)
             return
         }
         val error = synchronized(lock) {
             val gatt = try {
                 device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-            } catch (_: SecurityException) {
+            } catch (securityError: SecurityException) {
+                logBleWarning("connect_gatt", securityError)
                 return@synchronized ERR_UNAUTHORIZED
             }
             if (gatt == null) {
@@ -213,13 +212,24 @@ class SystemAndroidBleTransport(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeCharacteristic(char, data, writeType) == BluetoothStatusCodes.SUCCESS
             } else {
-                char.writeType = writeType
-                char.value = data
-                gatt.writeCharacteristic(char)
+                writeCharacteristicLegacy(gatt, char, data, writeType)
             }
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            logBleWarning("write_characteristic", error)
             false
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun writeCharacteristicLegacy(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        data: ByteArray,
+        writeType: Int,
+    ): Boolean {
+        characteristic.writeType = writeType
+        characteristic.value = data
+        return gatt.writeCharacteristic(characteristic)
     }
 
     override fun disconnect() {
@@ -230,12 +240,13 @@ class SystemAndroidBleTransport(
     private fun findConnectedCandidate(manager: BluetoothManager, savedAddress: String?): Pair<String, String>? {
         val devices = try {
             manager.getConnectedDevices(BluetoothProfile.GATT)
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            logBleWarning("connected_devices", error)
             return null
         }
         for (device in devices) {
             val address = device.address ?: continue
-            val name = try { device.name } catch (_: SecurityException) { null }
+            val name = readDeviceNameSafely(device)
             val matchesSaved = savedAddress != null && address.equals(savedAddress, ignoreCase = true)
             val candidate = BleAdvertisementCandidate.match(name, null, emptyList(), emptyList())
             if (matchesSaved || candidate != null) {
@@ -254,7 +265,7 @@ class SystemAndroidBleTransport(
         }
         val manufacturerData = buildList {
             val sparse = record?.manufacturerSpecificData ?: return@buildList
-            for (index in 0 until sparse.size()) {
+            for (index in 0 until sparse.size) {
                 val companyId = sparse.keyAt(index)
                 val payload = sparse.valueAt(index) ?: continue
                 val wireBytes = ByteArray(payload.size + 2)
@@ -264,7 +275,7 @@ class SystemAndroidBleTransport(
                 add(wireBytes)
             }
         }
-        val deviceName = try { result.device.name } catch (_: SecurityException) { null }
+        val deviceName = readDeviceNameSafely(result.device)
         val candidate = BleAdvertisementCandidate.match(deviceName, record?.deviceName, serviceUuids, manufacturerData)
         val matchesSaved = savedAddress != null && address.equals(savedAddress, ignoreCase = true)
         if (candidate == null && !matchesSaved) return
@@ -281,7 +292,7 @@ class SystemAndroidBleTransport(
             else { servicesDiscoveryStarted = true; true }
         }
         if (!shouldStart) return
-        val started = try { gatt.discoverServices() } catch (_: SecurityException) { false }
+        val started = try { gatt.discoverServices() } catch (e: SecurityException) { logBleWarning("discover_services", e); false }
         if (!started) closeAndNotifyDisconnect(gatt, ERR_SERVICES_FAILED)
     }
 
@@ -317,8 +328,20 @@ class SystemAndroidBleTransport(
 
     private fun closeGattSafely(gatt: BluetoothGatt?) {
         if (gatt == null) return
-        try { gatt.disconnect() } catch (_: SecurityException) {}
-        try { gatt.close() } catch (_: SecurityException) {}
+        try { gatt.disconnect() } catch (e: SecurityException) { logBleWarning("gatt_disconnect", e) }
+        try { gatt.close() } catch (e: SecurityException) { logBleWarning("gatt_close", e) }
+    }
+
+    private fun readDeviceNameSafely(device: BluetoothDevice): String? =
+        try { device.name } catch (e: SecurityException) { logBleWarning("read_device_name", e); null }
+
+    private fun logBleWarning(operation: String, error: Throwable) {
+        KoeLogger.w("KoeBle", operation, "BLE operation failed", error.javaClass.simpleName, error)
+    }
+
+    private fun logGattStatus(operation: String, status: Int, detail: String = "") {
+        val msg = if (detail.isEmpty()) "GATT status=$status" else "GATT status=$status $detail"
+        KoeLogger.e("KoeBle", operation, msg, "gatt_$status")
     }
 
     private fun writeDescriptorCompat(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, value: ByteArray): Boolean =
@@ -326,21 +349,34 @@ class SystemAndroidBleTransport(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS
             } else {
-                descriptor.value = value
-                gatt.writeDescriptor(descriptor)
+                writeDescriptorLegacy(gatt, descriptor, value)
             }
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            logBleWarning("write_descriptor", error)
             false
         }
 
-    private val gattCallback = object : BluetoothGattCallback() {
+    @Suppress("DEPRECATION")
+    private fun writeDescriptorLegacy(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+        value: ByteArray,
+    ): Boolean {
+        descriptor.value = value
+        return gatt.writeDescriptor(descriptor)
+    }
+
+    internal val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                logGattStatus("gatt_connection_state", status, "newState=$newState")
+            }
             if (!synchronized(lock) { activeGatt === gatt }) {
                 closeGattSafely(gatt)
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
-                val mtuRequested = try { gatt.requestMtu(REQUESTED_MTU) } catch (_: SecurityException) { false }
+                val mtuRequested = try { gatt.requestMtu(REQUESTED_MTU) } catch (e: SecurityException) { logBleWarning("request_mtu", e); false }
                 if (!mtuRequested) startServiceDiscoveryOnce(gatt)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
                 val wasReady = synchronized(lock) { linkReadyReported }
@@ -350,6 +386,7 @@ class SystemAndroidBleTransport(
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) logGattStatus("gatt_mtu_changed", status, "mtu=$mtu")
             val owned = synchronized(lock) {
                 if (activeGatt !== gatt) false
                 else {
@@ -361,6 +398,7 @@ class SystemAndroidBleTransport(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) logGattStatus("gatt_services_discovered", status)
             if (!synchronized(lock) { activeGatt === gatt }) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 closeAndNotifyDisconnect(gatt, ERR_SERVICES_FAILED)
@@ -392,7 +430,7 @@ class SystemAndroidBleTransport(
                 if (activeGatt !== gatt) return
                 writeCharacteristic = bestWrite
             }
-            val localOk = try { gatt.setCharacteristicNotification(bestNotify, true) } catch (_: SecurityException) { false }
+            val localOk = try { gatt.setCharacteristicNotification(bestNotify, true) } catch (e: SecurityException) { logBleWarning("set_notify", e); false }
             val cccd = bestNotify.getDescriptor(UUID.fromString(CCCD_UUID))
             if (!localOk || cccd == null || !writeDescriptorCompat(gatt, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
                 closeAndNotifyDisconnect(gatt, ERR_NOTIFY_FAILED)
@@ -403,6 +441,7 @@ class SystemAndroidBleTransport(
             if (!synchronized(lock) { activeGatt === gatt }) return
             if (!descriptor.uuid.toString().equals(CCCD_UUID, ignoreCase = true)) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                logGattStatus("gatt_descriptor_write", status)
                 closeAndNotifyDisconnect(gatt, ERR_NOTIFY_FAILED)
                 return
             }
@@ -417,6 +456,7 @@ class SystemAndroidBleTransport(
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            if (status != BluetoothGatt.GATT_SUCCESS) logGattStatus("gatt_characteristic_write", status)
             if (synchronized(lock) { activeGatt === gatt }) {
                 transportListener?.onWriteCompleted(status == BluetoothGatt.GATT_SUCCESS)
             }
@@ -431,6 +471,7 @@ class SystemAndroidBleTransport(
         }
 
         @Deprecated("Deprecated in Java")
+        @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,

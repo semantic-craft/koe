@@ -57,20 +57,19 @@ final class IOSFileActions {
     }
 
     func exportRecord(_ id: String) {
-        let title = store.records.first { $0.id == id }?.title ?? ""
-        exportWorkspace(WorkspaceExportRequest(recordId: id, suggestedFilename: "\(title).md"))
+        let title = store.records.first { $0.id == id }?.title
+        exportWorkspace(WorkspaceExportRequest(
+            recordId: id,
+            suggestedFilename: ExportFilenameSanitizer.markdownFilename(stem: title)
+        ))
     }
 
     func exportWorkspace(_ request: WorkspaceExportRequest) {
         prepareExport { directory in
-            let name = request.suggestedFilename
-            guard name.lowercased().hasSuffix(".md") else { throw FileActionError("导出文件名无效。") }
-            let padding = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "."))
-            let invalid = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
-            let stem = String(name.dropLast(3)).trimmingCharacters(in: padding)
-            let safeStem = stem.trimmingCharacters(in: invalid.union(padding)).isEmpty
-                ? "Koe 记录" : stem.components(separatedBy: invalid).joined(separator: "-")
-            return request.command(path: directory.appendingPathComponent("\(safeStem).md").path)
+            guard let safeName = ExportFilenameSanitizer.validatedMarkdownFilename(request.suggestedFilename) else {
+                throw FileActionError("导出文件名无效。")
+            }
+            return request.command(path: directory.appendingPathComponent(safeName).path)
         }
     }
 
@@ -101,8 +100,11 @@ final class IOSFileActions {
         guard let directory = exportURLs.first?.deletingLastPathComponent() else { return }
         exportURLs = []
         remove(directory)
-        if delivered { Self.logger.info("Markdown 已交付到文件应用") }
-        else { Self.logger.info("已取消 Markdown 导出") }
+        if delivered {
+            Self.logger.info("Markdown 已交付到文件应用")
+        } else {
+            Self.logger.info("已取消 Markdown 导出")
+        }
     }
 
     private func makeDirectory() throws -> URL {
@@ -112,8 +114,11 @@ final class IOSFileActions {
     }
 
     private func remove(_ directory: URL) {
-        do { try FileManager.default.removeItem(at: directory) }
-        catch { report("无法清理暂存文件", error) }
+        do {
+            try FileManager.default.removeItem(at: directory)
+        } catch {
+            report("无法清理暂存文件", error)
+        }
     }
 
     private func dispatch(_ command: HostCommand) throws {
@@ -148,8 +153,11 @@ final class IOSFileActions {
         var coordinationError: NSError?
         var copyError: Error?
         NSFileCoordinator().coordinate(readingItemAt: source, options: [], error: &coordinationError) { readableURL in
-            do { try copyFile(readableURL, to: destination) }
-            catch { copyError = error }
+            do {
+                try copyFile(readableURL, to: destination)
+            } catch {
+                copyError = error
+            }
         }
         if let error = coordinationError ?? copyError { throw error }
         return destination
@@ -180,8 +188,9 @@ final class IOSFileActions {
 
     private nonisolated static func withOpenHandle(_ handle: FileHandle, perform: (FileHandle) throws -> Void) throws {
         let operation = Result { try perform(handle) }
-        do { try handle.close() }
-        catch {
+        do {
+            try handle.close()
+        } catch {
             if case .failure(let original) = operation {
                 throw FileActionError("\(original.localizedDescription)（关闭文件失败：\(error.localizedDescription)）")
             }

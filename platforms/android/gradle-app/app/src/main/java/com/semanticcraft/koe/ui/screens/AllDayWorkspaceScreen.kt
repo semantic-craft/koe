@@ -28,13 +28,14 @@ import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeEmptyState
 import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
 @Composable
 internal fun AllDayWorkspaceScreen(
     store: HostSessionStore, onSelectRecord: (String) -> Unit, onOpenSource: (SourceSnapshot) -> Unit,
-    onOpenCaptureSource: () -> Unit, modifier: Modifier,
+    onOpenCaptureSource: () -> Unit, modifier: Modifier = Modifier,
 ) {
     val workspace by store.allDayWorkspace.collectAsStateWithLifecycle()
     val date = workspace.selectedDate
@@ -65,7 +66,7 @@ internal fun AllDayWorkspaceScreen(
                     WorkspaceTitle("每日回顾")
                     Text(review.overview)
                     review.highlights.forEach { Text(it) }
-                    WorkspaceSources(review.sources, onOpenSource)
+                    WorkspaceSources(StableList(review.sources), onOpenSource)
                 }
             }
         }
@@ -73,7 +74,7 @@ internal fun AllDayWorkspaceScreen(
         items(workspace.reviewDecisions, key = { "decision-" + it.id }) { decision ->
             KoeCard {
                 Text(decision.text)
-                WorkspaceSources(decision.sources, onOpenSource)
+                WorkspaceSources(StableList(decision.sources), onOpenSource)
             }
         }
         if (workspace.reviewTasks.isNotEmpty() || workspace.reviewMemories.isNotEmpty()) item { WorkspaceTitle("待办与记忆") }

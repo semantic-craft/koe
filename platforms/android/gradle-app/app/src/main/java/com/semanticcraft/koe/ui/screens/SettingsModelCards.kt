@@ -54,13 +54,14 @@ fun SettingsAsrCard(
     onConfigureSpeech: (String) -> Unit,
     onDraftChange: (ModelSettingsDraft) -> Unit,
     onSetMeetingAudioPolicy: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = KoeTheme.colors
     val isCloud = speech.engine == "cloud"
     val isQwen = draft.asrProvider == "qwen"
     val qwenOption = ModelSettingsCatalog.qwenAsrOption(draft.qwenAsrModel)
 
-    KoeCard {
+    KoeCard(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("语音识别（ASR）", color = colors.textPrimary, fontSize = KoeFontSizes.md, fontWeight = FontWeight.SemiBold)
 
@@ -180,11 +181,12 @@ fun SettingsLlmCard(
     draft: ModelSettingsDraft,
     onDraftChange: (ModelSettingsDraft) -> Unit,
     onSave: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = KoeTheme.colors
     val isCustom = draft.llmProvider == "custom"
 
-    KoeCard {
+    KoeCard(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

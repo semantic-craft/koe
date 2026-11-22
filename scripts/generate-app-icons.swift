@@ -1,5 +1,17 @@
 import AppKit
 
+let arguments = Array(CommandLine.arguments.dropFirst())
+let checkOnly: Bool
+switch arguments {
+case []:
+    checkOnly = false
+case ["--check"]:
+    checkOnly = true
+default:
+    fputs("Usage: swift scripts/generate-app-icons.swift [--check]\n", stderr)
+    exit(2)
+}
+
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let source = root.appendingPathComponent("assets/artwork/koe-schoolgirl-b-cheerful.png")
 let macArtworkInsetRatio: CGFloat = 100.0 / 1024.0
@@ -37,6 +49,69 @@ func writeIfChanged(_ data: Data, to url: URL) throws {
         return
     }
     try data.write(to: url, options: .atomic)
+}
+
+func relativePath(of url: URL) -> String {
+    let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+    return url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.path
+}
+
+struct DecodedImage: Equatable {
+    let width: Int
+    let height: Int
+    let rgba: Data
+}
+
+func decodedPixels(from data: Data) -> DecodedImage? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        return nil
+    }
+    let width = cgImage.width
+    let height = cgImage.height
+    guard width > 0, height > 0 else { return nil }
+    let bytesPerRow = width * 4
+    var rgba = Data(count: bytesPerRow * height)
+    let drawn = rgba.withUnsafeMutableBytes { rawBuffer -> Bool in
+        guard let baseAddress = rawBuffer.baseAddress,
+              let context = CGContext(
+                  data: baseAddress,
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: bytesPerRow,
+                  space: srgb,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return false
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return true
+    }
+    guard drawn else { return nil }
+    return DecodedImage(width: width, height: height, rgba: rgba)
+}
+
+func imagesMatch(expected: Data, actual: Data) -> Bool {
+    if expected == actual {
+        return true
+    }
+    guard let expectedPixels = decodedPixels(from: expected),
+          let actualPixels = decodedPixels(from: actual) else {
+        return false
+    }
+    return expectedPixels == actualPixels
+}
+
+func syncTrackedIcon(_ data: Data, to url: URL, mismatches: inout [String]) throws {
+    if checkOnly {
+        guard let existing = try? Data(contentsOf: url), imagesMatch(expected: data, actual: existing) else {
+            mismatches.append(relativePath(of: url))
+            return
+        }
+        return
+    }
+    try writeIfChanged(data, to: url)
 }
 
 func renderMacIcon(pixels: Int) -> Data {
@@ -137,8 +212,10 @@ for (filename, pixels) in macSpecs {
     print("macos: \(filename) (\(pixels) px)")
 }
 
+var trackedMismatches: [String] = []
+
 let iosIconPath = root.appendingPathComponent("platforms/ios/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png")
-try writeIfChanged(renderIOSIcon(pixels: 1024), to: iosIconPath)
+try syncTrackedIcon(renderIOSIcon(pixels: 1024), to: iosIconPath, mismatches: &trackedMismatches)
 print("ios: AppIcon.png (1024 px)")
 
 let androidResDir = root.appendingPathComponent("platforms/android/gradle-app/app/src/main/res", isDirectory: true)
@@ -153,7 +230,15 @@ let androidSpecs: [(String, Int)] = [
 for (density, pixels) in androidSpecs {
     let dir = androidResDir.appendingPathComponent("mipmap-\(density)", isDirectory: true)
     let layers = renderAndroidAdaptiveIcons(pixels: pixels)
-    try writeIfChanged(layers.foreground, to: dir.appendingPathComponent("ic_launcher_foreground.png"))
-    try writeIfChanged(layers.monochrome, to: dir.appendingPathComponent("ic_launcher_monochrome.png"))
+    try syncTrackedIcon(layers.foreground, to: dir.appendingPathComponent("ic_launcher_foreground.png"), mismatches: &trackedMismatches)
+    try syncTrackedIcon(layers.monochrome, to: dir.appendingPathComponent("ic_launcher_monochrome.png"), mismatches: &trackedMismatches)
     print("android: mipmap-\(density)/ic_launcher_{foreground,monochrome}.png (\(pixels) px)")
+}
+
+if !trackedMismatches.isEmpty {
+    for path in trackedMismatches {
+        fputs("FAIL: tracked icon out of sync with artwork: \(path)\n", stderr)
+    }
+    fputs("Run `swift scripts/generate-app-icons.swift` to regenerate tracked icons.\n", stderr)
+    exit(1)
 }

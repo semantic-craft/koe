@@ -1,20 +1,29 @@
 import CoreBluetooth
 @testable import KoeAppleCore
+import os
 import UIKit
 import XCTest
 @testable import KoeiOSApp
 
+private final class TestBluetoothDefaultsStore: BluetoothDefaultsStore {
+    private let values = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
+    init(initial: [String: String] = [:]) {
+        values.withLock { $0 = initial }
+    }
+
+    func string(forKey defaultName: String) -> String? { values.withLock { $0[defaultName] } }
+    func set(_ value: String, forKey defaultName: String) { values.withLock { $0[defaultName] = value } }
+    func removeObject(forKey defaultName: String) { values.withLock { _ = $0.removeValue(forKey: defaultName) } }
+}
+
 @MainActor
 final class IOSBluetoothRestorationTests: XCTestCase {
     private func withBridge(_ body: (BluetoothBridge, TestCentral, HostSessionStore) throws -> Void) throws {
-        let key = BluetoothBridge.savedPeripheralKey
-        let previous = UserDefaults.standard.string(forKey: key)
-        defer { UserDefaults.standard.set(previous, forKey: key) }
-        UserDefaults.standard.removeObject(forKey: key)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = HostSessionStore(workspacePath: root.path, credentials: NativeCredentialsiOS(forceIsolated: true))
-        let bridge = BluetoothBridge(store: store)
+        let bridge = BluetoothBridge(store: store, defaultsStore: TestBluetoothDefaultsStore())
         let central = TestCentral()
         bridge.makeIOSCentral = { _, options in central.options.append(options); return central }
         store.onSnapshotChanged = { bridge.syncWithRuntimeDevice($0.device) }
@@ -24,15 +33,13 @@ final class IOSBluetoothRestorationTests: XCTestCase {
     }
 
     func testOnlyMatchingLaunchIdentifierCreatesOneRestorableCentral() throws {
-        let key = BluetoothBridge.savedPeripheralKey
-        let previous = UserDefaults.standard.string(forKey: key)
-        defer { UserDefaults.standard.set(previous, forKey: key) }
-        UserDefaults.standard.removeObject(forKey: key)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let delegate = IOSAppDelegate()
+        let injectedBridge = BluetoothBridge(defaultsStore: TestBluetoothDefaultsStore())
         let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: ["Koe", "-koe-workspace", root.path],
-                                       environment: [:], source: TestMicrophone(), allowsCoreBluetooth: false)
+                                       environment: [:], source: TestMicrophone(), allowsCoreBluetooth: false,
+                                       bluetoothBridge: injectedBridge)
         defer { session.shutdown() }
         delegate.session = session
         let bridge = session.coordinator.bluetoothBridge
@@ -58,15 +65,13 @@ final class IOSBluetoothRestorationTests: XCTestCase {
 
     func testLaunchRestorationWithSavedPeripheralRestoresOnceWithoutSpuriousScan() throws {
         let key = BluetoothBridge.savedPeripheralKey
-        let previous = UserDefaults.standard.string(forKey: key)
-        defer { UserDefaults.standard.set(previous, forKey: key) }
-        UserDefaults.standard.set(UUID().uuidString, forKey: key)
+        let defaultsStore = TestBluetoothDefaultsStore(initial: [key: UUID().uuidString])
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let central = TestCentral()
-        let bridge = BluetoothBridge()
+        let bridge = BluetoothBridge(defaultsStore: defaultsStore)
         bridge.makeIOSCentral = { _, options in
             central.options.append(options)
             return central
@@ -111,18 +116,16 @@ final class IOSBluetoothRestorationTests: XCTestCase {
 
     func testRestorationWithDisconnectedPeerFallsBackToKnownReconnect() throws {
         let key = BluetoothBridge.savedPeripheralKey
-        let previous = UserDefaults.standard.string(forKey: key)
-        defer { UserDefaults.standard.set(previous, forKey: key) }
         let savedPeer = TestPeer(notifying: false)
         savedPeer.state = .disconnected
-        UserDefaults.standard.set(savedPeer.identifier.uuidString, forKey: key)
+        let defaultsStore = TestBluetoothDefaultsStore(initial: [key: savedPeer.identifier.uuidString])
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let central = TestCentral()
         central.known = [savedPeer]
-        let bridge = BluetoothBridge()
+        let bridge = BluetoothBridge(defaultsStore: defaultsStore)
         bridge.makeIOSCentral = { _, options in
             central.options.append(options)
             return central

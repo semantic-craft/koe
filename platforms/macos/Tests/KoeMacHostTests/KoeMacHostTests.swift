@@ -1,5 +1,6 @@
 import AppKit
 import CoreAudio
+import CoreBluetooth
 import Foundation
 @testable import KoeAppleCore
 import KoeAppleShared
@@ -102,7 +103,7 @@ struct KoeMacHostTests {
 
         #expect(BluetoothBridge.isWriteCharacteristic(BluetoothBridge.writeCharacteristicUUID))
         #expect(BluetoothBridge.isNotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID))
-        let otherService = BluetoothBridge.secondaryServiceUUIDForTest("00007000-0000-1000-8000-00805F9B34FB")
+        let otherService = CBUUID(string: "00007000-0000-1000-8000-00805F9B34FB")
         #expect(BluetoothBridge.isD3200WriteCharacteristic(BluetoothBridge.writeCharacteristicUUID, serviceUUID: BluetoothBridge.d3200ServiceUUID))
         #expect(!BluetoothBridge.isD3200WriteCharacteristic(BluetoothBridge.writeCharacteristicUUID, serviceUUID: otherService))
         #expect(BluetoothBridge.isD3200NotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID, serviceUUID: BluetoothBridge.d3200ServiceUUID))
@@ -149,7 +150,7 @@ struct KoeMacHostTests {
     @MainActor
     func writeCharacteristicServicePriority() {
         let primary = BluetoothBridge.d3200ServiceUUID
-        let secondary = BluetoothBridge.secondaryServiceUUIDForTest("00007000-0000-1000-8000-00805F9B34FB")
+        let secondary = CBUUID(string: "00007000-0000-1000-8000-00805F9B34FB")
 
         #expect(BluetoothBridge.shouldPreferWriteCharacteristic(existingServiceUUID: nil, candidateServiceUUID: secondary))
         #expect(BluetoothBridge.shouldPreferWriteCharacteristic(existingServiceUUID: secondary, candidateServiceUUID: primary))

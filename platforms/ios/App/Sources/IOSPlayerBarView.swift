@@ -77,13 +77,16 @@ struct IOSPlayerBarView: View {
     }
 }
 
+@MainActor
 struct IOSPlaybackScrubber {
     let draft: Binding<Double?>
     let positionMs: UInt64
     let seek: (UInt64) -> Void
 
     var value: Binding<Double> {
-        Binding(get: { draft.wrappedValue ?? Double(positionMs) }, set: { draft.wrappedValue = $0 })
+        let draft = self.draft
+        let positionMs = self.positionMs
+        return Binding(get: { draft.wrappedValue ?? Double(positionMs) }, set: { draft.wrappedValue = $0 })
     }
 
     func editingChanged(_ editing: Bool) {
