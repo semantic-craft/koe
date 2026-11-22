@@ -1,30 +1,58 @@
 import Foundation
 import KoeAppleShared
+import os
+import Security
 import Testing
 @testable import Koe
 
 private final class FixtureCredentials: HostCredentials {
+    private struct State: Sendable {
+        var items: [String: String] = [:]
+        var failRead = false
+        var operations: [UInt32] = []
+        var afterCreate: (@Sendable () -> Void)?
+    }
+
     let isolated = false
-    var items: [String: String] = [:]
-    var failRead = false
-    var operations: [UInt32] = []
-    var afterCreate: (() -> Void)?
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    var items: [String: String] {
+        get { state.withLock(\.items) }
+        set { state.withLock { $0.items = newValue } }
+    }
+    var failRead: Bool {
+        get { state.withLock(\.failRead) }
+        set { state.withLock { $0.failRead = newValue } }
+    }
+    var operations: [UInt32] {
+        state.withLock(\.operations)
+    }
+    var afterCreate: (@Sendable () -> Void)? {
+        get { state.withLock(\.afterCreate) }
+        set { state.withLock { $0.afterCreate = newValue } }
+    }
+
     func perform(operation: UInt32, reference: String, value: String) throws -> String? {
-        operations.append(operation)
-        switch operation {
-        case 0:
-            if failRead { throw NativeCredentials.Failure.unavailable }
-            return items[reference]
-        case 1:
-            items[reference] = value
-            afterCreate?()
-            return reference
-        case 2: items.removeValue(forKey: reference); return ""
-        case 3: return nil
-        case 4: return ""
-        case 5: return UUID().uuidString.lowercased()
-        default: throw NativeCredentials.Failure.unavailable
+        let (result, callback): (String?, (@Sendable () -> Void)?) = try state.withLock { state in
+            state.operations.append(operation)
+            switch operation {
+            case 0:
+                if state.failRead { throw NativeCredentials.Failure.keychainError(errSecAuthFailed) }
+                return (state.items[reference], nil)
+            case 1:
+                state.items[reference] = value
+                return (reference, state.afterCreate)
+            case 2:
+                state.items.removeValue(forKey: reference)
+                return ("", nil)
+            case 3: return (nil, nil)
+            case 4: return ("", nil)
+            case 5: return (UUID().uuidString.lowercased(), nil)
+            default: throw NativeCredentials.Failure.unsupportedOperation
+            }
         }
+        callback?()
+        return result
     }
 }
 
@@ -66,10 +94,10 @@ struct CredentialsTests {
         #expect(reopened.snapshot.provider.qwenConfigured)
         #expect(reopened.snapshot.provider.configured)
         #expect(vault.operations.contains(4))
-        reopened.send(.clearProviderCredential)
+        reopened.send(.clearProviderCredential())
         #expect(!reopened.snapshot.provider.qwenConfigured)
         #expect(reopened.snapshot.provider.configured)
-        reopened.send(.clearProviderCredentialFor(provider: "deepseek"))
+        reopened.send(.clearProviderCredential(provider: "deepseek"))
         #expect(!reopened.snapshot.provider.configured)
         reopened.shutdown()
         let cleared = HostSessionStore(workspacePath: root.path, credentials: vault)
@@ -90,8 +118,8 @@ struct CredentialsTests {
         #expect(neighbour.snapshot.provider.qwenConfigured)
         neighbour.shutdown()
         let file = root.appendingPathComponent("product-workspace.json")
-        var crashed: Data?
-        vault.afterCreate = { crashed = try? Data(contentsOf: file) }
+        let crashed = OSAllocatedUnfairLock<Data?>(initialState: nil)
+        vault.afterCreate = { crashed.withLock { $0 = try? Data(contentsOf: file) } }
         let first = HostSessionStore(workspacePath: root.path, credentials: vault)
         first.send(.configureProvider(apiKey: "orphan-fixture-secret", model: "fixture-model"))
         #expect(first.snapshot.provider.qwenConfigured)
@@ -99,7 +127,7 @@ struct CredentialsTests {
         vault.afterCreate = nil
         // Replay the disk state captured at the moment the item was created.
         try? FileManager.default.removeItem(at: file)
-        if let crashed { try crashed.write(to: file) }
+        if let crashedData = crashed.withLock({ $0 }) { try crashedData.write(to: file) }
         #expect(vault.items.values.contains("orphan-fixture-secret"))
         let reopened = HostSessionStore(workspacePath: root.path, credentials: vault)
         defer { reopened.shutdown() }
@@ -131,7 +159,7 @@ struct CredentialsTests {
         #expect(!second.snapshot.provider.configured)
         #expect(!second.snapshot.provider.qwenConfigured)
         #expect(second.snapshot.provider.model == "deepseek-flash")
-        second.send(.clearProviderCredential)
+        second.send(.clearProviderCredential())
         #expect(second.snapshot.provider.credentialState == "cleared")
     }
 
@@ -188,7 +216,7 @@ struct CredentialsTests {
         #expect(manual.snapshot.provider.configured)
         #expect(manual.snapshot.provider.model == "deepseek-v4-pro")
         #expect(manual.snapshot.provider.credentialState == "missing_saved")
-        manual.send(.clearProviderCredential)
+        manual.send(.clearProviderCredential())
         #expect(manual.snapshot.provider.credentialState == "cleared")
         manual.shutdown()
 
@@ -257,5 +285,138 @@ struct CredentialsTests {
         #expect(paddedReopened.snapshot.provider.qwenConfigured)
         #expect(paddedReopened.snapshot.provider.deepseekConfigured)
         #expect(paddedReopened.snapshot.provider.configured)
+    }
+
+    @Test("NativeCredentials rejects invalid isolated references on read and delete consistently with iOS")
+    func isolatedInvalidReferencesThrowOnReadAndDelete() throws {
+        let credentials = NativeCredentials(workspaceOverride: true, environment: [:])
+        #expect(credentials.isolated)
+
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try credentials.perform(operation: 0, reference: "bad-ref", value: "")
+        }
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try credentials.perform(operation: 2, reference: "bad-ref", value: "")
+        }
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try credentials.perform(operation: 0, reference: UUID().uuidString.lowercased(), value: "")
+        }
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try credentials.perform(operation: 2, reference: UUID().uuidString.lowercased(), value: "")
+        }
+        #expect(throws: NativeCredentials.Failure.unsupportedOperation) {
+            _ = try credentials.perform(operation: 99, reference: "", value: "")
+        }
+    }
+
+    @Test("NativeCredentials matches iOS across isolated rewrite-after-delete, environment, and mock Keychain 6-op matrix")
+    func macNativeCredentialsFullParityMatrix() throws {
+        #expect(NativeCredentials.allowsSystemStorage(debug: false, sourceOverride: false, workspaceOverride: false, trusted: true))
+        #expect(!NativeCredentials.allowsSystemStorage(debug: true, sourceOverride: false, workspaceOverride: false, trusted: true))
+        #expect(!NativeCredentials.allowsSystemStorage(debug: false, sourceOverride: true, workspaceOverride: false, trusted: true))
+        #expect(!NativeCredentials.allowsSystemStorage(debug: false, sourceOverride: false, workspaceOverride: true, trusted: true))
+        #expect(!NativeCredentials.allowsSystemStorage(debug: false, sourceOverride: false, workspaceOverride: false, trusted: false))
+
+        let isolated = NativeCredentials(workspaceOverride: true, environment: [:])
+        let ref = try #require(try isolated.perform(operation: 5, reference: "qwen", value: "sk-1"))
+        #expect(try isolated.perform(operation: 1, reference: ref, value: "sk-1") == ref)
+        #expect(try isolated.perform(operation: 2, reference: ref, value: "") == "")
+        #expect(try isolated.perform(operation: 0, reference: ref, value: "") == nil)
+        #expect(try isolated.perform(operation: 1, reference: ref, value: "sk-2") == ref)
+        #expect(try isolated.perform(operation: 0, reference: ref, value: "") == "sk-2")
+        #expect(try isolated.perform(operation: 2, reference: "isolated-1234-999-1", value: "") == "")
+
+        let env = NativeCredentials(
+            workspaceOverride: true,
+            environment: [
+                "KOE_CREDENTIAL_SOURCE": "environment",
+                "DASHSCOPE_API_KEY": "sk-env-qwen",
+                "DEEPSEEK_API_KEY": "sk-env-ds",
+            ]
+        )
+        let envRef = try #require(try env.perform(operation: 5, reference: "qwen", value: "sk-env-qwen"))
+        #expect(try env.perform(operation: 2, reference: envRef, value: "") == "")
+        #expect(try env.perform(operation: 0, reference: envRef, value: "") == nil)
+        #expect(try env.perform(operation: 1, reference: envRef, value: "sk-env-qwen") == envRef)
+        #expect(try env.perform(operation: 0, reference: envRef, value: "") == "sk-env-qwen")
+
+        final class MacMockKeychain: AppleKeychainBackend {
+            private struct State: Sendable {
+                var items: [String: Data] = [:]
+                var accessibilities: [AppleKeychainAccessibility] = []
+                var interactiveFlags: [Bool] = []
+            }
+            private let state = OSAllocatedUnfairLock(initialState: State())
+            var accessibilities: [AppleKeychainAccessibility] { state.withLock(\.accessibilities) }
+            var interactiveFlags: [Bool] { state.withLock(\.interactiveFlags) }
+            private func key(_ query: AppleKeychainQuery) -> String { "\(query.service)::\(query.account)" }
+
+            func copyData(for query: AppleKeychainQuery, interactive: Bool) -> AppleKeychainReadResult {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    state.interactiveFlags.append(interactive)
+                    return state.items[key(query)].map(AppleKeychainReadResult.found) ?? .notFound
+                }
+            }
+            func add(_ data: Data, for query: AppleKeychainQuery, interactive: Bool) -> OSStatus {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    state.interactiveFlags.append(interactive)
+                    let k = key(query)
+                    if state.items[k] != nil { return errSecDuplicateItem }
+                    state.items[k] = data
+                    return errSecSuccess
+                }
+            }
+            func update(_ data: Data, for query: AppleKeychainQuery, interactive: Bool) -> OSStatus {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    state.interactiveFlags.append(interactive)
+                    let k = key(query)
+                    guard state.items[k] != nil else { return errSecItemNotFound }
+                    state.items[k] = data
+                    return errSecSuccess
+                }
+            }
+            func delete(for query: AppleKeychainQuery, interactive: Bool) -> OSStatus {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    state.interactiveFlags.append(interactive)
+                    return state.items.removeValue(forKey: key(query)) != nil ? errSecSuccess : errSecItemNotFound
+                }
+            }
+        }
+
+        let backend = MacMockKeychain()
+        let production = NativeCredentials(mode: .productionKeychain, keychain: backend)
+        #expect(!production.isolated)
+        let uuid = try #require(try production.perform(operation: 5, reference: "qwen", value: "v1"))
+        #expect(UUID(uuidString: uuid) != nil)
+        #expect(try production.perform(operation: 1, reference: uuid, value: "v1") == uuid)
+        #expect(try production.perform(operation: 1, reference: uuid, value: "v2") == uuid)
+        #expect(try production.perform(operation: 0, reference: uuid, value: "") == "v2")
+        #expect(try production.perform(operation: 4, reference: uuid, value: "") == "")
+        #expect(try production.perform(operation: 2, reference: uuid, value: "") == "")
+        #expect(try production.perform(operation: 0, reference: uuid, value: "") == nil)
+        let backendCallsBeforeIsolatedNoOp = backend.accessibilities.count
+        #expect(try production.perform(operation: 2, reference: "isolated-\(uuid)", value: "") == "")
+        #expect(try production.perform(operation: 4, reference: "isolated-\(uuid)", value: "") == "")
+        #expect(try production.perform(operation: 2, reference: "isolated-1234-999-1", value: "") == "")
+        #expect(try production.perform(operation: 4, reference: "isolated-1234-999-1", value: "") == "")
+        #expect(backend.accessibilities.count == backendCallsBeforeIsolatedNoOp)
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try production.perform(operation: 0, reference: "bad-uuid", value: "")
+        }
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try production.perform(operation: 1, reference: "bad-uuid", value: "v")
+        }
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try production.perform(operation: 2, reference: "bad-uuid", value: "")
+        }
+        #expect(throws: NativeCredentials.Failure.invalidReference) {
+            _ = try production.perform(operation: 4, reference: "bad-uuid", value: "")
+        }
+        #expect(backend.accessibilities.allSatisfy { $0 == .platformDefault })
+        #expect(backend.interactiveFlags.contains(true))
     }
 }

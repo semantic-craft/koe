@@ -19,7 +19,7 @@ public enum SystemAudioAuthResult: Equatable, Sendable {
 public protocol SystemAudioSource: AnyObject {
     func authorize(shouldAbort: @escaping @Sendable () -> Bool,
                    _ completion: @escaping @Sendable (SystemAudioAuthResult) -> Void)
-    func start(expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
-               failed: @escaping (String) -> Void) throws -> UInt32
+    func start(expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
+               failed: @escaping @Sendable (String) -> Void) throws -> UInt32
     func stop()
 }

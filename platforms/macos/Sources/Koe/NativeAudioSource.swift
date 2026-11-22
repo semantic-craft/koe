@@ -29,6 +29,7 @@ public final class NativeAudioSource: MicrophoneSource {
         }
     }
     public func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void, failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
+        stop()
         let engine = AVAudioEngine()
         let node = engine.inputNode
         if !inputID.isEmpty {
@@ -45,8 +46,11 @@ public final class NativeAudioSource: MicrophoneSource {
         node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, when in
             guard fence.enter() else { return }
             defer { fence.leave() }
-            do { receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate)) }
-            catch { failed(error.localizedDescription) }
+            do {
+                receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate))
+            } catch {
+                failed(error.localizedDescription)
+            }
         }
         observer = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
@@ -64,13 +68,16 @@ public final class NativeAudioSource: MicrophoneSource {
     public func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
-        guard let engine else { return }
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        if let engine {
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+            self.engine = nil
+        }
         fence?.closeAndWait()
         fence = nil
-        self.engine = nil
     }
+
+    deinit { stop() }
     public static func classifyTransport(_ rawType: UInt32) -> String {
         switch rawType {
         case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
@@ -85,19 +92,22 @@ public final class NativeAudioSource: MicrophoneSource {
     }
     public static func inputs() -> [MicrophoneInput] {
         let defaultDevice = defaultInputDeviceID()
-        let discovered: [MicrophoneInput] = deviceIDs().compactMap { device in
+        let discovered: [HostAudioInputDescriptor] = deviceIDs().compactMap { device in
             guard hasInputChannels(device),
                   let rawID = uid(device),
-                  !rawID.isEmpty, rawID.count <= 256 else { return nil }
+                  !rawID.isEmpty,
+                  rawID.utf8.count <= HostAudioInputDescriptor.maxFieldUTF8Bytes else { return nil }
             let rawName = stringProperty(device, kAudioObjectPropertyName)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return MicrophoneInput(
+            return HostAudioInputDescriptor(
                 id: rawID,
                 name: rawName.isEmpty ? rawID : rawName,
                 transport: classifyTransport(transportType(device)),
                 isDefault: device == defaultDevice
             )
         }
-        return Array(discovered.prefix(64))
+        return HostAudioInputDescriptor.normalized(discovered).map {
+            MicrophoneInput(id: $0.id, name: $0.name, transport: $0.transport, isDefault: $0.isDefault)
+        }
     }
     private static func hasInputChannels(_ device: AudioDeviceID) -> Bool {
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)

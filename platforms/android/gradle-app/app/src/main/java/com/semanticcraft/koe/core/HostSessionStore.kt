@@ -2,24 +2,10 @@ package com.semanticcraft.koe.core
 
 import com.semanticcraft.koe.bridge.KoeNativeBridge
 import java.io.File
-import kotlinx.coroutines.flow.MutableStateFlow
+import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-
-internal class ViewRequestGeneration {
-    var latestRustGeneration: Long = 0L
-        private set
-
-    fun acceptRustGeneration(generation: Long): Boolean {
-        if (generation < latestRustGeneration) return false
-        latestRustGeneration = generation
-        return true
-    }
-
-    fun reset(generation: Long) {
-        latestRustGeneration = generation
-    }
-}
 
 class HostSessionStore(
     val workspacePath: String,
@@ -31,13 +17,16 @@ class HostSessionStore(
     private val clockEpochMs: () -> Long = { System.currentTimeMillis() },
     autoOpen: Boolean = true,
     private val verificationTrace: Boolean = false,
+    private val commandExecutor: Executor? = null,
 ) {
     private val stateLock = Any()
     private var currentSnapshot: HostSnapshot = HostSnapshot.empty
+    private var publishSequence: Long = 0L
     private var lastProjectedNowSec: Long = 0L
     private var requestGate = ViewRequestGeneration()
     private var resumeLiveOnCommand = false
     private val traceBuffer = HostTraceRingBuffer(if (verificationTrace) 2048 else HostTraceRingBuffer.DEFAULT_CAPACITY)
+    private val slices = HostSessionSliceFlows()
 
     var handle: Long = 0L
         private set
@@ -48,48 +37,30 @@ class HostSessionStore(
     @Volatile
     var onSnapshotChanged: ((HostSnapshot) -> Unit)? = null
     @Volatile
+    internal var onSnapshotPublished: ((HostSnapshot, Long) -> Unit)? = null
+    @Volatile
     var onTraceUpdated: (() -> Unit)? = null
 
-    private val _platform = MutableStateFlow(HostPlatformSnapshot.androidDefault)
-    val platform: StateFlow<HostPlatformSnapshot> = _platform.asStateFlow()
-    private val _navigation = MutableStateFlow(NavigationChromeSlice.empty)
-    val navigation: StateFlow<NavigationChromeSlice> = _navigation.asStateFlow()
-    private val _today = MutableStateFlow(TodaySlice.empty)
-    val today: StateFlow<TodaySlice> = _today.asStateFlow()
-    private val _quickNoteWorkspace = MutableStateFlow(QuickNoteWorkspaceSnapshot.empty)
-    val quickNoteWorkspace: StateFlow<QuickNoteWorkspaceSnapshot> = _quickNoteWorkspace.asStateFlow()
-    private val _allDayWorkspace = MutableStateFlow(AllDayWorkspaceSnapshot.empty)
-    val allDayWorkspace: StateFlow<AllDayWorkspaceSnapshot> = _allDayWorkspace.asStateFlow()
-    private val _liveMinutesWorkspace = MutableStateFlow(LiveMinutesWorkspaceSnapshot.empty)
-    val liveMinutesWorkspace: StateFlow<LiveMinutesWorkspaceSnapshot> = _liveMinutesWorkspace.asStateFlow()
-    private val _liveMinutesCoverage = MutableStateFlow<MeetingCoverageSnapshot?>(null)
-    val liveMinutesCoverage: StateFlow<MeetingCoverageSnapshot?> = _liveMinutesCoverage.asStateFlow()
-    private val _recordDetail = MutableStateFlow(RecordDetailSlice.empty)
-    val recordDetail: StateFlow<RecordDetailSlice> = _recordDetail.asStateFlow()
-    private val _records = MutableStateFlow<List<RecordSnapshot>>(emptyList())
-    val records: StateFlow<List<RecordSnapshot>> = _records.asStateFlow()
-    private val _tasks = MutableStateFlow<List<TaskSnapshot>>(emptyList())
-    val tasks: StateFlow<List<TaskSnapshot>> = _tasks.asStateFlow()
-    private val _memories = MutableStateFlow<List<MemorySnapshot>>(emptyList())
-    val memories: StateFlow<List<MemorySnapshot>> = _memories.asStateFlow()
-    private val _trashRecords = MutableStateFlow<List<TrashRecordSnapshot>>(emptyList())
-    val trashRecords: StateFlow<List<TrashRecordSnapshot>> = _trashRecords.asStateFlow()
-    private val _ask = MutableStateFlow(HostSnapshot.empty.ask)
-    val ask: StateFlow<AskSnapshot> = _ask.asStateFlow()
-    private val _captureStudio = MutableStateFlow(CaptureStudioSlice.empty)
-    val captureStudio: StateFlow<CaptureStudioSlice> = _captureStudio.asStateFlow()
-    private val _device = MutableStateFlow(DeviceSnapshot.empty)
-    val device: StateFlow<DeviceSnapshot> = _device.asStateFlow()
-    private val _settings = MutableStateFlow(SettingsSlice.empty)
-    val settings: StateFlow<SettingsSlice> = _settings.asStateFlow()
-    private val _playback = MutableStateFlow(HostSnapshot.empty.playback)
-    val playback: StateFlow<PlaybackSnapshot> = _playback.asStateFlow()
-    private val _keepAwake = MutableStateFlow(false)
-    val keepAwake = _keepAwake.asStateFlow()
-    private val _activeCapture = MutableStateFlow<ActiveCaptureSnapshot?>(null)
-    val activeCapture: StateFlow<ActiveCaptureSnapshot?> = _activeCapture.asStateFlow()
-    private val _liveCaption = MutableStateFlow<LiveCaptionSnapshot?>(null)
-    val liveCaption: StateFlow<LiveCaptionSnapshot?> = _liveCaption.asStateFlow()
+    val platform: StateFlow<HostPlatformSnapshot> = slices.platform
+    val navigation: StateFlow<NavigationChromeSlice> = slices.navigation
+    val today: StateFlow<TodaySlice> = slices.today
+    val quickNoteWorkspace: StateFlow<QuickNoteWorkspaceSnapshot> = slices.quickNoteWorkspace
+    val allDayWorkspace: StateFlow<AllDayWorkspaceSnapshot> = slices.allDayWorkspace
+    val liveMinutesWorkspace: StateFlow<LiveMinutesWorkspaceSnapshot> = slices.liveMinutesWorkspace
+    val liveMinutesCoverage: StateFlow<MeetingCoverageSnapshot?> = slices.liveMinutesCoverage
+    val recordDetail: StateFlow<RecordDetailSlice> = slices.recordDetail
+    val records: StateFlow<List<RecordSnapshot>> = slices.records
+    val tasks: StateFlow<List<TaskSnapshot>> = slices.tasks
+    val memories: StateFlow<List<MemorySnapshot>> = slices.memories
+    val trashRecords: StateFlow<List<TrashRecordSnapshot>> = slices.trashRecords
+    val ask: StateFlow<AskSnapshot> = slices.ask
+    val captureStudio: StateFlow<CaptureStudioSlice> = slices.captureStudio
+    val device: StateFlow<DeviceSnapshot> = slices.device
+    val settings: StateFlow<SettingsSlice> = slices.settings
+    val playback: StateFlow<PlaybackSnapshot> = slices.playback
+    val keepAwake: StateFlow<Boolean> = slices.keepAwake
+    val activeCapture: StateFlow<ActiveCaptureSnapshot?> = slices.activeCapture
+    val liveCaption: StateFlow<LiveCaptionSnapshot?> = slices.liveCaption
 
     val currentGeneration: Long
         get() = synchronized(stateLock) { currentSnapshot.generation }
@@ -139,8 +110,10 @@ class HostSessionStore(
     }
 
     fun clearError() {
-        synchronized(stateLock) { setNativeErrorLocked(null) }
-        send(HostCommand.ClearError)
+        enqueueOrRun {
+            synchronized(stateLock) { setNativeErrorLocked(null) }
+            sendReturningError(HostCommand.ClearError)
+        }
     }
 
     fun recentTraceEntries(): List<HostTraceEntry> = traceBuffer.snapshot()
@@ -149,8 +122,28 @@ class HostSessionStore(
 
     fun writeTraceAtomically(outputFile: File): Boolean = traceBuffer.writeAtomically(outputFile)
 
-    fun send(command: HostCommand, nowEpochSec: Long = 0L) {
-        sendReturningError(command, nowEpochSec)
+    fun send(command: HostCommand, nowEpochSec: Long = 0L, afterDispatch: (() -> Unit)? = null) {
+        enqueueOrRun {
+            sendReturningError(command, nowEpochSec)
+            afterDispatch?.invoke()
+        }
+    }
+
+    suspend fun sendReturningErrorAsync(command: HostCommand, nowEpochSec: Long = 0L): String? {
+        val executor = commandExecutor ?: return sendReturningError(command, nowEpochSec)
+        val result = CompletableDeferred<String?>()
+        try {
+            executor.execute {
+                try {
+                    result.complete(sendReturningError(command, nowEpochSec))
+                } catch (error: Throwable) {
+                    result.completeExceptionally(error)
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            result.complete("工作区正在关闭。")
+        }
+        return result.await()
     }
 
     fun sendReturningError(command: HostCommand, nowEpochSec: Long = 0L): String? {
@@ -168,7 +161,14 @@ class HostSessionStore(
         return dispatchEncodedJson(json, traceKind = "command", commandType = command.commandType, nowEpochSec = nowEpochSec)
     }
 
-    fun send(event: HostAdapterEvent, nowEpochSec: Long = 0L) {
+    fun send(event: HostAdapterEvent, nowEpochSec: Long = 0L, afterDispatch: (() -> Unit)? = null) {
+        enqueueOrRun {
+            sendEventSync(event, nowEpochSec)
+            afterDispatch?.invoke()
+        }
+    }
+
+    fun sendEventSync(event: HostAdapterEvent, nowEpochSec: Long = 0L) {
         val json = try {
             event.toJsonString()
         } catch (_: Exception) {
@@ -186,8 +186,10 @@ class HostSessionStore(
         get() = today.value.picker?.canReleaseToPhone ?: (device.value.transferPhase != "pulling_offline")
 
     fun startCapture(mode: CaptureMode, stayOnPage: Boolean = false) {
-        send(HostCommand.StartCaptureMode(mode = mode, stayOnPage = stayOnPage))
-        bridgeActions.flushBleOutbound()
+        enqueueOrRun {
+            sendReturningError(HostCommand.StartCaptureMode(mode = mode, stayOnPage = stayOnPage))
+            bridgeActions.flushBleOutbound()
+        }
     }
 
     fun toggleModeSession(card: ModePickerCardSnapshot) {
@@ -201,17 +203,31 @@ class HostSessionStore(
     }
 
     fun performCaptureAction(action: CaptureAction) {
-        if (action == CaptureAction.RESUME && (currentMicrophone() != null || captureStudio.value.studio.activeSource != "bean")) {
-            bridgeActions.resumeMicrophone()
+        enqueueOrRun {
+            if (action == CaptureAction.RESUME && (currentMicrophone() != null || captureStudio.value.studio.activeSource != "bean")) {
+                bridgeActions.resumeMicrophone()
+            } else {
+                sendReturningError(HostCommand.CaptureActionCommand(action = action))
+                bridgeActions.flushBleOutbound()
+            }
+        }
+    }
+
+    private fun enqueueOrRun(task: () -> Unit) {
+        val executor = commandExecutor
+        if (executor == null) {
+            task()
         } else {
-            send(HostCommand.CaptureActionCommand(action = action))
-            bridgeActions.flushBleOutbound()
+            try {
+                executor.execute(task)
+            } catch (_: RejectedExecutionException) {
+            }
         }
     }
 
     fun refreshSnapshot(nowEpochSec: Long = 0L) {
         var traced = false
-        var changedSnapshot: HostSnapshot? = null
+        var applied: ApplySnapshotResult? = null
         synchronized(stateLock) {
             if (handle == 0L) return
             try {
@@ -221,13 +237,13 @@ class HostSessionStore(
                     setNativeErrorLocked("无法读取工作区状态。")
                     return
                 }
-                changedSnapshot = applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false).changed
+                applied = applySnapshotJsonLocked(raw, projectedNowSec = effectiveNow, resetGate = false)
             } finally {
                 recordTraceLocked(kind = "snapshot", name = "snapshot")
                 traced = true
             }
         }
-        changedSnapshot?.let { onSnapshotChanged?.invoke(it) }
+        applied?.let { notifySnapshotPublished(it.changed, it.publishSequence) }
         if (traced) {
             onTraceUpdated?.invoke()
         }
@@ -267,6 +283,7 @@ class HostSessionStore(
         var needsFullRefresh = false
         var minRefreshGeneration: Long? = null
         var changedSnapshot: HostSnapshot? = null
+        var publishedSeq = 0L
         synchronized(stateLock) {
             if (handle == 0L) return
             val receipt = bridge.sessionReportPlaybackProgress(
@@ -284,13 +301,15 @@ class HostSessionStore(
                         isPlaying = receipt.isPlaying,
                     )
                     currentSnapshot = next
+                    publishSequence += 1L
+                    publishedSeq = publishSequence
                     lastProjectedNowSec = receipt.nowEpochSec
-                    _playback.value = next.playback
+                    slices.updatePlayback(next.playback)
                     changedSnapshot = next
                 }
             }
         }
-        changedSnapshot?.let { onSnapshotChanged?.invoke(it) }
+        notifySnapshotPublished(changedSnapshot, publishedSeq)
         if (needsFullRefresh) {
             refreshSnapshot(nowEpochSec)
         } else if (minRefreshGeneration != null) {
@@ -317,27 +336,10 @@ class HostSessionStore(
     fun drainOutboundBleFrames(): List<ByteArray> = synchronized(stateLock) {
         if (handle == 0L) return emptyList()
         val raw = bridge.sessionDrainBleTx(handle) ?: return emptyList()
-        if (raw.isEmpty()) return emptyList()
-        val frames = mutableListOf<ByteArray>()
-        var offset = 0
-        while (offset + 4 <= raw.size) {
-            val length = (raw[offset].toInt() and 0xFF) or
-                ((raw[offset + 1].toInt() and 0xFF) shl 8) or
-                ((raw[offset + 2].toInt() and 0xFF) shl 16) or
-                ((raw[offset + 3].toInt() and 0xFF) shl 24)
-            offset += 4
-            if (length < 0 || offset + length > raw.size) {
-                setNativeErrorLocked("无法读取设备发送队列。")
-                return emptyList()
-            }
-            frames.add(raw.copyOfRange(offset, offset + length))
-            offset += length
-        }
-        if (offset != raw.size) {
+        parseLengthPrefixedBleFrames(raw) ?: run {
             setNativeErrorLocked("无法读取设备发送队列。")
-            return emptyList()
+            emptyList()
         }
-        frames
     }
 
     fun drainLocalAsrEffects(): ByteArray = synchronized(stateLock) {
@@ -356,7 +358,7 @@ class HostSessionStore(
                 recordTraceLocked(kind = "fixture", name = "fixture")
             }
         }
-        result.changed?.let { onSnapshotChanged?.invoke(it) }
+        notifySnapshotPublished(result.changed, result.publishSequence)
         onTraceUpdated?.invoke()
         return result.accepted
     }
@@ -365,7 +367,7 @@ class HostSessionStore(
         val result = synchronized(stateLock) {
             applySnapshotJsonLocked(json, projectedNowSec = projectedNowSec, resetGate = false)
         }
-        result.changed?.let { onSnapshotChanged?.invoke(it) }
+        notifySnapshotPublished(result.changed, result.publishSequence)
         return result.accepted
     }
 
@@ -390,12 +392,23 @@ class HostSessionStore(
             recordTraceLocked(kind = traceKind, name = commandType)
             applied
         }
-        result.changed?.let { onSnapshotChanged?.invoke(it) }
+        notifySnapshotPublished(result.changed, result.publishSequence)
         onTraceUpdated?.invoke()
         return result.error
     }
 
-    private data class ApplySnapshotResult(val accepted: Boolean, val changed: HostSnapshot? = null, val error: String? = null)
+    private fun notifySnapshotPublished(snapshot: HostSnapshot?, sequence: Long) {
+        if (snapshot == null) return
+        onSnapshotPublished?.invoke(snapshot, sequence)
+        onSnapshotChanged?.invoke(snapshot)
+    }
+
+    private data class ApplySnapshotResult(
+        val accepted: Boolean,
+        val changed: HostSnapshot? = null,
+        val publishSequence: Long = 0L,
+        val error: String? = null,
+    )
 
     private fun snapshotFailureLocked(message: String): ApplySnapshotResult {
         setNativeErrorLocked(message)
@@ -420,8 +433,9 @@ class HostSessionStore(
         if (projectedNowSec > 0L) lastProjectedNowSec = projectedNowSec
         if (decoded != currentSnapshot || resetGate) {
             currentSnapshot = decoded
-            reconcileSlicesLocked()
-            return ApplySnapshotResult(accepted = true, changed = decoded, error = decoded.error)
+            publishSequence += 1L
+            slices.reconcile(decoded, nativeError)
+            return ApplySnapshotResult(accepted = true, changed = decoded, publishSequence = publishSequence, error = decoded.error)
         }
         return ApplySnapshotResult(accepted = true, error = decoded.error)
     }
@@ -429,7 +443,7 @@ class HostSessionStore(
     private fun setNativeErrorLocked(message: String?) {
         if (nativeError == message) return
         nativeError = message
-        _navigation.value = NavigationChromeSlice.from(currentSnapshot, nativeError)
+        slices.updateNavigation(currentSnapshot, nativeError)
     }
 
     private fun recordTraceLocked(kind: String, name: String) {
@@ -448,31 +462,6 @@ class HostSessionStore(
 
     private fun resolveNowEpochSec(requested: Long): Long =
         if (requested > 0L) requested else clockEpochSec().coerceAtLeast(0L)
-
-    private fun reconcileSlicesLocked() {
-        val snap = currentSnapshot
-        _platform.value = snap.platform
-        _navigation.value = NavigationChromeSlice.from(snap, nativeError)
-        _today.value = TodaySlice.from(snap)
-        _quickNoteWorkspace.value = snap.workspaces?.quickNote ?: QuickNoteWorkspaceSnapshot.empty
-        _allDayWorkspace.value = snap.workspaces?.allDay ?: AllDayWorkspaceSnapshot.empty
-        val resolvedLive = snap.workspaces?.liveMinutes ?: LiveMinutesWorkspaceSnapshot.empty
-        _liveMinutesWorkspace.value = resolvedLive.withoutCoverage()
-        _liveMinutesCoverage.value = resolvedLive.coverage
-        _recordDetail.value = RecordDetailSlice.from(snap)
-        _records.value = snap.records
-        _tasks.value = snap.tasks
-        _memories.value = snap.memories
-        _trashRecords.value = snap.trashRecords
-        _ask.value = snap.ask
-        _captureStudio.value = CaptureStudioSlice.from(snap)
-        _device.value = snap.device
-        _settings.value = SettingsSlice.from(snap)
-        _playback.value = snap.playback
-        _keepAwake.value = snap.lifecycle?.keepAwake == true
-        _activeCapture.value = snap.activeCapture
-        _liveCaption.value = snap.liveCaption
-    }
 
     companion object {
         const val EXPECTED_ABI_VERSION = 2

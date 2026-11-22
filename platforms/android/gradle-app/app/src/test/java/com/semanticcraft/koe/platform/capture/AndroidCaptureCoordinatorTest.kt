@@ -35,6 +35,7 @@ class AndroidCaptureCoordinatorTest {
         var permissionRequests = 0
         var lastPermissionCallback: ((Boolean) -> Unit)? = null
         var startCount = 0
+        var lastStartThread: Thread? = null
         var stopCount = 0
         var lastInputId: String? = null
         var lastExpectedSampleRate: Int? = null
@@ -56,6 +57,7 @@ class AndroidCaptureCoordinatorTest {
             onFailure: (String) -> Unit,
         ): Int {
             startCount += 1
+            lastStartThread = Thread.currentThread()
             lastInputId = inputId
             lastExpectedSampleRate = expectedSampleRate
             onChunkCallback = onChunk
@@ -116,6 +118,7 @@ class AndroidCaptureCoordinatorTest {
     private fun createHarness(
         synchronousGrant: Boolean? = null,
         grantFocus: Boolean = true,
+        workExecutor: java.util.concurrent.Executor? = null,
     ): Harness {
         var nowNs = 1_000_000_000L
         val bridge = StatefulCaptureBridgeClient()
@@ -128,11 +131,13 @@ class AndroidCaptureCoordinatorTest {
             focusController = focus,
             nowNanoseconds = { nowNs },
             onForegroundStateChanged = { foregroundStates.add(it) },
+            workExecutor = workExecutor,
         )
         val hostCoordinator = AndroidHostCoordinator(
             tickIntervalMs = 250L,
             scheduler = ManualTickScheduler(),
             clockElapsedMs = { 0L },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
         hostCoordinator.registerAdapter(captureCoordinator)
         hostCoordinator.bind(store, HostBridgeActions(resumeMicrophone = { captureCoordinator.resume() }))
@@ -355,5 +360,41 @@ class AndroidCaptureCoordinatorTest {
         assertEquals(1, h.source.stopCount)
         assertEquals(1, h.focus.abandonCount)
         assertFalse(h.foregroundStates.last().active)
+    }
+
+    @Test
+    fun asyncPermissionGrantDispatchesStartAndEventsOntoWorkExecutor() {
+        val workThreadRef = java.util.concurrent.atomic.AtomicReference<Thread>()
+        val workExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "koe-test-capture-work").apply {
+                isDaemon = true
+                workThreadRef.set(this)
+            }
+        }
+        val h = createHarness(synchronousGrant = null, workExecutor = workExecutor)
+        try {
+            h.store.startCapture(CaptureMode.QUICK_NOTE, stayOnPage = true)
+            assertEquals("starting", h.store.currentMicrophone()?.phase)
+            val callback = requireNotNull(h.source.lastPermissionCallback)
+            val permissionThread = Thread.currentThread()
+
+            callback(true)
+
+            val done = java.util.concurrent.CountDownLatch(1)
+            workExecutor.execute { done.countDown() }
+            assertTrue("expected workExecutor to finish", done.await(2, java.util.concurrent.TimeUnit.SECONDS))
+
+            val expectedWorker = requireNotNull(workThreadRef.get())
+            assertTrue("source.start must not run on permission callback thread", h.source.lastStartThread !== permissionThread)
+            assertEquals(expectedWorker, h.source.lastStartThread)
+            val preparedThread = h.bridge.dispatchedThreads.lastOrNull { it.first == "microphone_prepared" }?.second
+            val startedThread = h.bridge.dispatchedThreads.lastOrNull { it.first == "microphone_started" }?.second
+            assertEquals(expectedWorker, preparedThread)
+            assertEquals(expectedWorker, startedThread)
+            assertEquals("recording", h.store.currentMicrophone()?.phase)
+        } finally {
+            h.hostCoordinator.shutdown()
+            workExecutor.shutdownNow()
+        }
     }
 }

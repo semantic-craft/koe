@@ -64,6 +64,7 @@ public final class HostSessionStore {
     public private(set) var settings: SettingsSlice = .empty
     public private(set) var playback: PlaybackSnapshot = HostSnapshot.empty.playback
     public private(set) var activeCapture: ActiveCaptureSnapshot?
+    public private(set) var activeCaptureMode: CaptureMode?
     public private(set) var activeCaptureActions: [CaptureAction] = []
     public private(set) var liveCaption: LiveCaptionSnapshot?
     public private(set) var updatePopoverRequestCount: UInt64 = 0
@@ -178,7 +179,10 @@ public final class HostSessionStore {
         if !preservesNativeError, nativeError != nil {
             nativeError = nil
         }
-        let command = String(decoding: data, as: UTF8.self)
+        guard let command = String(bytes: data, encoding: .utf8) else {
+            nativeError = "操作未能完成，请重试。工作区数据仍然保留。"
+            return nativeError
+        }
         let effectiveNow = nowEpochSec > 0 ? nowEpochSec : UInt64(Date().timeIntervalSince1970)
         let result: String? = command.withCString { ptr in
             guard let response = koe_host_session_dispatch_json(handle, ptr, effectiveNow) else { return nil }
@@ -475,6 +479,8 @@ public final class HostSessionStore {
         if settings != nextSettings { settings = nextSettings }
         if playback != snapshot.playback { playback = snapshot.playback }
         if activeCapture != snapshot.activeCapture { activeCapture = snapshot.activeCapture }
+        let nextMode = snapshot.activeCapture?.mode
+        if activeCaptureMode != nextMode { activeCaptureMode = nextMode }
         let nextActions = snapshot.activeCapture?.actions ?? []
         if activeCaptureActions != nextActions { activeCaptureActions = nextActions }
         if liveCaption != snapshot.liveCaption { liveCaption = snapshot.liveCaption }

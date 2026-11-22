@@ -19,8 +19,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -38,14 +41,16 @@ import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoeModalSheet
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
 @Composable
 internal fun QuickNoteWorkspaceScreen(
     store: HostSessionStore, onSelectRecord: (String) -> Unit, onOpenSource: (SourceSnapshot) -> Unit,
-    onOpenCaptureSource: () -> Unit, modifier: Modifier,
+    onOpenCaptureSource: () -> Unit, modifier: Modifier = Modifier,
 ) {
     val workspace by store.quickNoteWorkspace.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     var filter by remember { mutableStateOf<QuickNoteFilterSelection>(QuickNoteFilterSelection.All) }
     var selection by remember(filter) { mutableStateOf<Set<String>?>(null) }
     var assignIds by remember(filter) { mutableStateOf<List<String>?>(null) }
@@ -106,12 +111,14 @@ internal fun QuickNoteWorkspaceScreen(
         }
     }
     assignIds?.let { targets ->
-        ProjectSheet(workspace.projects, onDismiss = { assignIds = null }) { project ->
+        ProjectSheet(StableList(workspace.projects), onDismiss = { assignIds = null }) { project ->
             val ids = cards.map { it.id }.filter { it in targets }
             if (ids.isNotEmpty()) {
                 val command = if (selection == null) HostCommand.SetRecordProject(ids.single(), project)
                     else HostCommand.BatchSetRecordProject(ids, project)
-                if (store.sendReturningError(command) == null) selection = null
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    if (store.sendReturningErrorAsync(command) == null) selection = null
+                }
             }
             assignIds = null
         }
@@ -134,7 +141,7 @@ private fun LazyListScope.quickNoteDetail(
         KoeCard {
             WorkspaceTitle(topic.title)
             Text(topic.summary)
-            WorkspaceSources(topic.sources, onOpenSource, "topic")
+            WorkspaceSources(StableList(topic.sources), onOpenSource, "topic")
         }
     }
     if (card.nextSteps.isNotEmpty()) item { WorkspaceTitle("下一步") }
@@ -150,12 +157,12 @@ private fun LazyListScope.quickNoteDetail(
 }
 
 @Composable
-private fun ProjectSheet(projects: List<QuickNoteProjectCountSnapshot>, onDismiss: () -> Unit, assign: (String?) -> Unit) {
+private fun ProjectSheet(projects: StableList<QuickNoteProjectCountSnapshot>, onDismiss: () -> Unit, assign: (String?) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     KoeModalSheet(onDismiss) {
         WorkspaceTitle("项目归类")
         TextButton({ assign(null) }) { Text("移回收件箱") }
-        projects.forEach { project ->
+        projects.items.forEach { project ->
             TextButton({ assign(project.name) }) { Text(project.name) }
         }
         OutlinedTextField(name, { name = it }, label = { Text("新项目名称") }, singleLine = true,

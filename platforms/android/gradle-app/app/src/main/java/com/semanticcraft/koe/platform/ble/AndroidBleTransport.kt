@@ -16,6 +16,8 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.edit
+import androidx.core.util.size
 import java.util.UUID
 
 enum class BleAdapterState {
@@ -55,11 +57,11 @@ class SharedPreferencesBleAddressStore(context: Context) : BleAddressStore {
     override fun read(): String? = prefs.getString(KEY_LAST_PERIPHERAL_ADDRESS, null)?.takeIf { it.isNotBlank() }
 
     override fun write(address: String) {
-        prefs.edit().putString(KEY_LAST_PERIPHERAL_ADDRESS, address).apply()
+        prefs.edit { putString(KEY_LAST_PERIPHERAL_ADDRESS, address) }
     }
 
     override fun clear() {
-        prefs.edit().remove(KEY_LAST_PERIPHERAL_ADDRESS).apply()
+        prefs.edit { remove(KEY_LAST_PERIPHERAL_ADDRESS) }
     }
 
     companion object {
@@ -213,13 +215,23 @@ class SystemAndroidBleTransport(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeCharacteristic(char, data, writeType) == BluetoothStatusCodes.SUCCESS
             } else {
-                char.writeType = writeType
-                char.value = data
-                gatt.writeCharacteristic(char)
+                writeCharacteristicLegacy(gatt, char, data, writeType)
             }
         } catch (_: SecurityException) {
             false
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun writeCharacteristicLegacy(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        data: ByteArray,
+        writeType: Int,
+    ): Boolean {
+        characteristic.writeType = writeType
+        characteristic.value = data
+        return gatt.writeCharacteristic(characteristic)
     }
 
     override fun disconnect() {
@@ -254,7 +266,7 @@ class SystemAndroidBleTransport(
         }
         val manufacturerData = buildList {
             val sparse = record?.manufacturerSpecificData ?: return@buildList
-            for (index in 0 until sparse.size()) {
+            for (index in 0 until sparse.size) {
                 val companyId = sparse.keyAt(index)
                 val payload = sparse.valueAt(index) ?: continue
                 val wireBytes = ByteArray(payload.size + 2)
@@ -326,12 +338,21 @@ class SystemAndroidBleTransport(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS
             } else {
-                descriptor.value = value
-                gatt.writeDescriptor(descriptor)
+                writeDescriptorLegacy(gatt, descriptor, value)
             }
         } catch (_: SecurityException) {
             false
         }
+
+    @Suppress("DEPRECATION")
+    private fun writeDescriptorLegacy(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+        value: ByteArray,
+    ): Boolean {
+        descriptor.value = value
+        return gatt.writeDescriptor(descriptor)
+    }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -431,6 +452,7 @@ class SystemAndroidBleTransport(
         }
 
         @Deprecated("Deprecated in Java")
+        @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,

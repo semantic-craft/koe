@@ -42,6 +42,7 @@ import com.semanticcraft.koe.ui.theme.KoeTheme
 fun DeviceSheet(
     store: HostSessionStore,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
     onOpenRecord: (String) -> Unit = {},
 ) {
     val device by store.device.collectAsStateWithLifecycle()
@@ -50,7 +51,7 @@ fun DeviceSheet(
     val colors = KoeTheme.colors
     val isReleased = today.beanControlState == "released"
 
-    KoeModalSheet(onDismissRequest = onDismiss) {
+    KoeModalSheet(onDismissRequest = onDismiss, modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

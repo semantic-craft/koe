@@ -55,11 +55,12 @@ fun SettingsCredentialsCard(
     onClearCredential: (String) -> Unit,
     onRetryCredentials: () -> Unit,
     onSave: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = KoeTheme.colors
     var showAdvancedEndpoints by rememberSaveable { mutableStateOf(false) }
 
-    KoeCard {
+    KoeCard(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

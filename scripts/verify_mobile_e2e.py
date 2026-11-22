@@ -29,7 +29,6 @@ def require(condition, message):
 
 
 def verify_png(path):
-    """Check chunk order/CRCs, zlib termination and complete scanlines, including Adam7 passes."""
     data = path.read_bytes()
     require(data.startswith(b'\x89PNG\r\n\x1a\n'), path)
     offset = 8
@@ -83,6 +82,10 @@ def verify_png(path):
     raise ValueError(f'{path}: incomplete PNG')
 
 
+def allows_injected_fixture_error(phase, entry):
+    return phase.startswith('device') and entry.get('kind') in ('fixture', 'snapshot')
+
+
 def verify_phase(directory, platform, phase):
     for page in PAGES[phase].split():
         screenshots = list((directory / 'maestro_debug').rglob(page + '.png'))
@@ -91,7 +94,15 @@ def verify_phase(directory, platform, phase):
     log = (directory / ('syslog.txt' if platform == 'ios' else 'logcat.txt')).read_text()
     time_pattern = r'(?m)^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:' if platform == 'ios' else r'(?m)^\d{2}-\d{2} \d{2}:\d{2}:'
     require(re.search(time_pattern, log) and not CRASH.search(log), f'{directory}: missing log entries or crash signature')
-    entries = json.loads((directory / 'koe-trace.json').read_text())
+    trace = json.loads((directory / 'trace.json').read_text())
+    require(
+        isinstance(trace, dict)
+        and trace.get('platform') == platform
+        and isinstance(trace.get('artifacts'), dict)
+        and isinstance(trace.get('outcome'), str),
+        f'{directory}: invalid forensics trace envelope',
+    )
+    entries = trace.get('host_intent_trace')
     require(isinstance(entries, list) and entries, f'{directory}: missing host trace')
     observed = []
     for entry in entries:
@@ -99,9 +110,8 @@ def verify_phase(directory, platform, phase):
                 and isinstance(entry.get('name'), str) and isinstance(entry.get('section'), str)
                 and type(entry.get('generation')) is int and type(entry.get('timestampEpochMs')) is int,
                 f'{directory}: invalid trace entry')
-        # The device fixture deliberately displays a recoverable BLE error on load.
         if entry['hasError']:
-            require(phase.startswith('device') and entry.get('kind') in ('fixture', 'snapshot'), f'{directory}: {entry}')
+            require(allows_injected_fixture_error(phase, entry), f'{directory}: {entry}')
         if entry.get('kind') == 'command' or (phase == 'restart' and entry.get('kind') == 'event'):
             observed.append(entry['name'])
     missing = COMMANDS[phase] - set(observed)
@@ -147,7 +157,6 @@ def verify_workspace(directory, before):
     microphones = [r for r in records if r.get('origin') == 'microphone' and r.get('duration_ms', 0) > 0]
     require(microphones, f'{directory}: missing captured microphone record')
     previous = json.loads((before / 'product-workspace.json').read_text())
-    # Index by persisted Rust identity so a new same-titled note cannot conceal data loss.
     old_records = {r['id']: r for r in previous['records']}
     require(state['provider'] == previous['provider'], f'{directory}: provider settings changed on restart')
     for survivor in [*notes, *synced, *archived, *microphones]:
@@ -180,4 +189,4 @@ if __name__ == '__main__':
     try:
         main()
     except (OSError, ValueError, KeyError, TypeError, EOFError, wave.Error, zlib.error) as error:
-        raise SystemExit(f'Evidence verification failed: {error}')
+        raise SystemExit(f'Evidence verification failed: {error}') from error

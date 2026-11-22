@@ -1,5 +1,4 @@
-"""Run after cargo build -p koe-host-api and the iOS self-check, passing its simulator UDID."""
-import ctypes
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -11,48 +10,16 @@ ROOT = Path(__file__).resolve().parents[4]
 APP = "com.semanticcraft.koe.ios"
 
 
-def seed(directory, *, title="行动页测试", speakers=()):
-    library = "libkoe_host_api.dylib" if sys.platform == "darwin" else "libkoe_host_api.so"
-    api = ctypes.CDLL(str(ROOT / "target/debug" / library))
-    api.koe_host_session_create.argtypes = [ctypes.c_char_p]
-    api.koe_host_session_create.restype = ctypes.c_uint64
-    api.koe_host_session_dispatch_json.argtypes = [ctypes.c_uint64, ctypes.c_char_p, ctypes.c_uint64]
-    api.koe_host_session_dispatch_json.restype = ctypes.c_void_p
-    api.koe_host_string_free.argtypes = [ctypes.c_void_p]
-    api.koe_host_string_free.restype = None
-    api.koe_host_session_destroy.argtypes = [ctypes.c_uint64]
-    api.koe_host_session_destroy.restype = ctypes.c_bool
-    handle = api.koe_host_session_create(str(directory).encode())
-    if not handle:
-        raise RuntimeError("Failed to open test workspace")
-
-    def send(command, **fields):
-        raw = api.koe_host_session_dispatch_json(handle, json.dumps(dict(type=command, **fields)).encode(), 1)
-        if not raw:
-            raise RuntimeError(command)
-        try:
-            snapshot = json.loads(ctypes.string_at(raw))
-        finally:
-            api.koe_host_string_free(raw)
-        if snapshot.get("error"):
-            raise RuntimeError(snapshot["error"])
-        return snapshot
-
-    try:
-        detail = send("create_note", title=title, text="核对会议纪要\n整理项目文档")["detail"]
-        for index, segment in enumerate(detail["segments"]):
-            if speakers:
-                send("set_segment_speaker", recordId=detail["id"], segmentId=segment["id"], speaker=speakers[index])
-            for command, collection in [("create_task", "tasks"), ("save_memory", "memories")]:
-                snapshot = send(command, recordId=detail["id"], segmentId=segment["id"])
-                item = next(item for item in snapshot[collection] if item["text"] == segment["text"])
-                send("review_item", itemId=item["id"], decision="reset")
-        return detail["id"]
-    finally:
-        api.koe_host_session_destroy(handle)
+def _load_seed():
+    spec = importlib.util.spec_from_file_location("run_mobile_e2e", ROOT / "scripts/run_mobile_e2e.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.seed
 
 
 def main(udid):
+    seed = _load_seed()
     simctl = ["xcrun", "simctl"]
     container = subprocess.check_output(simctl + ["get_app_container", udid, APP, "data"], text=True).strip()
     with tempfile.TemporaryDirectory(dir=Path(container) / "Documents") as workspace:

@@ -39,14 +39,14 @@ public struct BleAdvertisementCandidate: Equatable, Sendable {
             let bytes = [UInt8](mfg)
             var macBase = 0
             if bytes.count >= 16 {
-                let mark = String(decoding: bytes[10..<16], as: UTF8.self).lowercased()
+                let mark = String(bytes: bytes[10..<16], encoding: .isoLatin1)?.lowercased() ?? ""
                 if mark.contains("sound") || mark.contains("scor") {
                     matchedByMfg = true
                     macBase = 2
                 }
             }
             if !matchedByMfg && bytes.count >= 14 {
-                let mark = String(decoding: bytes[8..<14], as: UTF8.self).lowercased()
+                let mark = String(bytes: bytes[8..<14], encoding: .isoLatin1)?.lowercased() ?? ""
                 if mark.contains("sound") || mark.contains("scor") {
                     matchedByMfg = true
                     macBase = 0

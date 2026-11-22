@@ -7,13 +7,41 @@ public protocol CoreAudioPropertyListening: AnyObject, Sendable {
 }
 
 public final class SystemCoreAudioPropertyListener: CoreAudioPropertyListening, @unchecked Sendable {
+    typealias PropertyRegistration = @Sendable (
+        AudioObjectID,
+        UnsafePointer<AudioObjectPropertyAddress>,
+        DispatchQueue,
+        @escaping AudioObjectPropertyListenerBlock
+    ) -> OSStatus
+
     private let lock = NSLock()
+    private let addListener: PropertyRegistration
+    private let removeListener: PropertyRegistration
+    private var generation: UInt64 = 0
+    private var isActive = false
     private var registeredBlock: AudioObjectPropertyListenerBlock?
     private var registeredDevices = false
     private var registeredDefaultInput = false
     private var registeredServiceRestarted = false
 
-    public init() {}
+    public convenience init() {
+        self.init(
+            addListener: { object, address, queue, block in
+                AudioObjectAddPropertyListenerBlock(object, address, queue, block)
+            },
+            removeListener: { object, address, queue, block in
+                AudioObjectRemovePropertyListenerBlock(object, address, queue, block)
+            }
+        )
+    }
+
+    init(
+        addListener: @escaping PropertyRegistration,
+        removeListener: @escaping PropertyRegistration
+    ) {
+        self.addListener = addListener
+        self.removeListener = removeListener
+    }
 
     private static var devicesAddress: AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(
@@ -41,8 +69,15 @@ public final class SystemCoreAudioPropertyListener: CoreAudioPropertyListening, 
 
     public func startListening(queue: DispatchQueue, onPropertyChanged: @escaping @Sendable () -> Void) {
         lock.lock()
-        defer { lock.unlock() }
-        guard registeredBlock == nil else { return }
+        guard !isActive else {
+            lock.unlock()
+            return
+        }
+        isActive = true
+        generation &+= 1
+        let startGeneration = generation
+        lock.unlock()
+
         let block: AudioObjectPropertyListenerBlock = { _, _ in
             onPropertyChanged()
         }
@@ -50,16 +85,39 @@ public final class SystemCoreAudioPropertyListener: CoreAudioPropertyListening, 
         var devicesAddr = Self.devicesAddress
         var defaultAddr = Self.defaultInputAddress
         var restartedAddr = Self.serviceRestartedAddress
-        registeredDevices = AudioObjectAddPropertyListenerBlock(systemObject, &devicesAddr, queue, block) == noErr
-        registeredDefaultInput = AudioObjectAddPropertyListenerBlock(systemObject, &defaultAddr, queue, block) == noErr
-        registeredServiceRestarted = AudioObjectAddPropertyListenerBlock(systemObject, &restartedAddr, queue, block) == noErr
-        if registeredDevices || registeredDefaultInput || registeredServiceRestarted {
-            registeredBlock = block
+        let addedDevices = addListener(systemObject, &devicesAddr, queue, block) == noErr
+        let addedDefault = addListener(systemObject, &defaultAddr, queue, block) == noErr
+        let addedRestarted = addListener(systemObject, &restartedAddr, queue, block) == noErr
+
+        lock.lock()
+        let stillCurrent = isActive && generation == startGeneration
+        if stillCurrent {
+            if addedDevices || addedDefault || addedRestarted {
+                registeredBlock = block
+                registeredDevices = addedDevices
+                registeredDefaultInput = addedDefault
+                registeredServiceRestarted = addedRestarted
+            } else {
+                isActive = false
+            }
+        }
+        lock.unlock()
+
+        if !stillCurrent {
+            removeRegistered(
+                block: block,
+                devices: addedDevices,
+                defaultInput: addedDefault,
+                serviceRestarted: addedRestarted,
+                queue: queue
+            )
         }
     }
 
     public func stopListening(queue: DispatchQueue) {
         lock.lock()
+        isActive = false
+        generation &+= 1
         let block = registeredBlock
         let hadDevices = registeredDevices
         let hadDefault = registeredDefaultInput
@@ -70,18 +128,34 @@ public final class SystemCoreAudioPropertyListener: CoreAudioPropertyListening, 
         registeredServiceRestarted = false
         lock.unlock()
         guard let block else { return }
+        removeRegistered(
+            block: block,
+            devices: hadDevices,
+            defaultInput: hadDefault,
+            serviceRestarted: hadRestarted,
+            queue: queue
+        )
+    }
+
+    private func removeRegistered(
+        block: @escaping AudioObjectPropertyListenerBlock,
+        devices: Bool,
+        defaultInput: Bool,
+        serviceRestarted: Bool,
+        queue: DispatchQueue
+    ) {
         let systemObject = AudioObjectID(kAudioObjectSystemObject)
-        if hadDevices {
+        if devices {
             var devicesAddr = Self.devicesAddress
-            _ = AudioObjectRemovePropertyListenerBlock(systemObject, &devicesAddr, queue, block)
+            _ = removeListener(systemObject, &devicesAddr, queue, block)
         }
-        if hadDefault {
+        if defaultInput {
             var defaultAddr = Self.defaultInputAddress
-            _ = AudioObjectRemovePropertyListenerBlock(systemObject, &defaultAddr, queue, block)
+            _ = removeListener(systemObject, &defaultAddr, queue, block)
         }
-        if hadRestarted {
+        if serviceRestarted {
             var restartedAddr = Self.serviceRestartedAddress
-            _ = AudioObjectRemovePropertyListenerBlock(systemObject, &restartedAddr, queue, block)
+            _ = removeListener(systemObject, &restartedAddr, queue, block)
         }
     }
 }

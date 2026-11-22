@@ -24,6 +24,9 @@ REQUIRED_USAGE_KEYS = (
     "NSMicrophoneUsageDescription",
     "NSAudioCaptureUsageDescription",
     "NSSpeechRecognitionUsageDescription",
+)
+
+REMOVED_USAGE_KEYS = (
     "NSLocalNetworkUsageDescription",
     "NSCalendarsUsageDescription",
     "NSCalendarsFullAccessUsageDescription",
@@ -166,6 +169,9 @@ class InstallMacosScriptTest(unittest.TestCase):
             dst = scripts_dir / name
             shutil.copy2(src, dst)
             dst.chmod(0o755)
+        lib_dir = scripts_dir / "lib"
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / "scripts" / "lib" / "macos-signing.sh", lib_dir / "macos-signing.sh")
         self._write_executable(scripts_dir / "sign-macos.sh", STUB_SIGN_SCRIPT)
         shutil.copy2(REPO_ROOT / "THIRD_PARTY_NOTICES.md", root)
         shutil.copytree(REPO_ROOT / "assets" / "licenses", root / "assets" / "licenses")
@@ -235,6 +241,8 @@ class InstallMacosScriptTest(unittest.TestCase):
         self.assertNotIn("CFBundleIcons", plist)
         for key in REQUIRED_USAGE_KEYS:
             self.assertTrue(isinstance(plist.get(key), str) and plist[key], f"missing {key}")
+        for key in REMOVED_USAGE_KEYS:
+            self.assertNotIn(key, plist, f"unused privacy key must not be present: {key}")
 
         import re
         cargo_toml = (REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8")
@@ -332,7 +340,7 @@ class InstallMacosScriptTest(unittest.TestCase):
         self.assertEqual(colors.get("ic_launcher_background"), "#FFD9BB")
 
         for launcher_name in ("ic_launcher.xml", "ic_launcher_round.xml"):
-            xml_path = android_res / "mipmap-anydpi-v26" / launcher_name
+            xml_path = android_res / "mipmap-anydpi" / launcher_name
             self.assertTrue(xml_path.is_file(), f"missing adaptive icon XML: {xml_path}")
             root = ET.parse(xml_path).getroot()
             self.assertEqual(root.tag, "adaptive-icon")
@@ -393,6 +401,26 @@ class InstallMacosScriptTest(unittest.TestCase):
         smoke_idx = events.index(["koe", str(install_app / "Contents" / "MacOS" / "Koe"), "--smoke-test"])
         self.assertLess(reg_idx, verify_idx)
         self.assertLess(verify_idx, smoke_idx)
+
+    def test_skip_self_check_skips_bundle_probes_and_rejects_removed_keep_legacy_flag(self) -> None:
+        install_app = self.sandbox / "StageInstall" / "Koe.app"
+        proc = self._run_installer(
+            "--skip-build",
+            "--skip-self-check",
+            extra_env={"MACOS_INSTALL_PATH": str(install_app)},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((install_app / "Contents" / "Info.plist").is_file())
+        events = self._read_spy_events()
+        self.assertIn(["lsregister", "-f", str(install_app)], events)
+        self.assertFalse(any(e[0] == "koe" for e in events), f"expected no self-check probes: {events}")
+
+        removed_flag = self._run_installer(
+            "--skip-build",
+            "--keep-legacy",
+            extra_env={"MACOS_INSTALL_PATH": str(install_app)},
+        )
+        self.assertNotEqual(removed_flag.returncode, 0)
 
     def test_skip_build_installs_current_third_party_notices(self) -> None:
         bundle_path = Path("Contents/Resources/Licenses")

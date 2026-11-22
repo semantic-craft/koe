@@ -105,8 +105,7 @@ class AndroidBleCoordinator(
     fun requestScan() {
         val store = synchronized(lock) { boundStore } ?: return
         if (synchronized(lock) { reportedReady }) {
-            store.send(HostCommand.DeviceRefresh)
-            flushOutboundFrames()
+            store.send(HostCommand.DeviceRefresh) { flushOutboundFrames() }
             return
         }
         val shouldRequest = synchronized(lock) {
@@ -178,8 +177,11 @@ class AndroidBleCoordinator(
             return
         }
         addressStore.write(address)
-        readyContext.first.send(HostAdapterEvent.DeviceEvent("ready", readyContext.second, readyContext.third))
-        flushOutboundFrames()
+        readyContext.first.send(
+            HostAdapterEvent.DeviceEvent("ready", readyContext.second, readyContext.third),
+        ) {
+            flushOutboundFrames()
+        }
     }
 
     override fun onWriteCompleted(success: Boolean) {
@@ -300,8 +302,7 @@ class AndroidBleCoordinator(
             return
         }
         if (synchronized(lock) { reportedReady }) {
-            targetStore.send(HostCommand.DeviceRefresh)
-            flushOutboundFrames()
+            targetStore.send(HostCommand.DeviceRefresh) { flushOutboundFrames() }
             return
         }
         if (synchronized(lock) { isScanRequested && activeAddress == null }) return

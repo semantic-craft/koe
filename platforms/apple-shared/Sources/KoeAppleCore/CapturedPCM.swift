@@ -80,12 +80,12 @@ public protocol MicrophoneSource: AnyObject {
 }
 
 /// Bounded per-lane queue: overflow stops that lane instead of silently dropping audio.
-final class MicrophoneMailbox: @unchecked Sendable {
-    struct Block { let sequence: UInt64; let pcm: CapturedPCM }
-    private struct State {
+final class MicrophoneMailbox: Sendable {
+    struct Block: Sendable { let sequence: UInt64; let pcm: CapturedPCM }
+    private struct State: Sendable {
         var ring: [Block?]
         var head = 0
-        var count = 0
+        var buffered = 0
         var sequence: UInt64
         var closed = false
         var failure: String?
@@ -107,14 +107,14 @@ final class MicrophoneMailbox: @unchecked Sendable {
     func append(_ pcm: CapturedPCM) {
         state.withLock { state in
             guard !state.closed else { return }
-            guard !pcm.samples.isEmpty, pcm.samples.count <= 8192, state.count < limit else {
+            guard !pcm.samples.isEmpty, pcm.samples.count <= 8192, state.buffered < limit else {
                 state.failure = "音频处理未能跟上采集，已停止并保留已接收的音频。"
                 state.closed = true
                 return
             }
-            let tail = (state.head + state.count) % state.ring.count
+            let tail = (state.head + state.buffered) % state.ring.count
             state.ring[tail] = Block(sequence: state.sequence, pcm: pcm)
-            state.count += 1
+            state.buffered += 1
             state.sequence += 1
         }
     }
@@ -133,28 +133,28 @@ final class MicrophoneMailbox: @unchecked Sendable {
     func discardUnaccepted(nextSequence: UInt64) {
         state.withLock { state in
             state.closed = true
-            for offset in 0..<state.count {
+            for offset in 0..<state.buffered {
                 state.ring[(state.head + offset) % state.ring.count] = nil
             }
             state.head = 0
-            state.count = 0
+            state.buffered = 0
             state.sequence = nextSequence
         }
     }
 
     func peek() -> Block? {
         state.withLock { state in
-            guard state.count > 0 else { return nil }
+            guard state.buffered > 0 else { return nil }
             return state.ring[state.head]
         }
     }
 
     func acknowledge(_ sequence: UInt64) {
         state.withLock { state in
-            guard state.count > 0, state.ring[state.head]?.sequence == sequence else { return }
+            guard state.buffered > 0, state.ring[state.head]?.sequence == sequence else { return }
             state.ring[state.head] = nil
             state.head = (state.head + 1) % state.ring.count
-            state.count -= 1
+            state.buffered -= 1
         }
     }
 

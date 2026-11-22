@@ -143,8 +143,9 @@ struct RecordSessionSnapshotTests {
         let t0: UInt64 = 1_800_000_000
 
         func captureMicRecord(nowEpochSec: UInt64, title: String) throws -> (id: String, audioPath: String) {
-            store.send(.startMicrophone(inputId: "built-in", includeSystem: false, clockNs: 1_000_000_000), nowEpochSec: nowEpochSec)
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true), nowEpochSec: nowEpochSec)
             let mic = try #require(store.snapshot.microphone)
+            store.send(.microphonePrepared(recordId: mic.recordId, sessionId: mic.sessionId, epoch: 0, clockNs: 1_000_000_000), nowEpochSec: nowEpochSec)
             store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16000), nowEpochSec: nowEpochSec)
             let ingest = store.ingestMicrophonePCM(
                 recordId: mic.recordId,
@@ -157,9 +158,10 @@ struct RecordSessionSnapshotTests {
                 nowEpochSec: nowEpochSec
             )
             #expect(ingest.status == .accepted)
-            store.send(.stopMicrophone, nowEpochSec: nowEpochSec)
+            store.send(.captureAction(action: .end), nowEpochSec: nowEpochSec)
             store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: 0), nowEpochSec: nowEpochSec)
             store.send(.renameRecord(recordId: mic.recordId, title: title), nowEpochSec: nowEpochSec)
+            store.send(.selectRecord(recordId: mic.recordId), nowEpochSec: nowEpochSec)
             let detail = try #require(store.snapshot.detail)
             let audioPath = try #require(detail.audioPath)
             #expect(FileManager.default.fileExists(atPath: audioPath))

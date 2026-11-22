@@ -110,13 +110,11 @@ extension BluetoothBridge {
         scan(central)
     }
 
-    nonisolated public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+    public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard self.central === central else { return }
         let peers = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
         let services = dict[CBCentralManagerRestoredStateScanServicesKey] as? [CBUUID] ?? []
-        onMainActorIsolated {
-            guard self.central === central else { return }
-            self.stageRestoration(peripherals: peers, scanServices: services)
-        }
+        stageRestoration(peripherals: peers, scanServices: services)
     }
 
     func stageRestoration(peripherals: [any BlePeripheral], scanServices: [CBUUID]) {
@@ -183,8 +181,11 @@ extension BluetoothBridge {
             writeCharacteristic = write
             notifyFound = true
             notifyReady = peer.isNotifying(notify)
-            if notifyReady { checkReady() }
-            else { peer.setNotifyValue(true, for: notify) }
+            if notifyReady {
+                checkReady()
+            } else {
+                peer.setNotifyValue(true, for: notify)
+            }
             return
         }
         peer.discoverServices(nil)

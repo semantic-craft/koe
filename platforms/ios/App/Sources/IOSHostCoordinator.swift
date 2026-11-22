@@ -3,6 +3,28 @@ import KoeAppleCore
 import SwiftUI
 import UIKit
 
+private final class PollingTimer {
+    private let source: DispatchSourceTimer
+
+    init(interval: DispatchTimeInterval, handler: @escaping @MainActor @Sendable () -> Void) {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + interval, repeating: interval)
+        timer.setEventHandler {
+            MainActor.assumeIsolated(handler)
+        }
+        timer.resume()
+        source = timer
+    }
+
+    func cancel() {
+        source.cancel()
+    }
+
+    deinit {
+        source.cancel()
+    }
+}
+
 @MainActor
 final class IOSHostCoordinator {
     private let store: HostSessionStore
@@ -11,26 +33,35 @@ final class IOSHostCoordinator {
     private let nowPlaying: IOSNowPlayingController
     private let playback: NativePlayback
     let bluetoothBridge: BluetoothBridge
+    var currentPlaybackItem: AVPlayerItem? { playback.currentItem }
     typealias BeginBackgroundTask = @MainActor (String, @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier
     private let beginBackgroundTask: BeginBackgroundTask
     typealias EndBackgroundTask = @MainActor (UIBackgroundTaskIdentifier) -> Void
     private let endBackgroundTask: EndBackgroundTask
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var backgroundInterval: UUID?
-    private var interruptionObserver: NSObjectProtocol?
+    private var interruptionObserver: NotificationToken?
     private var scenePhase: ScenePhase = .background
-    private var timer: Timer?
+    private var timer: PollingTimer?
     private var lastTick: TimeInterval = 0
 
-    init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
-         audioSession: IOSAudioSession = IOSAudioSession(),
-         allowsCoreBluetooth: Bool = true, bluetoothBridge: BluetoothBridge? = nil,
-         restoreIdentifiers: [String] = [], mediaCenter: (any IOSMediaCenter)? = nil,
-         recognizer: (any LocalSpeechRecognizer)? = nil, allowsLocalSpeech: Bool = true,
-         beginBackgroundTask: @escaping BeginBackgroundTask = { name, expire in
-             UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expire)
-         }, endBackgroundTask: @escaping EndBackgroundTask = { UIApplication.shared.endBackgroundTask($0) },
-         nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
+    init(
+        store: HostSessionStore,
+        actions: HostBridgeActions,
+        source: MicrophoneSource? = nil,
+        audioSession: IOSAudioSession = IOSAudioSession(),
+        allowsCoreBluetooth: Bool = true,
+        bluetoothBridge: BluetoothBridge? = nil,
+        restoreIdentifiers: [String] = [],
+        mediaCenter: (any IOSMediaCenter)? = nil,
+        recognizer: (any LocalSpeechRecognizer)? = nil,
+        allowsLocalSpeech: Bool = true,
+        beginBackgroundTask: @escaping BeginBackgroundTask = { name, expire in
+            UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expire)
+        },
+        endBackgroundTask: @escaping EndBackgroundTask = { UIApplication.shared.endBackgroundTask($0) },
+        nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds
+    ) {
         self.beginBackgroundTask = beginBackgroundTask
         self.endBackgroundTask = endBackgroundTask
         self.store = store
@@ -54,13 +85,15 @@ final class IOSHostCoordinator {
             store?.send(command)
             playback?.tick()
         }
-        interruptionObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main
-        ) { [weak playback] notification in
-            guard notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ==
-                AVAudioSession.InterruptionType.began.rawValue else { return }
-            MainActor.assumeIsolated { playback?.interrupt() }
-        }
+        interruptionObserver = NotificationToken(
+            token: NotificationCenter.default.addObserver(
+                forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main
+            ) { [weak playback] notification in
+                guard notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ==
+                    AVAudioSession.InterruptionType.began.rawValue else { return }
+                MainActor.assumeIsolated { playback?.interrupt() }
+            }
+        )
         store.bridgeActions = actions
         store.bridgeActions.resumeMicrophone = { [weak capture] in capture?.resume() }
         store.bridgeActions.requestBleScan = { [weak bridge] in bridge?.requestScan() }
@@ -98,28 +131,24 @@ final class IOSHostCoordinator {
             UIApplication.shared.isIdleTimerDisabled = keepAwake
         }
         guard scenePhase == .active || keepAwake else {
-            timer?.invalidate()
+            timer?.cancel()
             timer = nil
             return
         }
         guard timer == nil else { return }
 
         lastTick = ProcessInfo.processInfo.systemUptime
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let now = ProcessInfo.processInfo.systemUptime
-                let elapsed = UInt64(max(0, now - self.lastTick) * 1000)
-                self.lastTick = now
-                self.store.pollTimers(elapsedMs: elapsed)
-                self.capture.apply()
-                self.localTranscription.apply()
-                self.playback.tick()
-                self.store.bridgeActions.flushBleOutbound()
-            }
+        timer = PollingTimer(interval: .milliseconds(250)) { [weak self] in
+            guard let self else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let elapsed = UInt64(max(0, now - self.lastTick) * 1000)
+            self.lastTick = now
+            self.store.pollTimers(elapsedMs: elapsed)
+            self.capture.apply()
+            self.localTranscription.apply()
+            self.playback.tick()
+            self.store.bridgeActions.flushBleOutbound()
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     private func updateBackgroundTask(needed: Bool) {
@@ -147,24 +176,16 @@ final class IOSHostCoordinator {
 
     func shutdown() {
         updateBackgroundTask(needed: false)
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
         store.onSnapshotChanged = nil
         nowPlaying.shutdown()
         bluetoothBridge.shutdown()
-        if let interruptionObserver {
-            NotificationCenter.default.removeObserver(interruptionObserver)
-            self.interruptionObserver = nil
-        }
+        interruptionObserver = nil
         playback.stop()
         localTranscription.shutdown()
         capture.shutdown()
         store.bridgeActions = HostBridgeActions()
         UIApplication.shared.isIdleTimerDisabled = false
-    }
-
-    deinit {
-        timer?.invalidate()
-        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
     }
 }
