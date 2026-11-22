@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Local verification gate for Koe (aligned with metasequoiaime/msime).
-#
-# Usage:
-#   scripts/verify-local.sh --quick   compile, lint, and fast contract checks
-#   scripts/verify-local.sh           full verification including workspace tests
-
 set -euo pipefail
 export MACOSX_DEPLOYMENT_TARGET=14.0
 
@@ -38,6 +32,7 @@ python3 scripts/test_android_app_harness.py
 python3 scripts/test_android_native_scripts.py
 python3 scripts/test_ios_harness.py
 python3 scripts/test_mobile_e2e_verifier.py
+python3 scripts/test_run_mobile_e2e.py
 python3 scripts/test_run_with_secrets.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all

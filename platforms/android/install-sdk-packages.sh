@@ -26,46 +26,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
 
-valid_java_home() {
-  local dir="$1"
-  # macOS ships a /usr/bin/java stub that exits non-zero when no JDK is installed.
-  [[ -n "$dir" && -x "$dir/bin/java" ]] && "$dir/bin/java" -version >/dev/null 2>&1
-}
-
-resolve_java_home() {
-  if [[ -n "${JAVA_HOME:-}" ]] && valid_java_home "$JAVA_HOME"; then
-    printf '%s\n' "$JAVA_HOME"
-    return 0
-  fi
-
-  local candidate=""
-  if [[ -x /usr/libexec/java_home ]]; then
-    candidate="$(/usr/libexec/java_home -v 17+ 2>/dev/null || true)"
-    if valid_java_home "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if command -v brew >/dev/null 2>&1; then
-    local brew_jdk=""
-    brew_jdk="$(brew --prefix openjdk@17 2>/dev/null || true)"
-    if [[ -n "$brew_jdk" ]]; then
-      candidate="$brew_jdk/libexec/openjdk.jdk/Contents/Home"
-      if valid_java_home "$candidate"; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  fi
-
-  die "working JDK 17+ not found; install with 'brew install openjdk@17' or set JAVA_HOME"
-}
+# shellcheck source=scripts/lib/java-env.sh
+source "$ROOT/scripts/lib/java-env.sh"
 
 resolve_cmdline_tool() {
   local override="$1"
@@ -113,7 +82,8 @@ KOE_ANDROID_API="${KOE_ANDROID_API:-35}"
 KOE_ANDROID_ABI="${KOE_ANDROID_ABI:-$(default_abi)}"
 [[ -n "$KOE_ANDROID_ABI" ]] || die "KOE_ANDROID_ABI must not be empty"
 
-JAVA_HOME="$(resolve_java_home)"
+JAVA_HOME="$(resolve_java_home)" \
+  || die "working JDK 17+ not found; install with 'brew install openjdk@17' or set JAVA_HOME"
 export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$PATH"
 

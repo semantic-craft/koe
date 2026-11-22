@@ -40,7 +40,24 @@ class EvidenceTest(unittest.TestCase):
                     transitions = ['microphone_started', 'microphone_paused', 'resume_microphone',
                                    'microphone_started', 'microphone_stopped']
                     entries += [dict(entries[0], kind='event', name=name) for name in transitions]
-                (out / 'koe-trace.json').write_text(json.dumps(entries))
+                trace_payload = {
+                    'platform': platform,
+                    'run_id': f'{platform}-{phase}',
+                    'flow': f'{phase}.yaml',
+                    'started_at': '2026-11-21T12:00:00Z',
+                    'finished_at': '2026-11-21T12:00:05Z',
+                    'duration_sec': 5.0,
+                    'flow_exit_code': 0,
+                    'outcome': 'pass',
+                    'artifacts': {
+                        'screen': str(out / 'screen.png'),
+                        'hierarchy': str(out / ('view_hierarchy.txt' if platform == 'ios' else 'window_hierarchy.xml')),
+                        'log': str(out / ('syslog.txt' if platform == 'ios' else 'logcat.txt')),
+                        'maestro_debug_dir': str(out / 'maestro_debug'),
+                    },
+                    'host_intent_trace': entries,
+                }
+                (out / 'trace.json').write_text(json.dumps(trace_payload))
                 (out / ('syslog.txt' if platform == 'ios' else 'logcat.txt')).write_text(
                     ('2026-11-21' if platform == 'ios' else '11-21') + ' 12:00:00.000 Koe host launched\n')
             workspace = out / 'workspace'
@@ -73,14 +90,21 @@ class EvidenceTest(unittest.TestCase):
         good = self.verify()
         self.assertEqual(good.returncode, 0, good.stderr)
         base = self.root / 'android'
-        device = json.loads((base / 'device/koe-trace.json').read_text())
-        device[0]['hasError'] = True
-        live_trace = json.loads((base / 'live/koe-trace.json').read_text())
+        device = json.loads((base / 'device/trace.json').read_text())
+        device['host_intent_trace'][0]['hasError'] = True
+        live_trace = json.loads((base / 'live/trace.json').read_text())
+        missing_resume = dict(
+            live_trace,
+            host_intent_trace=[e for e in live_trace['host_intent_trace'] if e['name'] != 'resume_microphone'],
+        )
+        empty_live = dict(live_trace, host_intent_trace=[])
+        wrong_platform = dict(live_trace, platform='ios')
         for rel, data in (
             ('live/maestro_debug/capture.png', png()[:-9]),
-            ('live/koe-trace.json', b'[]'),
-            ('live/koe-trace.json', json.dumps([e for e in live_trace if e['name'] != 'resume_microphone']).encode()),
-            ('device/koe-trace.json', json.dumps(device).encode()),
+            ('live/trace.json', json.dumps(empty_live).encode()),
+            ('live/trace.json', json.dumps(wrong_platform).encode()),
+            ('live/trace.json', json.dumps(missing_resume).encode()),
+            ('device/trace.json', json.dumps(device).encode()),
             ('restart/logcat.txt', b'11-21 12:00:00.000 FATAL EXCEPTION: main'),
             ('restart/logcat.txt', b'--------- beginning of main'),
             ('device-link/maestro_debug/synced-detail.png', png()[:-1]),

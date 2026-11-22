@@ -52,12 +52,12 @@ jobs:
                   ;;
               esac
               case "$path" in
-                platforms/ios/*|platforms/apple-shared/*|crates/*|Cargo.toml|Cargo.lock|.swiftlint.yml|.github/workflows/ci.yml)
+                platforms/ios/*|platforms/apple-shared/*|scripts/lib/*|crates/*|Cargo.toml|Cargo.lock|.swiftlint.yml|.github/workflows/ci.yml)
                   ios=true
                   ;;
               esac
               case "$path" in
-                platforms/android/*|platforms/apple-shared/Sources/CKoeHostApi/*|crates/*|Cargo.toml|Cargo.lock|.github/workflows/ci.yml)
+                platforms/android/*|platforms/apple-shared/Sources/CKoeHostApi/*|scripts/lib/*|crates/*|Cargo.toml|Cargo.lock|.github/workflows/ci.yml)
                   android=true
                   ;;
               esac
@@ -216,7 +216,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y shellcheck
           fi
-          shellcheck -S warning scripts/check scripts/ref scripts/*.sh platforms/*/*.sh platforms/android/tests/jni/*.sh
+          shellcheck -x -P . -S warning scripts/check scripts/ref scripts/*.sh scripts/lib/*.sh platforms/*/*.sh platforms/android/tests/jni/*.sh
       - name: Ruff lint Python scripts
         run: |
           python3 -m venv /tmp/ruff-venv
