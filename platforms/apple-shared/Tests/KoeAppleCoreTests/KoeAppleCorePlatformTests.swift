@@ -235,4 +235,35 @@ struct KoeAppleCorePlatformTests {
         #expect(scorMatch.matchedByManufacturerData)
         #expect(scorMatch.macAddress == "11:22:33:44:55:66")
     }
+
+    @Test("WorkspaceExportRequest sanitizes path separators, control characters, dotfiles, and empty stems")
+    func workspaceExportRequestSanitizesUnsafeTitles() throws {
+        let cardJSON = """
+        {
+          "id": "qn-1",
+          "title": "a\\\\b:c/d\\u0000e",
+          "createdAtEpochSec": 1700000000,
+          "durationMs": 0,
+          "source": "文字记录",
+          "status": "就绪",
+          "archived": false,
+          "project": null,
+          "isInbox": true,
+          "minutesStale": false,
+          "canSummarize": false,
+          "segments": [],
+          "gist": null,
+          "topics": [],
+          "nextSteps": []
+        }
+        """
+        let quickNoteCard = try JSONDecoder().decode(QuickNoteCardSnapshot.self, from: Data(cardJSON.utf8))
+        #expect(WorkspaceExportRequest.forQuickNote(quickNoteCard).suggestedFilename == "a-b-c-d-e.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-1", title: "...").suggestedFilename == "实时纪要.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-2", title: ".hidden").suggestedFilename == "hidden.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-3", title: "/:\\\0").suggestedFilename == "实时纪要.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-4", title: "   \n\t  ").suggestedFilename == "实时纪要.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-5", title: "架构/周会").suggestedFilename == "架构-周会.md")
+        #expect(WorkspaceExportRequest.forAllDay(date: "2026/11:15\\0").suggestedFilename == "全天听记-2026-11-15-0.md")
+    }
 }

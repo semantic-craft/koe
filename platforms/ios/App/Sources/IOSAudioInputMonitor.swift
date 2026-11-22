@@ -67,7 +67,9 @@ final class IOSAudioInputMonitor {
     private func sync() {
         guard observerBox.withLockUnchecked({ !$0.tokens.isEmpty }) else { return }
         do {
-            guard let devices = try inputs(), devices != lastInputs else { return }
+            guard let rawDevices = try inputs() else { return }
+            let devices = HostAudioInputDescriptor.normalized(rawDevices)
+            guard devices != lastInputs else { return }
             store.send(.syncAudioInputs(inputs: devices))
             lastInputs = devices
             IOSAudioSource.logger.info("可用麦克风数量：\(devices.count)")

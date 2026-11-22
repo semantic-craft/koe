@@ -64,7 +64,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
-    private var lastSyncedInputs: [MicrophoneInput]?
+    private var lastSyncedInputs: [HostAudioInputDescriptor]?
     private var lastSyncedAppMetadata: (version: String, build: String)?
     private var lastObservedHardwareGeneration: UInt64 = 0
 
@@ -161,12 +161,13 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         if inputsProvider == nil {
             lastObservedHardwareGeneration = observedGeneration
         }
-        let current = Array((inputsProvider ?? defaultInputsProvider)().prefix(64))
-        guard force || lastSyncedInputs != current else { return }
-        lastSyncedInputs = current
-        let descriptors = current.map {
-            HostAudioInputDescriptor(id: $0.id, name: $0.name, transport: $0.transport, isDefault: $0.isDefault)
-        }
+        let descriptors = HostAudioInputDescriptor.normalized(
+            (inputsProvider ?? defaultInputsProvider)().map {
+                HostAudioInputDescriptor(id: $0.id, name: $0.name, transport: $0.transport, isDefault: $0.isDefault)
+            }
+        )
+        guard force || lastSyncedInputs != descriptors else { return }
+        lastSyncedInputs = descriptors
         store.send(.syncAudioInputs(inputs: descriptors))
     }
 

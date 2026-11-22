@@ -248,6 +248,46 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
             XCTAssertEqual(center.activeCount, 0, "deinit must remove all NotificationCenter observers")
         }
     }
+
+    func testMonitorNormalizesOver64InputsAndMultiByteUTF8FieldsWithoutRedundantSync() async throws {
+        try await fixture { store, _, _ in
+            let center = NotificationCenter()
+            let longCJK = String(repeating: "麦", count: 100)
+            let longEmoji = String(repeating: "👨‍👩‍👧‍👦", count: 20)
+            var inputs: [HostAudioInputDescriptor] = [
+                HostAudioInputDescriptor(id: "   ", name: "Blank", transport: "usb", isDefault: true),
+                HostAudioInputDescriptor(id: longCJK, name: "Overlong ID", transport: "usb", isDefault: true),
+                HostAudioInputDescriptor(id: "ios-primary", name: longCJK, transport: "usb", isDefault: false),
+                HostAudioInputDescriptor(id: " ios-primary ", name: "Duplicate", transport: "usb", isDefault: false),
+                HostAudioInputDescriptor(id: "ios-emoji", name: longEmoji, transport: "external", isDefault: false),
+            ] + (2..<65).map { idx in
+                HostAudioInputDescriptor(id: "ios-mic-\(idx)", name: "Mic \(idx)", transport: "external", isDefault: false)
+            }
+            inputs.append(HostAudioInputDescriptor(id: "ios-late-default", name: "Late Default", transport: "built_in", isDefault: true))
+            inputs.append(HostAudioInputDescriptor(id: "ios-mic-66", name: "Tail", transport: "external", isDefault: false))
+            let monitor = IOSAudioInputMonitor(store: store, center: center, inputs: { inputs })
+            monitor.start()
+            defer { monitor.stop() }
+
+            try await self.waitFor("应截断到 64 个设备并满足 256 UTF-8 字节上限") {
+                store.captureStudio.studio.inputs.count == 64
+            }
+            XCTAssertNil(store.navigation.effectiveError)
+            let primary = try XCTUnwrap(store.captureStudio.studio.inputs.first(where: { $0.id == "ios-primary" }))
+            XCTAssertEqual(primary.name, String(repeating: "麦", count: 85))
+            XCTAssertLessThanOrEqual(primary.name.utf8.count, 256)
+            let emojiMic = try XCTUnwrap(store.captureStudio.studio.inputs.first(where: { $0.id == "ios-emoji" }))
+            XCTAssertEqual(emojiMic.name, String(repeating: "👨‍👩‍👧‍👦", count: 10))
+            let lateDefault = try XCTUnwrap(store.captureStudio.studio.inputs.first(where: { $0.id == "ios-late-default" }))
+            XCTAssertTrue(lateDefault.isDefault)
+
+            let generationAfterFirst = store.snapshot.generation
+            inputs[inputs.count - 1] = HostAudioInputDescriptor(id: "ios-mic-66-changed", name: "Ignored", transport: "external", isDefault: false)
+            center.post(name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
+            try await Task.sleep(for: .milliseconds(80))
+            XCTAssertEqual(store.snapshot.generation, generationAfterFirst)
+        }
+    }
 }
 
 @MainActor

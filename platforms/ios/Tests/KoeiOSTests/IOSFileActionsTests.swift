@@ -156,13 +156,19 @@ final class IOSFileActionsTests: XCTestCase {
         f.store.send(.createNote(title: "导出", text: "原文"))
         let record = try XCTUnwrap(f.store.records.first)
         for (name, expected) in [("..md", "Koe 记录.md"), ("/:\\\0.md", "Koe 记录.md"),
-                                 ("...笔\0记.md", "笔-记.md")] {
+                                 ("...笔\0记.md", "笔-记.md"), (".hidden.md", "hidden.md"),
+                                 ("架构/周会.md", "架构-周会.md"), ("   .md", "Koe 记录.md")] {
             f.files.exportWorkspace(.init(recordId: record.id, suggestedFilename: name))
             let url = try XCTUnwrap(f.files.exportURLs.first)
             XCTAssertEqual(url.lastPathComponent, expected)
             XCTAssertTrue(try readExport(url, in: f.staging).contains("原文"))
             f.files.finishExport()
         }
+        f.store.clearError()
+        f.files.exportWorkspace(.init(recordId: record.id, suggestedFilename: "invalid.txt"))
+        XCTAssertTrue(f.store.nativeError?.contains("导出文件名无效") == true)
+        XCTAssertTrue(f.files.exportURLs.isEmpty)
+        try assertClean(f.staging)
     }
 
     func testEmptyBatchLeavesPriorFeedbackAndStagingUntouched() throws {

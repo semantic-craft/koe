@@ -92,19 +92,22 @@ public final class NativeAudioSource: MicrophoneSource {
     }
     public static func inputs() -> [MicrophoneInput] {
         let defaultDevice = defaultInputDeviceID()
-        let discovered: [MicrophoneInput] = deviceIDs().compactMap { device in
+        let discovered: [HostAudioInputDescriptor] = deviceIDs().compactMap { device in
             guard hasInputChannels(device),
                   let rawID = uid(device),
-                  !rawID.isEmpty, rawID.count <= 256 else { return nil }
+                  !rawID.isEmpty,
+                  rawID.utf8.count <= HostAudioInputDescriptor.maxFieldUTF8Bytes else { return nil }
             let rawName = stringProperty(device, kAudioObjectPropertyName)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return MicrophoneInput(
+            return HostAudioInputDescriptor(
                 id: rawID,
                 name: rawName.isEmpty ? rawID : rawName,
                 transport: classifyTransport(transportType(device)),
                 isDefault: device == defaultDevice
             )
         }
-        return Array(discovered.prefix(64))
+        return HostAudioInputDescriptor.normalized(discovered).map {
+            MicrophoneInput(id: $0.id, name: $0.name, transport: $0.transport, isDefault: $0.isDefault)
+        }
     }
     private static func hasInputChannels(_ device: AudioDeviceID) -> Bool {
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)

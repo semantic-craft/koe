@@ -63,7 +63,7 @@ struct IOSRecordsView: View {
 
                 HStack {
                     Picker("排序", selection: $query.order) {
-                        ForEach([RecordSortOrder.newest, .oldest, .longest]) { Text($0.title).tag($0) }
+                        ForEach(RecordSortOrder.allCases) { Text($0.title).tag($0) }
                     }
                     Picker("项目", selection: $query.project) {
                         Text("全部项目").tag(RecordProjectFilter.all)
