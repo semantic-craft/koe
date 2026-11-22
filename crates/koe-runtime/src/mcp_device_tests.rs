@@ -1006,3 +1006,23 @@ fn bean_notification_pause_resume_keeps_device_file_and_audio_offset() {
         &DeviceCommands::start_transport_audio_file(fid, SLICE_RECORD_BYTES as u32, 1)
     ));
 }
+
+#[test]
+fn device_refresh_during_catalog_loading_emits_no_empty_ble_frames() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = connect_simulated_bean(&mut runtime, "ble-refresh-loading", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    let first_tx = runtime.device.session.request_full_catalog();
+    assert!(!first_tx.is_empty());
+    assert!(runtime.device.session.is_catalog_loading());
+
+    let _ = runtime.dispatch_json(&json!({"type": "device_refresh"}).to_string(), NOW + 1);
+    let frames = runtime.drain_outbound_ble_frames();
+    assert!(
+        frames.iter().all(|f| !f.is_empty()),
+        "device_refresh during catalog loading emitted empty BLE TX frame: {frames:?}"
+    );
+    assert!(frames.contains(&DeviceCommands::get_device_info()));
+}

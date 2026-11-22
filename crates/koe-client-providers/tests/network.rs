@@ -1512,3 +1512,110 @@ fn qwen_filetrans_fails_fast_on_unknown_status_and_subtask_failure() {
         srv.join().unwrap();
     }
 }
+
+#[test]
+fn remote_http_url_validator_blocks_loopback_aliases_and_non_global_ips() {
+    use koe_client_providers::validate_remote_http_url;
+    use std::io::Write;
+
+    assert!(validate_remote_http_url("https://oss.aliyuncs.com/path/result.json", false).is_ok());
+    assert!(validate_remote_http_url("http://127.0.0.1:8080/mock", true).is_ok());
+    assert!(validate_remote_http_url("http://localhost.:8080/mock", true).is_ok());
+    assert!(validate_remote_http_url("http://[::ffff:127.0.0.1]:8080/mock", true).is_ok());
+
+    for blocked in [
+        "https://localhost./x",
+        "https://a.localhost/x",
+        "https://a.localhost./x",
+        "https://169.254.169.254/latest/meta-data",
+        "https://10.0.0.1/x",
+        "https://[::ffff:127.0.0.1]/x",
+        "https://[::ffff:169.254.169.254]/x",
+        "https://[::ffff:0:127.0.0.1]/x",
+        "https://[64:ff9b::169.254.169.254]/latest/meta-data",
+        "https://[64:ff9b:1::1]/x",
+        "https://[2002:7f00:1::]/x",
+        "https://[fec0::1]/x",
+        "https://[100::1]/x",
+        "https://[2001:db8::1]/x",
+        "https://172.16.0.1/x",
+        "https://192.168.1.1/x",
+        "https://100.64.0.1/x",
+        "https://0.0.0.0/x",
+        "https://[::]/x",
+        "https://[fc00::1]/x",
+        "https://[fe80::1]/x",
+        "https://224.0.0.1/x",
+        "https://[ff02::1]/x",
+    ] {
+        assert!(
+            validate_remote_http_url(blocked, false).is_err(),
+            "accepted unsafe remote URL: {blocked}"
+        );
+    }
+    assert!(
+        validate_remote_http_url("http://a.localhost/x", true).is_err(),
+        "subdomain of localhost must not be treated as an allowed loopback endpoint"
+    );
+
+    for (idx, bad_upload_host) in [
+        "https://169.254.169.254/latest/meta-data",
+        "https://10.0.0.1/x",
+        "https://[::ffff:169.254.169.254]/x",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let ft_url = format!("{origin}/api/v1/services/audio/asr/transcription");
+        let host_for_srv = bad_upload_host.to_owned();
+        let srv = std::thread::spawn(move || {
+            let (mut s1, _) = listener.accept().unwrap();
+            let _ = read_http_request(&mut s1);
+            let pol = serde_json::json!({
+                "data": {
+                    "upload_host": host_for_srv,
+                    "oss_access_key_id": "ak",
+                    "signature": "sig",
+                    "policy": "pol",
+                    "upload_dir": "dir"
+                }
+            })
+            .to_string();
+            write!(
+                s1,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                pol.len(),
+                pol
+            )
+            .unwrap();
+        });
+
+        let mut pool = ProviderPool::new().unwrap();
+        pool.submit(
+            ProviderLane::Audio,
+            ProviderRequest {
+                operation_id: 500 + idx as u64,
+                record_id: format!("rec-ssrf-{idx}"),
+                config: ProviderConfig::new(
+                    ft_url,
+                    "qwen-audio-3.1-asr-flash-filetrans".into(),
+                    "qwen-test-key".into(),
+                )
+                .with_asr_mode(koe_client_providers::AsrTransportMode::DashScopeFiletransHttp),
+                task: ProviderTask::TranscribePcm16 {
+                    pcm16: vec![0u8; 32_000],
+                },
+                timeout: Duration::from_secs(5),
+            },
+        )
+        .unwrap();
+        let err = wait_result(&mut pool).result.unwrap_err();
+        assert!(
+            err.contains("不安全或受限"),
+            "expected SSRF rejection for {bad_upload_host}, got: {err}"
+        );
+        srv.join().unwrap();
+    }
+}

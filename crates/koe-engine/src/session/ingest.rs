@@ -199,7 +199,17 @@ impl TransportSession {
                         }
                     } else {
                         self.pending_realtime_subscribe = true;
-                        outcome.outbound_tx_frames.push(self.request_full_catalog());
+                        if self.is_catalog_loading() {
+                            if !self.catalog_started_for_subscribe {
+                                self.catalog_refresh_queued = true;
+                            }
+                        } else {
+                            self.catalog_started_for_subscribe = true;
+                            let frame = self.request_full_catalog();
+                            if !frame.is_empty() {
+                                outcome.outbound_tx_frames.push(frame);
+                            }
+                        }
                         outcome.transfer_updated = true;
                     }
                 } else if state == 0 || state == 2 {
@@ -216,7 +226,10 @@ impl TransportSession {
                         }
                     }
                     if state == 0 {
-                        outcome.outbound_tx_frames.push(self.request_full_catalog());
+                        let frame = self.request_full_catalog();
+                        if !frame.is_empty() {
+                            outcome.outbound_tx_frames.push(frame);
+                        }
                     }
                     outcome.transfer_updated = true;
                 }

@@ -37,10 +37,10 @@ impl KoeRuntime {
                         || req.evidence.iter().any(|e| e.source.record_id == id))
             })
         };
-        let record_pending = self
-            .workspace()
-            .record(id)
-            .is_some_and(|r| matches!(r.analysis, AnalysisState::Pending { .. }));
+        let record_pending = self.workspace().record(id).is_some_and(|r| {
+            matches!(r.analysis, AnalysisState::Pending { .. })
+                || matches!(r.live_summary, AnalysisState::Pending { .. })
+        });
         let pending_work_busy = self.pending.values().any(|work| match work {
             PendingWork::Transcription(key)
             | PendingWork::Summary(key)
@@ -549,5 +549,51 @@ mod tests {
         .unwrap();
         assert_eq!(quit["lifecycle"]["quitPhase"], "ready");
         assert_eq!(quit["lifecycle"]["keepAwake"], false);
+    }
+
+    #[test]
+    fn batch_trash_skips_record_with_pending_live_summary_and_trashes_siblings() {
+        let dir = Sandbox::new();
+        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+        let now = 1_800_000_000u64;
+
+        runtime
+            .commit(|w| {
+                w.insert_record(
+                    "rec-busy".into(),
+                    "Busy Live Summary".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    now,
+                    1_000,
+                )?;
+                w.append_transcript("rec-busy", "live summary text", 0, 1_000, "asr")?;
+                let _ = w.begin_live_summary("rec-busy")?;
+                w.insert_record(
+                    "rec-idle".into(),
+                    "Idle Sibling".into(),
+                    RecordOrigin::Note,
+                    0,
+                    now + 1,
+                    0,
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(runtime.ensure_record_deletable("rec-busy").is_err());
+
+        let snap: Value = serde_json::from_str(&runtime.dispatch_json(
+            &json!({
+                "type": "batch_trash_records",
+                "recordIds": ["rec-busy", "rec-idle"]
+            })
+            .to_string(),
+            now + 2,
+        ))
+        .unwrap();
+        assert!(snap["error"].is_null(), "{}", snap["error"]);
+        assert!(runtime.workspace().record("rec-busy").unwrap().is_live());
+        assert!(runtime.workspace().record("rec-idle").unwrap().is_trashed());
     }
 }

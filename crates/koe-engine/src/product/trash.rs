@@ -149,6 +149,12 @@ impl ProductRecord {
 }
 
 impl ProductWorkspace {
+    fn is_record_busy(&self, id: &str, record: &ProductRecord) -> bool {
+        matches!(record.analysis, AnalysisState::Pending { .. })
+            || matches!(record.live_summary, AnalysisState::Pending { .. })
+            || pending_ask_references(&self.pending_ask, id)
+    }
+
     /// Enables or clears accidental-deletion archive protection on a live recording.
     pub fn set_record_archived(&mut self, id: &str, archived: bool) -> Result<(), ProductError> {
         let record = self
@@ -172,22 +178,19 @@ impl ProductWorkspace {
     pub fn trash_record(&mut self, id: &str, now_ms: u64) -> Result<(), ProductError> {
         let trashed_at_ms = NonZeroU64::new(now_ms)
             .ok_or_else(|| ProductError::InvalidInput("删除时间无效".to_string()))?;
-        let record = self
-            .records
-            .get_mut(id)
-            .ok_or(ProductError::UnknownRecord)?;
+        let record = self.records.get(id).ok_or(ProductError::UnknownRecord)?;
         if record.is_trashed() {
             return Ok(());
         }
         if record.is_archived() {
             return Err(ProductError::RecordArchived);
         }
-        if matches!(record.analysis, AnalysisState::Pending { .. })
-            || pending_ask_references(&self.pending_ask, id)
-        {
+        if self.is_record_busy(id, record) {
             return Err(ProductError::Busy);
         }
-        record.retention = RecordRetention::Trashed { trashed_at_ms };
+        if let Some(record) = self.records.get_mut(id) {
+            record.retention = RecordRetention::Trashed { trashed_at_ms };
+        }
         if matches!(&self.ask_scope, SearchScope::Record(rid) if rid == id) {
             self.ask_scope = SearchScope::All;
         }
@@ -216,9 +219,7 @@ impl ProductWorkspace {
             RecordRetention::Active => return Err(ProductError::InvalidTransition),
             RecordRetention::Trashed { .. } => {}
         }
-        if matches!(record.analysis, AnalysisState::Pending { .. })
-            || pending_ask_references(&self.pending_ask, id)
-        {
+        if self.is_record_busy(id, record) {
             return Err(ProductError::Busy);
         }
         Ok(self.reconcile_purged_records(BTreeSet::from([id.to_string()])))
@@ -229,9 +230,7 @@ impl ProductWorkspace {
         let mut trashed_ids = BTreeSet::new();
         for (id, record) in &self.records {
             if record.is_trashed() {
-                if matches!(record.analysis, AnalysisState::Pending { .. })
-                    || pending_ask_references(&self.pending_ask, id)
-                {
+                if self.is_record_busy(id, record) {
                     return Err(ProductError::Busy);
                 }
                 trashed_ids.insert(id.clone());
@@ -249,9 +248,7 @@ impl ProductWorkspace {
             .records
             .iter()
             .filter(|(id, record)| {
-                record.retention.is_expired_at(now_ms)
-                    && !matches!(record.analysis, AnalysisState::Pending { .. })
-                    && !pending_ask_references(&self.pending_ask, id)
+                record.retention.is_expired_at(now_ms) && !self.is_record_busy(id, record)
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -265,9 +262,7 @@ impl ProductWorkspace {
     #[must_use]
     pub fn has_expired_trash(&self, now_ms: u64) -> bool {
         self.records.iter().any(|(id, record)| {
-            record.retention.is_expired_at(now_ms)
-                && !matches!(record.analysis, AnalysisState::Pending { .. })
-                && !pending_ask_references(&self.pending_ask, id)
+            record.retention.is_expired_at(now_ms) && !self.is_record_busy(id, record)
         })
     }
 

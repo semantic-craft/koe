@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+const MAX_JSON_DEPTH: usize = 64;
+
 /// Zero-dependency JSON DOM value with canonical `BTreeMap` key ordering.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonValue {
@@ -21,7 +23,7 @@ impl JsonValue {
     /// Parses a JSON string into a [`JsonValue`].
     pub fn parse(raw: &str) -> Result<Self, String> {
         let mut parser = JsonParser::new(raw);
-        let value = parser.parse_value()?;
+        let value = parser.parse_value(0)?;
         parser.skip_ws();
         if !parser.is_eof() {
             return Err(format!("trailing characters at byte {}", parser.pos));
@@ -190,14 +192,14 @@ impl<'a> JsonParser<'a> {
         self.bytes.get(self.pos).copied()
     }
 
-    fn parse_value(&mut self) -> Result<JsonValue, String> {
+    fn parse_value(&mut self, depth: usize) -> Result<JsonValue, String> {
         self.skip_ws();
         let Some(b) = self.peek() else {
             return Err("unexpected end of JSON".to_string());
         };
         match b {
-            b'{' => self.parse_object(),
-            b'[' => self.parse_array(),
+            b'{' => self.parse_object(depth + 1),
+            b'[' => self.parse_array(depth + 1),
             b'"' => self.parse_string().map(JsonValue::String),
             b't' => {
                 if self.src[self.pos..].starts_with("true") {
@@ -231,7 +233,10 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object(&mut self) -> Result<JsonValue, String> {
+    fn parse_object(&mut self, depth: usize) -> Result<JsonValue, String> {
+        if depth > MAX_JSON_DEPTH {
+            return Err("JSON nesting depth exceeded".to_string());
+        }
         self.pos += 1;
         self.skip_ws();
         let mut map = BTreeMap::new();
@@ -250,7 +255,7 @@ impl<'a> JsonParser<'a> {
                 return Err(format!("expected ':' at {}", self.pos));
             }
             self.pos += 1;
-            let val = self.parse_value()?;
+            let val = self.parse_value(depth)?;
             map.insert(key, val);
             self.skip_ws();
             match self.peek() {
@@ -267,7 +272,10 @@ impl<'a> JsonParser<'a> {
         Ok(JsonValue::Object(map))
     }
 
-    fn parse_array(&mut self) -> Result<JsonValue, String> {
+    fn parse_array(&mut self, depth: usize) -> Result<JsonValue, String> {
+        if depth > MAX_JSON_DEPTH {
+            return Err("JSON nesting depth exceeded".to_string());
+        }
         self.pos += 1;
         self.skip_ws();
         let mut items = Vec::new();
@@ -276,7 +284,7 @@ impl<'a> JsonParser<'a> {
             return Ok(JsonValue::Array(items));
         }
         loop {
-            let val = self.parse_value()?;
+            let val = self.parse_value(depth)?;
             items.push(val);
             self.skip_ws();
             match self.peek() {
@@ -360,12 +368,25 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_hex4(&mut self) -> Result<u16, String> {
-        if self.pos + 4 > self.bytes.len() {
+        let Some(hex_bytes) = self
+            .pos
+            .checked_add(4)
+            .and_then(|end| self.bytes.get(self.pos..end))
+        else {
             return Err("truncated \\uXXXX escape".to_string());
+        };
+        let mut value = 0u16;
+        for &byte in hex_bytes {
+            let nibble = match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'a'..=b'f' => byte - b'a' + 10,
+                b'A'..=b'F' => byte - b'A' + 10,
+                _ => return Err("invalid hex escape".to_string()),
+            };
+            value = (value << 4) | u16::from(nibble);
         }
-        let hex = &self.src[self.pos..self.pos + 4];
         self.pos += 4;
-        u16::from_str_radix(hex, 16).map_err(|e| format!("invalid hex escape: {e}"))
+        Ok(value)
     }
 
     fn parse_number(&mut self) -> Result<JsonValue, String> {
@@ -421,4 +442,49 @@ pub fn extract_json_object(raw: &str) -> &str {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsonValue;
+
+    #[test]
+    fn parse_rejects_deeply_nested_arrays() {
+        let depth = 200;
+        let input = format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+        let err = JsonValue::parse(&input).expect_err("deeply nested array must fail");
+        assert_eq!(err, "JSON nesting depth exceeded");
+    }
+
+    #[test]
+    fn parse_rejects_deeply_nested_objects() {
+        let depth = 200;
+        let input = format!(
+            "{}0{}",
+            "{\"a\":".repeat(depth),
+            "}".repeat(depth)
+        );
+        let err = JsonValue::parse(&input).expect_err("deeply nested object must fail");
+        assert_eq!(err, "JSON nesting depth exceeded");
+    }
+
+    #[test]
+    fn parse_rejects_non_ascii_unicode_escape_without_panicking() {
+        assert!(JsonValue::parse(r#""\u中文""#).is_err());
+        assert!(JsonValue::parse(r#""\u中""#).is_err());
+        assert_eq!(
+            JsonValue::parse(r#""\u0041\u4e2d""#).expect("valid hex escapes"),
+            JsonValue::String("A中".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_allows_exact_max_depth_and_rejects_one_deeper() {
+        let ok = format!("{}{}", "[".repeat(64), "]".repeat(64));
+        assert!(JsonValue::parse(&ok).is_ok());
+
+        let too_deep = format!("{}{}", "[".repeat(65), "]".repeat(65));
+        let err = JsonValue::parse(&too_deep).expect_err("depth 65 must fail");
+        assert_eq!(err, "JSON nesting depth exceeded");
+    }
 }

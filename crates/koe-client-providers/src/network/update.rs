@@ -66,7 +66,7 @@ pub fn validate_update_endpoint(endpoint: &str) -> Result<bool, String> {
     if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
         return Err("更新检查地址不能包含账户、密码或片段".into());
     }
-    let is_loopback = is_loopback_url(&url);
+    let is_loopback = super::is_loopback_host(&url);
     if is_loopback {
         if url.scheme() != "http" && url.scheme() != "https" {
             return Err("本机更新测试地址必须使用 HTTP 或 HTTPS".into());
@@ -352,17 +352,6 @@ fn is_allowed_github_api_path(path: &str) -> bool {
     false
 }
 
-fn is_loopback_url(url: &reqwest::Url) -> bool {
-    url.host_str().is_some_and(|raw_host| {
-        let host = raw_host.trim_end_matches('.');
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .trim_matches(['[', ']'])
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    })
-}
-
 fn sanitize_release_page_url(raw: &str, allow_loopback: bool) -> Option<String> {
     if has_unsafe_raw_path_tokens(raw) {
         return None;
@@ -372,7 +361,7 @@ fn sanitize_release_page_url(raw: &str, allow_loopback: bool) -> Option<String> 
         return None;
     }
     if allow_loopback
-        && is_loopback_url(&url)
+        && super::is_loopback_host(&url)
         && (url.scheme() == "http" || url.scheme() == "https")
     {
         return Some(url.into());
@@ -395,7 +384,7 @@ fn sanitize_download_url(raw: &str, allow_loopback: bool) -> Option<String> {
         return None;
     }
     if allow_loopback
-        && is_loopback_url(&url)
+        && super::is_loopback_host(&url)
         && (url.scheme() == "http" || url.scheme() == "https")
     {
         return Some(url.into());

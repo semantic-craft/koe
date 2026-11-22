@@ -32,6 +32,7 @@ pub(super) struct SpeechSession {
     pub(in crate::speech) input_closed: bool,
     pub(in crate::speech) source: Option<CaptureOrigin>,
     pub(in crate::speech) file_audio: Option<VecDeque<u8>>,
+    pub(in crate::speech) live_draft: String,
     pub(in crate::speech) results: VecDeque<LiveEvent>,
     pub(super) minutes_schedule: crate::live_minutes::LiveMinutesSchedule,
     pub saved: bool,
@@ -45,10 +46,13 @@ impl SpeechSession {
     }
 
     pub(super) fn drafts(&self) -> impl Iterator<Item = &str> {
-        self.operations
-            .values()
-            .map(|op| op.draft.as_str())
-            .filter(|text| !text.is_empty())
+        let live = (!self.live_draft.is_empty()).then_some(self.live_draft.as_str());
+        live.into_iter().chain(
+            self.operations
+                .values()
+                .map(|op| op.draft.as_str())
+                .filter(|text| !text.is_empty()),
+        )
     }
 }
 
@@ -157,6 +161,7 @@ impl KoeRuntime {
                 input_closed: false,
                 source,
                 file_audio: None,
+                live_draft: String::new(),
                 results: VecDeque::new(),
                 minutes_schedule: Default::default(),
                 saved: false,
@@ -183,6 +188,7 @@ impl KoeRuntime {
             input_closed: false,
             source,
             file_audio: None,
+            live_draft: String::new(),
             results: VecDeque::new(),
             minutes_schedule: Default::default(),
             saved: false,

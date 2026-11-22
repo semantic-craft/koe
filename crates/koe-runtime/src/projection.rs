@@ -37,17 +37,23 @@ impl KoeRuntime {
                 .spine
                 .segments()
                 .last()
-                .map(|s| s.text.chars().take(100).collect::<String>())
-                .unwrap_or_default()
+                .map(|s| s.text.as_str())
         } else {
             record
                 .aggregate
                 .spine
                 .segments()
                 .first()
-                .map(|s| s.text.chars().take(100).collect::<String>())
-                .unwrap_or_default()
-        };
+                .map(|s| s.text.as_str())
+        }
+        .or_else(|| {
+            self.captures
+                .sessions
+                .get(&record.aggregate.recording_id)
+                .and_then(|s| s.drafts().next())
+        })
+        .map(|text| text.chars().take(100).collect::<String>())
+        .unwrap_or_default();
         json!({
             "id": record.aggregate.recording_id,
             "title": record.title,

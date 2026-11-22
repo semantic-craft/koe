@@ -838,9 +838,38 @@ impl KoeRuntime {
             return Value::Null;
         };
         let lanes: BTreeMap<_,_> = m.lanes.iter().map(|(name,l)| (name, json!({"nextSequence":l.next_sequence,"sampleRate":l.sample_rate,"durationMs":l.asset.as_ref().map_or(0,|a|a.duration_ms()),"stopped":l.producer_stopped,"error":l.save_error,"interruption":l.interruption,"started":l.sample_rate.is_some()}))).collect();
-        let mic = &m.lanes["microphone"];
+        let next_sequence = m.lanes.get("microphone").map_or(0, |mic| mic.next_sequence);
         json!({"recordId":m.record_id,"sessionId":m.session_id,"epoch":m.epoch,"clockNs":m.clock_ns,"lane":"microphone","inputId":m.input_id,"inputLabel":status.input_label,"inputBadge":status.input_badge,
-            "phase":status.phase,"nextSequence":mic.next_sequence,"durationMs":status.duration_ms,"level":m.level,"error":m.save_error,"interruption":status.interruption,
+            "phase":status.phase,"nextSequence":next_sequence,"durationMs":status.duration_ms,"level":m.level,"error":m.save_error,"interruption":status.interruption,
             "includeSystem":m.lanes.contains_key("system"),"lanes":lanes})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn microphone_json_does_not_panic_when_microphone_lane_is_missing() {
+        let dir = std::env::temp_dir().join(format!(
+            "koe-mic-missing-lane-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut runtime = KoeRuntime::open(&dir).unwrap();
+        let now = 1_800_000_000;
+        let _ = runtime.dispatch_json(r#"{"type":"start_microphone","inputId":""}"#, now);
+        runtime
+            .microphone
+            .as_mut()
+            .expect("active microphone session")
+            .lanes
+            .remove("microphone");
+        let status = runtime.microphone_status();
+        let projected = runtime.microphone_json(status.as_ref());
+        assert_eq!(projected["nextSequence"], 0);
+        drop(runtime);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

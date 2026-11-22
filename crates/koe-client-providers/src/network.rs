@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use koe_engine::product::{
@@ -12,6 +13,7 @@ mod http_asr;
 mod live;
 mod update;
 
+pub use http_asr::validate_remote_http_url;
 pub use live::{LiveEvent, LiveTranscription};
 pub use update::{
     parse_release_payload, validate_update_endpoint, ReleaseAsset, RemoteRelease,
@@ -431,6 +433,25 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
     validate_endpoint_inner(config, secure, local, true)
 }
 
+pub(super) fn is_loopback_host(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let trimmed = host.trim_end_matches('.');
+    if trimmed.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    trimmed
+        .trim_matches(['[', ']'])
+        .parse::<IpAddr>()
+        .is_ok_and(|ip| match ip {
+            IpAddr::V4(v4) => v4.is_loopback(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+            }
+        })
+}
+
 fn validate_endpoint_inner(
     config: &ProviderConfig,
     secure: &str,
@@ -444,13 +465,7 @@ fn validate_endpoint_inner(
     if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
         return Err("云端地址不能包含账户、密码或片段".into());
     }
-    let loopback = url.host_str().is_some_and(|host| {
-        host == "localhost"
-            || host
-                .trim_matches(['[', ']'])
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
+    let loopback = is_loopback_host(&url);
     let keyless_local_http = secure == "https" && url.scheme() == "http" && loopback;
     if config.api_key.trim().is_empty() && !keyless_local_http {
         return Err("尚未配置云端 API Key".into());

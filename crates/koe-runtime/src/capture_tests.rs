@@ -499,6 +499,7 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let (allow_interim_tx, allow_interim_rx) = std::sync::mpsc::channel();
     let server = thread::spawn(move || {
         let stream = accept_before_deadline(&listener);
         stream.set_nonblocking(false).unwrap();
@@ -521,6 +522,7 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
         let Message::Binary(_) = socket.read().unwrap() else {
             panic!("expected first live PCM chunk");
         };
+        allow_interim_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         socket
             .send(Message::Text(
                 json!({"header":{"event":"result-generated","task_id":task},
@@ -576,14 +578,35 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
     );
 
     runtime.ingest_ble_chunk(&encrypted_slices(0..1), NOW);
+    let revision_before_interim = runtime.workspace().revision();
+    allow_interim_tx.send(()).unwrap();
     poll_until(&mut runtime, |runtime| {
+        runtime.snapshot(NOW)["liveCaption"]["text"] == FIRST
+    });
+    let snap_interim = runtime.snapshot(NOW);
+    assert_eq!(snap_interim["liveCaption"]["text"], FIRST);
+    assert_eq!(snap_interim["records"][0]["preview"], FIRST);
+    assert!(
         runtime
             .workspace()
             .record(&live_id)
-            .is_some_and(|r| !r.aggregate.spine.is_empty())
-    });
-    let snap_interim = runtime.snapshot(NOW);
-    assert_eq!(snap_interim["records"][0]["preview"], FIRST);
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty(),
+        "interim sentence must not mutate persisted spine"
+    );
+    assert_eq!(
+        runtime.workspace().revision(),
+        revision_before_interim,
+        "interim sentence must not bump workspace revision"
+    );
+    assert!(
+        !fs::read_to_string(dir.0.join("product-workspace.json"))
+            .unwrap()
+            .contains(FIRST),
+        "interim sentence must not persist to disk"
+    );
     assert!(snap_interim["device"]["liveDurationMs"].as_u64().unwrap() >= 20);
 
     runtime.ingest_ble_chunk(&encrypted_slices(1..2), NOW);
@@ -594,9 +617,9 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
             .unwrap()
             .aggregate
             .spine
-            .segments()[0]
-            .text
-            == REVISED
+            .segments()
+            .first()
+            .is_some_and(|s| s.text == REVISED)
     });
     let seg = &runtime
         .workspace()
@@ -606,6 +629,7 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
         .spine
         .segments()[0];
     assert_eq!(seg.end_ms, 40);
+    assert!(runtime.workspace().revision() > revision_before_interim);
 
     command(
         &mut runtime,
@@ -1368,6 +1392,134 @@ fn all_day_end_restores_quick_note_for_next_physical_recording() {
     runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x81, &[1]), NOW + 3);
     runtime.ingest_ble_chunk(&file_head_rx(964, 0), NOW + 3);
     assert_eq!(runtime.snapshot(NOW + 3)["activeCapture"]["mode"], "quick_note");
+}
+
+#[test]
+fn cloud_interim_sentences_do_not_persist_or_wipe_live_minutes() {
+    let dir = Sandbox::new();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let (allow_interim_tx, allow_interim_rx) = std::sync::mpsc::channel();
+    let server = thread::spawn(move || {
+        let stream = accept_before_deadline(&listener);
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut socket = accept(stream).unwrap();
+        let run: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        let task = run["header"]["task_id"].as_str().unwrap();
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"task-started","task_id":task},"payload":{}})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
+        let Message::Binary(_) = socket.read().unwrap() else {
+            panic!("expected first PCM chunk");
+        };
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"result-generated","task_id":task},
+                    "payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":true,
+                        "begin_time":0,"end_time":40,"text":FIRST}}}})
+                .to_string()
+                .into(),
+            ))
+            .unwrap();
+        allow_interim_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let Message::Binary(_) = socket.read().unwrap() else {
+            panic!("expected second PCM chunk");
+        };
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"result-generated","task_id":task},
+                    "payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":false,
+                        "begin_time":0,"end_time":60,"text":"Interim revision must stay transient"}}}})
+                .to_string()
+                .into(),
+            ))
+            .unwrap();
+        let finish: Value =
+            serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(finish["header"]["action"], "finish-task");
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"task-finished","task_id":task},"payload":{}})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
+    });
+
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","apiKey":"local-capture-fixture","model":"fixture","asrEndpoint":endpoint}),
+    );
+    prepare_capture(&mut runtime, 709, true);
+    runtime.ingest_ble_chunk(&slices(0..1), NOW);
+    poll_until(&mut runtime, |runtime| {
+        runtime
+            .workspace()
+            .records()
+            .values()
+            .any(|record| !record.aggregate.spine.is_empty())
+    });
+    let id = runtime.workspace().records().keys().next().unwrap().clone();
+    let snapshot_spine = runtime.workspace().record(&id).unwrap().aggregate.spine.clone();
+    let live_key = runtime
+        .store
+        .transact(|w| w.begin_live_summary(&id))
+        .unwrap();
+    let minutes = koe_engine::minutes::parse_meeting_minutes_json(
+        r#"{"schemaVersion":2,"title":"Live","overview":"The first live sentence.","topics":[],"decisions":[],"actions":[],"questions":[]}"#,
+        &snapshot_spine,
+    )
+    .unwrap();
+    runtime
+        .store
+        .transact(|w| w.complete_live_summary(&live_key, &snapshot_spine, minutes.clone()))
+        .unwrap();
+
+    let revision_before = runtime.workspace().revision();
+    allow_interim_tx.send(()).unwrap();
+    runtime.ingest_ble_chunk(&slices(1..2), NOW);
+    poll_until(&mut runtime, |runtime| {
+        runtime.snapshot(NOW)["liveCaption"]["text"] == "Interim revision must stay transient"
+    });
+
+    let record = runtime.workspace().record(&id).unwrap();
+    assert_eq!(runtime.workspace().revision(), revision_before);
+    assert_eq!(record.aggregate.spine.len(), 1);
+    assert_eq!(record.aggregate.spine.segments()[0].text, FIRST);
+    assert_eq!(record.aggregate.minutes.as_ref(), Some(&minutes));
+    assert!(matches!(record.live_summary, AnalysisState::Ready { .. }));
+    assert!(
+        !fs::read_to_string(dir.0.join("product-workspace.json"))
+            .unwrap()
+            .contains("Interim revision must stay transient")
+    );
+
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","apiKey":"","model":"fixture"}),
+    );
+    command(&mut runtime, json!({"type":"device_stop"}));
+    runtime.poll_timers(2_000, NOW + 2);
+    poll_until(&mut runtime, |runtime| {
+        recording_assets::audio_path(&dir.0, &id).unwrap().exists()
+            && !matches!(
+                runtime.workspace().record(&id).unwrap().analysis,
+                AnalysisState::Pending { .. }
+            )
+    });
+    server.join().unwrap();
 }
 
 #[path = "all_day_disconnect_tests.rs"]

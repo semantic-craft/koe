@@ -1229,3 +1229,51 @@
         assert_eq!(session.transfer.received_wire_bytes, 0);
         assert!(session.opus_buffer.is_empty());
     }
+
+    #[test]
+    fn one_byte_1a06_during_catalog_loading_never_emits_empty_tx_frame() {
+        let mut session = TransportSession::new();
+        assert!(!session.request_full_catalog().is_empty());
+        assert!(session.is_catalog_loading());
+
+        let start_rx = TransportSession::build_rx_frame(0x1A, 0x06, &[0x01]);
+        let start_out = session.ingest_ble_chunk(&start_rx, 1_700_000_200);
+        assert!(
+            start_out.outbound_tx_frames.iter().all(|f| !f.is_empty()),
+            "1A/06 state=1 during catalog loading emitted empty BLE TX frame: {:?}",
+            start_out.outbound_tx_frames
+        );
+
+        let stop_rx = TransportSession::build_rx_frame(0x1A, 0x06, &[0x00]);
+        let stop_out = session.ingest_ble_chunk(&stop_rx, 1_700_000_201);
+        assert!(
+            stop_out.outbound_tx_frames.iter().all(|f| !f.is_empty()),
+            "1A/06 state=0 during catalog loading emitted empty BLE TX frame: {:?}",
+            stop_out.outbound_tx_frames
+        );
+    }
+
+    #[test]
+    fn duplicate_one_byte_1a06_start_does_not_queue_spurious_catalog_refresh() {
+        let mut session = TransportSession::new();
+        let start_rx = TransportSession::build_rx_frame(0x1A, 0x06, &[0x01]);
+
+        let first = session.ingest_ble_chunk(&start_rx, 1_700_000_300);
+        assert_eq!(
+            first.outbound_tx_frames,
+            vec![DeviceCommands::list_files_with_end_time(0)]
+        );
+        assert!(session.is_catalog_loading());
+
+        let dup = session.ingest_ble_chunk(&start_rx, 1_700_000_301);
+        assert!(dup.outbound_tx_frames.is_empty());
+
+        let empty_page = build_1b0e_page(0, &[]);
+        let completed = session.ingest_ble_chunk(&empty_page, 1_700_000_302);
+        assert!(
+            completed.outbound_tx_frames.is_empty(),
+            "duplicate 1A/06 state=1 spuriously queued a second catalog refresh: {:?}",
+            completed.outbound_tx_frames
+        );
+        assert!(!session.is_catalog_loading());
+    }

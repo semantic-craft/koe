@@ -69,3 +69,103 @@ fn model_directory_creation_failure_is_reported() {
     assert!(OfflineSpeechWorker::new(root.clone()).is_err());
     std::fs::remove_file(root).unwrap();
 }
+
+#[test]
+fn cancelled_queued_prepare_preserves_previously_loaded_session() {
+    let control = Control::new();
+    let queued_epoch = *control.epoch.borrow();
+    let mut loaded = Some("existing-session");
+    control.cancel();
+
+    let event = handle_prepare(
+        &mut loaded,
+        &control,
+        queued_epoch,
+        "sensevoice-small".into(),
+        |_| panic!("cancelled prepare must not invoke artifact fetch"),
+        |_, _: ()| panic!("cancelled prepare must not invoke model load"),
+    );
+
+    assert!(matches!(
+        event,
+        OfflineSpeechEvent::PreparationFailed { ref model_id, ref error }
+            if model_id == "sensevoice-small" && error.contains("cancelled")
+    ));
+    assert_eq!(
+        loaded,
+        Some("existing-session"),
+        "cancelled queued prepare must not unload an already-loaded session"
+    );
+
+    let root = root();
+    let worker = OfflineSpeechWorker::new(root.clone()).unwrap();
+    let stale_epoch = *worker.control.epoch.borrow();
+    worker.cancel();
+    {
+        let mut events = lock_unpoisoned(&worker.events);
+        worker
+            .commands
+            .try_send(Command {
+                epoch: stale_epoch,
+                task: Task::Prepare("sensevoice-small".into()),
+            })
+            .unwrap();
+        events.outstanding += 1;
+    }
+    assert!(matches!(
+        &terminal(&worker)[..],
+        [OfflineSpeechEvent::PreparationFailed { model_id, error }]
+            if model_id == "sensevoice-small" && error.contains("cancelled")
+    ));
+    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
+    drop(worker);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn failed_or_mid_download_cancelled_prepare_preserves_previously_loaded_session() {
+    let control = Control::new();
+    let epoch = *control.epoch.borrow();
+    let mut loaded = Some("existing-session");
+
+    let failed = handle_prepare(
+        &mut loaded,
+        &control,
+        epoch,
+        "qwen3-asr-0.6b".into(),
+        |_| Err::<PathBuf, _>("download failed".into()),
+        |_, _| panic!("failed fetch must not invoke model load"),
+    );
+    assert!(matches!(
+        failed,
+        OfflineSpeechEvent::PreparationFailed { ref model_id, ref error }
+            if model_id == "qwen3-asr-0.6b" && error == "download failed"
+    ));
+    assert_eq!(
+        loaded,
+        Some("existing-session"),
+        "download failure must not unload an already-loaded session"
+    );
+
+    let cancelled_mid_download = handle_prepare(
+        &mut loaded,
+        &control,
+        epoch,
+        "qwen3-asr-0.6b".into(),
+        |_| {
+            control.cancel();
+            Ok(PathBuf::from("/tmp/fake.gguf"))
+        },
+        |_, _| panic!("cancelled prepare after fetch must not invoke model load"),
+    );
+    assert!(matches!(
+        cancelled_mid_download,
+        OfflineSpeechEvent::PreparationFailed { ref model_id, ref error }
+            if model_id == "qwen3-asr-0.6b" && error.contains("cancelled")
+    ));
+    assert_eq!(
+        loaded,
+        Some("existing-session"),
+        "mid-download cancellation must not unload an already-loaded session"
+    );
+}

@@ -10,9 +10,8 @@ impl KoeRuntime {
             return Value::Null;
         };
         let text = s
-            .operations
-            .values()
-            .find_map(|o| (!o.draft.is_empty()).then_some(o.draft.as_str()))
+            .drafts()
+            .next()
             .or_else(|| {
                 self.workspace()
                     .record(id)?
@@ -57,6 +56,7 @@ impl KoeRuntime {
         {
             session.stream = None;
             session.deferred_batch = false;
+            session.live_draft.clear();
             session.results.clear();
             session.terminal = true;
             session.success = false;
@@ -90,6 +90,14 @@ impl KoeRuntime {
             }
             while let Some(event) = s.results.front() {
                 let result = match event {
+                    LiveEvent::Interim { segment, .. } => {
+                        if s.live_draft != segment.text {
+                            s.live_draft.clone_from(&segment.text);
+                            changed = true;
+                        }
+                        s.results.pop_front();
+                        continue;
+                    }
                     LiveEvent::Final { sequence, segment } => self
                         .accept_speech_final(
                             &s.key,
@@ -122,10 +130,13 @@ impl KoeRuntime {
                         changed = true;
                         self.error = None;
                         match event {
+                            LiveEvent::Interim { .. } => {}
                             LiveEvent::Final { .. } => {
+                                s.live_draft.clear();
                                 s.minutes_schedule.observe_final();
                             }
                             LiveEvent::Finished => {
+                                s.live_draft.clear();
                                 s.success = self
                                     .workspace()
                                     .record(id)
@@ -134,6 +145,7 @@ impl KoeRuntime {
                                 s.stream = None;
                             }
                             LiveEvent::Failed(error) => {
+                                s.live_draft.clear();
                                 self.error = Some(error.clone());
                                 s.terminal = true;
                                 s.stream = None;
@@ -148,6 +160,7 @@ impl KoeRuntime {
                         | ProductError::UnknownRecord
                         | ProductError::RecordTrashed,
                     )) => {
+                        s.live_draft.clear();
                         s.terminal = true;
                         s.stream = None;
                         s.results.clear();

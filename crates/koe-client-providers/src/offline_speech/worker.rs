@@ -128,27 +128,24 @@ impl OfflineSpeechWorker {
                         break;
                     }
                     let event = match command.task {
-                        Task::Prepare(model_id) => {
-                            loaded = None;
-                            let result = prepare(
-                                &root,
-                                &model_id,
-                                &runtime,
-                                &client,
-                                &worker_control,
-                                command.epoch,
-                                &worker_events,
-                            );
-                            match result {
-                                Ok(session) => {
-                                    loaded = Some(session);
-                                    OfflineSpeechEvent::Ready { model_id }
-                                }
-                                Err(error) => {
-                                    OfflineSpeechEvent::PreparationFailed { model_id, error }
-                                }
-                            }
-                        }
+                        Task::Prepare(model_id) => handle_prepare(
+                            &mut loaded,
+                            &worker_control,
+                            command.epoch,
+                            model_id,
+                            |id| {
+                                fetch_artifact(
+                                    &root,
+                                    id,
+                                    &runtime,
+                                    &client,
+                                    &worker_control,
+                                    command.epoch,
+                                    &worker_events,
+                                )
+                            },
+                            load_session,
+                        ),
                         Task::Transcribe(operation_id, pcm16) => {
                             match transcribe(
                                 loaded.as_mut(),
@@ -241,7 +238,35 @@ impl Drop for OfflineSpeechWorker {
     }
 }
 
-fn prepare(
+fn handle_prepare<P, S>(
+    loaded: &mut Option<S>,
+    control: &Control,
+    epoch: u64,
+    model_id: String,
+    fetch: impl FnOnce(&str) -> Result<P, String>,
+    load: impl FnOnce(&str, P) -> Result<S, String>,
+) -> OfflineSpeechEvent {
+    let artifact = match control.check(epoch).and_then(|()| fetch(&model_id)) {
+        Ok(artifact) => artifact,
+        Err(error) => return OfflineSpeechEvent::PreparationFailed { model_id, error },
+    };
+    if let Err(error) = control.check(epoch) {
+        return OfflineSpeechEvent::PreparationFailed { model_id, error };
+    }
+    *loaded = None;
+    match load(&model_id, artifact).and_then(|session| {
+        control.check(epoch)?;
+        Ok(session)
+    }) {
+        Ok(session) => {
+            *loaded = Some(session);
+            OfflineSpeechEvent::Ready { model_id }
+        }
+        Err(error) => OfflineSpeechEvent::PreparationFailed { model_id, error },
+    }
+}
+
+fn fetch_artifact(
     root: &std::path::Path,
     model_id: &str,
     runtime: &tokio::runtime::Runtime,
@@ -249,10 +274,10 @@ fn prepare(
     control: &Control,
     epoch: u64,
     events: &Mutex<Events>,
-) -> Result<Session, String> {
+) -> Result<PathBuf, String> {
     control.check(epoch)?;
     let artifact = artifact_for(model_id)?;
-    let path = runtime.block_on(ensure_artifact(
+    runtime.block_on(ensure_artifact(
         root,
         &artifact,
         client,
@@ -265,8 +290,10 @@ fn prepare(
                 total_bytes: artifact.bytes,
             });
         },
-    ))?;
-    control.check(epoch)?;
+    ))
+}
+
+fn load_session(model_id: &str, path: PathBuf) -> Result<Session, String> {
     transcribe_cpp::init_backends_with(
         None::<&std::path::Path>,
         transcribe_cpp::BackendMask::for_backend(Backend::Cpu),
@@ -280,11 +307,9 @@ fn prepare(
         },
     )
     .map_err(|error| format!("load {model_id}: {error}"))?;
-    let session = model
+    model
         .session()
-        .map_err(|error| format!("create {model_id} session: {error}"))?;
-    control.check(epoch)?;
-    Ok(session)
+        .map_err(|error| format!("create {model_id} session: {error}"))
 }
 
 fn transcribe(

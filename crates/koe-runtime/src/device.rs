@@ -137,7 +137,10 @@ impl DeviceRuntime {
         self.auto_pull_attempted.clear();
         if self.session.session_key.is_some() {
             self.outbound.push(DeviceCommands::get_device_info());
-            self.outbound.push(self.session.request_full_catalog());
+            let frame = self.session.request_full_catalog();
+            if !frame.is_empty() {
+                self.outbound.push(frame);
+            }
         }
     }
 
