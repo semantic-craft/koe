@@ -139,14 +139,6 @@ public enum CaptureMode: String, Codable, Sendable {
         }
     }
 
-    public var purpose: String {
-        switch self {
-        case .quickNote: "快速留下一段想法"
-        case .allDay: "持续记录，随时回看"
-        case .meeting: "记录讨论并整理纪要"
-        }
-    }
-
     public var icon: String {
         section.icon
     }

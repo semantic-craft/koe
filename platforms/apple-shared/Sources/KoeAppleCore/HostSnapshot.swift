@@ -324,18 +324,6 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let clockNs: UInt64?
     public let lanes: [String: CaptureLaneSnapshot]
 
-    public var phaseSummaryLabel: String {
-        switch phase {
-        case "paused": "已暂停"
-        case "saving": "正在保存"
-        case "stopping": "正在停止并保存"
-        case "pausing": "正在暂停"
-        case "cancelling": "正在取消"
-        case "starting": "等待权限"
-        default: "正在录音"
-        }
-    }
-
     private enum CodingKeys: String, CodingKey {
         case recordId, sessionId, lane, inputId, inputLabel, inputBadge, phase, nextSequence, durationMs
         case level, error, interruption, epoch, clockNs, lanes
@@ -397,14 +385,6 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
         case selectedRecordId, focusSegmentId, records
         case trashRecords, undoTrash, detail, tasks, memories, ask
         case device, provider, playback, error, notice
-    }
-
-    public var activeLiveRecord: RecordSnapshot? {
-        if let liveId = device.liveRecordId,
-           let matched = records.first(where: { $0.id == liveId }) {
-            return matched
-        }
-        return records.first(where: \.isTranscribing)
     }
 
     public static let empty = HostSnapshot(

@@ -132,41 +132,80 @@ internal fun MemoryItemCard(
 }
 
 @Composable
-private fun ReviewStateBadge(state: String, accepted: String) {
+internal fun ReviewStateBadge(state: String, accepted: String, prefix: String? = null) {
     val colors = KoeTheme.colors
-    when (state) {
-        "proposed" -> KoeBadge("待确认", tint = colors.warning)
-        "accepted" -> KoeBadge(accepted, tint = colors.success)
-        "dismissed" -> KoeBadge("已忽略", tint = colors.textMuted)
-        else -> KoeBadge(state, tint = colors.textMuted)
+    val (label, tint) = when (state) {
+        "proposed" -> "待确认" to colors.warning
+        "accepted" -> accepted to colors.success
+        "dismissed" -> "已忽略" to colors.textMuted
+        else -> state to colors.textMuted
+    }
+    KoeBadge(if (prefix != null) "$prefix  |  $label" else label, tint = tint)
+}
+
+@Composable
+internal fun ReviewSources(
+    sources: StableList<SourceSnapshot>,
+    onOpenSource: (SourceSnapshot) -> Unit,
+    tag: String? = null,
+) {
+    if (sources.items.isEmpty()) return
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        sources.items.forEach { source ->
+            val mod = if (tag != null) Modifier.testTag("$tag-source-${source.id}") else Modifier
+            KoeSourceLink(source, { onOpenSource(source) }, mod)
+        }
     }
 }
 
 @Composable
-private fun ReviewSources(sources: StableList<SourceSnapshot>, onOpenSource: (SourceSnapshot) -> Unit) {
-    if (sources.items.isEmpty()) return
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        sources.items.forEach { source -> KoeSourceLink(source, { onOpenSource(source) }) }
+internal fun ReviewActionButtons(
+    store: HostSessionStore,
+    id: String,
+    state: String,
+    acceptLabel: String,
+    allowDismissWhenAccepted: Boolean = false,
+    onEdit: (() -> Unit)? = null,
+) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (state == "proposed") {
+            KoePrimaryButton(acceptLabel, {
+                store.send(HostCommand.ReviewItem(id, ReviewDecision.ACCEPT))
+            }, Modifier.testTag("review-accept-$id"))
+        }
+        if (state == "proposed" || (allowDismissWhenAccepted && state == "accepted")) {
+            KoePrimaryButton(
+                "忽略",
+                { store.send(HostCommand.ReviewItem(id, ReviewDecision.DISMISS)) },
+                Modifier.testTag("review-dismiss-$id"),
+                isPrimary = false,
+            )
+        }
+        if (state == "accepted" || state == "dismissed") {
+            KoePrimaryButton(
+                "重新审核",
+                { store.send(HostCommand.ReviewItem(id, ReviewDecision.RESET)) },
+                Modifier.testTag("review-reset-$id"),
+                isPrimary = false,
+            )
+        }
+        if (onEdit != null) {
+            KoePrimaryButton("编辑", onEdit, Modifier.testTag("review-edit-$id"), isPrimary = false)
+        }
     }
 }
 
 @Composable
 private fun ReviewControls(store: HostSessionStore, id: String, text: String, state: String, due: String?) {
     var editing by rememberSaveable(id) { mutableStateOf(false) }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (state == "proposed") {
-            KoePrimaryButton(if (due == null) "记住" else "采纳", {
-                store.send(HostCommand.ReviewItem(id, ReviewDecision.ACCEPT))
-            }, Modifier.testTag("review-accept-$id"))
-        }
-        if (state == "proposed" || (due == null && state == "accepted")) {
-            KoePrimaryButton("忽略", { store.send(HostCommand.ReviewItem(id, ReviewDecision.DISMISS)) }, Modifier.testTag("review-dismiss-$id"), isPrimary = false)
-        }
-        if (state == "accepted" || state == "dismissed") {
-            KoePrimaryButton("重新审核", { store.send(HostCommand.ReviewItem(id, ReviewDecision.RESET)) }, Modifier.testTag("review-reset-$id"), isPrimary = false)
-        }
-        KoePrimaryButton("编辑", { editing = true }, Modifier.testTag("review-edit-$id"), isPrimary = false)
-    }
+    ReviewActionButtons(
+        store = store,
+        id = id,
+        state = state,
+        acceptLabel = if (due == null) "记住" else "采纳",
+        allowDismissWhenAccepted = due == null,
+        onEdit = { editing = true },
+    )
     if (editing) ItemEditorSheet(store, id, text, due) { editing = false }
 }
 
@@ -174,6 +213,6 @@ private fun ReviewControls(store: HostSessionStore, id: String, text: String, st
 private fun ItemEditorSheet(store: HostSessionStore, id: String, text: String, due: String?, onDismiss: () -> Unit) {
     var dueDraft by rememberSaveable(id) { mutableStateOf(due) }
     TextEditorDialog("编辑内容", text, onDismiss, { value ->
-        store.sendReturningError(HostCommand.EditItem(id, value, dueDraft?.trim()?.ifBlank { null })) == null
+        store.sendReturningErrorAsync(HostCommand.EditItem(id, value, dueDraft?.trim()?.ifBlank { null })) == null
     }, due = dueDraft, onDueChange = { dueDraft = it })
 }

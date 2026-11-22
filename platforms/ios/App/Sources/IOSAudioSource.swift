@@ -22,6 +22,7 @@ final class IOSAudioSource: MicrophoneSource {
 
     func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
                failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
+        stop()
         try audioSession.setActive(true, for: .microphone)
         do {
             let preferred = session.availableInputs?.first { $0.uid == inputID }
@@ -80,6 +81,8 @@ final class IOSAudioSource: MicrophoneSource {
             reportError(message)
         }
     }
+
+    deinit { stop() }
 }
 
 final class IOSCaptureRouteObserver {

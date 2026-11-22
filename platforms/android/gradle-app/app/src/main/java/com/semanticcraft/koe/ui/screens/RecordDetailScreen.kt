@@ -31,8 +31,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -73,6 +77,7 @@ fun RecordDetailScreen(
     val slice by store.recordDetail.collectAsStateWithLifecycle()
     val records by store.records.collectAsStateWithLifecycle()
     val colors = KoeTheme.colors
+    val scope = rememberCoroutineScope()
     var selectedTab by rememberSaveable(recordId) { mutableStateOf(DetailTab.SUMMARY) }
 
     LaunchedEffect(recordId) {
@@ -215,8 +220,12 @@ fun RecordDetailScreen(
                                                 modifier = Modifier.testTag("segment-time-" + segment.id).clickable {
                                                     if (!store.navigation.value.hasPlayableDetailAsset) {
                                                         store.reportNativeError("这条记录没有可播放的音频。")
-                                                    } else if (store.sendReturningError(HostCommand.Seek(segment.startMs)) == null) {
-                                                        store.send(HostCommand.Playback(true))
+                                                    } else {
+                                                        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                                            if (store.sendReturningErrorAsync(HostCommand.Seek(segment.startMs)) == null) {
+                                                                store.send(HostCommand.Playback(true))
+                                                            }
+                                                        }
                                                     }
                                                 },
                                                 color = colors.textMuted,
@@ -337,9 +346,11 @@ private fun DetailHeaderCard(
     onAsk: () -> Unit,
 ) {
     val navigation by store.navigation.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     var renaming by rememberSaveable(detail.id) { mutableStateOf(false) }
+    var actionInFlight by remember(detail.id) { mutableStateOf(false) }
     if (renaming) TextEditorDialog("记录名称", detail.title, { renaming = false }, { value ->
-        store.sendReturningError(HostCommand.RenameRecord(detail.id, value)) == null
+        store.sendReturningErrorAsync(HostCommand.RenameRecord(detail.id, value)) == null
     }, singleLine = true)
     val colors = KoeTheme.colors
     KoeCard {
@@ -380,12 +391,27 @@ private fun DetailHeaderCard(
             ) {
                 KoePrimaryButton("重命名", { renaming = true }, Modifier.testTag("detail-rename"), isPrimary = false)
                 KoePrimaryButton("问这条记录", {
-                    if (store.sendReturningError(HostCommand.SetAskScope("record", detail.id)) == null) onAsk()
-                }, Modifier.testTag("detail-ask"), isPrimary = false)
+                    if (actionInFlight) return@KoePrimaryButton
+                    actionInFlight = true
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            if (store.sendReturningErrorAsync(HostCommand.SetAskScope("record", detail.id)) == null) onAsk()
+                        } finally {
+                            actionInFlight = false
+                        }
+                    }
+                }, Modifier.testTag("detail-ask"), enabled = !actionInFlight, isPrimary = false)
                 KoePrimaryButton("移入回收站", {
-                    if (detail.canTrash && store.navigation.value.savingRecordId != detail.id &&
-                        store.sendReturningError(HostCommand.TrashRecord(detail.id)) == null) onTrashed()
-                }, Modifier.testTag("detail-trash"), enabled = detail.canTrash && navigation.savingRecordId != detail.id, isPrimary = false)
+                    if (actionInFlight || !detail.canTrash || store.navigation.value.savingRecordId == detail.id) return@KoePrimaryButton
+                    actionInFlight = true
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            if (store.sendReturningErrorAsync(HostCommand.TrashRecord(detail.id)) == null) onTrashed()
+                        } finally {
+                            actionInFlight = false
+                        }
+                    }
+                }, Modifier.testTag("detail-trash"), enabled = !actionInFlight && detail.canTrash && navigation.savingRecordId != detail.id, isPrimary = false)
                 if (detail.canRetranscribe) {
                     KoePrimaryButton(
                         title = "重新转写",

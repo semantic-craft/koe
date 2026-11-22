@@ -117,6 +117,7 @@ class AndroidBleCoordinatorTest {
         val ingestedBleChunks = mutableListOf<ByteArray>()
         val outboundFrames = ArrayDeque<ByteArray>()
         var followUpFrameOnIngest: ByteArray? = null
+        var handshakeFrameOnReady: ByteArray? = null
 
         override fun apiVersion(): Int = 2
         override fun sessionCreate(directory: String): Long = 700L
@@ -143,7 +144,17 @@ class AndroidBleCoordinatorTest {
                     val updated = when (event) {
                         "scanning" -> snapshot.device.copy(phase = "scanning", connected = false)
                         "connecting" -> snapshot.device.copy(phase = "connecting", deviceName = name, connected = false)
-                        "ready" -> snapshot.device.copy(phase = "handshaking", deviceName = name, connected = false)
+                        "ready" -> {
+                            if (snapshot.device.phase == "connecting") {
+                                handshakeFrameOnReady?.let {
+                                    outboundFrames.addLast(it)
+                                    handshakeFrameOnReady = null
+                                }
+                                snapshot.device.copy(phase = "handshaking", deviceName = name, connected = false)
+                            } else {
+                                snapshot.device
+                            }
+                        }
                         "disconnected" -> snapshot.device.copy(
                             phase = "disconnected",
                             connected = false,
@@ -246,10 +257,15 @@ class AndroidBleCoordinatorTest {
         permissionGranted: Boolean = true,
         adapterState: BleAdapterState = BleAdapterState.SUPPORTED_READY,
         savedAddress: String? = null,
+        commandExecutor: java.util.concurrent.Executor? = null,
     ): Harness {
         var nowMs = 1_000L
         val bridge = StatefulBleBridgeClient()
-        val store = HostSessionStore(workspacePath = "/tmp/koe-ble-test", bridge = bridge)
+        val store = HostSessionStore(
+            workspacePath = "/tmp/koe-ble-test",
+            bridge = bridge,
+            commandExecutor = commandExecutor,
+        )
         val transport = FakeBleTransport(state = adapterState)
         val addressStore = InMemoryAddressStore(saved = savedAddress)
         val delayScheduler = ManualDelayScheduler()
@@ -266,6 +282,7 @@ class AndroidBleCoordinatorTest {
             tickIntervalMs = 250L,
             scheduler = ManualTickScheduler(),
             clockElapsedMs = { nowMs },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
         hostCoordinator.registerAdapter(bleCoordinator)
         hostCoordinator.bind(
@@ -482,5 +499,35 @@ class AndroidBleCoordinatorTest {
         assertEquals(1, h.transport.disconnectCount)
         assertEquals("disconnected", h.bridge.dispatchedEvents.last()["event"]?.jsonPrimitive?.content)
         assertEquals("设备指令发送失败，请重新连接。", h.store.navigation.value.effectiveError)
+    }
+
+    @Test
+    fun linkReadySerializesBehindConnectingOnQueuedCommandExecutorAndFlushesAfterReady() {
+        val queued = ArrayDeque<Runnable>()
+        val h = createHarness(commandExecutor = java.util.concurrent.Executor { queued.addLast(it) })
+        val handshakeFrame = byteArrayOf(0x09, 0x11, 0x22)
+        h.bridge.handshakeFrameOnReady = handshakeFrame
+
+        h.store.bridgeActions.requestBleScan()
+        while (queued.isNotEmpty()) queued.removeFirst().run()
+
+        h.transport.activeListener!!.onCandidateDiscovered("AA:BB:CC:DD:EE:FF", "soundcore Work")
+        h.transport.activeListener!!.onLinkReady("AA:BB:CC:DD:EE:FF", "soundcore Work", payloadMtu = 244)
+
+        val eventsBeforeDrain = h.bridge.dispatchedEvents
+            .filter { it["type"]?.jsonPrimitive?.content == "device_event" }
+            .map { it["event"]?.jsonPrimitive?.content }
+        assertEquals(listOf("scanning"), eventsBeforeDrain)
+        assertTrue("handshake frames must not flush before ready is dispatched", h.transport.writtenChunks.isEmpty())
+
+        while (queued.isNotEmpty()) queued.removeFirst().run()
+
+        val eventsAfterDrain = h.bridge.dispatchedEvents
+            .filter { it["type"]?.jsonPrimitive?.content == "device_event" }
+            .map { it["event"]?.jsonPrimitive?.content }
+        assertEquals(listOf("scanning", "connecting", "ready"), eventsAfterDrain)
+        assertEquals("handshaking", h.store.device.value.phase)
+        assertEquals(1, h.transport.writtenChunks.size)
+        assertArrayEquals(handshakeFrame, h.transport.writtenChunks.single())
     }
 }

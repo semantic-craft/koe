@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 public struct LocalSpeechResult: Equatable {
     public let text: String
@@ -108,15 +109,32 @@ public final class NativeLocalTranscription {
             if store != nil { prepare() }
         }
     }
+    private struct TaskHandles: Sendable {
+        var worker: Task<Void, Never>?
+        var readiness: Task<Void, Never>?
+        var cancellation: Task<Void, Never>?
+    }
+
     private let recognizer: any LocalSpeechRecognizer
     private let drain: (() throws -> Data)?
     private let sendEvent: ((HostAdapterEvent) -> Void)?
-    private var worker: Task<Void, Never>?
-    private var readiness: Task<Void, Never>?
-    private var cancellation: Task<Void, Never>?
+    private let taskHandles = OSAllocatedUnfairLock<TaskHandles>(initialState: TaskHandles())
+    private var worker: Task<Void, Never>? {
+        get { taskHandles.withLock(\.worker) }
+        set { taskHandles.withLock { $0.worker = newValue } }
+    }
+    private var readiness: Task<Void, Never>? {
+        get { taskHandles.withLock(\.readiness) }
+        set { taskHandles.withLock { $0.readiness = newValue } }
+    }
+    private var cancellation: Task<Void, Never>? {
+        get { taskHandles.withLock(\.cancellation) }
+        set { taskHandles.withLock { $0.cancellation = newValue } }
+    }
     private var session: (any LocalSpeechSession)?
     private var operation: UInt64?
     private var epoch: UInt64 = 0
+    private var prepareGeneration: UInt64 = 0
     private var deadline: ContinuousClock.Instant?
     private let now: () -> ContinuousClock.Instant
     private let operationTimeout: Duration
@@ -135,21 +153,43 @@ public final class NativeLocalTranscription {
         self.operationTimeout = operationTimeout
     }
 
+    deinit {
+        taskHandles.withLock { handles in
+            handles.readiness?.cancel()
+            handles.worker?.cancel()
+            handles.cancellation?.cancel()
+            handles.readiness = nil
+            handles.worker = nil
+            handles.cancellation = nil
+        }
+    }
+
     public func prepare() {
-        guard readiness == nil else { return }
+        prepareGeneration &+= 1
+        let currentPrepare = prepareGeneration
+        readiness?.cancel()
+        readiness = nil
         let currentEpoch = epoch
+        let recognizer = self.recognizer
         send(.localAsrReadiness(state: "preparing", message: "正在准备中文离线转写。"))
         readiness = Task { [weak self] in
-            guard let self else { return }
             do {
                 try await recognizer.prepare()
                 try Task.checkCancellation()
-                guard epoch == currentEpoch else { return }
-                send(.localAsrReadiness(state: "ready", message: "中文离线转写已就绪。"))
+                self?.finishPrepare(epoch: currentEpoch, prepareGeneration: currentPrepare, error: nil)
             } catch {
-                guard epoch == currentEpoch else { return }
-                send(.localAsrReadiness(state: "unavailable", message: error.localizedDescription))
+                guard !(error is CancellationError), !Task.isCancelled else { return }
+                self?.finishPrepare(epoch: currentEpoch, prepareGeneration: currentPrepare, error: error)
             }
+        }
+    }
+
+    private func finishPrepare(epoch currentEpoch: UInt64, prepareGeneration currentPrepare: UInt64, error: (any Error)?) {
+        guard epoch == currentEpoch, prepareGeneration == currentPrepare else { return }
+        if let error {
+            send(.localAsrReadiness(state: "unavailable", message: error.localizedDescription))
+        } else {
+            send(.localAsrReadiness(state: "ready", message: "中文离线转写已就绪。"))
         }
     }
 
@@ -182,6 +222,7 @@ public final class NativeLocalTranscription {
 
     public func shutdown() {
         epoch &+= 1
+        prepareGeneration &+= 1
         operation = nil
         readiness?.cancel()
         readiness = nil

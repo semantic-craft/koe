@@ -216,7 +216,7 @@ struct IOSSettingsView: View {
                 if configured {
                     Button("清除", role: .destructive) {
                         key.wrappedValue = ""
-                        store.send(.clearProviderCredentialFor(provider: slot))
+                        store.send(.clearProviderCredential(provider: slot))
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("清除 \(name) 凭据")

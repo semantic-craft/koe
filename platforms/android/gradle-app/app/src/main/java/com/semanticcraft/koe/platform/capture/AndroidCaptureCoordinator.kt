@@ -9,12 +9,15 @@ import com.semanticcraft.koe.core.HostSnapshot
 import com.semanticcraft.koe.core.MicrophoneSnapshot
 import com.semanticcraft.koe.core.PcmIngestStatus
 import com.semanticcraft.koe.platform.AndroidHostAdapter
+import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
 
 class AndroidCaptureCoordinator(
     private val source: AndroidMicrophoneSource,
     private val focusController: AudioFocusController,
     private val nowNanoseconds: () -> Long = { SystemClock.elapsedRealtimeNanos() },
     private val onForegroundStateChanged: (CaptureForegroundState) -> Unit = {},
+    private val workExecutor: Executor? = null,
 ) : AndroidHostAdapter {
     private class LaneRun(snapshot: MicrophoneSnapshot, state: CaptureLaneSnapshot) {
         val identity = CaptureIdentity.from(snapshot, LANE_MICROPHONE)
@@ -261,7 +264,19 @@ class AndroidCaptureCoordinator(
                     !applying
                 }
             }
-            if (shouldDrive) driveLoop()
+            if (shouldDrive) dispatchDriveLoop()
+        }
+    }
+
+    private fun dispatchDriveLoop() {
+        val executor = workExecutor
+        if (executor == null) {
+            driveLoop()
+        } else {
+            try {
+                executor.execute { driveLoop() }
+            } catch (_: RejectedExecutionException) {
+            }
         }
     }
 
@@ -280,9 +295,9 @@ class AndroidCaptureCoordinator(
             return
         }
         if (request.resuming) {
-            store.send(HostAdapterEvent.ResumeMicrophone(clockNs = clock))
+            store.sendEventSync(HostAdapterEvent.ResumeMicrophone(clockNs = clock))
         } else {
-            store.send(
+            store.sendEventSync(
                 HostAdapterEvent.MicrophonePrepared(
                     recordId = request.session.recordId,
                     sessionId = request.session.sessionId,
@@ -340,7 +355,7 @@ class AndroidCaptureCoordinator(
             if (expectedRate != null && expectedRate != rate) {
                 throw IllegalStateException("麦克风采样率发生变化，已保留此前收到的音频。")
             }
-            store.send(
+            store.sendEventSync(
                 HostAdapterEvent.MicrophoneStarted(
                     recordId = target.identity.recordId,
                     sessionId = target.identity.sessionId,

@@ -73,6 +73,7 @@ android {
     }
 
     sourceSets.getByName("main").jniLibs.srcDirs("../../../../target/android/jniLibs")
+    sourceSets.getByName("test").resources.srcDir("../../tests/fixtures")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

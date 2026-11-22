@@ -64,6 +64,7 @@ public final class HostSessionStore {
     public private(set) var settings: SettingsSlice = .empty
     public private(set) var playback: PlaybackSnapshot = HostSnapshot.empty.playback
     public private(set) var activeCapture: ActiveCaptureSnapshot?
+    public private(set) var activeCaptureMode: CaptureMode?
     public private(set) var activeCaptureActions: [CaptureAction] = []
     public private(set) var liveCaption: LiveCaptionSnapshot?
     public private(set) var updatePopoverRequestCount: UInt64 = 0
@@ -478,6 +479,8 @@ public final class HostSessionStore {
         if settings != nextSettings { settings = nextSettings }
         if playback != snapshot.playback { playback = snapshot.playback }
         if activeCapture != snapshot.activeCapture { activeCapture = snapshot.activeCapture }
+        let nextMode = snapshot.activeCapture?.mode
+        if activeCaptureMode != nextMode { activeCaptureMode = nextMode }
         let nextActions = snapshot.activeCapture?.actions ?? []
         if activeCaptureActions != nextActions { activeCaptureActions = nextActions }
         if liveCaption != snapshot.liveCaption { liveCaption = snapshot.liveCaption }

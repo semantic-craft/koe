@@ -34,6 +34,12 @@ open class KoeApplication : Application() {
     private var currentStore: HostSessionStore? = null
     private var captureForegroundState = CaptureForegroundState(active = false, paused = false, modeTitle = null)
     private val traceWriter = Executors.newSingleThreadExecutor()
+    private val commandExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "koe-host-session").apply { isDaemon = true }
+    }
+    private val captureExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "koe-capture-work").apply { isDaemon = true }
+    }
     private var bleForegroundActivity = BleForegroundActivity.IDLE
     private var lastSyncedForeground: Pair<CaptureForegroundState, Int>? = null
     val hostCoordinator = AndroidHostCoordinator()
@@ -50,6 +56,7 @@ open class KoeApplication : Application() {
             onForegroundStateChanged = { state ->
                 updateCaptureForegroundState(state)
             },
+            workExecutor = captureExecutor,
         )
     }
     val playbackCoordinator: AndroidPlaybackCoordinator by lazy {
@@ -192,9 +199,10 @@ open class KoeApplication : Application() {
                     allowDebugFixture = BuildConfig.DEBUG,
                     autoOpen = false,
                     verificationTrace = BuildConfig.DEBUG && debugWorkspace != null,
+                    commandExecutor = commandExecutor,
                 )
                 created.openSession()
-                created.send(
+                created.sendEventSync(
                     HostAdapterEvent.SyncAppMetadata(
                         version = BuildConfig.VERSION_NAME,
                         build = BuildConfig.VERSION_CODE.toString(),
@@ -262,6 +270,8 @@ open class KoeApplication : Application() {
 
     override fun onTerminate() {
         hostCoordinator.shutdown()
+        captureExecutor.shutdown()
+        commandExecutor.shutdown()
         synchronized(sessionLock) {
             currentStore?.onTraceUpdated = null
             currentStore?.shutdown()

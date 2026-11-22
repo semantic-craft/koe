@@ -93,10 +93,10 @@ struct CredentialsTests {
         #expect(reopened.snapshot.provider.qwenConfigured)
         #expect(reopened.snapshot.provider.configured)
         #expect(vault.operations.contains(4))
-        reopened.send(.clearProviderCredential)
+        reopened.send(.clearProviderCredential())
         #expect(!reopened.snapshot.provider.qwenConfigured)
         #expect(reopened.snapshot.provider.configured)
-        reopened.send(.clearProviderCredentialFor(provider: "deepseek"))
+        reopened.send(.clearProviderCredential(provider: "deepseek"))
         #expect(!reopened.snapshot.provider.configured)
         reopened.shutdown()
         let cleared = HostSessionStore(workspacePath: root.path, credentials: vault)
@@ -158,7 +158,7 @@ struct CredentialsTests {
         #expect(!second.snapshot.provider.configured)
         #expect(!second.snapshot.provider.qwenConfigured)
         #expect(second.snapshot.provider.model == "deepseek-flash")
-        second.send(.clearProviderCredential)
+        second.send(.clearProviderCredential())
         #expect(second.snapshot.provider.credentialState == "cleared")
     }
 
@@ -215,7 +215,7 @@ struct CredentialsTests {
         #expect(manual.snapshot.provider.configured)
         #expect(manual.snapshot.provider.model == "deepseek-v4-pro")
         #expect(manual.snapshot.provider.credentialState == "missing_saved")
-        manual.send(.clearProviderCredential)
+        manual.send(.clearProviderCredential())
         #expect(manual.snapshot.provider.credentialState == "cleared")
         manual.shutdown()
 

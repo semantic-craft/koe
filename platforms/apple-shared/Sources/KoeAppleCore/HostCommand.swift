@@ -63,11 +63,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
 
     case startCaptureMode(mode: CaptureMode, stayOnPage: Bool = false)
     case captureAction(action: CaptureAction, clockNs: UInt64? = nil)
-    case startMicrophone(inputId: String, includeSystem: Bool = false, clockNs: UInt64? = nil)
-    case pauseMicrophone
-    case stopMicrophone
-    case cancelMicrophone
-    case retryMicrophoneSave
     case selectCaptureSource(source: String)
     case setCaptureSystemAudio(enabled: Bool)
 
@@ -97,8 +92,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         chatEndpoint: String? = nil
     )
     case retryProviderCredentials(authorize: Bool = false)
-    case clearProviderCredential
-    case clearProviderCredentialFor(provider: String)
+    case clearProviderCredential(provider: String? = nil)
     case checkAppUpdate
 
     private enum CodingKeys: String, CodingKey {
@@ -106,7 +100,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case project, date, archived, includeAnalysis, includeSources
         case itemId, decision, completed, due, speaker, fromSpeaker, toSpeaker
         case question, scope, positionMs, isPlaying, lane
-        case enabled, mode, action, clockNs, inputId, includeSystem, source, fileId
+        case enabled, mode, action, clockNs, source, fileId
         case engine, modelId, policy, apiKey, deepseekApiKey, asrProvider, asrModel, llmProvider
         case model, enableThinking, qwenWorkspaceId, asrEndpoint, chatEndpoint, authorize, provider
     }
@@ -155,11 +149,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .seek: "seek"
         case .startCaptureMode: "start_capture_mode"
         case .captureAction: "capture_action"
-        case .startMicrophone: "start_microphone"
-        case .pauseMicrophone: "pause_microphone"
-        case .stopMicrophone: "stop_microphone"
-        case .cancelMicrophone: "cancel_microphone"
-        case .retryMicrophoneSave: "retry_microphone_save"
         case .selectCaptureSource: "select_capture_source"
         case .setCaptureSystemAudio: "set_capture_system_audio"
         case .deviceOpenGuide: "device_open_guide"
@@ -176,7 +165,7 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case .setMeetingAudioPolicy: "set_meeting_audio_policy"
         case .configureProvider: "configure_provider"
         case .retryProviderCredentials: "retry_provider_credentials"
-        case .clearProviderCredential, .clearProviderCredentialFor: "clear_provider_credential"
+        case .clearProviderCredential: "clear_provider_credential"
         case .checkAppUpdate: "check_app_update"
         }
     }
@@ -186,9 +175,8 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         try c.encode(commandType, forKey: .type)
         switch self {
         case .back, .clearError, .emptyTrash, .dismissUndoTrash,
-             .pauseMicrophone, .stopMicrophone, .cancelMicrophone, .retryMicrophoneSave,
              .deviceOpenGuide, .deviceOnboardingNext, .deviceCloseGuide, .deviceRefresh, .deviceRelease,
-             .deviceDownloadAll, .cancelSpeechModel, .clearProviderCredential, .checkAppUpdate:
+             .deviceDownloadAll, .cancelSpeechModel, .checkAppUpdate:
             break
         case let .navigate(section):
             try c.encode(section, forKey: .section)
@@ -286,10 +274,6 @@ public enum HostCommand: Encodable, Equatable, Sendable {
         case let .captureAction(action, clockNs):
             try c.encode(action, forKey: .action)
             try c.encodeIfPresent(clockNs, forKey: .clockNs)
-        case let .startMicrophone(inputId, includeSystem, clockNs):
-            try c.encode(inputId, forKey: .inputId)
-            try c.encode(includeSystem, forKey: .includeSystem)
-            try c.encodeIfPresent(clockNs, forKey: .clockNs)
         case let .selectCaptureSource(source):
             try c.encode(source, forKey: .source)
         case let .setCaptureSystemAudio(enabled),
@@ -318,8 +302,8 @@ public enum HostCommand: Encodable, Equatable, Sendable {
             try c.encodeIfPresent(qwenWorkspaceId, forKey: .qwenWorkspaceId)
             try c.encodeIfPresent(asrEndpoint, forKey: .asrEndpoint)
             try c.encodeIfPresent(chatEndpoint, forKey: .chatEndpoint)
-        case let .clearProviderCredentialFor(provider):
-            try c.encode(provider, forKey: .provider)
+        case let .clearProviderCredential(provider):
+            try c.encodeIfPresent(provider, forKey: .provider)
         case let .retryProviderCredentials(authorize):
             try c.encode(authorize, forKey: .authorize)
         }

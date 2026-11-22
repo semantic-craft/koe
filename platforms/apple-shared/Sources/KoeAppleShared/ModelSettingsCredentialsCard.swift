@@ -103,7 +103,7 @@ struct ModelSettingsCredentialsCard: View {
                     .onSubmit { onSave() }
                     KoeActionButton("清除") {
                         draft.qwenApiKey = ""
-                        store.send(.clearProviderCredentialFor(provider: "qwen"))
+                        store.send(.clearProviderCredential(provider: "qwen"))
                     }
                     .disabled(!provider.qwenConfigured && draft.qwenApiKey.isEmpty)
                 }
@@ -158,7 +158,7 @@ struct ModelSettingsCredentialsCard: View {
                     .onSubmit { onSave() }
                     KoeActionButton("清除") {
                         draft.deepseekApiKey = ""
-                        store.send(.clearProviderCredentialFor(provider: "deepseek"))
+                        store.send(.clearProviderCredential(provider: "deepseek"))
                     }
                     .disabled(!provider.deepseekConfigured && draft.deepseekApiKey.isEmpty)
                 }

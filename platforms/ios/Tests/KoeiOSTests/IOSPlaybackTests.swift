@@ -224,7 +224,7 @@ final class IOSPlaybackTests: XCTestCase {
         let session = IOSAudioSession { active in sessionActive.withLock { $0 = active } }
         try await fixture(audioSession: session) { store, _, source in
             let id = try XCTUnwrap(store.snapshot.playback.recordId)
-            store.send(.startMicrophone(inputId: "phone"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             try await until("microphone should be actively recording") { store.snapshot.microphone?.phase == "recording" }
             try session.setActive(true, for: .microphone)
             store.send(.selectRecord(recordId: id))
@@ -237,7 +237,7 @@ final class IOSPlaybackTests: XCTestCase {
             let write = try XCTUnwrap(source.receive)
             write(CapturedPCM(samples: [123], capturedStartNs: source.clockNs))
             try await until("capture should ingest PCM after EOF") { store.snapshot.microphone?.nextSequence == 1 }
-            store.send(.stopMicrophone)
+            store.send(.captureAction(action: .end))
             try await until("recording must finalize") { store.snapshot.microphone == nil }
             try session.setActive(false, for: .microphone)
             XCTAssertFalse(sessionActive.withLock { $0 }, "Stopping the last audio source must release the session")

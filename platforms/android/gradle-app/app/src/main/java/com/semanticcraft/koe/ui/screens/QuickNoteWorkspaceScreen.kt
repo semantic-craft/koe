@@ -19,8 +19,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -47,6 +50,7 @@ internal fun QuickNoteWorkspaceScreen(
     onOpenCaptureSource: () -> Unit, modifier: Modifier = Modifier,
 ) {
     val workspace by store.quickNoteWorkspace.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     var filter by remember { mutableStateOf<QuickNoteFilterSelection>(QuickNoteFilterSelection.All) }
     var selection by remember(filter) { mutableStateOf<Set<String>?>(null) }
     var assignIds by remember(filter) { mutableStateOf<List<String>?>(null) }
@@ -112,7 +116,9 @@ internal fun QuickNoteWorkspaceScreen(
             if (ids.isNotEmpty()) {
                 val command = if (selection == null) HostCommand.SetRecordProject(ids.single(), project)
                     else HostCommand.BatchSetRecordProject(ids, project)
-                if (store.sendReturningError(command) == null) selection = null
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    if (store.sendReturningErrorAsync(command) == null) selection = null
+                }
             }
             assignIds = null
         }

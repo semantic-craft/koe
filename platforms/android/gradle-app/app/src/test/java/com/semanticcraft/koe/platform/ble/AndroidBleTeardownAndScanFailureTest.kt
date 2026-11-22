@@ -212,6 +212,7 @@ class AndroidBleTeardownAndScanFailureTest {
             tickIntervalMs = 250L,
             scheduler = NoopTickScheduler(),
             clockElapsedMs = { clock.nowMs },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
         hostCoordinator.registerAdapter(coordinator)
         hostCoordinator.bind(
