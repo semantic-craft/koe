@@ -138,6 +138,7 @@ class AndroidPlaybackCoordinatorTest {
             tickIntervalMs = 250L,
             scheduler = ManualTickScheduler(),
             clockElapsedMs = { 0L },
+            callbackExecutor = java.util.concurrent.Executor { it.run() },
         )
         harness = Harness(
             bridge = bridge,

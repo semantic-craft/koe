@@ -12,12 +12,21 @@ struct IOSRecordsView: View {
     @State private var importing = false
     @State private var selecting = false
     @State private var selectedIDs: Set<String> = []
+    @State private var filteredRecords: [RecordSnapshot]
+    @State private var projects: [String]
+    @State private var selectedRecordIDs: [String] = []
+    @State private var selectedRecords: [RecordSnapshot] = []
+
+    init(store: HostSessionStore, onSelectRecord: @escaping (String) -> Void) {
+        self.store = store
+        self.onSelectRecord = onSelectRecord
+        let initialQuery = IOSRecordListQuery()
+        _filteredRecords = State(initialValue: initialQuery.results(in: store.records))
+        _projects = State(initialValue: RecordListFormatting.distinctProjects(from: store.records))
+    }
 
     var body: some View {
-        let filteredRecords = query.results(in: store.records)
-        let projects = RecordListFormatting.distinctProjects(from: store.records)
         let trashCount = store.navigation.trashCount
-        let selectedRecords = filteredRecords.map(\.id).filter(selectedIDs.contains)
 
         VStack(spacing: 0) {
             VStack(spacing: 10) {
@@ -146,10 +155,11 @@ struct IOSRecordsView: View {
                 .background(IOSColors.bgPanel)
             }
         }
-        .onChange(of: filteredRecords.map(\.id)) { _, visible in
-            selectedIDs.formIntersection(visible)
-        }
-        .navigationTitle(selecting ? "已选 \(selectedRecords.count)" : "记录")
+        .onAppear { refreshDerivedRecords() }
+        .onChange(of: store.records) { _, _ in refreshDerivedRecords() }
+        .onChange(of: query) { _, _ in refreshDerivedRecords() }
+        .onChange(of: selectedIDs) { _, ids in refreshSelectedRecords(filtered: filteredRecords, ids: ids) }
+        .navigationTitle(selecting ? "已选 \(selectedRecordIDs.count)" : "记录")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
@@ -160,13 +170,12 @@ struct IOSRecordsView: View {
                     }
                     .accessibilityIdentifier("records-cancel-selection")
                     Button("导出所选记录", systemImage: "square.and.arrow.up") {
-                        files.exportRecords(selectedRecords)
+                        files.exportRecords(selectedRecordIDs)
                     }
                     .labelStyle(.iconOnly)
-                    .disabled(selectedRecords.isEmpty)
+                    .disabled(selectedRecordIDs.isEmpty)
                     .accessibilityIdentifier("records-export-button")
-                    IOSRecordBatchMenu(store: store, selected: filteredRecords.filter { selectedIDs.contains($0.id) },
-                                       projects: projects) {
+                    IOSRecordBatchMenu(store: store, selected: selectedRecords, projects: projects) {
                         selectedIDs.removeAll()
                         selecting = false
                     }
@@ -204,6 +213,22 @@ struct IOSRecordsView: View {
         .sheet(isPresented: $showingTrashSheet) {
             IOSTrashView(store: store)
         }
+    }
+
+    private func refreshDerivedRecords() {
+        let nextFiltered = query.results(in: store.records)
+        filteredRecords = nextFiltered
+        projects = RecordListFormatting.distinctProjects(from: store.records)
+        let visible = Set(nextFiltered.map(\.id))
+        let pruned = selectedIDs.intersection(visible)
+        if pruned != selectedIDs { selectedIDs = pruned }
+        refreshSelectedRecords(filtered: nextFiltered, ids: pruned)
+    }
+
+    private func refreshSelectedRecords(filtered: [RecordSnapshot], ids: Set<String>) {
+        let items = filtered.filter { ids.contains($0.id) }
+        selectedRecords = items
+        selectedRecordIDs = items.map(\.id)
     }
 
     private func recordRow(_ record: RecordSnapshot) -> some View {
@@ -350,7 +375,7 @@ struct IOSTrashView: View {
     }
 }
 
-struct IOSRecordListQuery {
+struct IOSRecordListQuery: Equatable {
     var text = ""
     var category: RecordFilterCategory = .all
     var order: RecordSortOrder = .newest

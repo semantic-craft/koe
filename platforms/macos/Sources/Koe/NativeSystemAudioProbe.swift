@@ -129,7 +129,10 @@ final class SystemAudioCanaryOutput {
     private var unit: AudioUnit?
     init(state: SystemAudioCanaryState) { self.state = state }
 
+    deinit { stop() }
+
     func start() throws {
+        stop()
         var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
             componentSubType: kAudioUnitSubType_DefaultOutput, componentManufacturer: kAudioUnitManufacturer_Apple,
             componentFlags: 0, componentFlagsMask: 0)
@@ -140,18 +143,23 @@ final class SystemAudioCanaryOutput {
         try SystemAudioHAL.check(AudioComponentInstanceNew(component, &created), "无法打开默认音频输出")
         guard let unit = created else { throw CaptureError("无法打开默认音频输出。") }
         self.unit = unit
-        var format = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagsNativeFloatPacked | kAudioFormatFlagIsNonInterleaved,
-            mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1,
-            mBitsPerChannel: 32, mReserved: 0)
-        try SystemAudioHAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0,
-            &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "无法设置检测信号格式")
-        var callback = AURenderCallbackStruct(inputProc: renderCanary,
-            inputProcRefCon: Unmanaged.passUnretained(state).toOpaque())
-        try SystemAudioHAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0,
-            &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "无法设置检测信号")
-        try SystemAudioHAL.check(AudioUnitInitialize(unit), "无法初始化默认音频输出")
-        try SystemAudioHAL.check(AudioOutputUnitStart(unit), "无法播放检测信号")
+        do {
+            var format = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+                mFormatFlags: kAudioFormatFlagsNativeFloatPacked | kAudioFormatFlagIsNonInterleaved,
+                mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1,
+                mBitsPerChannel: 32, mReserved: 0)
+            try SystemAudioHAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0,
+                &format, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "无法设置检测信号格式")
+            var callback = AURenderCallbackStruct(inputProc: renderCanary,
+                inputProcRefCon: Unmanaged.passUnretained(state).toOpaque())
+            try SystemAudioHAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0,
+                &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "无法设置检测信号")
+            try SystemAudioHAL.check(AudioUnitInitialize(unit), "无法初始化默认音频输出")
+            try SystemAudioHAL.check(AudioOutputUnitStart(unit), "无法播放检测信号")
+        } catch {
+            stop()
+            throw error
+        }
     }
 
     func stop() {

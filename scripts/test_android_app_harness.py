@@ -125,10 +125,11 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
         )
 
         self.assertTrue(CANONICAL_FIXTURE.is_file(), f'missing canonical fixture: {CANONICAL_FIXTURE}')
-        self.assertTrue(TEST_RESOURCE_FIXTURE.is_file(), f'missing test resource fixture: {TEST_RESOURCE_FIXTURE}')
+        self.assertFalse(
+            TEST_RESOURCE_FIXTURE.exists(),
+            f'duplicate test resource fixture must not exist: {TEST_RESOURCE_FIXTURE}',
+        )
         canonical_data = json.loads(CANONICAL_FIXTURE.read_text(encoding='utf-8'))
-        resource_data = json.loads(TEST_RESOURCE_FIXTURE.read_text(encoding='utf-8'))
-        self.assertEqual(canonical_data, resource_data, 'canonical and test resource fixtures must stay in sync')
         self.assertEqual(canonical_data['platform']['id'], 'android')
         self.assertEqual(canonical_data['platform']['hostDisplayName'], 'Android')
         self.assertEqual(canonical_data['platform']['nativeSpeechLabel'], 'Android 本机')

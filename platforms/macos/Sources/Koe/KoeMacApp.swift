@@ -5,8 +5,10 @@ import SwiftUI
 
 @MainActor
 public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    let sessionHolder = KoeSessionHolder()
     public var store: HostSessionStore? {
         didSet {
+            sessionHolder.store = store
             oldValue?.onSnapshotChanged = nil
             oldValue?.bridgeActions = HostBridgeActions()
             if let oldValue, oldValue !== store {
@@ -115,6 +117,10 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private var statusItem: NSStatusItem?
     private var timer: Timer?
     private var lastTick = ProcessInfo.processInfo.systemUptime
+
+    public func applicationWillFinishLaunching(_ notification: Notification) {
+        _ = ensureSessionStore()
+    }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         _ = ensureSessionStore()
@@ -443,53 +449,4 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     @objc private func releaseBleControl() { store?.send(.deviceRelease) }
     @objc private func openWindow() { KoeWindowPresenter.presentPrimaryWorkspaceWindow() }
     @objc private func quit() { NSApp?.terminate(nil) }
-}
-
-struct KoeNativeSceneApp: App {
-    @NSApplicationDelegateAdaptor(KoeAppDelegate.self) private var appDelegate
-    var body: some Scene {
-        WindowGroup("Koe") {
-            KoeWorkspaceRootView(
-                store: appDelegate.ensureSessionStore(),
-                onImport: { appDelegate.files.importFile() },
-                onExport: { appDelegate.files.exportRecord($0) },
-                onExportRecords: { appDelegate.files.exportRecords($0) },
-                onExportWorkspace: { appDelegate.files.exportWorkspace($0) }
-            )
-            .onAppear {
-                KoeWindowPresenter.presentPrimaryWorkspaceWindow()
-            }
-        }
-        .windowResizability(.contentMinSize)
-        .commands {
-            CommandGroup(replacing: .appInfo) {
-                Button("关于 Koe") {
-                    appDelegate.showAboutPanel()
-                }
-                Divider()
-                Button("检查更新…") {
-                    appDelegate.checkForUpdatesFromMenu()
-                }
-            }
-        }
-    }
-}
-
-@main
-public enum KoeMainEntry {
-    @MainActor static var workspacePath: String?
-    @MainActor
-    public static func main() {
-        let args = CommandLine.arguments
-        if args.contains("--verify-self") { exit(KoeSelfCheckRunner.runVerifySelf()) }
-        if args.contains("--smoke-test") { exit(KoeSelfCheckRunner.runSmokeTest()) }
-        if let index = args.firstIndex(of: "--workspace-root") {
-            guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/") else {
-                fputs("--workspace-root requires an absolute directory path\n", stderr)
-                exit(2)
-            }
-            workspacePath = args[index + 1]
-        }
-        KoeNativeSceneApp.main()
-    }
 }

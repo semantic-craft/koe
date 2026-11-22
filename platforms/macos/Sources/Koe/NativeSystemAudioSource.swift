@@ -198,7 +198,7 @@ final class SystemAudioTapGraph {
     let outputDevice: AudioObjectID
     let format: SystemAudioFormat
     private var procID: AudioDeviceIOProcID?
-    private let fence = AudioCallbackFence()
+    private var fence: AudioCallbackFence?
     private var destroyed = false
 
     init(excludingProcesses: [AudioObjectID], name: String) throws {
@@ -236,8 +236,21 @@ final class SystemAudioTapGraph {
         }
     }
 
+    deinit { stop() }
+
+    private func stopIOProc() {
+        if let procID { AudioDeviceStop(aggregateID, procID) }
+        fence?.closeAndWait()
+        fence = nil
+        if let procID { AudioDeviceDestroyIOProcID(aggregateID, procID) }
+        procID = nil
+    }
+
     func start(_ handler: @escaping @Sendable (UnsafePointer<AudioBufferList>, UnsafePointer<AudioTimeStamp>) -> Void) throws {
-        let fence = self.fence
+        guard !destroyed else { throw CaptureError("系统音频采集已关闭。") }
+        stopIOProc()
+        let fence = AudioCallbackFence()
+        self.fence = fence
         var proc: AudioDeviceIOProcID?
         try SystemAudioHAL.check(AudioDeviceCreateIOProcIDWithBlock(&proc, aggregateID, nil) { _, input, inputTime, _, _ in
             guard fence.enter() else { return }
@@ -245,16 +258,18 @@ final class SystemAudioTapGraph {
             handler(input, inputTime)
         }, "无法接收系统音频")
         procID = proc
-        try SystemAudioHAL.check(AudioDeviceStart(aggregateID, proc), "无法启动系统音频采集")
+        do {
+            try SystemAudioHAL.check(AudioDeviceStart(aggregateID, proc), "无法启动系统音频采集")
+        } catch {
+            stopIOProc()
+            throw error
+        }
     }
 
     func stop() {
         guard !destroyed else { return }
         destroyed = true
-        if let procID { AudioDeviceStop(aggregateID, procID) }
-        fence.closeAndWait()
-        if let procID { AudioDeviceDestroyIOProcID(aggregateID, procID) }
-        procID = nil
+        stopIOProc()
         AudioHardwareDestroyAggregateDevice(aggregateID)
         AudioHardwareDestroyProcessTap(tapID)
     }
@@ -267,6 +282,8 @@ final class NativeSystemAudioSource: SystemAudioSource {
     private var stopSession: (() -> Void)?
 
     init(authorizer: SystemAudioAuthorizer = CoreAudioCanaryAuthorizer()) { self.authorizer = authorizer }
+
+    deinit { stop() }
 
     func authorize(shouldAbort: @escaping @Sendable () -> Bool,
                    _ completion: @escaping @Sendable (SystemAudioAuthResult) -> Void) {
@@ -301,7 +318,7 @@ final class NativeSystemAudioSource: SystemAudioSource {
 private final class SystemAudioCapture {
     let graph: SystemAudioTapGraph
     private let failed: @Sendable (String) -> Void
-    private let listenerFence = AudioCallbackFence()
+    private var listenerFence: AudioCallbackFence?
     private let queue = DispatchQueue(label: "com.semanticcraft.koe.system-audio.listeners")
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
 
@@ -311,14 +328,19 @@ private final class SystemAudioCapture {
         self.failed = failed
     }
 
+    deinit { stop() }
+
     func start(receive: @escaping @Sendable (CapturedPCM) -> Void) throws {
+        removeListeners()
+        let fence = AudioCallbackFence()
+        listenerFence = fence
         let changed = "系统音频输出设备发生变化，已停止系统音频采集并保留此前收到的音频。"
-        listen(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, changed)
+        listen(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, changed, fence: fence)
         listen(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyServiceRestarted,
-               "系统音频服务已重启，已停止系统音频采集并保留此前收到的音频。")
-        listen(graph.outputDevice, kAudioDevicePropertyDeviceIsAlive, changed)
-        listen(graph.outputDevice, kAudioDevicePropertyNominalSampleRate, "系统音频采样率发生变化，已停止系统音频采集。")
-        listen(graph.tapID, kAudioTapPropertyFormat, "系统音频格式发生变化，已停止系统音频采集。")
+               "系统音频服务已重启，已停止系统音频采集并保留此前收到的音频。", fence: fence)
+        listen(graph.outputDevice, kAudioDevicePropertyDeviceIsAlive, changed, fence: fence)
+        listen(graph.outputDevice, kAudioDevicePropertyNominalSampleRate, "系统音频采样率发生变化，已停止系统音频采集。", fence: fence)
+        listen(graph.tapID, kAudioTapPropertyFormat, "系统音频格式发生变化，已停止系统音频采集。", fence: fence)
         let format = graph.format
         let failed = self.failed
         let mixScratch = OSAllocatedUnfairLock(initialState: [Float](repeating: 0, count: SystemAudioConversion.maxFrames))
@@ -343,9 +365,8 @@ private final class SystemAudioCapture {
         }
     }
 
-    private func listen(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ message: String) {
+    private func listen(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ message: String, fence: AudioCallbackFence) {
         var address = SystemAudioHAL.address(selector)
-        let fence = listenerFence
         let failed = self.failed
         let block: AudioObjectPropertyListenerBlock = { _, _ in
             guard fence.enter() else { return }
@@ -356,13 +377,18 @@ private final class SystemAudioCapture {
         listeners.append((object, address, block))
     }
 
-    func stop() {
+    private func removeListeners() {
         for (object, address, block) in listeners {
             var address = address
             AudioObjectRemovePropertyListenerBlock(object, &address, queue, block)
         }
         listeners.removeAll()
-        listenerFence.closeAndWait()
+        listenerFence?.closeAndWait()
+        listenerFence = nil
+    }
+
+    func stop() {
+        removeListeners()
         graph.stop()
     }
 }

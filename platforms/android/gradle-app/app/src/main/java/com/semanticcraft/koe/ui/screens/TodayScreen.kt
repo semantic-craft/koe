@@ -30,8 +30,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -100,17 +104,27 @@ internal fun QuickNoteComposer(store: HostSessionStore) {
     val colors = KoeTheme.colors
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
     var quickNoteDraft by rememberSaveable { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
 
     fun submitQuickNote() {
-        val trimmed = quickNoteDraft.trim()
-        if (trimmed.isEmpty()) return
+        val submittedDraft = quickNoteDraft
+        val trimmed = submittedDraft.trim()
+        if (saving || trimmed.isEmpty()) return
+        saving = true
         focusManager.clearFocus()
         keyboardController?.hide()
         val title = trimmed.take(24)
-        val error = store.sendReturningError(HostCommand.CreateNote(title = title, text = trimmed, stayOnPage = true))
-        if (error == null) {
-            quickNoteDraft = ""
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                val error = store.sendReturningErrorAsync(HostCommand.CreateNote(title = title, text = trimmed, stayOnPage = true))
+                if (error == null && quickNoteDraft == submittedDraft) {
+                    quickNoteDraft = ""
+                }
+            } finally {
+                saving = false
+            }
         }
     }
 
@@ -175,7 +189,7 @@ internal fun QuickNoteComposer(store: HostSessionStore) {
                 KoePrimaryButton(
                     title = "保存",
                     isPrimary = true,
-                    enabled = quickNoteDraft.isNotBlank(),
+                    enabled = !saving && quickNoteDraft.isNotBlank(),
                     onClick = { submitQuickNote() },
                     modifier = Modifier.testTag("quick-note-submit"),
                 )

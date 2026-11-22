@@ -1,6 +1,15 @@
 import CoreBluetooth
 import Foundation
+import os
 import OSLog
+
+struct BleTeardownResources {
+    var central: (any BleCentral)?
+    var peripheral: (any BlePeripheral)?
+    var reconnectingPeripheral: (any BlePeripheral)?
+    var teardownDeadline: Timer?
+    var outboundFlushTimer: Timer?
+}
 
 @MainActor
 protocol BleWriteLink: AnyObject {
@@ -37,6 +46,29 @@ final class GattWriteLink: BleWriteLink {
 }
 
 extension BluetoothBridge {
+    nonisolated static func releaseTeardownResources(_ box: OSAllocatedUnfairLock<BleTeardownResources>) {
+        let cleanup: @MainActor @Sendable () -> Void = {
+            let resources = box.withLockUnchecked { state -> BleTeardownResources in
+                let snapshot = state
+                state = BleTeardownResources()
+                return snapshot
+            }
+            resources.teardownDeadline?.invalidate()
+            resources.outboundFlushTimer?.invalidate()
+            if let central = resources.central {
+                if central.isScanning { central.stopScan() }
+                central.delegate = nil
+            }
+            resources.peripheral?.delegate = nil
+            resources.reconnectingPeripheral?.delegate = nil
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(cleanup)
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated(cleanup) }
+        }
+    }
+
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {
         let wasAutoConnectDisabled = lastObservedAutoConnect == false
         lastObservedAutoConnect = device.autoConnect

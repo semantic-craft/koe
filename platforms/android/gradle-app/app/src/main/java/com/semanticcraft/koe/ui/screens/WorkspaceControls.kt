@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.dp
 import com.semanticcraft.koe.core.CaptureMode
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
-import com.semanticcraft.koe.core.ReviewDecision
 import com.semanticcraft.koe.core.SegmentSnapshot
 import com.semanticcraft.koe.core.SourceSnapshot
 import com.semanticcraft.koe.core.TimeLabel
@@ -36,7 +35,6 @@ import com.semanticcraft.koe.core.WorkspaceSourcedItemSnapshot
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
-import com.semanticcraft.koe.ui.components.KoeSourceLink
 import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.leaves.WorkspaceCaptureActions
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
@@ -103,24 +101,20 @@ private fun ExportSwitch(title: String, checked: Boolean, onChange: (Boolean) ->
 
 @Composable
 internal fun WorkspaceSources(sources: StableList<SourceSnapshot>, onOpenSource: (SourceSnapshot) -> Unit, tag: String = "item") {
-    sources.items.forEach { source ->
-        KoeSourceLink(source, { onOpenSource(source) }, Modifier.testTag(tag + "-source-" + source.id))
-    }
+    ReviewSources(sources, onOpenSource, tag)
 }
 
 @Composable
 internal fun WorkspaceReviewRow(store: HostSessionStore, item: WorkspaceSourcedItemSnapshot, onOpenSource: (SourceSnapshot) -> Unit) {
     KoeCard {
-        val status = when (item.state) {
-            "proposed" -> "待确认"
-            "accepted" -> if (item.completed) "已完成" else "已采纳"
-            "dismissed" -> "已忽略"
-            else -> item.state
-        }
-        KoeBadge((if (item.kind == "task") "待办" else "记忆") + "  |  " + status)
+        ReviewStateBadge(
+            state = item.state,
+            accepted = if (item.completed) "已完成" else "已采纳",
+            prefix = if (item.kind == "task") "待办" else "记忆",
+        )
         Text(item.text)
         item.due?.let { Text(it, color = KoeTheme.colors.textSecondary) }
-        WorkspaceSources(StableList(item.sources), onOpenSource)
+        ReviewSources(StableList(item.sources), onOpenSource, tag = "item")
         if (item.kind == "task" && item.state == "accepted") {
             Row(Modifier.testTag("complete-" + item.id).toggleable(item.completed, role = Role.Checkbox) {
                 store.send(HostCommand.CompleteTask(item.id, it))
@@ -129,21 +123,8 @@ internal fun WorkspaceReviewRow(store: HostSessionStore, item: WorkspaceSourcedI
                 Text("已完成", Modifier.padding(start = 8.dp))
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (item.state == "proposed") {
-                ReviewButton(store, item.id, ReviewDecision.ACCEPT, "采纳")
-                ReviewButton(store, item.id, ReviewDecision.DISMISS, "忽略")
-            } else if (item.state == "accepted" || item.state == "dismissed") {
-                ReviewButton(store, item.id, ReviewDecision.RESET, "重新审核")
-            }
-        }
+        ReviewActionButtons(store = store, id = item.id, state = item.state, acceptLabel = "采纳")
     }
-}
-
-@Composable
-private fun ReviewButton(store: HostSessionStore, id: String, decision: ReviewDecision, label: String) {
-    KoePrimaryButton(label, { store.send(HostCommand.ReviewItem(id, decision)) },
-        Modifier.testTag("review-" + decision.name.lowercase() + "-" + id), isPrimary = decision == ReviewDecision.ACCEPT)
 }
 
 @Composable

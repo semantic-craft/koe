@@ -6,6 +6,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -423,5 +426,67 @@ class HostSessionStoreTest {
         assertEquals("quick_note", parsed[3]["mode"]?.jsonPrimitive?.content)
         assertEquals("capture_action", parsed[4]["type"]?.jsonPrimitive?.content)
         assertEquals("end", parsed[4]["action"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun backgroundCommandExecutorRunsOffCallerThreadInFifoOrderWithoutDeadlock() {
+        val callerThread = Thread.currentThread()
+        val observedThreads = java.util.Collections.synchronizedList(mutableListOf<Thread>())
+        val observedSections = java.util.Collections.synchronizedList(mutableListOf<String>())
+        var generation = 1L
+        val releaseFirst = java.util.concurrent.CountDownLatch(1)
+        val allDispatched = java.util.concurrent.CountDownLatch(4)
+        val bridge = FakeHostBridgeClient(
+            snapshotJson = HostJson.json.encodeToString(HostSnapshot.serializer(), HostSnapshot.empty.copy(generation = 1L)),
+        )
+        bridge.dispatchHandler = { commandJson, _ ->
+            observedThreads.add(Thread.currentThread())
+            val obj = HostJson.json.parseToJsonElement(commandJson) as JsonObject
+            val section = obj["section"]?.jsonPrimitive?.content ?: "other"
+            if (section == "today") {
+                releaseFirst.await(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            observedSections.add(section)
+            generation += 1L
+            allDispatched.countDown()
+            HostJson.json.encodeToString(
+                HostSnapshot.serializer(),
+                HostSnapshot.empty.copy(generation = generation, section = section),
+            )
+        }
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "koe-test-host-session").apply { isDaemon = true }
+        }
+        val store = HostSessionStore(
+            workspacePath = "/tmp/koe-bg-cmd",
+            bridge = bridge,
+            commandExecutor = executor,
+        )
+        var triggeredReentrant = false
+        store.onSnapshotChanged = { snap ->
+            if (snap.section == "records" && !triggeredReentrant) {
+                triggeredReentrant = true
+                store.send(HostCommand.Navigate("ask"))
+            }
+        }
+        try {
+            val asyncError = runBlocking {
+                store.send(HostCommand.Navigate("today"))
+                store.send(HostCommand.Navigate("records"))
+                val tasksError = async(start = CoroutineStart.UNDISPATCHED) {
+                    store.sendReturningErrorAsync(HostCommand.Navigate("tasks"))
+                }
+                releaseFirst.countDown()
+                tasksError.await()
+            }
+            assertNull(asyncError)
+            assertTrue("expected all FIFO and re-entrant commands to finish", allDispatched.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(listOf("today", "records", "tasks", "ask"), observedSections)
+            assertTrue("commands must run off caller thread", observedThreads.all { it !== callerThread })
+        } finally {
+            releaseFirst.countDown()
+            store.shutdown()
+            executor.shutdownNow()
+        }
     }
 }

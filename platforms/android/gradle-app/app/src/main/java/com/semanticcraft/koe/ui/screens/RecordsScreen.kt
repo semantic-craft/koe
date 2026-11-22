@@ -36,10 +36,14 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,6 +89,7 @@ fun RecordsScreen(
     val colors = KoeTheme.colors
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var filterCategory by rememberSaveable { mutableStateOf(RecordFilterCategory.ALL) }
@@ -94,14 +99,36 @@ fun RecordsScreen(
     var project by rememberSaveable { mutableStateOf<String?>(null) }
     var selecting by rememberSaveable { mutableStateOf(false) }
     var selectedIds by rememberSaveable(stateSaver = stringListSaver) { mutableStateOf(emptyList()) }
-    val projects = records.mapNotNull { it.project?.takeIf(String::isNotBlank) }.distinct().sorted()
-    val filteredRecords = records.filter {
-        it.matches(filterCategory, searchQuery) && (project == null || it.project.orEmpty().ifBlank { "" } == project)
+    var trashingIds by remember { mutableStateOf(emptySet<String>()) }
+    fun trashRecord(recordId: String) {
+        if (recordId in trashingIds) return
+        trashingIds = trashingIds + recordId
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                store.sendReturningErrorAsync(HostCommand.TrashRecord(recordId))
+            } finally {
+                trashingIds = trashingIds - recordId
+            }
+        }
     }
-    val sortedRecords = filteredRecords.sortedWith(sort.order)
-    val selected = sortedRecords.filter { it.id in selectedIds }
+    val projects = remember(records) {
+        records.mapNotNull { it.project?.takeIf(String::isNotBlank) }.distinct().sorted()
+    }
+    val filteredRecords = remember(records, filterCategory, searchQuery, project) {
+        records.filter {
+            it.matches(filterCategory, searchQuery) && (project == null || it.project.orEmpty().ifBlank { "" } == project)
+        }
+    }
+    val sortedRecords = remember(filteredRecords, sort) {
+        filteredRecords.sortedWith(sort.order)
+    }
+    val selectedIdSet = remember(selectedIds) { selectedIds.toSet() }
+    val selected = remember(sortedRecords, selectedIdSet) {
+        sortedRecords.filter { it.id in selectedIdSet }
+    }
     LaunchedEffect(filteredRecords) {
-        selectedIds = selected.map { it.id }
+        val nextIds = selected.map { it.id }
+        if (nextIds != selectedIds) selectedIds = nextIds
     }
 
     LazyColumn(
@@ -237,21 +264,23 @@ fun RecordsScreen(
             }
         }
         if (filteredRecords.isEmpty()) {
-            item { KoeEmptyState(
-                icon = Icons.Outlined.Inbox,
-                title = "暂无匹配记录",
-                detail = "切换筛选条件，或在今天页保存文字闪记与录音。",
-            ) }
+            item(key = "records-empty") {
+                KoeEmptyState(
+                    icon = Icons.Outlined.Inbox,
+                    title = "暂无匹配记录",
+                    detail = "切换筛选条件，或在今天页保存文字闪记与录音。",
+                )
+            }
         } else {
             items(sortedRecords, key = { "record-" + it.id }) { record ->
-                val canTrash by rememberUpdatedState(!selecting && record.canTrash && navigation.savingRecordId != record.id)
+                val isTrashing = record.id in trashingIds
+                val canTrash by rememberUpdatedState(!selecting && !isTrashing && record.canTrash && navigation.savingRecordId != record.id)
                 val dismissState = rememberSwipeToDismissBoxState(
                     confirmValueChange = { value ->
                         if (canTrash && value == SwipeToDismissBoxValue.EndToStart) {
-                            store.sendReturningError(HostCommand.TrashRecord(record.id)) == null
-                        } else {
-                            false
+                            trashRecord(record.id)
                         }
+                        false
                     },
                 )
                 SwipeToDismissBox(
@@ -290,12 +319,12 @@ fun RecordsScreen(
                     RecordRowCard(
                         record = record,
                         canTrash = canTrash,
-                        selected = if (selecting) record.id in selectedIds else null,
+                        selected = if (selecting) record.id in selectedIdSet else null,
                         onOpen = {
                             if (!selecting) onSelectRecord(record.id)
-                            else selectedIds = if (record.id in selectedIds) selectedIds - record.id else selectedIds + record.id
+                            else selectedIds = if (record.id in selectedIdSet) selectedIds - record.id else selectedIds + record.id
                         },
-                        onTrash = { store.send(HostCommand.TrashRecord(record.id)) },
+                        onTrash = { trashRecord(record.id) },
                     )
                 }
             }

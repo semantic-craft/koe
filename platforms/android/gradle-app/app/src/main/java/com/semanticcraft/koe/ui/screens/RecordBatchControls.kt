@@ -83,6 +83,6 @@ internal fun RecordBatchControls(
         }
     }
     if (newProject && ids.isNotEmpty()) TextEditorDialog("项目名称", "", { newProject = false }, { name ->
-        store.sendReturningError(HostCommand.BatchSetRecordProject(ids, name)) == null
+        store.sendReturningErrorAsync(HostCommand.BatchSetRecordProject(ids, name)) == null
     }, singleLine = true)
 }

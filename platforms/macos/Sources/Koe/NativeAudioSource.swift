@@ -29,6 +29,7 @@ public final class NativeAudioSource: MicrophoneSource {
         }
     }
     public func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void, failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
+        stop()
         let engine = AVAudioEngine()
         let node = engine.inputNode
         if !inputID.isEmpty {
@@ -67,13 +68,16 @@ public final class NativeAudioSource: MicrophoneSource {
     public func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
-        guard let engine else { return }
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        if let engine {
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+            self.engine = nil
+        }
         fence?.closeAndWait()
         fence = nil
-        self.engine = nil
     }
+
+    deinit { stop() }
     public static func classifyTransport(_ rawType: UInt32) -> String {
         switch rawType {
         case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:

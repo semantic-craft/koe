@@ -1,20 +1,34 @@
 import AVFoundation
 import KoeAppleCore
+import os
+
+protocol AudioInputNotificationCenter: Sendable {
+    func addObserver(
+        forName name: NSNotification.Name?,
+        object obj: Any?,
+        queue: OperationQueue?,
+        using block: @escaping @Sendable (Notification) -> Void
+    ) -> any NSObjectProtocol
+    func removeObserver(_ observer: Any)
+}
+
+extension NotificationCenter: AudioInputNotificationCenter {}
 
 @MainActor
 final class IOSAudioInputMonitor {
     private let store: HostSessionStore
-    private let center: NotificationCenter
+    private let observerBox: OSAllocatedUnfairLock<(center: any AudioInputNotificationCenter, tokens: [NSObjectProtocol])>
     private let inputs: () throws -> [HostAudioInputDescriptor]?
-    private var observers: [NSObjectProtocol] = []
     private var lastInputs: [HostAudioInputDescriptor]?
 
-    init(store: HostSessionStore, center: NotificationCenter = .default,
+    init(store: HostSessionStore, center: any AudioInputNotificationCenter = NotificationCenter.default,
          inputs: @escaping () throws -> [HostAudioInputDescriptor]?) {
         self.store = store
-        self.center = center
+        self.observerBox = OSAllocatedUnfairLock(uncheckedState: (center, []))
         self.inputs = inputs
     }
+
+    deinit { clearObservers() }
 
     convenience init(store: HostSessionStore, audioSession: IOSAudioSession) {
         self.init(store: store) {
@@ -24,26 +38,34 @@ final class IOSAudioInputMonitor {
     }
 
     func start() {
-        guard observers.isEmpty else { return }
+        stop()
         var names = [AVAudioSession.routeChangeNotification]
         if #available(iOS 26.0, *) { names.append(AVAudioSession.availableInputsChangeNotification) }
-        for name in names {
-            observers.append(center.addObserver(forName: name, object: AVAudioSession.sharedInstance(),
-                                                queue: nil) { [weak self] _ in
-                Task { @MainActor in self?.sync() }
-            })
+        observerBox.withLockUnchecked { state in
+            for name in names {
+                state.tokens.append(state.center.addObserver(forName: name, object: AVAudioSession.sharedInstance(),
+                                                             queue: nil) { [weak self] _ in
+                    Task { @MainActor in self?.sync() }
+                })
+            }
         }
         sync()
     }
 
     func stop() {
-        observers.forEach(center.removeObserver)
-        observers.removeAll()
+        clearObservers()
         lastInputs = nil
     }
 
+    private nonisolated func clearObservers() {
+        observerBox.withLockUnchecked { state in
+            state.tokens.forEach(state.center.removeObserver)
+            state.tokens.removeAll()
+        }
+    }
+
     private func sync() {
-        guard !observers.isEmpty else { return }
+        guard observerBox.withLockUnchecked({ !$0.tokens.isEmpty }) else { return }
         do {
             guard let devices = try inputs(), devices != lastInputs else { return }
             store.send(.syncAudioInputs(inputs: devices))

@@ -1,5 +1,6 @@
 import AVFAudio
 import KoeAppleCore
+import os
 import XCTest
 @testable import KoeiOSApp
 
@@ -57,7 +58,7 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
     }
 
     private func start(_ store: HostSessionStore) async throws -> String {
-        store.send(.startMicrophone(inputId: "phone"))
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
         try await waitFor("已授权的采集应从 starting 进入 recording") {
             store.snapshot.microphone?.phase == "recording"
         }
@@ -85,7 +86,7 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
     func testDeniedPermissionFinishesPendingCaptureAndExplainsFailure() async throws {
         try await fixture { store, source, _ in
             source.permission = false
-            store.send(.startMicrophone(inputId: "phone"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             try await self.waitFor("权限拒绝应结束采集并显示麦克风权限提示") {
                 store.snapshot.microphone == nil &&
                     [store.navigation.notice, store.navigation.effectiveError].compactMap { $0 }.contains { $0.contains("权限") }
@@ -159,7 +160,7 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
             let nextID = try await self.start(store)
             old(CapturedPCM(samples: [99], capturedStartNs: source.clockNs))
             source.receive?(CapturedPCM(samples: [8], capturedStartNs: source.clockNs))
-            store.send(.stopMicrophone)
+            store.send(.captureAction(action: .end))
             try await self.waitFor("中断后新录音可以独立保存") { store.snapshot.microphone == nil && store.records.contains { $0.id == nextID } }
             XCTAssertEqual(try self.wav(root, nextID), [8, 0])
         }
@@ -198,6 +199,53 @@ final class IOSMicrophoneCaptureTests: XCTestCase {
             try await self.waitFor("移除的设备须消失，当前输入须成为默认") {
                 store.captureStudio.studio.inputs.map(\.id) == ["dock"] && store.captureStudio.studio.inputs.first?.isDefault == true
             }
+        }
+    }
+
+    func testAudioInputMonitorDeinitRemovesObserversAndRepeatedStartIsIdempotent() async throws {
+        final class TrackingNotificationCenter: AudioInputNotificationCenter {
+            private let backing = NotificationCenter()
+            private let lock = OSAllocatedUnfairLock(initialState: (added: 0, removed: 0))
+            var addedCount: Int { lock.withLock { $0.added } }
+            var removedCount: Int { lock.withLock { $0.removed } }
+            var activeCount: Int { lock.withLock { $0.added - $0.removed } }
+
+            func addObserver(
+                forName name: NSNotification.Name?,
+                object obj: Any?,
+                queue: OperationQueue?,
+                using block: @escaping @Sendable (Notification) -> Void
+            ) -> any NSObjectProtocol {
+                lock.withLock { $0.added += 1 }
+                return backing.addObserver(forName: name, object: obj, queue: queue, using: block)
+            }
+
+            func removeObserver(_ observer: Any) {
+                lock.withLock { $0.removed += 1 }
+                backing.removeObserver(observer)
+            }
+        }
+
+        try await fixture { store, _, _ in
+            let center = TrackingNotificationCenter()
+            var syncCalls = 0
+            weak var weakMonitor: IOSAudioInputMonitor?
+            do {
+                let monitor = IOSAudioInputMonitor(store: store, center: center) {
+                    syncCalls += 1
+                    return [HostAudioInputDescriptor(id: "phone", name: "phone", transport: "built_in", isDefault: true)]
+                }
+                weakMonitor = monitor
+                monitor.start()
+                let perStart = center.activeCount
+                XCTAssertGreaterThan(perStart, 0)
+                monitor.start()
+                XCTAssertEqual(center.activeCount, perStart, "repeated start must not leak observers")
+                XCTAssertGreaterThanOrEqual(center.removedCount, perStart, "repeated start must tear down previous observers")
+                XCTAssertEqual(syncCalls, 2)
+            }
+            XCTAssertNil(weakMonitor)
+            XCTAssertEqual(center.activeCount, 0, "deinit must remove all NotificationCenter observers")
         }
     }
 }
