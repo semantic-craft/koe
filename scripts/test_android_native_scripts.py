@@ -233,6 +233,7 @@ class AndroidNativeScriptsTest(unittest.TestCase):
         scripts = sorted((ROOT / 'platforms' / 'android').glob('*.sh'))
         scripts += sorted((ROOT / 'platforms' / 'android' / 'tests' / 'jni').glob('*.sh'))
         scripts += sorted((ROOT / 'platforms' / 'ios').glob('*.sh'))
+        scripts += sorted((ROOT / 'scripts' / 'lib').glob('*.sh'))
         self.assertGreaterEqual(len(scripts), 4)
         pattern = re.compile(r'/Users/')
         for script in scripts:

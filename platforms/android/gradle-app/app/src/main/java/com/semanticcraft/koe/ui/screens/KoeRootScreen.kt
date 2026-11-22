@@ -2,35 +2,28 @@ package com.semanticcraft.koe.ui.screens
 
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Checklist
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,15 +32,15 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -55,8 +48,8 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -67,14 +60,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.SourceSnapshot
-import com.semanticcraft.koe.ui.components.KoePrimaryButton
-import com.semanticcraft.koe.ui.leaves.AndroidActiveCaptureBar
-import com.semanticcraft.koe.ui.leaves.AndroidLiveCaptionBar
 import com.semanticcraft.koe.ui.leaves.AndroidMiniPlayerBar
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
-import com.semanticcraft.koe.ui.theme.KoeShapes
 import com.semanticcraft.koe.ui.theme.KoeTheme
-import kotlinx.coroutines.delay
 
 enum class AndroidAppTab(val label: String, val icon: ImageVector) {
     TODAY("今天", Icons.Outlined.GridView),
@@ -132,8 +120,6 @@ fun KoeRootScreen(
 ) {
     val colors = KoeTheme.colors
     val navigation by store.navigation.collectAsStateWithLifecycle()
-    val device by store.device.collectAsStateWithLifecycle()
-    val today by store.today.collectAsStateWithLifecycle()
 
     var selectedTab by rememberSaveable { mutableStateOf(AndroidAppTab.TODAY) }
     var activeSheet by rememberSaveable { mutableStateOf(AndroidRootSheet.NONE) }
@@ -174,8 +160,9 @@ fun KoeRootScreen(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         val compactLandscape = maxWidth >= 600.dp && maxHeight < 600.dp
-        val landscapeKeyboard = compactLandscape && selectedTab == AndroidAppTab.ASK && topRoute == null &&
-            WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        val landscapeKeyboard = rememberLandscapeKeyboardVisible(
+            compactLandscape && selectedTab == AndroidAppTab.ASK && topRoute == null,
+        )
         Scaffold(
             containerColor = colors.bgPanel,
             topBar = {
@@ -206,10 +193,7 @@ fun KoeRootScreen(
                         },
                         actions = {
                             DeviceStatusPill(
-                                connected = device.connected,
-                                phase = device.phase,
-                                batteryPercent = device.batteryPercent,
-                                isReleased = today.beanControlState == "released",
+                                store = store,
                                 onClick = { activeSheet = AndroidRootSheet.DEVICE },
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -241,7 +225,7 @@ fun KoeRootScreen(
                 if (landscapeKeyboard) return@Scaffold
                 if (compactLandscape && showDock) {
                     Row(Modifier.fillMaxWidth().navigationBarsPadding(), verticalAlignment = Alignment.Bottom) {
-                        Box(Modifier.weight(2f)) { DockedBottomChrome(store, ::openRecord, captureWorkspace, compact = true) }
+                        Box(Modifier.weight(2f)) { DockedBottomChrome(store, navigation, ::openRecord, captureWorkspace, compact = true) }
                         Column(Modifier.weight(1f)) {
                             AndroidMiniPlayerBar(store, visibleRecord, ::openRecord)
                             TabNavigationBar(selectedTab, openTab)
@@ -250,11 +234,10 @@ fun KoeRootScreen(
                 } else {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         AndroidMiniPlayerBar(store, visibleRecord, ::openRecord)
-                        DockedBottomChrome(store, ::openRecord, captureWorkspace)
+                        DockedBottomChrome(store, navigation, ::openRecord, captureWorkspace)
                         HorizontalDivider(color = colors.border)
                         TabNavigationBar(selectedTab, openTab)
                     }
-
                 }
             },
         ) { innerPadding ->
@@ -336,163 +319,11 @@ private fun TabNavigationBar(selectedTab: AndroidAppTab, onSelect: (AndroidAppTa
 }
 
 @Composable
-private fun DeviceStatusPill(
-    connected: Boolean,
-    phase: String,
-    batteryPercent: Int?,
-    isReleased: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = KoeTheme.colors
-    val label = when {
-        isReleased -> "录音豆 已让出"
-        connected && batteryPercent != null -> "录音豆 ${batteryPercent}%"
-        connected -> "录音豆 已连接"
-        else -> "录音豆"
-    }
-    val dotColor = when {
-        isReleased -> colors.textMuted
-        connected -> colors.success
-        phase == "disconnected" -> colors.textMuted
-        else -> colors.warning
-    }
-
-    Surface(
-        onClick = onClick,
-        shape = KoeShapes.pill,
-        color = colors.bgSubtle,
-        border = BorderStroke(1.dp, colors.border),
-        modifier = Modifier.testTag("device-status-pill"),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Box(modifier = Modifier.size(7.dp).clip(KoeShapes.pill).background(dotColor))
-            Text(
-                text = label,
-                color = colors.textPrimary,
-                fontSize = KoeFontSizes.xs,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-@Composable
-private fun DockedBottomChrome(
-    store: HostSessionStore,
-    onOpenRecord: (String) -> Unit,
-    workspace: AndroidModeWorkspaceRoute?,
-    compact: Boolean = false,
-) {
-    val navigation by store.navigation.collectAsStateWithLifecycle()
-    val colors = KoeTheme.colors
-
-    Column(modifier = Modifier.fillMaxWidth().background(colors.bgPanel)) {
-        navigation.effectiveError?.let { errorMessage ->
-            Surface(
-                shape = KoeShapes.card,
-                color = colors.surface1,
-                border = BorderStroke(1.dp, colors.danger.copy(alpha = 0.4f)),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = colors.danger, modifier = Modifier.size(18.dp))
-                    Text(
-                        text = errorMessage,
-                        color = colors.textPrimary,
-                        fontSize = KoeFontSizes.xs,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    KoePrimaryButton(title = "知道了", isPrimary = false, onClick = { store.clearError() })
-                }
-            }
-        }
-
-        val notice = navigation.notice
-        var dismissed by rememberSaveable(notice) { mutableStateOf(false) }
-        if (!notice.isNullOrBlank() && !dismissed) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(notice, modifier = Modifier.weight(1f), color = colors.success, fontSize = KoeFontSizes.xs)
-                IconButton(onClick = { dismissed = true }) {
-                    Icon(Icons.Outlined.Close, contentDescription = "关闭提示")
-                }
-            }
-        }
-
-        val barPadding = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-        if (compact && navigation.hasLiveCaption && navigation.activeCaptureMode != null &&
-            navigation.activeCaptureMode != workspace?.mode) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                AndroidLiveCaptionBar(store, onOpenRecord, Modifier.weight(1f).then(barPadding))
-                AndroidActiveCaptureBar(store, Modifier.weight(1f).then(barPadding), workspace?.mode)
-            }
-        } else {
-            AndroidLiveCaptionBar(store, onOpenRecord, barPadding)
-            AndroidActiveCaptureBar(store, barPadding, workspace?.mode)
-        }
-        UndoTrashBar(store = store)
-    }
-}
-
-@Composable
-private fun UndoTrashBar(store: HostSessionStore) {
-    val navigation by store.navigation.collectAsStateWithLifecycle()
-    val undo = navigation.undoTrash ?: return
-    val colors = KoeTheme.colors
-
-    LaunchedEffect(undo.recordId) {
-        delay(8_000L)
-        if (store.navigation.value.undoTrash?.recordId == undo.recordId) {
-            store.send(HostCommand.DismissUndoTrash)
-        }
-    }
-
-    Surface(
-        shape = KoeShapes.card,
-        color = colors.surface1,
-        border = BorderStroke(1.dp, colors.border),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .testTag("undo-trash-bar"),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(18.dp))
-            Text(
-                text = "已移入回收站  ${undo.title}",
-                color = colors.textPrimary,
-                fontSize = KoeFontSizes.xs,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            KoePrimaryButton(
-                title = "撤销",
-                modifier = Modifier.testTag("trash-undo"),
-                isPrimary = true,
-                onClick = {
-                    val ids = undo.effectiveRecordIds
-                    if (ids.size > 1) store.send(HostCommand.BatchRestoreRecords(ids))
-                    else store.send(HostCommand.RestoreRecord(undo.recordId))
-                },
-            )
-        }
-    }
+private fun rememberLandscapeKeyboardVisible(enabled: Boolean): Boolean {
+    if (!enabled) return false
+    val density = LocalDensity.current
+    val ime = WindowInsets.ime
+    return remember(ime, density) {
+        derivedStateOf { ime.getBottom(density) > 0 }
+    }.value
 }

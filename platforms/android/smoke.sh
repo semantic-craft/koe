@@ -108,41 +108,16 @@ done
 [[ "$AVD_NAME" =~ $TEST_AVD_REGEX ]] || die "refusing non-test AVD '$AVD_NAME'; AVD must match $TEST_AVD_REGEX"
 [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 5554 && PORT <= 65534 && PORT % 2 == 0 )) || die "--port must be an even integer in [5554, 65534]: $PORT"
 
-valid_java_home() {
-  local dir="$1"
-  [[ -n "$dir" && -x "$dir/bin/java" ]] && "$dir/bin/java" -version >/dev/null 2>&1
-}
-
-resolve_java_home() {
-  if [[ -n "${JAVA_HOME:-}" ]] && valid_java_home "$JAVA_HOME"; then
-    printf '%s\n' "$JAVA_HOME"
-    return 0
-  fi
-  if [[ -x /usr/libexec/java_home ]]; then
-    local candidate=""
-    candidate="$(/usr/libexec/java_home -v 17+ 2>/dev/null || true)"
-    if valid_java_home "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-  if command -v brew >/dev/null 2>&1; then
-    local brew_jdk=""
-    brew_jdk="$(brew --prefix openjdk@17 2>/dev/null || true)"
-    if [[ -n "$brew_jdk" ]] && valid_java_home "$brew_jdk/libexec/openjdk.jdk/Contents/Home"; then
-      printf '%s\n' "$brew_jdk/libexec/openjdk.jdk/Contents/Home"
-      return 0
-    fi
-  fi
-  die "working JDK 17+ not found; install openjdk@17 or set JAVA_HOME"
-}
+# shellcheck source=scripts/lib/java-env.sh
+source "$ROOT/scripts/lib/java-env.sh"
 
 if [[ "$SKIP_NATIVE" -eq 0 ]]; then
   "$ANDROID_DIR/build-native.sh" arm64-v8a
 fi
 
 if [[ "$SKIP_GRADLE" -eq 0 ]]; then
-  JAVA_HOME="$(resolve_java_home)"
+  JAVA_HOME="$(resolve_java_home)" \
+    || die "working JDK 17+ not found; install openjdk@17 or set JAVA_HOME"
   export JAVA_HOME
   export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
   export ANDROID_HOME="$ANDROID_SDK_ROOT"

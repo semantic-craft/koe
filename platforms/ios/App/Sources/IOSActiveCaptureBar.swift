@@ -70,9 +70,9 @@ struct IOSCaptureActionButtons: View {
     var identifierPrefix = "capture-action"
 
     var body: some View {
-        if let capture = store.activeCapture, capture.mode == mode {
+        if store.activeCaptureMode == mode {
             HStack(spacing: 6) {
-                ForEach(capture.actions, id: \.self) { action in
+                ForEach(store.activeCaptureActions, id: \.self) { action in
                     IOSPrimaryButton(action.iosTitle, isPrimary: action == .end) {
                         store.performCaptureAction(action)
                     }

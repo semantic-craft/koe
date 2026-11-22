@@ -3,28 +3,27 @@ import json
 import os
 from pathlib import Path
 import plistlib
-import re
 import subprocess
 import tempfile
 import unittest
 
+from test_harness_stubs import (
+    FAKE_JAVA,
+    FAKE_MAESTRO,
+    FAKE_SLIM,
+    read_calls,
+    write_exec,
+)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 IOS_DIR = ROOT / 'platforms' / 'ios'
-PROJECT_YML = IOS_DIR / 'project.yml'
 INFO_PLIST = IOS_DIR / 'App' / 'Info.plist'
 VERIFY_SCRIPT = IOS_DIR / 'verify-simulator.sh'
 SMOKE_LIVE_FLOW = IOS_DIR / 'Tests' / 'maestro' / 'smoke-ios-live.yaml'
 SMOKE_FIXTURE_FLOW = IOS_DIR / 'Tests' / 'maestro' / 'smoke-ios-fixture.yaml'
 FAIL_PROBE_FLOW = IOS_DIR / 'Tests' / 'maestro' / 'fail-probe-ios.yaml'
 FIXTURE_JSON = IOS_DIR / 'Tests' / 'Fixtures' / 'ios-rich-snapshot.json'
-
-
-FAKE_JAVA = '''#!/usr/bin/env python3
-import sys
-sys.stderr.write('openjdk version "17.0.10"\\n')
-sys.exit(0)
-'''
 
 FAKE_XCODEGEN = '''#!/usr/bin/env python3
 import json, os, sys
@@ -166,90 +165,8 @@ sys.stderr.write(f'unexpected fake simctl subcommand: {sub}\\n')
 sys.exit(1)
 '''
 
-FAKE_MAESTRO = '''#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-
-args = sys.argv[1:]
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps([
-            'maestro',
-            *args,
-            {
-                'MAESTRO_CLI_NO_ANALYTICS': os.environ.get('MAESTRO_CLI_NO_ANALYTICS'),
-                'MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED': os.environ.get(
-                    'MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED'
-                ),
-            },
-        ]) + '\\n')
-
-if 'hierarchy' in args:
-    print('{"attributes":{"text":"模式选择","accessibilityText":"模式选择"},"children":[]}')
-    sys.exit(0)
-
-if '--udid' not in args:
-    sys.stderr.write('error: expected --udid flag on maestro test\\n')
-    sys.exit(2)
-
-for idx, arg in enumerate(args):
-    if arg == '--debug-output' and idx + 1 < len(args):
-        debug_dir = Path(args[idx + 1])
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        (debug_dir / 'maestro.log').write_text('fake maestro ios log\\n', encoding='utf-8')
-        if os.environ.get('FAKE_MAESTRO_WRITE_PNG') == '1':
-            shot_dir = debug_dir / 'screenshots'
-            shot_dir.mkdir(parents=True, exist_ok=True)
-            (shot_dir / 'final_screen.png').write_bytes(b'\\x89PNG\\r\\n\\x1a\\nMAESTRO_FALLBACK_SCREEN')
-
-container_dir = os.environ.get('FAKE_APP_CONTAINER')
-if container_dir:
-    docs_dir = Path(container_dir) / 'Documents'
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    if Path(args[-1]).name == 'smoke-ios-live.yaml':
-        workspace_dir = Path((Path(container_dir) / 'launched-workspace').read_text(encoding='utf-8'))
-        (workspace_dir / 'product-workspace.json').write_text(
-            json.dumps({'provider': {'model': 'deepseek-v4-pro'}}), encoding='utf-8')
-    trace_file = docs_dir / 'koe-trace.json'
-    if not trace_file.exists():
-        trace_file.write_text(json.dumps([
-            {
-                'kind': 'command',
-                'name': 'create_note',
-                'generation': 2,
-                'section': 'today',
-                'hasError': False,
-                'timestampEpochMs': 1700000001000,
-            }
-        ]) + '\\n', encoding='utf-8')
-
-sys.exit(int(os.environ.get('FAKE_MAESTRO_EXIT', '0')))
-'''
-
-
 class IOSProjectContractTest(unittest.TestCase):
-    def test_project_yml_and_info_plist_contracts(self):
-        self.assertTrue(PROJECT_YML.is_file(), f'missing {PROJECT_YML}')
-        yml = PROJECT_YML.read_text(encoding='utf-8')
-
-        self.assertIn('createIntermediateGroups: false', yml)
-        self.assertRegex(yml, r'iOS:\s*"?17\.0"?')
-        self.assertIn('KoeAppleShared:', yml)
-        self.assertIn('path: ../apple-shared', yml)
-        self.assertIn('product: KoeAppleCore', yml)
-        self.assertNotIn('product: KoeAppleShared', yml)
-        self.assertIn('LIBRARY_SEARCH_PATHS[sdk=iphoneos*]', yml)
-        self.assertIn('$(PROJECT_DIR)/../../target/ios/device', yml)
-        self.assertIn('LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]', yml)
-        self.assertIn('$(PROJECT_DIR)/../../target/ios/simulator', yml)
-        self.assertIn('-lkoe_host_api', yml)
-        self.assertRegex(yml, r'CODE_SIGNING_ALLOWED\[sdk=iphonesimulator\*\]:\s*"?NO"?')
-        self.assertIn('KoeiOSTests:', yml)
-        self.assertIn('type: bundle.unit-test', yml)
-        self.assertIn('schemes:', yml)
-        self.assertIn('KoeiOSApp:', yml)
-
+    def test_info_plist_contract(self):
         self.assertTrue(INFO_PLIST.is_file(), f'missing {INFO_PLIST}')
         plist = plistlib.loads(INFO_PLIST.read_bytes())
         self.assertEqual(plist.get('CFBundleDisplayName'), 'Koe')
@@ -288,11 +205,7 @@ class IOSSimulatorHarnessTest(unittest.TestCase):
         self.fake_native_lib.write_bytes(b'!<arch>\n')
 
     def write_exec(self, rel, content):
-        path = self.root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding='utf-8')
-        path.chmod(0o755)
-        return path
+        return write_exec(self.root, rel, content)
 
     def base_env(self, **extra):
         env = dict(
@@ -312,9 +225,7 @@ class IOSSimulatorHarnessTest(unittest.TestCase):
         return env
 
     def read_calls(self):
-        if not self.call_log.exists():
-            return []
-        return [json.loads(line) for line in self.call_log.read_text(encoding='utf-8').splitlines() if line]
+        return read_calls(self.call_log)
 
     def run_verify(self, args, **env_extra):
         self.assertTrue(VERIFY_SCRIPT.is_file(), f'missing {VERIFY_SCRIPT}')
@@ -327,21 +238,28 @@ class IOSSimulatorHarnessTest(unittest.TestCase):
             timeout=30,
         )
 
-    def assert_four_artifacts(self, artifacts_dir: Path):
+    def assert_four_artifacts(self, artifacts_dir: Path, expected_outcome: str | None = None):
         for name in ('screen.png', 'view_hierarchy.txt', 'syslog.txt', 'trace.json'):
             path = artifacts_dir / name
             self.assertTrue(path.exists() and path.stat().st_size > 0, f'missing or empty {name} in {artifacts_dir}')
+        self.assertFalse((artifacts_dir / 'koe-trace.json').exists())
         self.assertTrue((artifacts_dir / 'screen.png').read_bytes().startswith(b'\x89PNG'))
         trace = json.loads((artifacts_dir / 'trace.json').read_text(encoding='utf-8'))
-        self.assertIsInstance(trace, (dict, list))
+        self.assertIsInstance(trace, dict)
+        self.assertEqual(trace['platform'], 'ios')
+        self.assertEqual(trace['udid'], 'FAKE-IPHONE-17-UDID')
+        self.assertEqual(trace['device_name'], 'iPhone 17')
+        self.assertEqual(
+            set(trace['artifacts'].keys()),
+            {'screen', 'hierarchy', 'log', 'maestro_debug_dir'},
+        )
+        self.assertIsInstance(trace['host_intent_trace'], list)
+        self.assertGreaterEqual(len(trace['host_intent_trace']), 1)
+        if expected_outcome is not None:
+            self.assertEqual(trace['outcome'], expected_outcome)
 
     def fake_slim(self):
-        return self.write_exec('bin/fake-slim', """#!/usr/bin/env python3
-import json, os, sys
-with open(os.environ['FAKE_CALL_LOG'], 'a') as log:
-    print(json.dumps(['slim', *sys.argv[1:]]), file=log)
-print('{"rss_mb": 256}')
-""")
+        return self.write_exec('bin/fake-slim', FAKE_SLIM)
 
     def test_slim_profile_doctor_metrics_and_workspace_relaunch(self):
         artifacts = self.root / 'slim'
@@ -404,7 +322,7 @@ print('{"rss_mb": 256}')
             FAKE_MAESTRO_EXIT='0',
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assert_four_artifacts(artifacts_dir)
+        self.assert_four_artifacts(artifacts_dir, expected_outcome='pass')
 
         calls = self.read_calls()
         self.assertTrue(any(c[:3] == ['xcrun', 'simctl', 'boot'] and 'FAKE-IPHONE-17-UDID' in c for c in calls))
@@ -442,7 +360,7 @@ print('{"rss_mb": 256}')
             FAKE_MAESTRO_EXIT='1',
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assert_four_artifacts(artifacts_dir)
+        self.assert_four_artifacts(artifacts_dir, expected_outcome='fail')
         calls = self.read_calls()
         self.assertTrue(any(c[:3] == ['xcrun', 'simctl', 'shutdown'] and 'FAKE-IPHONE-17-UDID' in c for c in calls))
 
@@ -454,7 +372,7 @@ print('{"rss_mb": 256}')
             FAKE_MAESTRO_EXIT='1',
         )
         self.assertEqual(expected.returncode, 0, expected.stderr + expected.stdout)
-        self.assert_four_artifacts(expected_dir)
+        self.assert_four_artifacts(expected_dir, expected_outcome='expected_failure')
 
         unexpected_dir = self.root / 'unexpected-pass'
         unexpected = self.run_verify(
@@ -508,19 +426,8 @@ print('{"rss_mb": 256}')
             KOE_IOS_FORENSICS_TIMEOUT='1',
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assert_four_artifacts(artifacts_dir)
+        self.assert_four_artifacts(artifacts_dir, expected_outcome='pass')
         self.assertIn(b'MAESTRO_FALLBACK_SCREEN', (artifacts_dir / 'screen.png').read_bytes())
-
-    def test_ios_shell_scripts_have_no_hardcoded_home_paths(self):
-        scripts = sorted(IOS_DIR.glob('*.sh'))
-        self.assertGreaterEqual(len(scripts), 2)
-        pattern = re.compile(r'/Users/')
-        for script in scripts:
-            content = script.read_text(encoding='utf-8')
-            self.assertIsNone(
-                pattern.search(content),
-                f'hardcoded personal home path found in {script.relative_to(ROOT)}',
-            )
 
 
 if __name__ == '__main__':

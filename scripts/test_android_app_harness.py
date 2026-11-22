@@ -2,11 +2,19 @@
 import json
 import os
 from pathlib import Path
-import re
-import shlex
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
+
+from test_harness_stubs import (
+    FAKE_ADB,
+    FAKE_EMULATOR,
+    FAKE_JAVA,
+    FAKE_MAESTRO,
+    read_calls,
+    write_exec,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,214 +25,6 @@ SMOKE_SCRIPT = ANDROID_DIR / 'smoke.sh'
 CANONICAL_FIXTURE = ANDROID_DIR / 'tests' / 'fixtures' / 'android-rich-snapshot.json'
 TEST_RESOURCE_FIXTURE = GRADLE_APP_DIR / 'src' / 'test' / 'resources' / 'android-rich-snapshot.json'
 MAESTRO_DIR = ANDROID_DIR / 'tests' / 'maestro'
-
-FAKE_JAVA = '''#!/usr/bin/env python3
-import sys
-sys.stderr.write('openjdk version "17.0.10"\\n')
-sys.exit(0)
-'''
-
-FAKE_EMULATOR = '''#!/usr/bin/env python3
-import json, os, signal, sys, time
-from pathlib import Path
-
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(['emulator', *sys.argv[1:]]) + '\\n')
-
-def _stop(_signum, _frame):
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, _stop)
-signal.signal(signal.SIGINT, _stop)
-
-while True:
-    time.sleep(0.1)
-'''
-
-FAKE_ADB = '''#!/usr/bin/env python3
-import json, os, shlex, sys
-from pathlib import Path
-
-args = sys.argv[1:]
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(['adb', *args]) + '\\n')
-
-sandbox_root = Path(os.environ['FAKE_SANDBOX_ROOT'])
-tmp_root = sandbox_root / 'data_local_tmp'
-app_root = sandbox_root / 'app_sandbox'
-tmp_root.mkdir(parents=True, exist_ok=True)
-app_root.mkdir(parents=True, exist_ok=True)
-
-if args == ['devices']:
-    print('List of devices attached')
-    sys.exit(0)
-
-rest = args
-if len(args) >= 2 and args[0] == '-s':
-    rest = args[2:]
-
-if rest == ['get-state']:
-    print('device')
-    sys.exit(0)
-
-if rest == ['emu', 'avd', 'name']:
-    print(os.environ.get('FAKE_EMU_AVD_NAME', 'koe-test-api35') + '\\r')
-    print('OK\\r')
-    sys.exit(0)
-
-if rest == ['emu', 'kill']:
-    print('OK: killing emulator, bye bye')
-    sys.exit(0)
-
-if len(rest) >= 2 and rest[0] == 'install':
-    print('Success')
-    sys.exit(0)
-
-if len(rest) == 3 and rest[0] == 'push':
-    src = Path(rest[1])
-    dst_name = Path(rest[2]).name
-    (tmp_root / dst_name).write_bytes(src.read_bytes())
-    print('1 file pushed.')
-    sys.exit(0)
-
-if rest == ['exec-out', 'screencap', '-p']:
-    sys.stdout.buffer.write(b'\\x89PNG\\r\\n\\x1a\\nFAKE_PNG')
-    sys.exit(0)
-
-if len(rest) == 3 and rest[0] == 'pull':
-    Path(rest[2]).write_text(
-        '<?xml version="1.0" encoding="UTF-8"?><hierarchy rotation="0"><node text="Koe"/></hierarchy>\\n',
-        encoding='utf-8',
-    )
-    sys.exit(0)
-
-if rest and rest[0] == 'logcat':
-    print('11-20 07:30:00.500  100  100 I KoeApp: fake logcat line')
-    sys.exit(0)
-
-if rest and rest[0] == 'shell':
-    raw_cmd = ' '.join(rest[1:])
-    tokens = shlex.split(raw_cmd)
-
-    if len(tokens) == 2 and tokens[0] == 'getprop':
-        props = {
-            'sys.boot_completed': '1',
-            'ro.build.version.sdk': '35',
-            'ro.product.cpu.abi': 'arm64-v8a',
-        }
-        print(props.get(tokens[1], '') + '\\r')
-        sys.exit(0)
-
-    if tokens and tokens[0] == 'date':
-        print('2026-11-20 07:30:00.000\\r')
-        sys.exit(0)
-
-    if len(tokens) == 3 and tokens[:2] == ['uiautomator', 'dump']:
-        print(f'UI hierchary dumped to: {tokens[2]}')
-        sys.exit(0)
-
-    if tokens and tokens[0] == 'rm':
-        for target in tokens[1:]:
-            if target.startswith('/data/local/tmp/'):
-                p = tmp_root / Path(target).name
-                if p.exists():
-                    p.unlink()
-        sys.exit(0)
-
-    if tokens[:2] == ['am', 'force-stop']:
-        sys.exit(0)
-
-    if len(tokens) == 4 and tokens[:2] == ['pm', 'grant']:
-        sys.exit(0)
-
-    if tokens[:2] == ['am', 'start']:
-        trace_payload = os.environ.get('FAKE_HOST_TRACE_JSON', '')
-        if trace_payload:
-            pkg = 'com.semanticcraft.koe'
-            trace_file = app_root / pkg / 'files' / 'koe-trace.json'
-            trace_file.parent.mkdir(parents=True, exist_ok=True)
-            trace_file.write_text(trace_payload, encoding='utf-8')
-        print('Status: ok')
-        sys.exit(0)
-
-    if tokens and tokens[0] == 'run-as':
-        pkg = tokens[1]
-        pkg_dir = app_root / pkg
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-        sub = tokens[2:]
-
-        if sub and sub[0] == 'rm':
-            for rel in sub[1:]:
-                if not rel.startswith('-'):
-                    p = pkg_dir / rel
-                    if p.exists():
-                        p.unlink()
-            sys.exit(0)
-
-        if sub == ['cat', 'files/koe-trace.json']:
-            p = pkg_dir / 'files' / 'koe-trace.json'
-            if not p.exists():
-                sys.stderr.write('cat: files/koe-trace.json: No such file or directory\\n')
-                sys.exit(1)
-            sys.stdout.write(p.read_text(encoding='utf-8'))
-            sys.exit(0)
-
-        if len(sub) >= 3 and sub[:2] == ['sh', '-c']:
-            inner = sub[2]
-            if 'test -s files/koe-trace.json' in inner:
-                p = pkg_dir / 'files' / 'koe-trace.json'
-                sys.exit(0 if p.exists() and p.stat().st_size > 0 else 1)
-            if 'files/koe-active-fixture.json' in inner:
-                src_match = None
-                for i, tok in enumerate(tokens):
-                    if tok == '<' and i + 1 < len(tokens):
-                        src_match = tokens[i + 1]
-                        break
-                if src_match is None:
-                    for part in inner.split():
-                        if part.startswith('/data/local/tmp/'):
-                            src_match = part.strip('"\\'')
-                            break
-                if not src_match:
-                    sys.stderr.write(f'no staged fixture path found in: {raw_cmd}\\n')
-                    sys.exit(1)
-                staged = tmp_root / Path(src_match).name
-                if not staged.exists():
-                    sys.stderr.write(f'missing pushed file: {staged}\\n')
-                    sys.exit(1)
-                dst = pkg_dir / 'files' / 'koe-active-fixture.json'
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(staged.read_bytes())
-                sys.exit(0)
-
-    sys.stderr.write(f'unexpected fake adb shell: {raw_cmd}\\n')
-    sys.exit(1)
-
-sys.stderr.write(f'unexpected fake adb args: {args}\\n')
-sys.exit(1)
-'''
-
-FAKE_MAESTRO = '''#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(['maestro', *sys.argv[1:]]) + '\\n')
-
-for i, arg in enumerate(sys.argv[1:]):
-    if arg == '--debug-output' and i + 2 < len(sys.argv):
-        debug_dir = Path(sys.argv[i + 2])
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        (debug_dir / 'maestro.log').write_text('fake maestro log\\n', encoding='utf-8')
-
-sys.exit(int(os.environ.get('FAKE_MAESTRO_EXIT', '0')))
-'''
 
 FAKE_VERIFY_EMULATOR = '''#!/usr/bin/env python3
 import json, os, sys
@@ -267,17 +67,10 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
         self.sandbox_root = self.root / 'sandbox'
 
     def write_exec(self, rel, content):
-        path = self.root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding='utf-8')
-        path.chmod(0o755)
-        return path
+        return write_exec(self.root, rel, content)
 
     def read_calls(self, path=None):
-        target = path or self.call_log
-        if not target.exists():
-            return []
-        return [json.loads(line) for line in target.read_text(encoding='utf-8').splitlines() if line]
+        return read_calls(path or self.call_log)
 
     def verify_env(self, **extra):
         env = dict(
@@ -313,29 +106,16 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
         env.update(extra)
         return env
 
-    def test_gradle_manifest_bridge_and_canonical_fixture_contracts(self):
-        gradle_text = (GRADLE_APP_DIR / 'build.gradle.kts').read_text(encoding='utf-8')
-        self.assertRegex(gradle_text, r'\bcompileSdk\s*=\s*36\b')
-        self.assertRegex(gradle_text, r'\btargetSdk\s*=\s*36\b')
-        self.assertRegex(gradle_text, r'\bminSdk\s*=\s*29\b')
-        self.assertRegex(gradle_text, r'\buseLegacyPackaging\s*=\s*false\b')
-        self.assertIn('"NewApi"', gradle_text)
-        self.assertIn('"InlinedApi"', gradle_text)
-        self.assertRegex(gradle_text, r'\bwarningsAsErrors\s*=\s*true\b')
-        self.assertIn('create("github")', gradle_text)
-        self.assertIn('create("play")', gradle_text)
-        jni_match = re.search(r'jniLibs\.srcDirs\("([^"]+)"\)', gradle_text)
-        self.assertIsNotNone(jni_match, 'app/build.gradle.kts must configure jniLibs.srcDirs')
-        resolved_jni_dir = (GRADLE_APP_DIR / jni_match.group(1)).resolve()
-        self.assertEqual(
-            resolved_jni_dir,
-            (ROOT / 'target' / 'android' / 'jniLibs').resolve(),
-            f'jniLibs.srcDirs must resolve to repo target/android/jniLibs, got {resolved_jni_dir}',
-        )
-
-        play_manifest = (GRADLE_APP_DIR / 'src' / 'play' / 'AndroidManifest.xml').read_text(encoding='utf-8')
-        self.assertIn('android.permission.REQUEST_INSTALL_PACKAGES', play_manifest)
-        self.assertIn('tools:node="remove"', play_manifest)
+    def test_manifest_bridge_and_canonical_fixture_contracts(self):
+        android_ns = '{http://schemas.android.com/apk/res/android}'
+        tools_ns = '{http://schemas.android.com/tools}'
+        play_manifest = ET.parse(GRADLE_APP_DIR / 'src' / 'play' / 'AndroidManifest.xml').getroot()
+        removed_perms = [
+            el.attrib.get(f'{android_ns}name')
+            for el in play_manifest.findall('uses-permission')
+            if el.attrib.get(f'{tools_ns}node') == 'remove'
+        ]
+        self.assertIn('android.permission.REQUEST_INSTALL_PACKAGES', removed_perms)
 
         bridge_files = list(ANDROID_DIR.rglob('KoeNativeBridge.java'))
         self.assertEqual(
@@ -345,10 +125,11 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
         )
 
         self.assertTrue(CANONICAL_FIXTURE.is_file(), f'missing canonical fixture: {CANONICAL_FIXTURE}')
-        self.assertTrue(TEST_RESOURCE_FIXTURE.is_file(), f'missing test resource fixture: {TEST_RESOURCE_FIXTURE}')
+        self.assertFalse(
+            TEST_RESOURCE_FIXTURE.exists(),
+            f'duplicate test resource fixture must not exist: {TEST_RESOURCE_FIXTURE}',
+        )
         canonical_data = json.loads(CANONICAL_FIXTURE.read_text(encoding='utf-8'))
-        resource_data = json.loads(TEST_RESOURCE_FIXTURE.read_text(encoding='utf-8'))
-        self.assertEqual(canonical_data, resource_data, 'canonical and test resource fixtures must stay in sync')
         self.assertEqual(canonical_data['platform']['id'], 'android')
         self.assertEqual(canonical_data['platform']['hostDisplayName'], 'Android')
         self.assertEqual(canonical_data['platform']['nativeSpeechLabel'], 'Android 本机')

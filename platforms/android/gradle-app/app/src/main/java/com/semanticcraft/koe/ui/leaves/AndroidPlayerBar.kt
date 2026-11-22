@@ -172,7 +172,12 @@ fun AndroidPlayerBar(
 }
 
 @Composable
-fun AndroidMiniPlayerBar(store: HostSessionStore, visibleRecordId: String?, onOpenRecord: (String) -> Unit) {
+fun AndroidMiniPlayerBar(
+    store: HostSessionStore,
+    visibleRecordId: String?,
+    onOpenRecord: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val playback by store.playback.collectAsStateWithLifecycle()
     val asset = playback.asset ?: return
     val id = playback.recordId ?: return
@@ -181,7 +186,7 @@ fun AndroidMiniPlayerBar(store: HostSessionStore, visibleRecordId: String?, onOp
     val record = records.firstOrNull { it.id == id }
     val duration = record?.durationMs?.takeIf { it > 0 } ?: asset.durationNs / 1_000_000
     Surface(onClick = { onOpenRecord(id) }, color = KoeTheme.colors.surface1,
-        modifier = Modifier.fillMaxWidth().testTag("mini-player-bar")) {
+        modifier = modifier.fillMaxWidth().testTag("mini-player-bar")) {
         Row(modifier = Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { store.send(HostCommand.Playback(!playback.isPlaying)) }) {
                 Icon(if (playback.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,

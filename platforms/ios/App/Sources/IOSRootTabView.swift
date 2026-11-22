@@ -46,7 +46,7 @@ struct IOSRootTabView: View {
 
     private var tabs: some View {
         TabView(selection: tabSelection) {
-            tabNavigationStack(path: $todayPath) {
+            tabNavigationStack(tab: .today, path: $todayPath) {
                 IOSTodayView(
                     store: store,
                     onOpenWorkspace: { route in
@@ -60,7 +60,7 @@ struct IOSRootTabView: View {
             }
             .tag(IOSAppTab.today)
 
-            tabNavigationStack(path: $recordsPath) {
+            tabNavigationStack(tab: .records, path: $recordsPath) {
                 IOSRecordsView(
                     store: store,
                     onSelectRecord: { recordId in
@@ -74,7 +74,7 @@ struct IOSRootTabView: View {
             }
             .tag(IOSAppTab.records)
 
-            tabNavigationStack(path: $actionsPath) {
+            tabNavigationStack(tab: .actions, path: $actionsPath) {
                 IOSActionsView(
                     store: store,
                     onOpenSource: { source in
@@ -88,7 +88,7 @@ struct IOSRootTabView: View {
             }
             .tag(IOSAppTab.actions)
 
-            tabNavigationStack(path: $askPath) {
+            tabNavigationStack(tab: .ask, path: $askPath) {
                 IOSAskView(
                     store: store,
                     onOpenSource: { source in
@@ -114,6 +114,7 @@ struct IOSRootTabView: View {
 
     @ViewBuilder
     private func tabNavigationStack<Content: View>(
+        tab: IOSAppTab,
         path: Binding<[IOSDetailRoute]>,
         @ViewBuilder root: () -> Content
     ) -> some View {
@@ -145,7 +146,9 @@ struct IOSRootTabView: View {
                         }
                     }
             }
-            dockedOverlayStack(route: path.wrappedValue.last)
+            if tab == selectedTab {
+                dockedOverlayStack(route: path.wrappedValue.last)
+            }
         }
     }
 

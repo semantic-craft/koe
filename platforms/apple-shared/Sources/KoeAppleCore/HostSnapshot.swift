@@ -35,7 +35,7 @@ public struct SegmentSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let isEdited: Bool
     public let startMs: UInt64
     public let endMs: UInt64
-    public var timed: Bool? = nil
+    public var timed: Bool?
     public let speaker: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -73,10 +73,10 @@ public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let segmentCount: Int
     public let preview: String
     public let archived: Bool
-    public var runId: String? = nil
-    public var ordinal: UInt64? = nil
-    public var mode: String? = nil
-    public var project: String? = nil
+    public var runId: String?
+    public var ordinal: UInt64?
+    public var mode: String?
+    public var project: String?
     public var isTranscribing: Bool { status == "转写中" || status == "等待转写" }
 
     private enum CodingKeys: String, CodingKey {
@@ -175,8 +175,8 @@ public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let source: String
     public let status: String
     public let archived: Bool
-    public var mode: String? = nil
-    public var project: String? = nil
+    public var mode: String?
+    public var project: String?
     public let segments: [SegmentSnapshot]
     public let summary: [SummarySnapshot]
     public let highlights: [SourceSnapshot]
@@ -324,18 +324,6 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let clockNs: UInt64?
     public let lanes: [String: CaptureLaneSnapshot]
 
-    public var phaseSummaryLabel: String {
-        switch phase {
-        case "paused": "已暂停"
-        case "saving": "正在保存"
-        case "stopping": "正在停止并保存"
-        case "pausing": "正在暂停"
-        case "cancelling": "正在取消"
-        case "starting": "等待权限"
-        default: "正在录音"
-        }
-    }
-
     private enum CodingKeys: String, CodingKey {
         case recordId, sessionId, lane, inputId, inputLabel, inputBadge, phase, nextSequence, durationMs
         case level, error, interruption, epoch, clockNs, lanes
@@ -365,12 +353,12 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public var platform: HostPlatformSnapshot = .macosDefault
     public var speech: SpeechSnapshot = .empty
     public var appUpdate: AppUpdateSnapshot = .empty
-    public var liveCaption: LiveCaptionSnapshot? = nil
-    public var microphone: MicrophoneSnapshot? = nil
+    public var liveCaption: LiveCaptionSnapshot?
+    public var microphone: MicrophoneSnapshot?
     public var capture: CaptureStudioSnapshot = .empty
-    public var lifecycle: LifecycleSnapshot? = nil
-    public var activeCapture: ActiveCaptureSnapshot? = nil
-    public var workspaces: ModeWorkspacesSnapshot? = nil
+    public var lifecycle: LifecycleSnapshot?
+    public var activeCapture: ActiveCaptureSnapshot?
+    public var workspaces: ModeWorkspacesSnapshot?
     public let version: UInt32
     public let generation: UInt64
     public let section: String
@@ -397,14 +385,6 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
         case selectedRecordId, focusSegmentId, records
         case trashRecords, undoTrash, detail, tasks, memories, ask
         case device, provider, playback, error, notice
-    }
-
-    public var activeLiveRecord: RecordSnapshot? {
-        if let liveId = device.liveRecordId,
-           let matched = records.first(where: { $0.id == liveId }) {
-            return matched
-        }
-        return records.first(where: \.isTranscribing)
     }
 
     public static let empty = HostSnapshot(

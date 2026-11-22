@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
@@ -54,7 +55,7 @@ internal fun SettingsExtrasCards(store: HostSessionStore, update: AppUpdateSnaps
                     Text("新版本 " + (update.latestVersion ?: ""))
                     update.releaseNotes?.takeIf { it.isNotBlank() }?.let { Text(it) }
                     val targetUrl = update.downloadUrl?.takeIf { it.isNotBlank() } ?: update.releaseUrl
-                    val uri = Uri.parse(targetUrl)
+                    val uri = targetUrl.toUri()
                     if (uri.scheme == "https" && !uri.host.isNullOrBlank()) {
                         KoePrimaryButton("下载更新", { launch(Intent(Intent.ACTION_VIEW, uri)) })
                     }

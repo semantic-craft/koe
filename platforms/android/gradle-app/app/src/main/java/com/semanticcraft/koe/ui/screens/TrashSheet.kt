@@ -30,13 +30,14 @@ import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeEmptyState
 import com.semanticcraft.koe.ui.components.KoeModalSheet
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.theme.KoeFontSizes
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun TrashSheet(
-    trashRecords: List<TrashRecordSnapshot>,
+    trashRecords: StableList<TrashRecordSnapshot>,
     onRestore: (String) -> Unit,
     onPurge: (String) -> Unit,
     onEmptyTrash: () -> Unit,
@@ -59,7 +60,7 @@ internal fun TrashSheet(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(modifier = Modifier.weight(1f))
-                if (trashRecords.isNotEmpty()) {
+                if (trashRecords.items.isNotEmpty()) {
                     KoePrimaryButton(title = "清空", isPrimary = false, onClick = {
                         deletionTitle = "清空回收站？"
                         confirmDeletion = onEmptyTrash
@@ -73,14 +74,14 @@ internal fun TrashSheet(
                 )
             }
 
-            if (trashRecords.isEmpty()) {
+            if (trashRecords.items.isEmpty()) {
                 KoeEmptyState(
                     icon = Icons.Outlined.DeleteOutline,
                     title = "回收站为空",
                     detail = "左滑或轻点移入回收站后，可在 30 天内随时恢复。",
                 )
             } else {
-                trashRecords.forEach { item ->
+                trashRecords.items.forEach { item ->
                     KoeCard {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(

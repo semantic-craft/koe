@@ -7,14 +7,6 @@ public struct SettingsDoctorView: View {
 
     public init(store: HostSessionStore) { self.store = store }
 
-    private var persistedModelFingerprint: [String] {
-        let p = store.settings.provider
-        return [
-            p.asrProvider, p.asrModel, p.llmProvider, p.model,
-            String(p.enableThinking), p.qwenWorkspaceId, p.asrEndpoint, p.chatEndpoint
-        ]
-    }
-
     public var body: some View {
         let provider = store.settings.provider
         let speech = store.settings.speech
@@ -45,7 +37,7 @@ public struct SettingsDoctorView: View {
                 didInitialize = true
             }
         }
-        .onChange(of: persistedModelFingerprint) { _, _ in
+        .onChange(of: store.settings.provider.persistedModelFingerprint) { _, _ in
             draft.sync(from: store.settings.provider)
         }
         .onDisappear {

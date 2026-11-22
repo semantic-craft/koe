@@ -115,12 +115,12 @@ final class NativeCaptureIntegrationTests: XCTestCase {
     }
     func testPauseDrainsAcceptedTailAndCanFinishQuit() async throws {
         try await fixture { store, source, capture, root in
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             source.permission?(true)
             await self.awaitRecording(store)
             let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
             source.receive?([1, 2]); source.tail = [3, 4]
-            store.send(.pauseMicrophone)
+            store.send(.captureAction(action: .pause))
             capture.apply()
             XCTAssertEqual(store.snapshot.microphone?.phase, "paused")
             XCTAssertEqual(store.snapshot.microphone?.nextSequence, 2)
@@ -133,11 +133,11 @@ final class NativeCaptureIntegrationTests: XCTestCase {
     }
     func testLatePermissionAfterCancelCannotStartAnotherSession() async throws {
         try await fixture { store, source, _, _ in
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             let late = source.permission
-            store.send(.cancelMicrophone)
+            store.send(.captureAction(action: .cancel))
             XCTAssertNil(store.snapshot.microphone)
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             late?(true)
             source.permission?(true)
             await self.awaitRecording(store)
@@ -146,7 +146,7 @@ final class NativeCaptureIntegrationTests: XCTestCase {
     }
     func testStopCallbackTailReachesRustBeforeQuitReady() async throws {
         try await fixture { store, source, capture, root in
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             source.permission?(true)
             await self.awaitRecording(store)
             let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
@@ -161,7 +161,7 @@ final class NativeCaptureIntegrationTests: XCTestCase {
     }
     func testPermissionDenialHasNoSuccessfulRecord() async throws {
         try await fixture { store, source, capture, _ in
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             source.permission?(false)
             await self.awaitState { capture.apply(); return store.snapshot.microphone == nil }
             XCTAssertNil(store.snapshot.microphone)
@@ -172,7 +172,7 @@ final class NativeCaptureIntegrationTests: XCTestCase {
     }
     func testFailedMetadataSaveKeepsQuitBlockedUntilExplicitRetry() async throws {
         try await fixture { store, source, capture, root in
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             source.permission?(true)
             await self.awaitRecording(store)
             let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
@@ -189,7 +189,7 @@ final class NativeCaptureIntegrationTests: XCTestCase {
             store.pollTimers(elapsedMs: 250)
             XCTAssertEqual(store.snapshot.microphone?.recordId, id)
             XCTAssertFalse(FileManager.default.fileExists(atPath: metadata.path))
-            store.send(.retryMicrophoneSave)
+            store.send(.captureAction(action: .retrySave))
             XCTAssertNil(store.snapshot.microphone)
             XCTAssertEqual(store.snapshot.records.map(\.id), [id])
             let saved = try SavedCapture.read(root)
@@ -206,14 +206,14 @@ extension NativeCaptureIntegrationTests {
             let audio = root.appendingPathComponent("audio")
             try Data([0]).write(to: audio)
             source.startSamples = [7, 8]
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             source.permission?(true)
             await self.awaitState { capture.apply(); return store.snapshot.microphone?.error != nil }
             XCTAssertNotNil(store.snapshot.microphone?.error)
             XCTAssertTrue(store.snapshot.records.isEmpty)
             let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
             try FileManager.default.removeItem(at: audio)
-            store.send(.retryMicrophoneSave)
+            store.send(.captureAction(action: .retrySave))
             capture.apply()
             XCTAssertNil(store.snapshot.microphone)
             let bytes = try Data(contentsOf: root.appendingPathComponent("audio/\(id).wav"))
@@ -295,7 +295,7 @@ extension NativeCaptureIntegrationTests {
             source.startSamples = [7, 8]
             source.tail = [9, 10]
             source.throwAfterStartSamples = true
-            store.send(.startMicrophone(inputId: "fixture"))
+            store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             source.permission?(true)
             await self.awaitState { capture.apply(); return store.snapshot.microphone == nil }
             store.send(.requestQuit)
@@ -311,8 +311,8 @@ extension NativeCaptureIntegrationTests {
 final class FakeSystemAudio: SystemAudioSource {
     var authorization: (@Sendable (SystemAudioAuthResult) -> Void)?
     var shouldAbort: (@Sendable () -> Bool)?
-    var emit: ((CapturedPCM) -> Void)?
-    var failure: ((String) -> Void)?
+    var emit: (@Sendable (CapturedPCM) -> Void)?
+    var failure: (@Sendable (String) -> Void)?
     var clock: () -> UInt64 = { 1_000_000_000 }
     var firstOffsetNs: UInt64 = 0
     var nextSampleNs: UInt64 = 0
@@ -327,8 +327,8 @@ final class FakeSystemAudio: SystemAudioSource {
         self.shouldAbort = shouldAbort
         authorization = completion
     }
-    func start(expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
-               failed: @escaping (String) -> Void) throws -> UInt32 {
+    func start(expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
+               failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
         starts += 1
         emit = receive
         failure = failed
@@ -353,7 +353,7 @@ extension NativeCaptureIntegrationTests {
     func testSingleLaneDenialKeepsTheOtherLaneRecordingInBothDirections() async throws {
         for denied in ["system", "microphone"] {
             try await dualFixture { store, microphone, system, capture, root in
-                store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
+                store.send(.setCaptureSystemAudio(enabled: true)); store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
                 XCTAssertEqual(store.snapshot.microphone?.lanes.keys.sorted(), ["microphone", "system"])
                 microphone.permission?(denied != "microphone")
                 system.authorization?(denied == "system" ? .denied(SystemAudioCanaryEvaluator.deniedMessage) : .authorized)
@@ -365,7 +365,7 @@ extension NativeCaptureIntegrationTests {
                 let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
                 if denied == "system" { microphone.receive?([1, 2]) } else { system.receive([3, 4]) }
                 capture.apply()
-                store.send(.stopMicrophone)
+                store.send(.captureAction(action: .end))
                 XCTAssertNil(store.snapshot.microphone)
                 let lanes = try SavedCapture.read(root).captureLanes
                 XCTAssertEqual(lanes.count, 2)
@@ -380,7 +380,7 @@ extension NativeCaptureIntegrationTests {
 
     func testOutputSwitchStopsOnlySystemLaneWithoutLosingAcceptedAudio() async throws {
         try await dualFixture { store, microphone, system, capture, root in
-            store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
+            store.send(.setCaptureSystemAudio(enabled: true)); store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             microphone.permission?(true)
             system.authorization?(.authorized)
             await self.awaitRecording(store)
@@ -406,12 +406,12 @@ extension NativeCaptureIntegrationTests {
 
     func testCancelAbortsPendingSystemAuthorizationAndLateGrantStartsNothing() async throws {
         try await dualFixture { store, microphone, system, _, _ in
-            store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
+            store.send(.setCaptureSystemAudio(enabled: true)); store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
             microphone.permission?(true)
             await Task.yield()
             XCTAssertEqual(store.snapshot.microphone?.phase, "starting")
             XCTAssertEqual(system.shouldAbort?(), false)
-            store.send(.cancelMicrophone)
+            store.send(.captureAction(action: .cancel))
             XCTAssertNil(store.snapshot.microphone)
             XCTAssertEqual(system.shouldAbort?(), true)
             system.authorization?(.authorized)

@@ -12,6 +12,7 @@ struct IOSLaunchConfig: Equatable {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> IOSLaunchConfig {
+        #if DEBUG
         func option(_ flag: String, envKey: String) -> String? {
             if let idx = arguments.firstIndex(of: flag), idx + 1 < arguments.count {
                 let value = arguments[idx + 1].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,6 +29,9 @@ struct IOSLaunchConfig: Equatable {
             snapshotFixturePath: option("-koe-snapshot-fixture", envKey: "KOE_SNAPSHOT_FIXTURE"),
             traceOutputPath: option("-koe-trace-output", envKey: "KOE_TRACE_OUTPUT")
         )
+        #else
+        return IOSLaunchConfig(workspacePath: nil, snapshotFixturePath: nil, traceOutputPath: nil)
+        #endif
     }
 }
 
@@ -39,7 +43,7 @@ final class IOSLaunchSession {
     let fileActions: IOSFileActions
     let coordinator: IOSHostCoordinator
     private let inputMonitor: IOSAudioInputMonitor
-    private static let traceQueue = DispatchQueue(label: "com.semanticcraft.koe.ios.trace", qos: .utility)
+    static let traceQueue = DispatchQueue(label: "com.semanticcraft.koe.ios.trace", qos: .utility)
     private let traceURLs: [URL]
 
     init(
@@ -124,7 +128,7 @@ final class IOSLaunchSession {
     private func writeTraceFile() {
         guard !traceURLs.isEmpty else { return }
         let json = store.exportTraceJSON()
-        Self.traceQueue.async { [traceURLs, weak store] in
+        Self.traceQueue.async { [traceURLs] in
             let data = Data((json + "\n").utf8)
             for url in traceURLs {
                 do {
@@ -132,7 +136,6 @@ final class IOSLaunchSession {
                     try data.write(to: url, options: .atomic)
                 } catch {
                     Self.logger.error("Trace write failed: \(error.localizedDescription, privacy: .public)")
-                    Task { @MainActor [weak store] in store?.reportNativeError("无法保存宿主追踪文件。") }
                 }
             }
         }

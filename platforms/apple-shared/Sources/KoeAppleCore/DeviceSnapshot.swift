@@ -6,7 +6,7 @@ public struct DeviceFileSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let durationMs: UInt64
     public var synced: Bool = false
     public var downloading: Bool = false
-    public var recordId: String? = nil
+    public var recordId: String?
     public var fileId: UInt32 { id }
 
     private enum CodingKeys: String, CodingKey {

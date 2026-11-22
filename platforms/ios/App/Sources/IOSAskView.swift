@@ -168,8 +168,6 @@ struct IOSAskView: View {
             }
         }
     }
-
-
 }
 
 private struct IOSAskSourceEvidenceSheet: View {

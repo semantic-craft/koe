@@ -31,8 +31,6 @@ UDID=""
 DEVICE_NAME=""
 BOOTED_BY_SCRIPT=0
 CLEANUP_DONE=0
-MAESTRO_PID=""
-SLEEP_PID=""
 XCRUN_BIN=""
 
 usage() {
@@ -62,16 +60,11 @@ Options:
 USAGE
 }
 
-die() {
-  printf 'ios verify-simulator error: %s\n' "$*" >&2
-  exit 1
-}
-
-die_usage() {
-  printf 'ios verify-simulator error: %s\n' "$*" >&2
-  usage >&2
-  exit 2
-}
+export MOBILE_E2E_LOG_PREFIX="ios verify-simulator error"
+# shellcheck source=scripts/lib/java-env.sh
+source "$ROOT/scripts/lib/java-env.sh"
+# shellcheck source=scripts/lib/mobile-e2e-common.sh
+source "$ROOT/scripts/lib/mobile-e2e-common.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -102,7 +95,7 @@ while [[ $# -gt 0 ]]; do
       shift ;;
     --restart-flow)
       [[ $# -ge 2 && -f "$2" ]] || die_usage "--restart-flow requires an existing flow"
-      RESTART_FLOW="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")"
+      RESTART_FLOW="$(abs_path "$2")"
       shift ;;
     --workspace)
       [[ $# -ge 2 && -n "$2" ]] || die_usage "--workspace requires a directory"
@@ -159,87 +152,26 @@ fi
 
 if [[ -n "$FLOW_PATH" ]]; then
   [[ -f "$FLOW_PATH" ]] || die "Maestro flow not found: $FLOW_PATH"
-  FLOW_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$FLOW_PATH")"
+  FLOW_PATH="$(abs_path "$FLOW_PATH")"
 fi
 
 if [[ -n "$FIXTURE_PATH" ]]; then
   [[ -f "$FIXTURE_PATH" ]] || die "snapshot fixture not found: $FIXTURE_PATH"
-  FIXTURE_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$FIXTURE_PATH")"
+  FIXTURE_PATH="$(abs_path "$FIXTURE_PATH")"
 fi
 
-valid_java_home() {
-  local dir="$1"
-  [[ -n "$dir" && -x "$dir/bin/java" ]] && "$dir/bin/java" -version >/dev/null 2>&1
-}
-
-resolve_java_home() {
-  if [[ -n "${JAVA_HOME:-}" ]] && valid_java_home "$JAVA_HOME"; then
-    printf '%s\n' "$JAVA_HOME"
-    return 0
-  fi
-
-  local candidate=""
-  if [[ -x /usr/libexec/java_home ]]; then
-    candidate="$(/usr/libexec/java_home -v 17+ 2>/dev/null || true)"
-    if valid_java_home "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if command -v brew >/dev/null 2>&1; then
-    local formula brew_jdk
-    for formula in openjdk@17 openjdk; do
-      brew_jdk="$(brew --prefix "$formula" 2>/dev/null || true)"
-      if [[ -n "$brew_jdk" ]]; then
-        candidate="$brew_jdk/libexec/openjdk.jdk/Contents/Home"
-        if valid_java_home "$candidate"; then
-          printf '%s\n' "$candidate"
-          return 0
-        fi
-      fi
-    done
-  fi
-
-  die "working JDK 17+ not found for Maestro; install openjdk@17 or set JAVA_HOME"
-}
-
-resolve_tool() {
-  local override="$1"
-  local extra_candidate="$2"
-  local name="$3"
-
-  if [[ -n "$override" ]]; then
-    [[ -x "$override" ]] || die "$name override is not executable: $override"
-    printf '%s/%s\n' "$(cd "$(dirname "$override")" && pwd -P)" "$(basename "$override")"
-    return 0
-  fi
-
-  if [[ -n "$extra_candidate" && -x "$extra_candidate" ]]; then
-    printf '%s\n' "$extra_candidate"
-    return 0
-  fi
-
-  local found=""
-  if found="$(command -v "$name" 2>/dev/null)"; then
-    printf '%s\n' "$found"
-    return 0
-  fi
-
-  die "$name not found; install $name or set KOE_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_BIN"
-}
-
-JAVA_HOME="$(resolve_java_home)"
+JAVA_HOME="$(resolve_java_home)" \
+  || die "working JDK 17+ not found for Maestro; install openjdk@17 or set JAVA_HOME"
 export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$PATH"
 
-XCRUN_BIN="$(resolve_tool "${KOE_XCRUN_BIN:-}" "" "xcrun")"
-MAESTRO_BIN="$(resolve_tool "${KOE_MAESTRO_BIN:-}" "$HOME/.maestro/bin/maestro" "maestro")"
+XCRUN_BIN="$(resolve_tool "${KOE_XCRUN_BIN:-}" "xcrun")"
+MAESTRO_BIN="$(resolve_tool "${KOE_MAESTRO_BIN:-}" "maestro" "$HOME/.maestro/bin/maestro")"
 XCODEGEN_BIN=""
 XCODEBUILD_BIN=""
 if [[ "$SKIP_BUILD" -eq 0 || "$SELF_CHECK" -eq 1 ]]; then
-  XCODEGEN_BIN="$(resolve_tool "${KOE_XCODEGEN_BIN:-}" "" "xcodegen")"
-  XCODEBUILD_BIN="$(resolve_tool "${KOE_XCODEBUILD_BIN:-}" "" "xcodebuild")"
+  XCODEGEN_BIN="$(resolve_tool "${KOE_XCODEGEN_BIN:-}" "xcodegen")"
+  XCODEBUILD_BIN="$(resolve_tool "${KOE_XCODEBUILD_BIN:-}" "xcodebuild")"
 fi
 
 SIM_LIB="${KOE_IOS_SIM_LIB:-$ROOT/target/ios/simulator/libkoe_host_api.a}"
@@ -299,46 +231,6 @@ sys.exit(rc)
 PY
 }
 
-pid_alive() {
-  local pid="$1"
-  [[ -n "$pid" ]] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
-  local stat=""
-  stat="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  [[ -n "$stat" && "$stat" != Z* ]]
-}
-
-interruptible_sleep() {
-  sleep "$1" &
-  SLEEP_PID=$!
-  wait "$SLEEP_PID" 2>/dev/null || true
-  kill "$SLEEP_PID" 2>/dev/null || true
-  SLEEP_PID=""
-}
-
-terminate_pgroup() {
-  local pid="$1"
-  local grace="${2:-3}"
-  [[ -n "$pid" ]] || return 0
-
-  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-  local ticks=$(( grace * 5 ))
-  local i=0
-  while [[ $i -lt $ticks ]]; do
-    if ! pid_alive "$pid"; then
-      wait "$pid" 2>/dev/null || true
-      kill -0 -- "-$pid" 2>/dev/null || return 0
-    fi
-    sleep 0.2
-    i=$((i + 1))
-  done
-  if pid_alive "$pid" || kill -0 -- "-$pid" 2>/dev/null; then
-    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-    sleep 0.1
-  fi
-  wait "$pid" 2>/dev/null || true
-}
-
 cleanup() {
   if [[ "$CLEANUP_DONE" -eq 1 ]]; then
     return 0
@@ -358,18 +250,6 @@ cleanup() {
   if [[ "$BOOTED_BY_SCRIPT" -eq 1 && -n "$UDID" && -n "$XCRUN_BIN" ]]; then
     "$XCRUN_BIN" simctl shutdown "$UDID" >/dev/null 2>&1 || true
   fi
-}
-
-on_term() {
-  trap - INT TERM
-  cleanup
-  exit 143
-}
-
-on_int() {
-  trap - INT TERM
-  cleanup
-  exit 130
 }
 
 trap cleanup EXIT
@@ -441,7 +321,7 @@ ARTIFACTS_DIR_CREATED=0
 if [[ -z "$ARTIFACTS_DIR" ]]; then
   ARTIFACTS_DIR="$ROOT/target/verify-artifacts/ios-$RUN_ID"
 else
-  ARTIFACTS_DIR="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$ARTIFACTS_DIR")"
+  ARTIFACTS_DIR="$(abs_path "$ARTIFACTS_DIR")"
 fi
 if [[ ! -d "$ARTIFACTS_DIR" ]]; then
   ARTIFACTS_DIR_CREATED=1
@@ -522,6 +402,10 @@ collect_forensics() {
   local container_dir="$2"
   local trace_src="$3"
   local maestro_debug_dir="$4"
+  local log_window_sec="${5:-120}"
+  local flow="$6"
+  local flow_exit="$7"
+  local outcome="$8"
   mkdir -p "$dir"
 
   rm -f "$dir/screen.png"
@@ -571,31 +455,22 @@ PY
 
   rm -f "$dir/syslog.txt"
   run_with_timeout "$FORENSICS_TIMEOUT" "$dir/syslog.txt" "__STDOUT__" \
-    "$XCRUN_BIN" simctl spawn "$UDID" log show --last "${5:-120}s" --style compact \
+    "$XCRUN_BIN" simctl spawn "$UDID" log show --last "${log_window_sec}s" --style compact \
     --predicate 'process == "Koe" OR subsystem BEGINSWITH "com.semanticcraft.koe"' || true
 
+  local host_trace_raw=""
   if [[ -n "$trace_src" && -s "$trace_src" ]]; then
-    cp "$trace_src" "$dir/trace.json"
+    host_trace_raw="$trace_src"
   elif [[ -n "$container_dir" && -s "$container_dir/Documents/koe-trace.json" ]]; then
-    cp "$container_dir/Documents/koe-trace.json" "$dir/trace.json"
+    host_trace_raw="$container_dir/Documents/koe-trace.json"
   fi
-}
 
-validate_forensics_bundle() {
-  local dir="$1"
-  local missing=()
-  local name
-  for name in screen.png view_hierarchy.txt syslog.txt trace.json; do
-    if [[ ! -s "$dir/$name" ]]; then
-      missing+=("$name")
-    fi
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    printf 'ios verify-simulator error: incomplete forensics bundle in %s; missing or empty: %s\n' \
-      "$dir" "${missing[*]}" >&2
-    return 1
-  fi
-  python3 -c 'import json, sys; data = json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(data, (dict, list))' "$dir/trace.json"
+  write_forensics_trace \
+    "$dir/trace.json" "ios" "$RUN_ID" "$flow" \
+    "$flow_exit" "$outcome" \
+    "$dir/screen.png" "$dir/view_hierarchy.txt" "$dir/syslog.txt" "$maestro_debug_dir" \
+    "$host_trace_raw" \
+    "udid=$UDID" "device_name=$DEVICE_NAME"
 }
 
 run_single_flow() {
@@ -659,31 +534,8 @@ run_single_flow() {
     wait_ticks=$((wait_ticks + 1))
   done
 
-  export MAESTRO_CLI_NO_ANALYTICS=1
-  export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
-
-  python3 -c 'import os, sys; os.setsid(); os.chdir(sys.argv[1]); os.execvp(sys.argv[2], sys.argv[2:])' \
-    "$debug_dir" \
-    "$MAESTRO_BIN" test --udid "$UDID" --no-ansi --debug-output "$debug_dir" "$flow" &
-  MAESTRO_PID=$!
-
   local flow_exit=0
-  local flow_deadline=$(( $(date +%s) + FLOW_TIMEOUT ))
-  while pid_alive "$MAESTRO_PID"; do
-    if [[ $(date +%s) -ge $flow_deadline ]]; then
-      printf 'ios verify-simulator error: Maestro flow timed out after %ds: %s\n' "$FLOW_TIMEOUT" "$flow" >&2
-      terminate_pgroup "$MAESTRO_PID" 3
-      MAESTRO_PID=""
-      flow_exit=124
-      break
-    fi
-    interruptible_sleep 0.5
-  done
-
-  if [[ -n "$MAESTRO_PID" ]]; then
-    wait "$MAESTRO_PID" || flow_exit=$?
-    MAESTRO_PID=""
-  fi
+  run_maestro_with_timeout "$MAESTRO_BIN" "$UDID" "$debug_dir" "$flow" "$FLOW_TIMEOUT" || flow_exit=$?
 
   if [[ "$flow_exit" -eq 0 && "$flow" -ef "$LIVE_FLOW" ]]; then
     python3 - "$workspace_dir/product-workspace.json" <<'PYTHON' || flow_exit=$?
@@ -698,14 +550,17 @@ print(f"iOS live settings persisted: {saved_model}")
 PYTHON
   fi
 
+  local outcome=""
+  outcome="$(compute_flow_outcome "$flow_exit" "$EXPECT_FAILURE")"
+
   local should_collect=0
   if [[ "$flow_exit" -ne 0 || "$EXPECT_FAILURE" -eq 1 || "$KEEP_ARTIFACTS" -eq 1 ]]; then
     should_collect=1
   fi
 
   if [[ "$should_collect" -eq 1 ]]; then
-    collect_forensics "$out_dir" "$container_dir" "$trace_file" "$debug_dir" "$((SECONDS - log_start + 1))"
-    if [[ -s "$trace_file" ]]; then cp "$trace_file" "$out_dir/koe-trace.json"; fi
+    collect_forensics "$out_dir" "$container_dir" "$trace_file" "$debug_dir" \
+      "$((SECONDS - log_start + 1))" "$flow" "$flow_exit" "$outcome"
     if [[ -n "$WORKSPACE" && -z "$fixture" ]]; then
       mkdir -p "$out_dir/workspace"
       cp "$workspace_dir/product-workspace.json" "$out_dir/workspace/"
@@ -729,22 +584,22 @@ if [[ "$SELF_CHECK" -eq 1 ]]; then
   fixture_dir="$ARTIFACTS_DIR/fixture"
 
   if ! run_single_flow "$LIVE_FLOW" "" "$live_dir" "live"; then
-    validate_forensics_bundle "$live_dir" || true
+    validate_forensics_bundle "$live_dir" "view_hierarchy.txt" "syslog.txt" || true
     printf 'verify-simulator: FAIL (live flow failed, device=%s, udid=%s, artifacts=%s)\n' \
       "$DEVICE_NAME" "$UDID" "$live_dir" >&2
     exit 1
   fi
 
   if ! run_single_flow "$FIXTURE_FLOW" "$DEFAULT_FIXTURE" "$fixture_dir" "fixture"; then
-    validate_forensics_bundle "$fixture_dir" || true
+    validate_forensics_bundle "$fixture_dir" "view_hierarchy.txt" "syslog.txt" || true
     printf 'verify-simulator: FAIL (fixture flow failed, device=%s, udid=%s, artifacts=%s)\n' \
       "$DEVICE_NAME" "$UDID" "$fixture_dir" >&2
     exit 1
   fi
 
   if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
-    validate_forensics_bundle "$live_dir"
-    validate_forensics_bundle "$fixture_dir"
+    validate_forensics_bundle "$live_dir" "view_hierarchy.txt" "syslog.txt"
+    validate_forensics_bundle "$fixture_dir" "view_hierarchy.txt" "syslog.txt"
     printf 'verify-simulator: PASS (self-check, device=%s, udid=%s, artifacts=%s)\n' \
       "$DEVICE_NAME" "$UDID" "$ARTIFACTS_DIR"
   else
@@ -765,7 +620,7 @@ if [[ "$EXPECT_FAILURE" -eq 1 ]]; then
       "$ARTIFACTS_DIR" >&2
     exit 1
   fi
-  validate_forensics_bundle "$ARTIFACTS_DIR"
+  validate_forensics_bundle "$ARTIFACTS_DIR" "view_hierarchy.txt" "syslog.txt"
   printf 'verify-simulator: expected failure confirmed with complete 4-artifact forensics (%s)\n' \
     "$ARTIFACTS_DIR"
   exit 0
@@ -776,12 +631,12 @@ if [[ "$flow_exit" -eq 0 && -n "$RESTART_FLOW" ]]; then
   SKIP_BUILD=1
   restart_dir="$(dirname "$ARTIFACTS_DIR")/restart"
   run_single_flow "$RESTART_FLOW" "" "$restart_dir" restart
-  validate_forensics_bundle "$restart_dir"
+  validate_forensics_bundle "$restart_dir" "view_hierarchy.txt" "syslog.txt"
 fi
 
 if [[ "$flow_exit" -eq 0 ]]; then
   if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
-    validate_forensics_bundle "$ARTIFACTS_DIR"
+    validate_forensics_bundle "$ARTIFACTS_DIR" "view_hierarchy.txt" "syslog.txt"
     printf 'verify-simulator: PASS (device=%s, udid=%s, artifacts=%s)\n' \
       "$DEVICE_NAME" "$UDID" "$ARTIFACTS_DIR"
   else
@@ -793,7 +648,7 @@ if [[ "$flow_exit" -eq 0 ]]; then
   exit 0
 fi
 
-validate_forensics_bundle "$ARTIFACTS_DIR" || true
+validate_forensics_bundle "$ARTIFACTS_DIR" "view_hierarchy.txt" "syslog.txt" || true
 printf 'verify-simulator: FAIL (exit=%d, device=%s, udid=%s, artifacts=%s)\n' \
   "$flow_exit" "$DEVICE_NAME" "$UDID" "$ARTIFACTS_DIR" >&2
 exit "$flow_exit"

@@ -1,6 +1,8 @@
 import Foundation
 import KoeAppleCore
 @testable import KoeiOSApp
+import os
+import Security
 import XCTest
 
 @MainActor
@@ -79,6 +81,9 @@ final class KoeiOSHostTests: XCTestCase {
 
         XCTAssertEqual(try credentials.perform(operation: 2, reference: qwenRef, value: ""), "")
         XCTAssertNil(try credentials.perform(operation: 0, reference: qwenRef, value: ""))
+        XCTAssertEqual(try credentials.perform(operation: 1, reference: qwenRef, value: "sk-qwen-rewritten"), qwenRef)
+        XCTAssertEqual(try credentials.perform(operation: 0, reference: qwenRef, value: ""), "sk-qwen-rewritten")
+        XCTAssertEqual(try credentials.perform(operation: 2, reference: "isolated-1234-999-1", value: ""), "")
 
         XCTAssertThrowsError(try credentials.perform(operation: 1, reference: "bad-ref", value: "secret")) { error in
             XCTAssertEqual(error as? NativeCredentialsiOS.Failure, .invalidReference)
@@ -104,6 +109,82 @@ final class KoeiOSHostTests: XCTestCase {
         let legacyPayload = try XCTUnwrap(try envCredentials.perform(operation: 3, reference: "", value: ""))
         XCTAssertTrue(legacyPayload.contains("sk-env-qwen"))
         XCTAssertTrue(legacyPayload.contains("sk-env-ds"))
+        let envRef = try XCTUnwrap(try envCredentials.perform(operation: 5, reference: "qwen", value: "sk-env-qwen"))
+        XCTAssertEqual(try envCredentials.perform(operation: 2, reference: envRef, value: ""), "")
+        XCTAssertNil(try envCredentials.perform(operation: 0, reference: envRef, value: ""))
+        XCTAssertEqual(try envCredentials.perform(operation: 1, reference: envRef, value: "sk-env-qwen"), envRef)
+        XCTAssertEqual(try envCredentials.perform(operation: 0, reference: envRef, value: ""), "sk-env-qwen")
+    }
+
+    func testNativeCredentialsiOSProductionKeychainParityAndAccessibility() throws {
+        final class IOSMockKeychain: AppleKeychainBackend {
+            private struct State: Sendable {
+                var items: [String: Data] = [:]
+                var accessibilities: [AppleKeychainAccessibility] = []
+            }
+            private let state = OSAllocatedUnfairLock(initialState: State())
+            var accessibilities: [AppleKeychainAccessibility] { state.withLock(\.accessibilities) }
+            private func key(_ query: AppleKeychainQuery) -> String { "\(query.service)::\(query.account)" }
+
+            func copyData(for query: AppleKeychainQuery, interactive: Bool) -> AppleKeychainReadResult {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    return state.items[key(query)].map(AppleKeychainReadResult.found) ?? .notFound
+                }
+            }
+            func add(_ data: Data, for query: AppleKeychainQuery, interactive: Bool) -> OSStatus {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    let k = key(query)
+                    if state.items[k] != nil { return errSecDuplicateItem }
+                    state.items[k] = data
+                    return errSecSuccess
+                }
+            }
+            func update(_ data: Data, for query: AppleKeychainQuery, interactive: Bool) -> OSStatus {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    let k = key(query)
+                    guard state.items[k] != nil else { return errSecItemNotFound }
+                    state.items[k] = data
+                    return errSecSuccess
+                }
+            }
+            func delete(for query: AppleKeychainQuery, interactive: Bool) -> OSStatus {
+                state.withLock { state in
+                    state.accessibilities.append(query.accessibility)
+                    return state.items.removeValue(forKey: key(query)) != nil ? errSecSuccess : errSecItemNotFound
+                }
+            }
+        }
+
+        let backend = IOSMockKeychain()
+        let production = NativeCredentialsiOS(mode: .productionKeychain, keychain: backend)
+        XCTAssertFalse(production.isolated)
+        let uuid = try XCTUnwrap(try production.perform(operation: 5, reference: "qwen", value: "v1"))
+        XCTAssertNotNil(UUID(uuidString: uuid))
+        XCTAssertEqual(try production.perform(operation: 1, reference: uuid, value: "v1"), uuid)
+        XCTAssertEqual(try production.perform(operation: 1, reference: uuid, value: "v2"), uuid)
+        XCTAssertEqual(try production.perform(operation: 0, reference: uuid, value: ""), "v2")
+        XCTAssertEqual(try production.perform(operation: 4, reference: uuid, value: ""), "")
+        XCTAssertEqual(try production.perform(operation: 2, reference: uuid, value: ""), "")
+        XCTAssertNil(try production.perform(operation: 0, reference: uuid, value: ""))
+        let backendCallsBeforeIsolatedNoOp = backend.accessibilities.count
+        XCTAssertEqual(try production.perform(operation: 2, reference: "isolated-\(uuid)", value: ""), "")
+        XCTAssertEqual(try production.perform(operation: 4, reference: "isolated-\(uuid)", value: ""), "")
+        XCTAssertEqual(try production.perform(operation: 2, reference: "isolated-1234-999-1", value: ""), "")
+        XCTAssertEqual(try production.perform(operation: 4, reference: "isolated-1234-999-1", value: ""), "")
+        XCTAssertEqual(backend.accessibilities.count, backendCallsBeforeIsolatedNoOp)
+        XCTAssertThrowsError(try production.perform(operation: 0, reference: "bad-uuid", value: "")) { error in
+            XCTAssertEqual(error as? NativeCredentialsiOS.Failure, .invalidReference)
+        }
+        XCTAssertThrowsError(try production.perform(operation: 2, reference: "bad-uuid", value: "")) { error in
+            XCTAssertEqual(error as? NativeCredentialsiOS.Failure, .invalidReference)
+        }
+        XCTAssertThrowsError(try production.perform(operation: 4, reference: "bad-uuid", value: "")) { error in
+            XCTAssertEqual(error as? NativeCredentialsiOS.Failure, .invalidReference)
+        }
+        XCTAssertTrue(backend.accessibilities.allSatisfy { $0 == .afterFirstUnlockThisDeviceOnly })
     }
 
     func testLaunchSessionLoadsRichFixtureAndWritesSecretFreeTrace() async throws {

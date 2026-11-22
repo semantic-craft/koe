@@ -1,16 +1,17 @@
 // CBCentralManager is initialized with `queue: .main`, so all delegate callbacks arrive on the main thread.
 @preconcurrency import CoreBluetooth
 import Foundation
+import os
 import OSLog
 
 @MainActor
-public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     nonisolated public static var d3200ServiceUUID: CBUUID { CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB") }
     nonisolated public static var writeCharacteristicUUID: CBUUID { CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB") }
     nonisolated public static var notifyCharacteristicUUID: CBUUID { CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB") }
     nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool { uuid == writeCharacteristicUUID || uuid.uuidString == "7777" }
     nonisolated static func isWritableD3200Characteristic(_ characteristic: CBCharacteristic) -> Bool {
-        isWriteCharacteristic(characteristic.uuid) && !characteristic.properties.intersection([.write, .writeWithoutResponse]).isEmpty
+        isWriteCharacteristic(characteristic.uuid) && !characteristic.properties.isDisjoint(with: [.write, .writeWithoutResponse])
     }
     nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool { uuid == notifyCharacteristicUUID || uuid.uuidString == "8888" }
     nonisolated public static func isD3200WriteCharacteristic(_ uuid: CBUUID, serviceUUID: CBUUID?) -> Bool {
@@ -29,7 +30,6 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         guard let existingServiceUUID else { return true }
         return isPrimaryD3200Service(existingServiceUUID) ? isPrimaryD3200Service(candidateServiceUUID) : true
     }
-    nonisolated public static func secondaryServiceUUIDForTest(_ string: String) -> CBUUID { CBUUID(string: string) }
 
     #if os(iOS)
     static let logger = Logger(subsystem: "com.semanticcraft.koe.ios", category: "ble")
@@ -51,19 +51,20 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         CBCentralManager(delegate: $0, queue: .main, options: $1)
     }
     #endif
-    var central: (any BleCentral)?
-    var peripheral: (any BlePeripheral)?
-    var reconnectingPeripheral: (any BlePeripheral)?
+    let teardownBox = OSAllocatedUnfairLock<BleTeardownResources>(uncheckedState: BleTeardownResources())
+    var central: (any BleCentral)? { get { teardownBox.withLockUnchecked(\.central) } set { teardownBox.withLockUnchecked { $0.central = newValue } } }
+    var peripheral: (any BlePeripheral)? { get { teardownBox.withLockUnchecked(\.peripheral) } set { teardownBox.withLockUnchecked { $0.peripheral = newValue } } }
+    var reconnectingPeripheral: (any BlePeripheral)? { get { teardownBox.withLockUnchecked(\.reconnectingPeripheral) } set { teardownBox.withLockUnchecked { $0.reconnectingPeripheral = newValue } } }
     var writeCharacteristic: CBCharacteristic?
     var writeLink: (any BleWriteLink)?
     var awaitingWriteResponse = false
     var teardownPending = false
     var scanAfterTeardown = false
-    var teardownDeadline: Timer?
+    var teardownDeadline: Timer? { get { teardownBox.withLockUnchecked(\.teardownDeadline) } set { teardownBox.withLockUnchecked { $0.teardownDeadline = newValue } } }
     var projectedStopFramesHex: [String] = []
     private var lastCentralState: CBManagerState = .unknown
     var outboundQueue = BleOutboundQueue()
-    var outboundFlushTimer: Timer?
+    var outboundFlushTimer: Timer? { get { teardownBox.withLockUnchecked(\.outboundFlushTimer) } set { teardownBox.withLockUnchecked { $0.outboundFlushTimer = newValue } } }
     public internal(set) var lastTeardownStopFrames: [Data] = []
     public internal(set) var lastObservedAutoConnect: Bool?
     var notifyReady = false
@@ -74,6 +75,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     private var discoveredName: String?
 
     public init(store: HostSessionStore? = nil) { self.store = store; super.init() }
+    deinit { Self.releaseTeardownResources(teardownBox) }
 
     public func activateHost(allowsCoreBluetooth: Bool = true) {
         self.allowsCoreBluetooth = allowsCoreBluetooth
@@ -114,6 +116,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             central?.cancelPeer(staleReconnect)
             reconnectingPeripheral = nil
         }
+        stopScanning()
+        outboundFlushTimer?.invalidate()
+        outboundFlushTimer = nil
         scanInitiatedByUser = initiatedByUser
         isScanRequested = true
         connectionID = UUID().uuidString
@@ -242,8 +247,8 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         guard bytes.count.isMultiple(of: 2) else { return nil }
         var data = Data()
         for index in stride(from: 0, to: bytes.count, by: 2) {
-            let pair = String(decoding: bytes[index..<index + 2], as: UTF8.self)
-            guard let byte = UInt8(pair, radix: 16) else { return nil }
+            guard let pair = String(bytes: bytes[index..<index + 2], encoding: .utf8),
+                  let byte = UInt8(pair, radix: 16) else { return nil }
             data.append(byte)
         }
         return data
@@ -383,8 +388,11 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             let stopPending = self.teardownPending
             self.resetLinkState()
             self.emit("disconnected")
-            if stopPending { self.reportError("录音豆已断开，未能确认停录指令写入。", error: error) }
-            else if let error { self.reportError("录音豆连接中断。", error: error) }
+            if stopPending {
+                self.reportError("录音豆已断开，未能确认停录指令写入。", error: error)
+            } else if let error {
+                self.reportError("录音豆连接中断。", error: error)
+            }
         }
     }
 
@@ -478,3 +486,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 }
+
+#if os(iOS)
+extension BluetoothBridge: @preconcurrency CBCentralManagerDelegate {}
+#else
+extension BluetoothBridge: CBCentralManagerDelegate {}
+#endif
