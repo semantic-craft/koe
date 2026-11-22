@@ -85,7 +85,15 @@ public final class NativeCapture {
             for (lane, state) in current.lanes where !state.stopped {
                 runs[lane] = LaneRun(current, lane: lane, state: state)
             }
-            if current.lanes.isEmpty { store.reportNativeError("录音快照缺少音轨，无法继续采集。") }
+            if current.lanes.isEmpty {
+                activeDiagnostics.error(
+                    category: "capture",
+                    event: "missing_lanes",
+                    detail: "phase=\(current.phase)",
+                    errorCode: "missing_lanes"
+                )
+                store.reportNativeError("录音快照缺少音轨，无法继续采集。")
+            }
             if current.phase == "starting" { requestPermissions(for: current, resuming: false) }
         }
         orderedRuns.forEach(reportFailure)
@@ -256,6 +264,7 @@ public final class NativeCapture {
                 start(run, snapshot: prepared, expectedRate: prepared.lanes[lane]?.sampleRate)
             }
         } catch {
+            activeDiagnostics.error(category: "capture", event: "clock_failed", error: error)
             for lane in request.lanes { runs[lane]?.mailbox.fail(error.localizedDescription) }
         }
     }
@@ -288,11 +297,19 @@ public final class NativeCapture {
                 return
             }
         } catch {
+            activeDiagnostics.error(
+                category: "capture",
+                event: "lane_start_failed",
+                detailPrefix: "lane=\(run.lane) ",
+                error: error
+            )
             stop(run)
             mailbox.discardUnaccepted(nextSequence: run.initialSequence)
             mailbox.fail("\(label)启动失败：\(error.localizedDescription)")
         }
     }
+
+    private var activeDiagnostics: HostDiagnosticLog { store?.diagnostics ?? .shared }
 
     private func send(_ event: HostAdapterEvent) {
         logger.info("Capture event \(event.eventType, privacy: .public)")
@@ -324,7 +341,12 @@ public final class NativeCapture {
     /// A failed lane is fenced and reported; Rust keeps the session alive while another lane records.
     private func reportFailure(_ run: LaneRun) {
         guard let error = run.mailbox.error, !run.failureSent else { return }
-        logger.error("Capture failure on \(run.lane, privacy: .public): \(error, privacy: .public)")
+        activeDiagnostics.error(
+            category: "capture",
+            event: "lane_failed",
+            detail: "lane=\(run.lane) reason=\(error)",
+            errorCode: "lane_failed"
+        )
         run.failureSent = true
         stop(run)
         send(.microphoneFailed(

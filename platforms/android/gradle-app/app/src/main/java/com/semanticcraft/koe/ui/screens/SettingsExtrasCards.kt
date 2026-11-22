@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
@@ -18,6 +19,7 @@ import com.semanticcraft.koe.BuildConfig
 import com.semanticcraft.koe.core.AppUpdateSnapshot
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.platform.capture.AndroidPermissionCoordinator
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
@@ -30,9 +32,11 @@ internal fun SettingsExtrasCards(store: HostSessionStore, update: AppUpdateSnaps
     fun launch(intent: Intent) {
         try {
             context.startActivity(intent)
-        } catch (_: ActivityNotFoundException) {
+        } catch (error: ActivityNotFoundException) {
+            KoeLogger.w("KoeApp", "launch_settings_intent", "no target activity", "activity_not_found", error)
             store.reportNativeError("系统没有可打开此操作的应用。")
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            KoeLogger.w("KoeApp", "launch_settings_intent", "intent denied", "security_exception", error)
             store.reportNativeError("系统未允许打开此操作。")
         }
     }
@@ -54,7 +58,7 @@ internal fun SettingsExtrasCards(store: HostSessionStore, update: AppUpdateSnaps
                     Text("新版本 " + (update.latestVersion ?: ""))
                     update.releaseNotes?.takeIf { it.isNotBlank() }?.let { Text(it) }
                     val targetUrl = update.downloadUrl?.takeIf { it.isNotBlank() } ?: update.releaseUrl
-                    val uri = Uri.parse(targetUrl)
+                    val uri = targetUrl.toUri()
                     if (uri.scheme == "https" && !uri.host.isNullOrBlank()) {
                         KoePrimaryButton("下载更新", { launch(Intent(Intent.ACTION_VIEW, uri)) })
                     }

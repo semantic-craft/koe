@@ -832,4 +832,18 @@ mod tests {
         assert!(unbounded.add_bookmark(5_000));
         assert_eq!(unbounded.bookmarks, vec![5_000, 42_000]);
     }
+
+    #[test]
+    fn add_bookmark_clamps_to_duration_when_nonzero_and_deduplicates() {
+        let mut bounded = RecordingAggregate::new("rec-clamped", 7, 1_762_590_000, 10_000);
+        assert!(bounded.add_bookmark(15_000));
+        assert!(!bounded.add_bookmark(12_000));
+        assert!(bounded.add_bookmark(4_000));
+        assert_eq!(bounded.bookmarks, vec![4_000, 10_000]);
+
+        let mut unbounded = RecordingAggregate::new("rec-open", 8, 1_762_590_000, 0);
+        assert!(unbounded.add_bookmark(42_000));
+        assert!(unbounded.add_bookmark(5_000));
+        assert_eq!(unbounded.bookmarks, vec![5_000, 42_000]);
+    }
 }

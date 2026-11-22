@@ -121,21 +121,20 @@ struct IOSWorkspaceTranscript: View {
     }
 }
 
-
 // Snapshot strings have no server ID. Keep identical lines distinct when a draft repeats.
 struct IOSWorkspaceLine: Identifiable {
-    struct ID: Hashable {
+    struct LineID: Hashable {
         let text: String
         let occurrence: Int
     }
-    let id: ID
+    let id: LineID
     var text: String { id.text }
 
     static func keyed(_ lines: [String]) -> [Self] {
         var counts: [String: Int] = [:]
         return lines.map { line in
             counts[line, default: 0] += 1
-            return Self(id: ID(text: line, occurrence: counts[line, default: 0]))
+            return Self(id: LineID(text: line, occurrence: counts[line, default: 0]))
         }
     }
 }

@@ -69,7 +69,7 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         store.send(.createNote(title: "旧记录", text: "正文"), nowEpochSec: oldDate)
         let id = try XCTUnwrap(store.snapshot.records.first?.id)
         store.send(.trashRecord(recordId: id), nowEpochSec: oldDate)
-        store.send(.startMicrophone(inputId: "fixture"), nowEpochSec: oldDate)
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true), nowEpochSec: oldDate)
         let ticket = try XCTUnwrap(store.snapshot.microphone)
         XCTAssertEqual(store.lifecycle?.keepAwake, true)
         XCTAssertTrue(UIApplication.shared.isIdleTimerDisabled)
@@ -130,7 +130,7 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         XCTAssertEqual(entries.last, expected.last)
     }
 
-    func testTraceWriteFailureReachesStore() async throws {
+    func testTraceWriteFailureDoesNotPolluteUserErrorBar() async throws {
         let root = directory
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
@@ -140,10 +140,11 @@ final class IOSLaunchLifecycleTests: XCTestCase {
         ], environment: [:], allowsCoreBluetooth: false)
         defer { session.shutdown() }
 
-        let deadline = ContinuousClock.now + .seconds(2)
-        while session.store.nativeError?.contains("追踪") != true, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        await withCheckedContinuation { continuation in
+            IOSLaunchSession.traceQueue.async { continuation.resume() }
         }
-        XCTAssertTrue(session.store.nativeError?.contains("追踪") == true)
+        await Task.yield()
+        XCTAssertNil(session.store.nativeError)
+        XCTAssertNil(session.store.navigation.effectiveError)
     }
 }

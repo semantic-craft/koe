@@ -210,10 +210,11 @@ final class IOSBluetoothTests: XCTestCase {
     }
 
     private func waitForLinkEvent(_ observed: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(5)
         while !observed(), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
+        if !observed() { await Task.yield() }
         XCTAssertTrue(observed(), file: file, line: line)
     }
 

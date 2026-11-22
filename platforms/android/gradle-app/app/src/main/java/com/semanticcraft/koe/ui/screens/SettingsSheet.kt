@@ -16,9 +16,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -97,6 +100,7 @@ private fun ProviderSnapshot.modelSyncKey(): ProviderModelSyncKey = ProviderMode
 fun SettingsSheet(
     store: HostSessionStore,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val platform by store.platform.collectAsStateWithLifecycle()
     val settings by store.settings.collectAsStateWithLifecycle()
@@ -104,11 +108,13 @@ fun SettingsSheet(
     val provider = settings.provider
     val speech = settings.speech
     val colors = KoeTheme.colors
+    val scope = rememberCoroutineScope()
 
     var draft by rememberSaveable(stateSaver = settingsDraftSaver) { mutableStateOf(ModelSettingsDraft.from(provider)) }
     val modelSyncKey = provider.modelSyncKey()
     var lastSyncedKey by remember { mutableStateOf(modelSyncKey) }
     var showSavedNotice by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
 
     LaunchedEffect(modelSyncKey) {
         if (modelSyncKey != lastSyncedKey) {
@@ -129,17 +135,31 @@ fun SettingsSheet(
     }
 
     fun saveSettings() {
-        if (store.sendReturningError(draft.toConfigureProviderCommand()) == null) {
-            draft = draft.clearingApiKeyInputs()
-            showSavedNotice = true
-        } else {
-            showSavedNotice = false
+        if (saving) return
+        val submittedQwenKey = draft.qwenApiKey
+        val submittedDeepseekKey = draft.deepseekApiKey
+        val command = draft.toConfigureProviderCommand()
+        saving = true
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                if (store.sendReturningErrorAsync(command) == null) {
+                    draft = draft.copy(
+                        qwenApiKey = if (draft.qwenApiKey == submittedQwenKey) "" else draft.qwenApiKey,
+                        deepseekApiKey = if (draft.deepseekApiKey == submittedDeepseekKey) "" else draft.deepseekApiKey,
+                    )
+                    showSavedNotice = true
+                } else {
+                    showSavedNotice = false
+                }
+            } finally {
+                saving = false
+            }
         }
     }
 
     val matchedPreset = draft.matchedPreset(speech.engine)
 
-    KoeModalSheet(onDismissRequest = onDismiss) {
+    KoeModalSheet(onDismissRequest = onDismiss, modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -316,6 +336,7 @@ fun SettingsSheet(
                     KoePrimaryButton(
                         title = "保存模型配置",
                         isPrimary = true,
+                        enabled = !saving,
                         onClick = ::saveSettings,
                         modifier = Modifier
                             .fillMaxWidth()

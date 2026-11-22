@@ -63,7 +63,7 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
     public let inputs: [AudioInputSnapshot]
     public var includeSystemAudio: Bool = false
     public var canIncludeSystemAudio: Bool = false
-    public var audioStorage: AudioStorageSnapshot? = nil
+    public var audioStorage: AudioStorageSnapshot?
 
     private enum CodingKeys: String, CodingKey {
         case selectedSource, selectedInputId, selectedLabel, selectedBadge
@@ -136,14 +136,6 @@ public enum CaptureMode: String, Codable, Sendable {
         case .quickNote: "随心闪记"
         case .allDay: "全天听记"
         case .meeting: "实时纪要"
-        }
-    }
-
-    public var purpose: String {
-        switch self {
-        case .quickNote: "快速留下一段想法"
-        case .allDay: "持续记录，随时回看"
-        case .meeting: "记录讨论并整理纪要"
         }
     }
 

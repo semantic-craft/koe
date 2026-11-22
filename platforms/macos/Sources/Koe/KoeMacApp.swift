@@ -5,8 +5,10 @@ import SwiftUI
 
 @MainActor
 public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    let sessionHolder = KoeSessionHolder()
     public var store: HostSessionStore? {
         didSet {
+            sessionHolder.store = store
             oldValue?.onSnapshotChanged = nil
             oldValue?.bridgeActions = HostBridgeActions()
             if let oldValue, oldValue !== store {
@@ -53,8 +55,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             }
         }
     }
-    public let bluetoothBridge = BluetoothBridge()
-    let files = NativeFileActions()
+    public let bluetoothBridge: BluetoothBridge
+    let files: NativeFileActions
     private let playback: NativePlayback
     private let audioInputMonitor: CoreAudioInputMonitor
     private let defaultInputsProvider: () -> [MicrophoneInput]
@@ -62,7 +64,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
-    private var lastSyncedInputs: [MicrophoneInput]?
+    private var lastSyncedInputs: [HostAudioInputDescriptor]?
     private var lastSyncedAppMetadata: (version: String, build: String)?
     private var lastObservedHardwareGeneration: UInt64 = 0
 
@@ -77,10 +79,14 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     init(
         playback: NativePlayback,
         capture: NativeCapture? = nil,
+        bluetoothBridge: BluetoothBridge = BluetoothBridge(),
+        files: NativeFileActions = NativeFileActions(),
         audioInputMonitor: CoreAudioInputMonitor = CoreAudioInputMonitor(),
         defaultInputsProvider: @escaping () -> [MicrophoneInput] = NativeAudioSource.inputs,
         makeDefaultStore: @escaping @MainActor () -> HostSessionStore = { KoeAppDelegate.createDefaultStore() }
     ) {
+        self.bluetoothBridge = bluetoothBridge
+        self.files = files
         self.playback = playback
         self.capture = capture ?? NativeCapture(source: NativeAudioSource(), systemSource: NativeSystemAudioSource())
         self.audioInputMonitor = audioInputMonitor
@@ -115,6 +121,10 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private var statusItem: NSStatusItem?
     private var timer: Timer?
     private var lastTick = ProcessInfo.processInfo.systemUptime
+
+    public func applicationWillFinishLaunching(_ notification: Notification) {
+        _ = ensureSessionStore()
+    }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         _ = ensureSessionStore()
@@ -155,12 +165,13 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         if inputsProvider == nil {
             lastObservedHardwareGeneration = observedGeneration
         }
-        let current = Array((inputsProvider ?? defaultInputsProvider)().prefix(64))
-        guard force || lastSyncedInputs != current else { return }
-        lastSyncedInputs = current
-        let descriptors = current.map {
-            HostAudioInputDescriptor(id: $0.id, name: $0.name, transport: $0.transport, isDefault: $0.isDefault)
-        }
+        let descriptors = HostAudioInputDescriptor.normalized(
+            (inputsProvider ?? defaultInputsProvider)().map {
+                HostAudioInputDescriptor(id: $0.id, name: $0.name, transport: $0.transport, isDefault: $0.isDefault)
+            }
+        )
+        guard force || lastSyncedInputs != descriptors else { return }
+        lastSyncedInputs = descriptors
         store.send(.syncAudioInputs(inputs: descriptors))
     }
 
@@ -443,53 +454,4 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     @objc private func releaseBleControl() { store?.send(.deviceRelease) }
     @objc private func openWindow() { KoeWindowPresenter.presentPrimaryWorkspaceWindow() }
     @objc private func quit() { NSApp?.terminate(nil) }
-}
-
-struct KoeNativeSceneApp: App {
-    @NSApplicationDelegateAdaptor(KoeAppDelegate.self) private var appDelegate
-    var body: some Scene {
-        WindowGroup("Koe") {
-            KoeWorkspaceRootView(
-                store: appDelegate.ensureSessionStore(),
-                onImport: { appDelegate.files.importFile() },
-                onExport: { appDelegate.files.exportRecord($0) },
-                onExportRecords: { appDelegate.files.exportRecords($0) },
-                onExportWorkspace: { appDelegate.files.exportWorkspace($0) }
-            )
-            .onAppear {
-                KoeWindowPresenter.presentPrimaryWorkspaceWindow()
-            }
-        }
-        .windowResizability(.contentMinSize)
-        .commands {
-            CommandGroup(replacing: .appInfo) {
-                Button("关于 Koe") {
-                    appDelegate.showAboutPanel()
-                }
-                Divider()
-                Button("检查更新…") {
-                    appDelegate.checkForUpdatesFromMenu()
-                }
-            }
-        }
-    }
-}
-
-@main
-public enum KoeMainEntry {
-    @MainActor static var workspacePath: String?
-    @MainActor
-    public static func main() {
-        let args = CommandLine.arguments
-        if args.contains("--verify-self") { exit(KoeSelfCheckRunner.runVerifySelf()) }
-        if args.contains("--smoke-test") { exit(KoeSelfCheckRunner.runSmokeTest()) }
-        if let index = args.firstIndex(of: "--workspace-root") {
-            guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/") else {
-                fputs("--workspace-root requires an absolute directory path\n", stderr)
-                exit(2)
-            }
-            workspacePath = args[index + 1]
-        }
-        KoeNativeSceneApp.main()
-    }
 }

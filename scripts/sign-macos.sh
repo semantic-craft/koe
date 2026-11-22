@@ -37,9 +37,8 @@ done
 
 REQUIREMENT="=identifier \"$BUNDLE_ID\" and anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\""
 
-requirement_of() {
-  codesign -d -r- "$1" 2>/dev/null | sed -n 's/^designated => //p'
-}
+# shellcheck source=scripts/lib/macos-signing.sh
+source "$ROOT/scripts/lib/macos-signing.sh"
 
 # `codesign -dv` does not print CDHash; -dvvv is the level that does.
 cdhash_of() {
@@ -54,21 +53,11 @@ verify() {
 if [[ "$VERIFY_ONLY" -eq 1 ]]; then
   verify "$APP"
   echo "Verified: $APP"
-  echo "Designated requirement: $(requirement_of "$APP")"
+  echo "Designated requirement: $(designated_requirement "$APP")"
   exit 0
 fi
 
-if [[ -z "$IDENTITY" ]]; then
-  identities=()
-  while IFS= read -r value; do
-    [[ -z "$value" ]] || identities+=("$value")
-  done < <(security find-identity -v -p codesigning | sed -nE 's/.*"(Developer ID Application:[^"]*)".*/\1/p' | awk -v team="($TEAM_ID)" 'index($0,team)')
-  if [[ ${#identities[@]} -ne 1 ]]; then
-    echo 'A unique Developer ID Application certificate is required; pass --identity. No ad-hoc fallback.' >&2
-    exit 1
-  fi
-  IDENTITY="${identities[0]}"
-fi
+IDENTITY="$(resolve_signing_identity "$IDENTITY" "$TEAM_ID")"
 [[ -f "$ENTITLEMENTS" ]] || { echo "error: missing entitlements: $ENTITLEMENTS" >&2; exit 1; }
 
 # Sign nested code inside-out. --deep is a verification aid, not a signing policy.
@@ -83,4 +72,4 @@ verify "$APP"
 echo "Signed: $APP"
 echo "Identity: $IDENTITY"
 echo "CDHash: $(cdhash_of "$APP")"
-echo "Designated requirement: $(requirement_of "$APP")"
+echo "Designated requirement: $(designated_requirement "$APP")"

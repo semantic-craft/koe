@@ -2,7 +2,7 @@ import CKoeHostApi
 import Foundation
 
 /// Platform I/O only. The runtime owns credential selection and persistence order.
-public protocol HostCredentials: AnyObject {
+public protocol HostCredentials: AnyObject, Sendable {
     var isolated: Bool { get }
     func perform(operation: UInt32, reference: String, value: String) throws -> String?
 }

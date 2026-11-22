@@ -64,7 +64,7 @@ extension BluetoothBridge {
             attachAndConnect(existing, on: central, displayName: existing.name ?? "soundcore Work")
             return
         }
-        if let savedString = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+        if let savedString = defaultsStore.string(forKey: Self.savedPeripheralKey),
            let savedUUID = UUID(uuidString: savedString),
            let known = central.knownPeripherals(withIdentifiers: [savedUUID]).first
         {
@@ -110,13 +110,11 @@ extension BluetoothBridge {
         scan(central)
     }
 
-    nonisolated public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+    public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard self.central === central else { return }
         let peers = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
         let services = dict[CBCentralManagerRestoredStateScanServicesKey] as? [CBUUID] ?? []
-        onMainActorIsolated {
-            guard self.central === central else { return }
-            self.stageRestoration(peripherals: peers, scanServices: services)
-        }
+        stageRestoration(peripherals: peers, scanServices: services)
     }
 
     func stageRestoration(peripherals: [any BlePeripheral], scanServices: [CBUUID]) {
@@ -166,7 +164,7 @@ extension BluetoothBridge {
     func beginDeferredKnownReconnectIfAvailable() {
         guard isHostActivated, store?.runtimeDevice.autoConnect != false,
               peripheral == nil, reconnectingPeripheral == nil, !reportedReady, !isScanRequested,
-              let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+              let saved = defaultsStore.string(forKey: Self.savedPeripheralKey),
               UUID(uuidString: saved) != nil else { return }
         stopScanning()
         isScanRequested = true
@@ -183,8 +181,11 @@ extension BluetoothBridge {
             writeCharacteristic = write
             notifyFound = true
             notifyReady = peer.isNotifying(notify)
-            if notifyReady { checkReady() }
-            else { peer.setNotifyValue(true, for: notify) }
+            if notifyReady {
+                checkReady()
+            } else {
+                peer.setNotifyValue(true, for: notify)
+            }
             return
         }
         peer.discoverServices(nil)

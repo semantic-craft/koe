@@ -1,4 +1,5 @@
 import CKoeHostApi
+import CoreBluetooth
 import Foundation
 import KoeAppleCore
 import Testing
@@ -201,5 +202,68 @@ struct KoeAppleCorePlatformTests {
         let decoded = try JSONDecoder().decode([HostTraceEntry].self, from: Data(cappedJSON.utf8))
         #expect(decoded.count == 20)
         #expect(decoded.allSatisfy { $0.kind == "command" && $0.name == "navigate" })
+    }
+
+    @Test("D3200 manufacturer data matches sound/scor markers even when followed by non-UTF8 bytes")
+    func bleManufacturerMarkerMatchesWithTrailingNonUTF8Bytes() throws {
+        let soundPayload = Data([
+            0x00, 0x00,
+            0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+            0x00, 0x00,
+            0x73, 0x6F, 0x75, 0x6E, 0x64, 0xFF,
+        ])
+        let soundMatch = try #require(
+            BleAdvertisementCandidate.match(
+                peripheralName: nil,
+                advertisementData: [CBAdvertisementDataManufacturerDataKey: soundPayload]
+            )
+        )
+        #expect(soundMatch.matchedByManufacturerData)
+        #expect(soundMatch.macAddress == "AA:BB:CC:DD:EE:FF")
+
+        let scorPayload = Data([
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x00, 0x00,
+            0x73, 0x63, 0x6F, 0x72, 0x80, 0xFF,
+        ])
+        let scorMatch = try #require(
+            BleAdvertisementCandidate.match(
+                peripheralName: nil,
+                advertisementData: [CBAdvertisementDataManufacturerDataKey: scorPayload]
+            )
+        )
+        #expect(scorMatch.matchedByManufacturerData)
+        #expect(scorMatch.macAddress == "11:22:33:44:55:66")
+    }
+
+    @Test("WorkspaceExportRequest sanitizes path separators, control characters, dotfiles, and empty stems")
+    func workspaceExportRequestSanitizesUnsafeTitles() throws {
+        let cardJSON = """
+        {
+          "id": "qn-1",
+          "title": "a\\\\b:c/d\\u0000e",
+          "createdAtEpochSec": 1700000000,
+          "durationMs": 0,
+          "source": "文字记录",
+          "status": "就绪",
+          "archived": false,
+          "project": null,
+          "isInbox": true,
+          "minutesStale": false,
+          "canSummarize": false,
+          "segments": [],
+          "gist": null,
+          "topics": [],
+          "nextSteps": []
+        }
+        """
+        let quickNoteCard = try JSONDecoder().decode(QuickNoteCardSnapshot.self, from: Data(cardJSON.utf8))
+        #expect(WorkspaceExportRequest.forQuickNote(quickNoteCard).suggestedFilename == "a-b-c-d-e.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-1", title: "...").suggestedFilename == "实时纪要.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-2", title: ".hidden").suggestedFilename == "hidden.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-3", title: "/:\\\0").suggestedFilename == "实时纪要.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-4", title: "   \n\t  ").suggestedFilename == "实时纪要.md")
+        #expect(WorkspaceExportRequest.forMeeting(recordId: "m-5", title: "架构/周会").suggestedFilename == "架构-周会.md")
+        #expect(WorkspaceExportRequest.forAllDay(date: "2026/11:15\\0").suggestedFilename == "全天听记-2026-11-15-0.md")
     }
 }
