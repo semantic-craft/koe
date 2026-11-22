@@ -285,7 +285,7 @@ class HTML(HTMLParser):
         a = dict(attrs)
         if len(a) != len(attrs):
             self.violations.append((self.getpos()[0], 'Unsupported duplicate HTML attribute'))
-        for key, value in attrs:
+        for key, _value in attrs:
             if key.startswith('on') or key == 'ping':
                 self.violations.append((self.getpos()[0], 'Unsupported active attribute: ' + key))
         if tag == 'iframe' and a.get('srcdoc') is not None:

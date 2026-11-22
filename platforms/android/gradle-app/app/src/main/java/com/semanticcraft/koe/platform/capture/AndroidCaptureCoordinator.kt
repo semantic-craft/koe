@@ -6,15 +6,19 @@ import com.semanticcraft.koe.core.HostAdapterEvent
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.core.MicrophoneSnapshot
 import com.semanticcraft.koe.core.PcmIngestStatus
 import com.semanticcraft.koe.platform.AndroidHostAdapter
+import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
 
 class AndroidCaptureCoordinator(
     private val source: AndroidMicrophoneSource,
     private val focusController: AudioFocusController,
     private val nowNanoseconds: () -> Long = { SystemClock.elapsedRealtimeNanos() },
     private val onForegroundStateChanged: (CaptureForegroundState) -> Unit = {},
+    private val workExecutor: Executor? = null,
 ) : AndroidHostAdapter {
     private class LaneRun(snapshot: MicrophoneSnapshot, state: CaptureLaneSnapshot) {
         val identity = CaptureIdentity.from(snapshot, LANE_MICROPHONE)
@@ -261,7 +265,20 @@ class AndroidCaptureCoordinator(
                     !applying
                 }
             }
-            if (shouldDrive) driveLoop()
+            if (shouldDrive) dispatchDriveLoop()
+        }
+    }
+
+    private fun dispatchDriveLoop() {
+        val executor = workExecutor
+        if (executor == null) {
+            driveLoop()
+        } else {
+            try {
+                executor.execute { driveLoop() }
+            } catch (error: RejectedExecutionException) {
+                KoeLogger.w("KoeCapture", "dispatch_drive_loop", "work executor rejected task", "executor_rejected", error)
+            }
         }
     }
 
@@ -276,13 +293,14 @@ class AndroidCaptureCoordinator(
         val clock = try {
             nowNanoseconds()
         } catch (error: Throwable) {
+            KoeLogger.e("KoeCapture", "read_clock", "audio clock read failed", error.javaClass.simpleName, error)
             activeRun()?.mailbox?.fail(error.message ?: "无法读取音频采样时钟。")
             return
         }
         if (request.resuming) {
-            store.send(HostAdapterEvent.ResumeMicrophone(clockNs = clock))
+            store.sendEventSync(HostAdapterEvent.ResumeMicrophone(clockNs = clock))
         } else {
-            store.send(
+            store.sendEventSync(
                 HostAdapterEvent.MicrophonePrepared(
                     recordId = request.session.recordId,
                     sessionId = request.session.sessionId,
@@ -321,6 +339,7 @@ class AndroidCaptureCoordinator(
         val focusOk = try {
             focusController.requestFocus { handleAudioFocusLost(expectedSession) }
         } catch (error: Throwable) {
+            KoeLogger.e("KoeCapture", "request_focus", "audio focus request failed", error.javaClass.simpleName, error)
             target.mailbox.fail("未能获取音频焦点：${error.message ?: "未知错误"}")
             return
         }
@@ -340,7 +359,7 @@ class AndroidCaptureCoordinator(
             if (expectedRate != null && expectedRate != rate) {
                 throw IllegalStateException("麦克风采样率发生变化，已保留此前收到的音频。")
             }
-            store.send(
+            store.sendEventSync(
                 HostAdapterEvent.MicrophoneStarted(
                     recordId = target.identity.recordId,
                     sessionId = target.identity.sessionId,
@@ -353,6 +372,7 @@ class AndroidCaptureCoordinator(
                 mailbox.fail(store.navigation.value.effectiveError ?: "无法创建麦克风音频文件。")
             }
         } catch (error: Throwable) {
+            KoeLogger.e("KoeCapture", "start_source", "microphone start failed", error.javaClass.simpleName, error)
             stopRunAndFocus(target)
             mailbox.discardUnaccepted(target.initialSequence)
             val reason = error.message?.takeIf { it.isNotBlank() } ?: "未知错误"

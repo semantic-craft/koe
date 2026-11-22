@@ -5,7 +5,10 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Process
 import android.os.SystemClock
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.core.PlaybackAssetSnapshot
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 interface AudioPlaybackSink : AutoCloseable {
     val durationMs: Long
@@ -13,21 +16,14 @@ interface AudioPlaybackSink : AutoCloseable {
     val isPlaying: Boolean
     val isCompleted: Boolean
     val failureMessage: String?
-
     fun seekToMs(positionMs: Long)
-
     fun play()
-
     fun pause()
-
     override fun close()
 }
 
 fun interface AudioPlaybackSinkFactory {
-    fun open(
-        plan: PlaybackAssetSnapshot,
-        onStateChanged: () -> Unit,
-    ): AudioPlaybackSink
+    fun open(plan: PlaybackAssetSnapshot, onStateChanged: () -> Unit): AudioPlaybackSink
 }
 
 class AndroidAudioTrackSink(
@@ -57,15 +53,18 @@ class AndroidAudioTrackSink(
     private var completed = false
     private var closed = false
     private var failure: String? = null
+    private val headReadErrorLogged = AtomicBoolean(false)
+    private val pendingHeadReadError = AtomicReference<Throwable?>(null)
 
     override val durationMs: Long = reader.durationMs
 
     override val currentPositionMs: Long
-        get() = synchronized(stateLock) {
-            TimelineWavReader.framesToMs(
-                computePositionFrameLocked(SystemClock.elapsedRealtimeNanos()),
-                sampleRate,
-            )
+        get() {
+            val pos = synchronized(stateLock) {
+                TimelineWavReader.framesToMs(computePositionFrameLocked(SystemClock.elapsedRealtimeNanos()), sampleRate)
+            }
+            flushPendingHeadReadError()
+            return pos
         }
 
     override val isPlaying: Boolean
@@ -78,16 +77,8 @@ class AndroidAudioTrackSink(
         get() = synchronized(stateLock) { failure }
 
     init {
-        val channelMask = if (channelCount == 2) {
-            AudioFormat.CHANNEL_OUT_STEREO
-        } else {
-            AudioFormat.CHANNEL_OUT_MONO
-        }
-        val minBufferBytes = AudioTrack.getMinBufferSize(
-            sampleRate,
-            channelMask,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
+        val channelMask = if (channelCount == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
+        val minBufferBytes = AudioTrack.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
         if (minBufferBytes <= 0) {
             reader.close()
             throw IllegalStateException("Unsupported AudioTrack configuration: rate=$sampleRate channels=$channelCount")
@@ -96,26 +87,20 @@ class AndroidAudioTrackSink(
         val bufferBytes = maxOf(minBufferBytes, chunkFrames * frameBytes * 3)
         val created = try {
             val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
+                .setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
             val format = AudioFormat.Builder()
-                .setSampleRate(sampleRate)
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setChannelMask(channelMask)
-                .build()
+                .setSampleRate(sampleRate).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(channelMask).build()
             AudioTrack.Builder()
-                .setAudioAttributes(attributes)
-                .setAudioFormat(format)
-                .setBufferSizeInBytes(bufferBytes)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
+                .setAudioAttributes(attributes).setAudioFormat(format)
+                .setBufferSizeInBytes(bufferBytes).setTransferMode(AudioTrack.MODE_STREAM).build()
         } catch (error: Throwable) {
+            KoeLogger.e("KoePlayback", "create_track", "AudioTrack init failed", error.javaClass.simpleName, error)
             reader.close()
             throw error
         }
         if (created.state != AudioTrack.STATE_INITIALIZED) {
-            runCatching { created.release() }
+            KoeLogger.e("KoePlayback", "create_track", "state=${created.state}", "track_not_initialized")
+            runCatching { created.release() }.onFailure { KoeLogger.w("KoePlayback", "release_track", "cleanup release failed", error = it) }
             reader.close()
             throw IllegalStateException("AudioTrack failed to initialize")
         }
@@ -182,6 +167,7 @@ class AndroidAudioTrackSink(
             stateLock.notifyAll()
             epoch
         }
+        flushPendingHeadReadError()
         interruptTrackBeforeEpoch(targetEpoch)
     }
 
@@ -197,34 +183,42 @@ class AndroidAudioTrackSink(
             workerThread = null
             stateLock.notifyAll()
         }
-        synchronized(trackControlLock) {
-            pauseAndFlushTrack()
-            runCatching { track.stop() }
+        flushPendingHeadReadError()
+        val (pauseFlushErrs, stopErr) = synchronized(trackControlLock) {
+            pauseAndFlushTrackLocked() to captureTrackOp { track.stop() }
         }
+        logPauseFlushErrors(pauseFlushErrs)
+        logTrackError("stop_track", stopErr)
         if (threadToJoin != null && threadToJoin !== Thread.currentThread()) {
             threadToJoin.interrupt()
-            try {
-                threadToJoin.join(CLOSE_JOIN_TIMEOUT_MS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
+            try { threadToJoin.join(CLOSE_JOIN_TIMEOUT_MS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
-        synchronized(trackControlLock) {
-            runCatching { track.release() }
-        }
-        runCatching { reader.close() }
+        logTrackError("release_track", synchronized(trackControlLock) { captureTrackOp { track.release() } })
+        logTrackError("close_reader", captureTrackOp { reader.close() })
     }
 
     private fun interruptTrackBeforeEpoch(targetEpoch: Long) {
-        synchronized(trackControlLock) {
+        val errs = synchronized(trackControlLock) {
             if (startedEpoch >= targetEpoch) return
-            pauseAndFlushTrack()
+            pauseAndFlushTrackLocked()
         }
+        logPauseFlushErrors(errs)
     }
 
-    private fun pauseAndFlushTrack() {
-        runCatching { track.pause() }
-        runCatching { track.flush() }
+    private fun pauseAndFlushTrackLocked(): Pair<Throwable?, Throwable?> =
+        captureTrackOp { track.pause() } to captureTrackOp { track.flush() }
+
+    private fun logPauseFlushErrors(errs: Pair<Throwable?, Throwable?>) {
+        logTrackError("pause_track", errs.first)
+        logTrackError("flush_track", errs.second)
+    }
+
+    private inline fun captureTrackOp(block: () -> Unit): Throwable? = try {
+        block(); null
+    } catch (error: Throwable) { error }
+
+    private fun logTrackError(operation: String, error: Throwable?) {
+        if (error != null) KoeLogger.w("KoePlayback", operation, "AudioTrack op failed", error.javaClass.simpleName, error)
     }
 
     private fun resetClockLocked() {
@@ -282,11 +276,12 @@ class AndroidAudioTrackSink(
 
     private fun startTrackForEpoch(localEpoch: Long): Long? {
         var failureError: Throwable? = null
+        var pauseFlushErrs: Pair<Throwable?, Throwable?>? = null
         val baseline = synchronized(trackControlLock) {
             val active = synchronized(stateLock) { !closed && playingDesired && epoch == localEpoch }
             if (!active) return null
             try {
-                pauseAndFlushTrack()
+                pauseFlushErrs = pauseAndFlushTrackLocked()
                 val head = readPlaybackHeadFrames() ?: 0L
                 track.play()
                 startedEpoch = localEpoch
@@ -296,6 +291,8 @@ class AndroidAudioTrackSink(
                 null
             }
         }
+        pauseFlushErrs?.let(::logPauseFlushErrors)
+        flushPendingHeadReadError()
         val error = failureError
         if (error != null) {
             recordFailure(localEpoch, error)
@@ -370,14 +367,16 @@ class AndroidAudioTrackSink(
                 }
             }
         }
+        flushPendingHeadReadError()
     }
 
     private fun drainToCompletion(localEpoch: Long) {
-        synchronized(trackControlLock) {
+        val stopErr = synchronized(trackControlLock) {
             val active = synchronized(stateLock) { !closed && playingDesired && epoch == localEpoch }
             if (!active) return
-            runCatching { track.stop() }
+            captureTrackOp { track.stop() }
         }
+        logTrackError("drain_stop_track", stopErr)
         val didComplete = synchronized(stateLock) {
             var reachedEnd = false
             while (!closed && playingDesired && epoch == localEpoch) {
@@ -404,9 +403,8 @@ class AndroidAudioTrackSink(
             }
             reachedEnd
         }
-        if (didComplete) {
-            onStateChanged()
-        }
+        flushPendingHeadReadError()
+        if (didComplete) onStateChanged()
     }
 
     private fun finishCompletedLocked(): Boolean {
@@ -420,13 +418,17 @@ class AndroidAudioTrackSink(
     }
 
     private fun recordFailure(localEpoch: Long, error: Throwable) {
-        synchronized(stateLock) {
+        val shouldNotify = synchronized(stateLock) {
             if (closed || epoch != localEpoch || !playingDesired || failure != null) return
             failure = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
             playingDesired = false
             stateLock.notifyAll()
+            true
         }
-        onStateChanged()
+        if (shouldNotify) {
+            KoeLogger.e("KoePlayback", "playback_failed", "AudioTrack playback failed", error.javaClass.simpleName, error)
+            onStateChanged()
+        }
     }
 
     private fun updateHardwareHeadLocked(): Long? {
@@ -463,8 +465,14 @@ class AndroidAudioTrackSink(
 
     private fun readPlaybackHeadFrames(): Long? = try {
         track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
-    } catch (_: Throwable) {
+    } catch (error: Throwable) {
+        if (headReadErrorLogged.compareAndSet(false, true)) pendingHeadReadError.set(error)
         null
+    }
+
+    private fun flushPendingHeadReadError() {
+        val error = pendingHeadReadError.getAndSet(null) ?: return
+        KoeLogger.w("KoePlayback", "read_head_position", "getPlaybackHeadPosition failed", error.javaClass.simpleName, error)
     }
 
     companion object {

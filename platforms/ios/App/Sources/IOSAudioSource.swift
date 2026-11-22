@@ -22,6 +22,7 @@ final class IOSAudioSource: MicrophoneSource {
 
     func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
                failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
+        stop()
         try audioSession.setActive(true, for: .microphone)
         do {
             let preferred = session.availableInputs?.first { $0.uid == inputID }
@@ -47,8 +48,11 @@ final class IOSAudioSource: MicrophoneSource {
             node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, when in
                 guard fence.enter() else { return }
                 defer { fence.leave() }
-                do { receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate)) }
-                catch { failed(error.localizedDescription) }
+                do {
+                    receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate))
+                } catch {
+                    failed(error.localizedDescription)
+                }
             }
             self.engine = engine
             try engine.start()
@@ -56,6 +60,7 @@ final class IOSAudioSource: MicrophoneSource {
             guard engine.isRunning else { throw CaptureError("麦克风采集引擎未能保持运行。") }
             return rate
         } catch {
+            HostDiagnosticLog.shared.error(category: "ios_capture", event: "engine_start_failed", error: error)
             stop()
             throw error
         }
@@ -72,11 +77,13 @@ final class IOSAudioSource: MicrophoneSource {
         do {
             try audioSession.setActive(false, for: .microphone)
         } catch {
+            HostDiagnosticLog.shared.error(category: "ios_capture", event: "session_deactivate_failed", error: error)
             let message = "停用麦克风音频会话失败：\(error.localizedDescription)"
-            Self.logger.error("\(message, privacy: .public)")
             reportError(message)
         }
     }
+
+    deinit { stop() }
 }
 
 final class IOSCaptureRouteObserver {

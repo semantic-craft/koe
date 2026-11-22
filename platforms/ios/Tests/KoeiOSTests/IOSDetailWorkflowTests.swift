@@ -9,12 +9,12 @@ final class IOSDetailWorkflowTests: XCTestCase {
     private var directory: URL!
     private var store: HostSessionStore!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         store = HostSessionStore(workspacePath: directory.path, credentials: NativeCredentialsiOS(forceIsolated: true))
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         store.shutdown()
         store = nil
         try? FileManager.default.removeItem(at: directory)
@@ -203,6 +203,22 @@ final class IOSDetailWorkflowTests: XCTestCase {
         query.project = .all
         query.order = .longest
         XCTAssertEqual(query.results(in: store.records).map(\.durationMs), store.records.map(\.durationMs).sorted(by: >))
+        query.order = .shortest
+        XCTAssertEqual(query.results(in: store.records).map(\.durationMs), store.records.map(\.durationMs).sorted(by: <))
+        query.order = .title
+        XCTAssertEqual(
+            query.results(in: store.records).map(\.title),
+            store.records.map(\.title).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        )
+
+        let recordsView = IOSRecordsView(store: store, onSelectRecord: { _ in })
+        let inspected = try recordsView.inspect()
+        for sortOrder in RecordSortOrder.allCases {
+            XCTAssertNoThrow(
+                try inspected.find(text: sortOrder.title),
+                "IOSRecordsView sort picker missing \(sortOrder.rawValue) (\(sortOrder.title))"
+            )
+        }
     }
 
     func testTimedSourceCanSeekWithoutRetainedAudioAndUntimedTextCannot() throws {
@@ -248,6 +264,48 @@ final class IOSDetailWorkflowTests: XCTestCase {
             draft.qwenAsrModel = model.id
             let labels = try IOSSpeechModeNotice(draft: draft).inspect().findAll(ViewType.Text.self)
             XCTAssertEqual(try labels.map { try $0.string() }, model.nonRealtimeWarning.map { [$0] } ?? [])
+        }
+    }
+
+    func testProviderFingerprintIgnoresCredentialOnlyMutationsAndTracksModelChanges() {
+        let initialFingerprint = store.settings.provider.persistedModelFingerprint
+        store.send(.configureProvider(apiKey: "ios-fixture-qwen", model: store.settings.provider.model))
+        XCTAssertEqual(store.settings.provider.persistedModelFingerprint, initialFingerprint)
+        store.send(.clearProviderCredential(provider: "qwen"))
+        XCTAssertEqual(store.settings.provider.persistedModelFingerprint, initialFingerprint)
+        store.send(.configureProvider(model: "deepseek-v4-pro", enableThinking: true))
+        XCTAssertNotEqual(store.settings.provider.persistedModelFingerprint, initialFingerprint)
+    }
+
+    func testIOSRecordListQuerySortsEveryRecordSortOrderCase() {
+        let records = [
+            RecordSnapshot(
+                id: "r1", title: "Beta", createdAtEpochSec: 200, durationMs: 3_000,
+                source: "录音豆", status: "已整理", segmentCount: 1, preview: "短",
+                archived: false, mode: "quick_note", project: nil
+            ),
+            RecordSnapshot(
+                id: "r2", title: "Alpha", createdAtEpochSec: 100, durationMs: 90_000,
+                source: "麦克风", status: "已整理", segmentCount: 5, preview: "长",
+                archived: false, mode: "meeting", project: nil
+            ),
+            RecordSnapshot(
+                id: "r3", title: "Gamma", createdAtEpochSec: 300, durationMs: 45_000,
+                source: "麦克风", status: "已整理", segmentCount: 2, preview: "中",
+                archived: false, mode: "quick_note", project: nil
+            ),
+        ]
+        let expectedByOrder: [RecordSortOrder: [String]] = [
+            .newest: ["r3", "r1", "r2"],
+            .oldest: ["r2", "r1", "r3"],
+            .longest: ["r2", "r3", "r1"],
+            .shortest: ["r1", "r3", "r2"],
+            .title: ["r2", "r1", "r3"],
+        ]
+        for order in RecordSortOrder.allCases {
+            var query = IOSRecordListQuery()
+            query.order = order
+            XCTAssertEqual(query.results(in: records).map(\.id), expectedByOrder[order], order.rawValue)
         }
     }
 }

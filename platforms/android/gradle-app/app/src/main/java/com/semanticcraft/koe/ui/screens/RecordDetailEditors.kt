@@ -23,6 +23,8 @@ import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.RecordDetailSnapshot
 import com.semanticcraft.koe.core.SegmentSnapshot
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -30,15 +32,28 @@ internal fun TextEditorDialog(
     title: String,
     initial: String,
     onDismiss: () -> Unit,
-    onSave: (String) -> Boolean,
+    onSave: suspend (String) -> Boolean,
     due: String? = null,
     onDueChange: (String) -> Unit = {},
     singleLine: Boolean = false,
     allowEmpty: Boolean = false,
     saveLabel: String = "保存",
-    onSaveAll: ((String) -> Boolean)? = null,
+    onSaveAll: (suspend (String) -> Boolean)? = null,
 ) {
     var value by rememberSaveable(initial) { mutableStateOf(initial) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    fun submit(action: suspend (String) -> Boolean) {
+        if (saving) return
+        saving = true
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                if (action(value.trim())) onDismiss()
+            } finally {
+                saving = false
+            }
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.semantics { testTagsAsResourceId = true },
@@ -53,11 +68,11 @@ internal fun TextEditorDialog(
         },
         confirmButton = {
             Row {
-                if (onSaveAll != null) TextButton(modifier = Modifier.testTag("editor-save-all"), enabled = value.isNotBlank(), onClick = {
-                    if (onSaveAll(value.trim())) onDismiss()
+                if (onSaveAll != null) TextButton(modifier = Modifier.testTag("editor-save-all"), enabled = !saving && value.isNotBlank(), onClick = {
+                    submit(onSaveAll)
                 }) { Text("整条记录") }
-                TextButton(modifier = Modifier.testTag("editor-save"), enabled = allowEmpty || value.isNotBlank(), onClick = {
-                    if (onSave(value.trim())) onDismiss()
+                TextButton(modifier = Modifier.testTag("editor-save"), enabled = !saving && (allowEmpty || value.isNotBlank()), onClick = {
+                    submit(onSave)
                 }) { Text(saveLabel) }
             }
         },
@@ -84,15 +99,15 @@ internal fun TranscriptEditors(store: HostSessionStore, detail: RecordDetailSnap
     }
     when (editor) {
         "text" -> TextEditorDialog("编辑原文", segment.text, { editor = null }, { text ->
-            store.sendReturningError(HostCommand.EditSegmentText(detail.id, segment.id, text)) == null
+            store.sendReturningErrorAsync(HostCommand.EditSegmentText(detail.id, segment.id, text)) == null
         })
         "speaker" -> {
             val from = segment.speaker
             TextEditorDialog("说话人姓名", from.orEmpty(), { editor = null }, { name ->
-                store.sendReturningError(HostCommand.SetSegmentSpeaker(detail.id, segment.id, name.ifBlank { null })) == null
+                store.sendReturningErrorAsync(HostCommand.SetSegmentSpeaker(detail.id, segment.id, name.ifBlank { null })) == null
             }, singleLine = true, allowEmpty = true, saveLabel = "仅此段",
                 onSaveAll = if (from.isNullOrBlank()) null else { name ->
-                    store.sendReturningError(HostCommand.RenameSpeaker(detail.id, from, name)) == null
+                    store.sendReturningErrorAsync(HostCommand.RenameSpeaker(detail.id, from, name)) == null
                 })
         }
     }

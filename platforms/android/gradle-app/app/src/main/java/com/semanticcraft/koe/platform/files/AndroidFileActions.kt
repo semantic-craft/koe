@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.core.WorkspaceExportOptions
 import com.semanticcraft.koe.platform.AndroidHostAdapter
 import java.io.File
@@ -231,9 +232,11 @@ class AndroidFileActions(
         }
         try {
             launch(host, request)
-        } catch (_: ActivityNotFoundException) {
+        } catch (error: ActivityNotFoundException) {
+            KoeLogger.w("KoeFiles", "launch_picker", "no document picker app", "activity_not_found", error)
             handleLaunchFailed(request, PickerLaunchFailure.NO_PICKER_APP)
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            KoeLogger.w("KoeFiles", "launch_picker", "picker launch failed", error.javaClass.simpleName, error)
             handleLaunchFailed(request, PickerLaunchFailure.ACTIVITY_UNAVAILABLE)
         }
     }
@@ -270,15 +273,7 @@ class AndroidFileActions(
         }
 
         val lastModifiedMs = safIo.queryLastModifiedMs(uri)
-        val inputStream = try {
-            safIo.openInputStream(uri)
-        } catch (_: SecurityException) {
-            null
-        } catch (_: IOException) {
-            null
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+        val inputStream = runSafIo("open_import_stream") { safIo.openInputStream(uri) }
         if (inputStream == null) {
             reportErrorIfBound(targetStore, ERROR_READ_FAILED)
             return
@@ -294,10 +289,12 @@ class AndroidFileActions(
                     lastModifiedMs = lastModifiedMs,
                 )
             }
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            KoeLogger.w("KoeFiles", "stage_import", "permission denied staging import", "security_exception", error)
             StageImportResult.IoError(ERROR_READ_FAILED)
-        } catch (e: IOException) {
-            StageImportResult.IoError(e.message ?: ERROR_READ_FAILED)
+        } catch (error: IOException) {
+            KoeLogger.w("KoeFiles", "stage_import", "IO error staging import", "io_error", error)
+            StageImportResult.IoError(error.message ?: ERROR_READ_FAILED)
         }
 
         when (stageResult) {
@@ -325,7 +322,8 @@ class AndroidFileActions(
 
         val tempDir = try {
             createTempStagingDir(exportStagingRoot)
-        } catch (_: IOException) {
+        } catch (error: IOException) {
+            KoeLogger.w("KoeFiles", "export_workspace_stage", "failed to create export staging dir", "io_error", error)
             safIo.deleteDocumentBestEffort(targetUri)
             reportErrorIfBound(targetStore, ERROR_WRITE_FAILED)
             return
@@ -368,7 +366,8 @@ class AndroidFileActions(
 
         val tempDir = try {
             createTempStagingDir(exportStagingRoot)
-        } catch (_: IOException) {
+        } catch (error: IOException) {
+            KoeLogger.w("KoeFiles", "export_records_stage", "failed to create batch staging dir", "io_error", error)
             reportErrorIfBound(targetStore, ERROR_BATCH_WRITE_FAILED)
             return
         }
@@ -391,17 +390,7 @@ class AndroidFileActions(
 
             for (file in exportedFiles) {
                 if (!isStoreBound(targetStore)) return
-                val childUri = try {
-                    safIo.createChildMarkdownDocument(treeUri, file.name)
-                } catch (_: SecurityException) {
-                    null
-                } catch (_: IOException) {
-                    null
-                } catch (_: IllegalArgumentException) {
-                    null
-                } catch (_: UnsupportedOperationException) {
-                    null
-                }
+                val childUri = runSafIo("create_child_document") { safIo.createChildMarkdownDocument(treeUri, file.name) }
                 if (childUri == null) {
                     reportErrorIfBound(targetStore, ERROR_BATCH_WRITE_FAILED)
                     return
@@ -417,21 +406,26 @@ class AndroidFileActions(
         }
     }
 
-    private fun copyFileToUri(source: File, targetUri: Uri): Boolean = try {
-        val output = safIo.openOutputStream(targetUri) ?: return false
-        output.use { out ->
-            source.inputStream().use { input ->
-                input.copyTo(out, COPY_BUFFER_BYTES)
+    private fun copyFileToUri(source: File, targetUri: Uri): Boolean =
+        runSafIo("copy_to_uri") {
+            val output = safIo.openOutputStream(targetUri) ?: return@runSafIo false
+            output.use { out ->
+                source.inputStream().use { input -> input.copyTo(out, COPY_BUFFER_BYTES) }
+                out.flush()
             }
-            out.flush()
+            true
+        } == true
+
+    private inline fun <T> runSafIo(operation: String, block: () -> T?): T? = try {
+        block()
+    } catch (error: Exception) {
+        when (error) {
+            is SecurityException, is IOException, is IllegalArgumentException, is UnsupportedOperationException -> {
+                KoeLogger.w("KoeFiles", operation, "SAF I/O failed", error.javaClass.simpleName, error)
+                null
+            }
+            else -> throw error
         }
-        true
-    } catch (_: SecurityException) {
-        false
-    } catch (_: IOException) {
-        false
-    } catch (_: IllegalArgumentException) {
-        false
     }
 
     private fun normalizeRecordIds(recordIds: List<String>): List<String> =
@@ -460,7 +454,8 @@ class AndroidFileActions(
                     }
                 }
             }
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            KoeLogger.e("KoeFiles", "submit_io_job", "SAF I/O executor failed", error.javaClass.simpleName, error)
             synchronized(lock) {
                 activeIoJobs = (activeIoJobs - 1).coerceAtLeast(0)
             }
@@ -472,7 +467,7 @@ class AndroidFileActions(
             root.listFiles()?.forEach { child ->
                 child.deleteRecursively()
             }
-        }
+        }.onFailure { KoeLogger.w("KoeFiles", "clean_staging", "staging cleanup failed", error = it) }
     }
 
     companion object {

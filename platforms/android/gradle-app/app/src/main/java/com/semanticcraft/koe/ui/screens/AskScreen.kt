@@ -46,8 +46,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -89,8 +92,10 @@ fun AskScreen(
     val colors = KoeTheme.colors
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
 
     var questionDraft by rememberSaveable { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
     var inspectedSource by remember { mutableStateOf<SourceSnapshot?>(null) }
 
     val scopedRecord = (ask.recordId ?: navigation.selectedRecordId)
@@ -110,12 +115,16 @@ fun AskScreen(
             LazyColumn {
                 item {
                     TextButton(onClick = {
-                        if (store.sendReturningError(HostCommand.SetAskScope("all")) == null) picking = false
+                        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            if (store.sendReturningErrorAsync(HostCommand.SetAskScope("all")) == null) picking = false
+                        }
                     }) { Text("全部记录") }
                 }
                 items(records, key = { it.id }) { record ->
                     TextButton(onClick = {
-                        if (store.sendReturningError(HostCommand.SetAskScope("record", record.id)) == null) picking = false
+                        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            if (store.sendReturningErrorAsync(HostCommand.SetAskScope("record", record.id)) == null) picking = false
+                        }
                     }, modifier = Modifier.fillMaxWidth().testTag("ask-scope-" + record.id)) { Text(record.title) }
                 }
             }
@@ -124,12 +133,24 @@ fun AskScreen(
     )
 
     fun submitQuestion() {
-        val trimmed = questionDraft.trim()
-        if (trimmed.isEmpty() || ask.phase == "pending") return
+        val submittedDraft = questionDraft
+        val trimmed = submittedDraft.trim()
+        if (submitting || trimmed.isEmpty() || ask.phase == "pending") return
+        submitting = true
         focusManager.clearFocus()
         keyboardController?.hide()
-        if (store.sendReturningError(HostCommand.Ask(trimmed, ask.scope, ask.recordId)) == null) {
-            questionDraft = ""
+        val askScope = ask.scope
+        val askRecordId = ask.recordId
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                if (store.sendReturningErrorAsync(HostCommand.Ask(trimmed, askScope, askRecordId)) == null &&
+                    questionDraft == submittedDraft
+                ) {
+                    questionDraft = ""
+                }
+            } finally {
+                submitting = false
+            }
         }
     }
 
@@ -291,7 +312,7 @@ fun AskScreen(
                 title = "发送",
                 icon = Icons.AutoMirrored.Outlined.Send,
                 isPrimary = true,
-                enabled = questionDraft.isNotBlank() && ask.phase != "pending",
+                enabled = !submitting && questionDraft.isNotBlank() && ask.phase != "pending",
                 onClick = { submitQuestion() },
                 modifier = Modifier.testTag("ask-question-submit"),
             )
@@ -349,7 +370,7 @@ private fun AskMessageCard(
                 if (!isUser) {
                     val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
                     TextButton(onClick = {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Koe", message.text))
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Koe", message.text))
                     }, modifier = Modifier.testTag("copy-" + message.id)) { Text("复制") }
                 }
             }

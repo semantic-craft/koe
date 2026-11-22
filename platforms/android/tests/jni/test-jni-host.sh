@@ -26,64 +26,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-valid_jdk17_home() {
-  local dir="$1"
-  [[ -n "$dir" && -x "$dir/bin/java" && -x "$dir/bin/javac" && -f "$dir/include/jni.h" ]] || return 1
-  local version_line major
-  version_line="$("$dir/bin/java" -version 2>&1 | head -n 1 || true)"
-  major="$(sed -nE 's/.*version "([0-9]+).*/\1/p' <<< "$version_line")"
-  [[ -n "$major" && "$major" -ge 17 ]]
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../../.." && pwd))"
+# shellcheck source=scripts/lib/java-env.sh
+source "$REPO_ROOT/scripts/lib/java-env.sh"
 
-resolve_java_home() {
-  if [[ -n "${JAVA_HOME:-}" ]] && valid_jdk17_home "$JAVA_HOME"; then
-    printf '%s\n' "$JAVA_HOME"
-    return 0
-  fi
-
-  local candidate=""
-  if [[ -x /usr/libexec/java_home ]]; then
-    candidate="$(/usr/libexec/java_home -v 17+ 2>/dev/null || true)"
-    if valid_jdk17_home "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if command -v brew >/dev/null 2>&1; then
-    local formula brew_prefix
-    for formula in openjdk@17 openjdk@21 openjdk; do
-      brew_prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
-      if [[ -n "$brew_prefix" ]]; then
-        candidate="$brew_prefix/libexec/openjdk.jdk/Contents/Home"
-        if valid_jdk17_home "$candidate"; then
-          printf '%s\n' "$candidate"
-          return 0
-        fi
-      fi
-    done
-  fi
-
-  local jvm_dir
-  for jvm_dir in /usr/lib/jvm/java-21-openjdk* /usr/lib/jvm/java-17-openjdk* /usr/lib/jvm/default-java; do
-    if valid_jdk17_home "$jvm_dir"; then
-      printf '%s\n' "$jvm_dir"
-      return 0
-    fi
-  done
-
-  if candidate="$(command -v javac 2>/dev/null)"; then
-    candidate="$(python3 -c 'import os, sys; print(os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1]))))' "$candidate")"
-    if valid_jdk17_home "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  return 1
-}
-
-if ! JDK_HOME="$(resolve_java_home)"; then
+if ! JDK_HOME="$(resolve_java_home --require-jni)"; then
   die "working JDK 17+ with JNI headers not found; install with 'brew install openjdk@17' or set JAVA_HOME"
 fi
 
@@ -91,9 +39,6 @@ if [[ "$CHECK_JDK_ONLY" -eq 1 ]]; then
   printf '%s\n' "$JDK_HOME"
   exit 0
 fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../../.." && pwd))"
 
 OS_NAME="$(uname -s)"
 case "$OS_NAME" in
@@ -138,9 +83,9 @@ cp "$HOST_LIB_SRC" "$BUILD_DIR/libkoe_host_api.$LIB_EXT"
 cxx_platform_flags=()
 if [[ "$OS_NAME" == "Darwin" ]]; then
   install_name_tool -id "@rpath/libkoe_host_api.dylib" "$BUILD_DIR/libkoe_host_api.dylib"
-  cxx_platform_flags+=(-Wl,-rpath,@loader_path)
+  cxx_platform_flags+=("-Wl,-rpath,@loader_path")
 else
-  cxx_platform_flags+=(-Wl,-rpath,'$ORIGIN' -pthread)
+  cxx_platform_flags+=('-Wl,-rpath,$ORIGIN' -pthread)
 fi
 
 "$CXX_BIN" \

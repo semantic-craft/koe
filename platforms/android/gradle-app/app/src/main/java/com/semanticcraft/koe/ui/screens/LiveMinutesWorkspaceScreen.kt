@@ -31,13 +31,14 @@ import com.semanticcraft.koe.ui.components.KoeEmptyState
 import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoeInfoTip
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.leaves.AndroidLiveMinutesCoverageSlot
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
 @Composable
 internal fun LiveMinutesWorkspaceScreen(
     store: HostSessionStore, onSelectRecord: (String) -> Unit, onOpenSource: (SourceSnapshot) -> Unit,
-    onOpenCaptureSource: () -> Unit, onOpenSettings: () -> Unit, modifier: Modifier,
+    onOpenCaptureSource: () -> Unit, onOpenSettings: () -> Unit, modifier: Modifier = Modifier,
 ) {
     val workspace by store.liveMinutesWorkspace.collectAsStateWithLifecycle()
     val recordId = workspace.selectedRecordId
@@ -84,7 +85,7 @@ internal fun LiveMinutesWorkspaceScreen(
             KoeCard {
                 WorkspaceTitle(section.title)
                 Text(section.text)
-                WorkspaceSources(section.sources, onOpenSource, "minutes")
+                WorkspaceSources(StableList(section.sources), onOpenSource, "minutes")
             }
         }
         if (sections.isEmpty()) item {

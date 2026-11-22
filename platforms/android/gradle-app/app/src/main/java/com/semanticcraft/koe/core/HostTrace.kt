@@ -18,6 +18,7 @@ data class HostTraceEntry(
     val section: String,
     val hasError: Boolean,
     val timestampEpochMs: Long,
+    val errorDetail: String? = null,
 )
 
 class HostTraceRingBuffer(capacity: Int = DEFAULT_CAPACITY) {
@@ -69,7 +70,14 @@ class HostTraceRingBuffer(capacity: Int = DEFAULT_CAPACITY) {
                 )
             }
             true
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            KoeLogger.w(
+                tag = "KoeTrace",
+                operation = "write_trace_atomically",
+                message = "failed to write trace file",
+                errorCode = "trace_write_failed",
+                error = error,
+            )
             tempFile.delete()
             false
         }

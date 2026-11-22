@@ -33,8 +33,6 @@ CLONED_AVD_HOME=""
 
 EMULATOR_PID=""
 EMULATOR_OWNED=0
-MAESTRO_PID=""
-SLEEP_PID=""
 CLEANUP_DONE=0
 TEMP_EMU_LOG=""
 SERIAL=""
@@ -74,16 +72,11 @@ Options:
 USAGE
 }
 
-die() {
-  printf 'error: %s\n' "$*" >&2
-  exit 1
-}
-
-die_usage() {
-  printf 'error: %s\n' "$*" >&2
-  usage >&2
-  exit 2
-}
+export MOBILE_E2E_LOG_PREFIX="error"
+# shellcheck source=scripts/lib/java-env.sh
+source "$ROOT/scripts/lib/java-env.sh"
+# shellcheck source=scripts/lib/mobile-e2e-common.sh
+source "$ROOT/scripts/lib/mobile-e2e-common.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -168,7 +161,7 @@ while [[ $# -gt 0 ]]; do
       shift ;;
     --restart-flow)
       [[ $# -ge 2 && -f "$2" ]] || die_usage "--restart-flow requires an existing flow"
-      RESTART_FLOW="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")"
+      RESTART_FLOW="$(abs_path "$2")"
       shift ;;
     --workspace)
       [[ $# -ge 2 && "$2" =~ ^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || die_usage "--workspace requires a safe relative directory"
@@ -213,16 +206,16 @@ elif [[ -z "$FLOW_PATH" ]]; then
 fi
 
 [[ -f "$FLOW_PATH" ]] || die "Maestro flow not found: $FLOW_PATH"
-FLOW_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$FLOW_PATH")"
+FLOW_PATH="$(abs_path "$FLOW_PATH")"
 
 if [[ -n "$APK_PATH" ]]; then
   [[ -f "$APK_PATH" ]] || die "APK not found: $APK_PATH"
-  APK_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$APK_PATH")"
+  APK_PATH="$(abs_path "$APK_PATH")"
 fi
 
 if [[ -n "$FIXTURE_PATH" ]]; then
   [[ -f "$FIXTURE_PATH" ]] || die "snapshot fixture not found: $FIXTURE_PATH"
-  FIXTURE_PATH="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$FIXTURE_PATH")"
+  FIXTURE_PATH="$(abs_path "$FIXTURE_PATH")"
   [[ "$LAUNCH_APP" -eq 1 ]] || die_usage "--fixture requires --launch-app"
 fi
 
@@ -248,74 +241,8 @@ if [[ -n "$APP_ACTIVITY" ]]; then
   [[ "$APP_ACTIVITY" =~ ^[A-Za-z0-9._/$]+$ ]] || die "invalid --app-activity value: $APP_ACTIVITY"
 fi
 
-valid_java_home() {
-  local dir="$1"
-  # macOS ships a /usr/bin/java stub that exits non-zero when no JDK is installed.
-  [[ -n "$dir" && -x "$dir/bin/java" ]] && "$dir/bin/java" -version >/dev/null 2>&1
-}
-
-resolve_java_home() {
-  if [[ -n "${JAVA_HOME:-}" ]] && valid_java_home "$JAVA_HOME"; then
-    printf '%s\n' "$JAVA_HOME"
-    return 0
-  fi
-
-  local candidate=""
-  if [[ -x /usr/libexec/java_home ]]; then
-    candidate="$(/usr/libexec/java_home -v 17+ 2>/dev/null || true)"
-    if valid_java_home "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  if command -v brew >/dev/null 2>&1; then
-    local brew_jdk=""
-    brew_jdk="$(brew --prefix openjdk@17 2>/dev/null || true)"
-    if [[ -n "$brew_jdk" ]]; then
-      candidate="$brew_jdk/libexec/openjdk.jdk/Contents/Home"
-      if valid_java_home "$candidate"; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  fi
-
-  die "working JDK 17+ not found; install with 'brew install openjdk@17' or set JAVA_HOME"
-}
-
-resolve_tool() {
-  local override="$1"
-  local sdk_rel="$2"
-  local extra_candidate="$3"
-  local name="$4"
-
-  if [[ -n "$override" ]]; then
-    [[ -x "$override" ]] || die "$name override is not executable: $override"
-    printf '%s/%s\n' "$(cd "$(dirname "$override")" && pwd -P)" "$(basename "$override")"
-    return 0
-  fi
-
-  if [[ -n "$sdk_rel" && -x "$ANDROID_SDK_ROOT/$sdk_rel" ]]; then
-    printf '%s\n' "$ANDROID_SDK_ROOT/$sdk_rel"
-    return 0
-  fi
-
-  if [[ -n "$extra_candidate" && -x "$extra_candidate" ]]; then
-    printf '%s\n' "$extra_candidate"
-    return 0
-  fi
-
-  local found=""
-  if found="$(command -v "$name" 2>/dev/null)"; then
-    printf '%s\n' "$found"
-    return 0
-  fi
-
-  die "$name not found; run platforms/android/install-sdk-packages.sh or set KOE_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_BIN"
-}
-
-JAVA_HOME="$(resolve_java_home)"
+JAVA_HOME="$(resolve_java_home)" \
+  || die "working JDK 17+ not found; install with 'brew install openjdk@17' or set JAVA_HOME"
 export JAVA_HOME
 
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
@@ -323,56 +250,15 @@ export ANDROID_SDK_ROOT
 export ANDROID_HOME="$ANDROID_SDK_ROOT"
 export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
 
-ADB_BIN="$(resolve_tool "${KOE_ADB_BIN:-}" "platform-tools/adb" "" "adb")"
-MAESTRO_BIN="$(resolve_tool "${KOE_MAESTRO_BIN:-}" "" "$HOME/.maestro/bin/maestro" "maestro")"
+ADB_BIN="$(resolve_tool "${KOE_ADB_BIN:-}" "adb" "$ANDROID_SDK_ROOT/platform-tools/adb" "run platforms/android/install-sdk-packages.sh or set KOE_ADB_BIN")"
+MAESTRO_BIN="$(resolve_tool "${KOE_MAESTRO_BIN:-}" "maestro" "$HOME/.maestro/bin/maestro" "run platforms/android/install-sdk-packages.sh or set KOE_MAESTRO_BIN")"
 EMULATOR_BIN=""
 if [[ -z "$REUSE_SERIAL" ]]; then
-  EMULATOR_BIN="$(resolve_tool "${KOE_EMULATOR_BIN:-}" "emulator/emulator" "" "emulator")"
+  EMULATOR_BIN="$(resolve_tool "${KOE_EMULATOR_BIN:-}" "emulator" "$ANDROID_SDK_ROOT/emulator/emulator" "run platforms/android/install-sdk-packages.sh or set KOE_EMULATOR_BIN")"
 fi
 
-export PATH="$JAVA_HOME/bin:$(dirname "$ADB_BIN"):$PATH"
-
-pid_alive() {
-  local pid="$1"
-  [[ -n "$pid" ]] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
-  local stat=""
-  stat="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  [[ -n "$stat" && "$stat" != Z* ]]
-}
-
-interruptible_sleep() {
-  # Waiting on a background sleep allows bash to dispatch trapped SIGTERM immediately.
-  sleep "$1" &
-  SLEEP_PID=$!
-  wait "$SLEEP_PID" 2>/dev/null || true
-  kill "$SLEEP_PID" 2>/dev/null || true
-  SLEEP_PID=""
-}
-
-terminate_pgroup() {
-  local pid="$1"
-  local grace="${2:-3}"
-  [[ -n "$pid" ]] || return 0
-
-  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-  local ticks=$(( grace * 5 ))
-  local i=0
-  while [[ $i -lt $ticks ]]; do
-    if ! pid_alive "$pid"; then
-      wait "$pid" 2>/dev/null || true
-      kill -0 -- "-$pid" 2>/dev/null || return 0
-    fi
-    sleep 0.2
-    i=$((i + 1))
-  done
-
-  if pid_alive "$pid" || kill -0 -- "-$pid" 2>/dev/null; then
-    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-    sleep 0.1
-  fi
-  wait "$pid" 2>/dev/null || true
-}
+ADB_DIR="$(dirname "$ADB_BIN")"
+export PATH="$JAVA_HOME/bin:$ADB_DIR:$PATH"
 
 cleanup() {
   if [[ "$CLEANUP_DONE" -eq 1 ]]; then
@@ -437,18 +323,6 @@ cleanup() {
   fi
 }
 
-on_term() {
-  trap - INT TERM
-  cleanup
-  exit 143
-}
-
-on_int() {
-  trap - INT TERM
-  cleanup
-  exit 130
-}
-
 trap cleanup EXIT
 trap on_term TERM
 trap on_int INT
@@ -499,7 +373,7 @@ else
     if [[ "$WITH_AUDIO" -eq 1 ]]; then
       # Emulator hardware.ini serializes enabled booleans as true on some SDK versions.
       for key in audioInput audioOutput; do
-        if [[ ! -f "$hardware" ]] || ! grep -Eiq "^[[:blank:]]*hw[.]$key[[:blank:]]*=[[:blank:]]*(yes|true)[[:space:]]*$" "$hardware"; then
+        if [[ ! -f "$hardware" ]] || ! grep -Eiq "^[[:blank:]]*hw[.]${key}[[:blank:]]*=[[:blank:]]*(yes|true)[[:space:]]*$" "$hardware"; then
           GOLDEN=0
           break
         fi
@@ -523,7 +397,6 @@ else
     boot_args+=(-no-snapshot-load)
   fi
   if [[ "$SLIM" -eq 1 ]]; then GPU_MODE="${GPU_MODE:-host}"; fi
-  # os.setsid() places the emulator and its child processes in a dedicated process group for clean teardown.
   python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
     "$EMULATOR_BIN" -avd "$AVD_NAME" -port "$PORT" \
     "${boot_args[@]}" \
@@ -569,7 +442,7 @@ ARTIFACTS_DIR_CREATED=0
 if [[ -z "$ARTIFACTS_DIR" ]]; then
   ARTIFACTS_DIR="$ROOT/target/verify-artifacts/$RUN_ID"
 else
-  ARTIFACTS_DIR="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$ARTIFACTS_DIR")"
+  ARTIFACTS_DIR="$(abs_path "$ARTIFACTS_DIR")"
 fi
 if [[ ! -d "$ARTIFACTS_DIR" ]]; then
   ARTIFACTS_DIR_CREATED=1
@@ -641,50 +514,9 @@ if [[ "$LAUNCH_APP" -eq 1 ]]; then
   done
 fi
 
-read -r STARTED_AT START_EPOCH < <(python3 -c 'import datetime, time; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), f"{time.time():.6f}")')
-
-export MAESTRO_CLI_NO_ANALYTICS=1
-export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
-
-# Run Maestro inside MAESTRO_DEBUG_DIR so takeScreenshot outputs never pollute the repo root.
-python3 -c 'import os, sys; os.setsid(); os.chdir(sys.argv[1]); os.execvp(sys.argv[2], sys.argv[2:])' \
-  "$MAESTRO_DEBUG_DIR" \
-  "$MAESTRO_BIN" test --udid "$SERIAL" --no-ansi --debug-output "$MAESTRO_DEBUG_DIR" "$FLOW_PATH" &
-MAESTRO_PID=$!
-
 FLOW_EXIT_CODE=0
-flow_deadline=$(( $(date +%s) + FLOW_TIMEOUT ))
-while pid_alive "$MAESTRO_PID"; do
-  if [[ $(date +%s) -ge $flow_deadline ]]; then
-    printf 'error: Maestro flow timed out after %ds: %s\n' "$FLOW_TIMEOUT" "$FLOW_PATH" >&2
-    terminate_pgroup "$MAESTRO_PID" 3
-    MAESTRO_PID=""
-    FLOW_EXIT_CODE=124
-    break
-  fi
-  interruptible_sleep 0.5
-done
-
-if [[ -n "$MAESTRO_PID" ]]; then
-  wait "$MAESTRO_PID" || FLOW_EXIT_CODE=$?
-  MAESTRO_PID=""
-fi
-
-read -r FINISHED_AT DURATION_SEC < <(python3 -c 'import datetime, sys, time; now = time.time(); print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), f"{max(0.0, now - float(sys.argv[1])):.3f}")' "$START_EPOCH")
-
-if [[ "$EXPECT_FAILURE" -eq 1 ]]; then
-  if [[ "$FLOW_EXIT_CODE" -ne 0 ]]; then
-    OUTCOME="expected_failure"
-  else
-    OUTCOME="unexpected_pass"
-  fi
-else
-  if [[ "$FLOW_EXIT_CODE" -eq 0 ]]; then
-    OUTCOME="pass"
-  else
-    OUTCOME="fail"
-  fi
-fi
+run_maestro_with_timeout "$MAESTRO_BIN" "$SERIAL" "$MAESTRO_DEBUG_DIR" "$FLOW_PATH" "$FLOW_TIMEOUT" || FLOW_EXIT_CODE=$?
+OUTCOME="$(compute_flow_outcome "$FLOW_EXIT_CODE" "$EXPECT_FAILURE")"
 
 collect_forensics() {
   local dir="$1"
@@ -728,69 +560,14 @@ collect_forensics() {
     "$ADB_BIN" -s "$SERIAL" shell "run-as $APP_PACKAGE cat files/koe-trace.json" 2>/dev/null | tr -d '\r' > "$host_trace_raw" || true
   fi
 
-  python3 - "$dir/trace.json" \
-    "$RUN_ID" "$AVD_NAME" "$SERIAL" "$API_LEVEL" "$ABI" "$FLOW_PATH" \
-    "$STARTED_AT" "$FINISHED_AT" "$DURATION_SEC" "$FLOW_EXIT_CODE" "$OUTCOME" \
-    "$dir/screen.png" "$dir/window_hierarchy.xml" "$dir/logcat.txt" "$MAESTRO_DEBUG_DIR" "$host_trace_raw" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-(
-    trace_path,
-    run_id,
-    avd,
-    serial,
-    api_level,
-    abi,
-    flow,
-    started_at,
-    finished_at,
-    duration_sec,
-    flow_exit_code,
-    outcome,
-    screen_path,
-    hierarchy_path,
-    logcat_path,
-    maestro_debug_dir,
-    host_trace_raw_path,
-) = sys.argv[1:18]
-
-host_intent_trace = None
-if host_trace_raw_path:
-    raw_file = Path(host_trace_raw_path)
-    if raw_file.is_file() and raw_file.stat().st_size > 0:
-        try:
-            parsed = json.loads(raw_file.read_text(encoding="utf-8"))
-            if isinstance(parsed, list):
-                host_intent_trace = parsed
-        except Exception:
-            host_intent_trace = None
-
-payload = {
-    "run_id": run_id,
-    "avd": avd,
-    "serial": serial,
-    "api_level": api_level,
-    "abi": abi,
-    "flow": flow,
-    "started_at": started_at,
-    "finished_at": finished_at,
-    "duration_sec": float(duration_sec),
-    "flow_exit_code": int(flow_exit_code),
-    "outcome": outcome,
-    "artifacts": {
-        "screen": screen_path,
-        "window_hierarchy": hierarchy_path,
-        "logcat": logcat_path,
-        "maestro_debug_dir": maestro_debug_dir,
-    },
-    "host_intent_trace": host_intent_trace,
-}
-Path(trace_path).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-PY
+  write_forensics_trace \
+    "$dir/trace.json" "android" "$RUN_ID" "$FLOW_PATH" \
+    "$FLOW_EXIT_CODE" "$OUTCOME" \
+    "$dir/screen.png" "$dir/window_hierarchy.xml" "$dir/logcat.txt" "$MAESTRO_DEBUG_DIR" \
+    "$host_trace_raw" \
+    "avd=$AVD_NAME" "serial=$SERIAL" "api_level=$API_LEVEL" "abi=$ABI"
   if [[ -n "$host_trace_raw" && -f "$host_trace_raw" ]]; then
-    if [[ -s "$host_trace_raw" ]]; then mv "$host_trace_raw" "$dir/koe-trace.json"; else rm -f "$host_trace_raw"; fi
+    rm -f "$host_trace_raw"
   fi
   if [[ -n "$WORKSPACE" && "$LAUNCH_APP" -eq 1 && -z "$FIXTURE_PATH" ]]; then
     mkdir -p "$dir/workspace/audio"
@@ -802,22 +579,6 @@ PY
       "$ADB_BIN" -s "$SERIAL" exec-out run-as "$APP_PACKAGE" cat "files/$WORKSPACE_REL/audio/$wav" > "$dir/workspace/audio/$wav"
     done < <("$ADB_BIN" -s "$SERIAL" shell run-as "$APP_PACKAGE" ls "files/$WORKSPACE_REL/audio" 2>/dev/null)
   fi
-}
-
-validate_forensics_bundle() {
-  local dir="$1"
-  local missing=()
-  local name
-  for name in screen.png window_hierarchy.xml logcat.txt trace.json; do
-    if [[ ! -s "$dir/$name" ]]; then
-      missing+=("$name")
-    fi
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    printf 'error: incomplete forensics bundle in %s; missing or empty: %s\n' "$dir" "${missing[*]}" >&2
-    return 1
-  fi
-  python3 -c 'import json, sys; data = json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(data, dict)' "$dir/trace.json"
 }
 
 SHOULD_COLLECT=0
@@ -834,7 +595,7 @@ if [[ "$EXPECT_FAILURE" -eq 1 ]]; then
     printf 'error: --expect-failure failed because flow passed (artifacts: %s)\n' "$ARTIFACTS_DIR" >&2
     exit 1
   fi
-  validate_forensics_bundle "$ARTIFACTS_DIR"
+  validate_forensics_bundle "$ARTIFACTS_DIR" "window_hierarchy.xml" "logcat.txt"
   printf 'verify-emulator: expected failure confirmed with complete 4-artifact forensics (%s)\n' "$ARTIFACTS_DIR"
   exit 0
 fi
@@ -846,7 +607,7 @@ if [[ "$FLOW_EXIT_CODE" -eq 0 && -n "$RESTART_FLOW" ]]; then
 fi
 if [[ "$FLOW_EXIT_CODE" -eq 0 ]]; then
   if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
-    validate_forensics_bundle "$ARTIFACTS_DIR"
+    validate_forensics_bundle "$ARTIFACTS_DIR" "window_hierarchy.xml" "logcat.txt"
     printf 'verify-emulator: PASS (avd=%s, api=%s, abi=%s, artifacts=%s)\n' "$AVD_NAME" "$API_LEVEL" "$ABI" "$ARTIFACTS_DIR"
   else
     if [[ "$ARTIFACTS_DIR_CREATED" -eq 1 && "$SLIM" -eq 0 ]]; then

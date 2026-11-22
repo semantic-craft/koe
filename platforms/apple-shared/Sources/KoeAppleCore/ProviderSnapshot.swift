@@ -70,6 +70,19 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
         self.isolated = isolated
     }
 
+    public var persistedModelFingerprint: [String] {
+        [
+            asrProvider,
+            asrModel,
+            llmProvider,
+            model,
+            String(enableThinking),
+            qwenWorkspaceId,
+            asrEndpoint,
+            chatEndpoint,
+        ]
+    }
+
     public static let empty = ProviderSnapshot(
         meetingAudioPolicy: "local_only",
         meetingAudioStatus: nil,

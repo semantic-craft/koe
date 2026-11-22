@@ -26,7 +26,8 @@ internal data class IngestedChunk(
 
 internal class StatefulCaptureBridgeClient : HostBridgeClient {
     var snapshot: HostSnapshot = HostSnapshot.empty.copy(generation = 1L)
-    val dispatchedEvents = mutableListOf<JsonObject>()
+    val dispatchedEvents = java.util.Collections.synchronizedList(mutableListOf<JsonObject>())
+    val dispatchedThreads = java.util.Collections.synchronizedList(mutableListOf<Pair<String?, Thread>>())
     val ingestedChunks = mutableListOf<IngestedChunk>()
     var rejectAtSequence: Long? = null
     private var sessionCounter = 0
@@ -48,6 +49,7 @@ internal class StatefulCaptureBridgeClient : HostBridgeClient {
         val obj = HostJson.json.parseToJsonElement(commandJson) as JsonObject
         dispatchedEvents.add(obj)
         val type = obj["type"]?.jsonPrimitive?.content
+        dispatchedThreads.add(type to Thread.currentThread())
         when (type) {
             "start_capture_mode", "start_microphone" -> {
                 sessionCounter += 1

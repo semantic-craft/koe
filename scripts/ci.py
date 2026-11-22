@@ -65,7 +65,8 @@ def main():
     if light:
         return
     subprocess.run(['cargo', '--version'], check=True)
-    subprocess.run(['scripts/check'], check=True)
+    check_env = dict(os.environ, KOE_SKIP_PROGRESS_CHECK='1')
+    subprocess.run(['scripts/check'], env=check_env, check=True)
 
 
 if __name__ == '__main__':

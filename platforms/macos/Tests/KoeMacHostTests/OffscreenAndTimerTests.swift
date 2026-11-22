@@ -120,8 +120,9 @@ struct OffscreenAndTimerTests {
     @MainActor
     private func createPlayableSixSecondRecord(in store: HostSessionStore) throws -> String {
         let nowSec: UInt64 = 1_800_100_000
-        store.send(.startMicrophone(inputId: "fixture", clockNs: 1_000_000_000), nowEpochSec: nowSec)
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true), nowEpochSec: nowSec)
         let mic = try #require(store.snapshot.microphone)
+        store.send(.microphonePrepared(recordId: mic.recordId, sessionId: mic.sessionId, epoch: 0, clockNs: 1_000_000_000), nowEpochSec: nowSec)
         store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16_000), nowEpochSec: nowSec)
         let halfSecondSamples = [Int16](repeating: 900, count: 8_000)
         for seq: UInt64 in 0..<12 {
@@ -138,7 +139,7 @@ struct OffscreenAndTimerTests {
             #expect(receipt.status == .accepted)
         }
         store.refreshSnapshot(nowEpochSec: nowSec)
-        store.send(.stopMicrophone, nowEpochSec: nowSec + 1)
+        store.send(.captureAction(action: .end), nowEpochSec: nowSec + 1)
         store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 12, epoch: 0), nowEpochSec: nowSec + 1)
         return mic.recordId
     }
@@ -288,7 +289,8 @@ struct OffscreenAndTimerTests {
             try? FileManager.default.removeItem(at: root)
         }
 
-        store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
+        store.send(.setCaptureSystemAudio(enabled: true))
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
         micSource.permission?(true)
         sysSource.authorization?(.authorized)
         let started = await waitUntil(tick: { capture.apply() }) {
@@ -309,7 +311,7 @@ struct OffscreenAndTimerTests {
         #expect(snapshotCallbacks == 1)
         #expect(store.activeCapture != nil)
 
-        store.send(.stopMicrophone)
+        store.send(.captureAction(action: .end))
         capture.apply()
         #expect(store.snapshot.microphone == nil)
 
@@ -320,7 +322,7 @@ struct OffscreenAndTimerTests {
         #expect(try readPCMInt16(recordId) == (1...8).flatMap { Array(repeating: Int16($0), count: 160) })
         #expect(try readPCMInt16("\(recordId)-system") == (1...8).flatMap { Array(repeating: Int16(100 + $0), count: 480) })
 
-        store.send(.startMicrophone(inputId: "fixture", includeSystem: true))
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true))
         micSource.permission?(true)
         sysSource.authorization?(.authorized)
         let secondStarted = await waitUntil(tick: { capture.apply() }) {
@@ -343,7 +345,7 @@ struct OffscreenAndTimerTests {
         #expect(store.snapshot.microphone?.lanes["system"]?.stopped == false)
         #expect(store.snapshot.microphone?.lanes["system"]?.nextSequence == 2)
 
-        store.send(.stopMicrophone)
+        store.send(.captureAction(action: .end))
         capture.apply()
         #expect(store.snapshot.microphone == nil)
         #expect(try readPCMInt16(secondRecordId) == [11, 12].flatMap { Array(repeating: Int16($0), count: 160) })

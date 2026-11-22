@@ -1,5 +1,6 @@
 package com.semanticcraft.koe.platform.ble
 
+import com.semanticcraft.koe.core.KoeLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -20,7 +21,8 @@ internal class CoroutineDelayScheduler(
                 action()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                KoeLogger.e("KoeBle", "delayed_task", "scheduled BLE callback failed", error.javaClass.simpleName, error)
             }
         }
         return AutoCloseable { job.cancel() }

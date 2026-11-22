@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.core.WorkspaceExportOptions
 import java.io.InputStream
 import java.io.OutputStream
@@ -62,10 +63,12 @@ class SystemSafDocumentIo(
                 null
             }
         }
-    }.getOrNull()
+    }.onFailure { KoeLogger.w("KoeFiles", "query_display_name", "display name query failed", error = it) }.getOrNull()
 
     override fun queryMimeType(uri: Uri): String? =
-        runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        runCatching { context.contentResolver.getType(uri) }
+            .onFailure { KoeLogger.w("KoeFiles", "query_mime_type", "mime query failed", error = it) }
+            .getOrNull()
 
     override fun queryLastModifiedMs(uri: Uri): Long? = runCatching {
         context.contentResolver.query(
@@ -82,16 +85,18 @@ class SystemSafDocumentIo(
                 null
             }
         }
-    }.getOrNull()
+    }.onFailure { KoeLogger.w("KoeFiles", "query_last_modified", "last modified query failed", error = it) }.getOrNull()
 
     override fun openInputStream(uri: Uri): InputStream? =
         context.contentResolver.openInputStream(uri)
 
     override fun openOutputStream(uri: Uri): OutputStream? = try {
         context.contentResolver.openOutputStream(uri, "wt")
-    } catch (_: IllegalArgumentException) {
+    } catch (error: IllegalArgumentException) {
+        KoeLogger.w("KoeFiles", "open_output_stream_fallback", "mode wt unsupported", "illegal_argument", error)
         context.contentResolver.openOutputStream(uri)
-    } catch (_: UnsupportedOperationException) {
+    } catch (error: UnsupportedOperationException) {
+        KoeLogger.w("KoeFiles", "open_output_stream_fallback", "mode wt unsupported", "unsupported_operation", error)
         context.contentResolver.openOutputStream(uri)
     }
 
@@ -109,7 +114,7 @@ class SystemSafDocumentIo(
     override fun deleteDocumentBestEffort(uri: Uri) {
         runCatching {
             DocumentsContract.deleteDocument(context.contentResolver, uri)
-        }
+        }.onFailure { KoeLogger.w("KoeFiles", "delete_document", "best-effort delete failed", error = it) }
     }
 
     companion object {

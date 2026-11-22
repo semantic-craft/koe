@@ -7,6 +7,7 @@ struct IOSSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focusedField: String?
     @State private var draft = ModelSettingsDraft()
+    @State private var didInitialize = false
 
     @State private var trace: IOSTraceDocument?
     @State private var exportingTrace = false
@@ -178,11 +179,27 @@ struct IOSSettingsView: View {
             trace = nil
             if case .failure(let error) = result { store.reportNativeError(error.localizedDescription) }
         }
-        .onAppear { draft.sync(from: store.settings.provider) }
+        .onAppear {
+            if !didInitialize {
+                draft.sync(from: store.settings.provider)
+                didInitialize = true
+            }
+        }
+        .onChange(of: store.settings.provider.persistedModelFingerprint) { _, _ in
+            draft.sync(from: store.settings.provider)
+        }
+        .onDisappear {
+            draft.qwenApiKey = ""
+            draft.deepseekApiKey = ""
+        }
     }
 
     private func saveConfiguration() {
-        if store.sendReturningError(draft.configureProviderCommand) == nil { dismiss() }
+        if store.sendReturningError(draft.configureProviderCommand) == nil {
+            draft.qwenApiKey = ""
+            draft.deepseekApiKey = ""
+            dismiss()
+        }
     }
 
     private func settingsField(_ placeholder: String, text: Binding<String>) -> some View {
@@ -216,7 +233,7 @@ struct IOSSettingsView: View {
                 if configured {
                     Button("清除", role: .destructive) {
                         key.wrappedValue = ""
-                        store.send(.clearProviderCredentialFor(provider: slot))
+                        store.send(.clearProviderCredential(provider: slot))
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("清除 \(name) 凭据")

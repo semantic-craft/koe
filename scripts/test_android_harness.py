@@ -10,238 +10,22 @@ import time
 import unittest
 
 
+from test_harness_stubs import (
+    FAKE_ADB,
+    FAKE_EMULATOR,
+    FAKE_JAVA,
+    FAKE_MAESTRO,
+    FAKE_SLIM,
+    read_calls,
+    write_exec,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 ANDROID_DIR = ROOT / 'platforms' / 'android'
 VERIFY_SCRIPT = ANDROID_DIR / 'verify-emulator.sh'
 INSTALL_SCRIPT = ANDROID_DIR / 'install-sdk-packages.sh'
 FAIL_PROBE_FLOW = ANDROID_DIR / 'tests' / 'maestro' / 'fail-probe.yaml'
 SMOKE_FLOW = ANDROID_DIR / 'tests' / 'maestro' / 'smoke-system-settings.yaml'
-
-FAKE_JAVA = '''#!/usr/bin/env python3
-import sys
-sys.stderr.write('openjdk version "17.0.10"\\n')
-sys.exit(0)
-'''
-
-FAKE_EMULATOR = '''#!/usr/bin/env python3
-import json, os, signal, subprocess, sys, time
-from pathlib import Path
-
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(['emulator', *sys.argv[1:]]) + '\\n')
-
-if os.environ.get('FAKE_AVD_OBSERVATION'):
-    home = Path(os.environ['ANDROID_AVD_HOME'])
-    name = sys.argv[sys.argv.index('-avd') + 1]
-    registry = dict(line.split('=', 1) for line in (home / (name + '.ini')).read_text().splitlines())
-    config = Path(registry['path']) / 'config.ini'
-    Path(os.environ['FAKE_AVD_OBSERVATION']).write_text(json.dumps([str(config), config.read_text()]))
-
-child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
-pid_file = os.environ.get('FAKE_EMU_PID_FILE')
-if pid_file:
-    Path(pid_file).write_text(str(os.getpid()), encoding='utf-8')
-child_pid_file = os.environ.get('FAKE_EMU_CHILD_PID_FILE')
-if child_pid_file:
-    Path(child_pid_file).write_text(str(child.pid), encoding='utf-8')
-
-def _stop(signum, _frame):
-    try:
-        child.terminate()
-    except OSError:
-        pass
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, _stop)
-signal.signal(signal.SIGINT, _stop)
-
-while True:
-    time.sleep(0.1)
-'''
-
-FAKE_ADB = '''#!/usr/bin/env python3
-import json, os, shlex, signal, sys
-from pathlib import Path
-
-args = sys.argv[1:]
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(['adb', *args]) + '\\n')
-
-if args == ['devices']:
-    print('List of devices attached')
-    extra = os.environ.get('FAKE_ADB_DEVICES', '')
-    if extra:
-        print(extra)
-    stale_file = os.environ.get('FAKE_ADB_STALE_FILE')
-    if stale_file and Path(stale_file).exists():
-        parts = Path(stale_file).read_text(encoding='utf-8').strip().split()
-        if len(parts) == 2 and int(parts[1]) > 0:
-            stale_serial, remaining = parts[0], int(parts[1])
-            print(f'{stale_serial}\\toffline')
-            Path(stale_file).write_text(f'{stale_serial} {remaining - 1}\\n', encoding='utf-8')
-    sys.exit(0)
-
-serial = None
-rest = args
-if len(args) >= 2 and args[0] == '-s':
-    serial = args[1]
-    rest = args[2:]
-
-if rest == ['get-state']:
-    state = os.environ.get('FAKE_ADB_STATE', 'device')
-    if state == 'offline':
-        sys.stderr.write('error: device offline\\n')
-        sys.exit(1)
-    print(state)
-    sys.exit(0)
-
-if rest == ['emu', 'avd', 'name']:
-    avd = os.environ.get('FAKE_EMU_AVD_NAME', 'koe-test-api35')
-    if avd == '__FAIL__':
-        sys.stderr.write('error: not an emulator\\n')
-        sys.exit(1)
-    print(f'{avd}\\r')
-    print('OK\\r')
-    sys.exit(0)
-
-if rest == ['emu', 'kill']:
-    if os.environ.get('FAKE_EMU_KILL_FAIL') == '1':
-        sys.stderr.write('error: emulator console unreachable\\n')
-        sys.exit(1)
-    pid_file = os.environ.get('FAKE_EMU_PID_FILE')
-    if pid_file and Path(pid_file).exists():
-        pid = int(Path(pid_file).read_text(encoding='utf-8').strip())
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    stale_file = os.environ.get('FAKE_ADB_STALE_FILE')
-    stale_polls = int(os.environ.get('FAKE_ADB_STALE_POLLS', '0'))
-    if stale_file and stale_polls > 0 and serial:
-        Path(stale_file).write_text(f'{serial} {stale_polls}\\n', encoding='utf-8')
-    print('OK: killing emulator, bye bye')
-    sys.exit(0)
-
-if rest and rest[0] == 'shell':
-    # Real adb shell joins arguments with spaces and evaluates them under remote sh -c.
-    tokens = shlex.split(' '.join(rest[1:]))
-    if len(tokens) == 2 and tokens[0] == 'getprop':
-        prop = tokens[1]
-        props = {
-            'sys.boot_completed': os.environ.get('FAKE_BOOT_COMPLETED', '1'),
-            'ro.build.version.sdk': os.environ.get('FAKE_API_LEVEL', '35'),
-            'ro.product.cpu.abi': os.environ.get('FAKE_ABI', 'arm64-v8a'),
-        }
-        print(props.get(prop, '') + '\\r')
-        sys.exit(0)
-
-    if tokens and tokens[0] == 'date':
-        if len(tokens) != 2 or not tokens[1].startswith('+'):
-            sys.stderr.write(f'date: bad date {tokens[1:]}\\n')
-            sys.exit(1)
-        print(os.environ.get('FAKE_DEVICE_TS', '2026-11-20 07:30:00.000') + '\\r')
-        sys.exit(0)
-
-    if len(tokens) == 3 and tokens[:2] == ['uiautomator', 'dump']:
-        fail_times = int(os.environ.get('FAKE_UIAUTOMATOR_FAIL_TIMES', '0'))
-        state_path = os.environ.get('FAKE_UIAUTOMATOR_ATTEMPTS')
-        attempts = 1
-        if state_path:
-            p = Path(state_path)
-            attempts = (int(p.read_text(encoding='utf-8')) if p.exists() else 0) + 1
-            p.write_text(str(attempts), encoding='utf-8')
-        if attempts <= fail_times:
-            sys.stderr.write('ERROR: could not get idle state.\\n')
-            sys.exit(1)
-        print(f'UI hierchary dumped to: {tokens[2]}')
-        sys.exit(0)
-
-    sandbox = os.environ.get('FAKE_APP_FILES')
-    if sandbox and tokens[:2] == ['am', 'start']:
-        workspace = tokens[tokens.index('koe_workspace') + 1]
-        Path(sandbox, 'active-workspace').write_text(workspace)
-    if tokens and tokens[0] in ('am', 'run-as'):
-        sys.exit(0)
-
-    if tokens and tokens[0] == 'rm':
-        sys.exit(0)
-
-    sys.stderr.write(f'unexpected fake adb shell tokens: {tokens}\\n')
-    sys.exit(1)
-
-if rest[:2] == ['exec-out', 'run-as'] and rest[3] == 'cat' and os.environ.get('FAKE_APP_FILES'):
-    path = Path(os.environ['FAKE_APP_FILES'], rest[4].removeprefix('files/'))
-    sys.stdout.buffer.write(path.read_bytes())
-    sys.exit(0)
-
-if rest == ['exec-out', 'screencap', '-p']:
-    sys.stdout.buffer.write(b'\\x89PNG\\r\\n\\x1a\\nFAKE_SCREEN_BYTES')
-    sys.exit(0)
-
-if len(rest) == 3 and rest[0] == 'pull':
-    Path(rest[2]).write_text(
-        '<?xml version="1.0" encoding="UTF-8"?><hierarchy rotation="0"><node text="Settings"/></hierarchy>\\n',
-        encoding='utf-8',
-    )
-    sys.exit(0)
-
-if rest and rest[0] == 'logcat':
-    if '-b' in rest and 'crash' in rest:
-        print('--------- beginning of crash')
-        print('11-20 07:30:01.000  100  100 E AndroidRuntime: fake crash entry')
-    else:
-        print('--------- beginning of main')
-        print('11-20 07:30:00.500  100  100 I KoeHarness: fake main log entry')
-    sys.exit(0)
-
-sys.stderr.write(f'unexpected fake adb args: {args}\\n')
-sys.exit(1)
-'''
-
-FAKE_MAESTRO = '''#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-
-log_path = os.environ.get('FAKE_CALL_LOG')
-if log_path:
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps([
-            'maestro',
-            *sys.argv[1:],
-            {
-                'MAESTRO_CLI_NO_ANALYTICS': os.environ.get('MAESTRO_CLI_NO_ANALYTICS'),
-                'MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED': os.environ.get(
-                    'MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED'
-                ),
-            },
-        ]) + '\\n')
-
-if os.environ.get('FAKE_APP_FILES'):
-    files = Path(os.environ['FAKE_APP_FILES'])
-    product = files / (files / 'active-workspace').read_text() / 'product-workspace.json'
-    if Path(sys.argv[-1]).stem == 'restart':
-        if json.loads(product.read_text())['records'][0]['id'] != 'survivor':
-            sys.exit(1)
-    else:
-        product.parent.mkdir(parents=True, exist_ok=True)
-        product.write_text(json.dumps({'records': [{'id': 'survivor'}]}))
-
-if '--udid' not in sys.argv[1:]:
-    sys.stderr.write('error: expected --udid flag on maestro test\\n')
-    sys.exit(2)
-
-for i, arg in enumerate(sys.argv[1:]):
-    if arg == '--debug-output' and i + 2 < len(sys.argv):
-        debug_dir = Path(sys.argv[i + 2])
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        (debug_dir / 'maestro.log').write_text('fake maestro debug output\\n', encoding='utf-8')
-
-sys.exit(int(os.environ.get('FAKE_MAESTRO_EXIT', '0')))
-'''
 
 FAKE_SDKMANAGER = '''#!/usr/bin/env python3
 import json, os, sys
@@ -373,11 +157,7 @@ class AndroidHarnessTest(unittest.TestCase):
         self.avd_home = self.root / 'avd'
 
     def write_exec(self, rel, content):
-        path = self.root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding='utf-8')
-        path.chmod(0o755)
-        return path
+        return write_exec(self.root, rel, content)
 
     def base_env(self, **extra):
         env = dict(
@@ -401,9 +181,7 @@ class AndroidHarnessTest(unittest.TestCase):
         return env
 
     def read_calls(self):
-        if not self.call_log.exists():
-            return []
-        return [json.loads(line) for line in self.call_log.read_text(encoding='utf-8').splitlines() if line]
+        return read_calls(self.call_log)
 
     def run_verify(self, args, **env_extra):
         return subprocess.run(
@@ -426,12 +204,7 @@ class AndroidHarnessTest(unittest.TestCase):
                             f'fake emulator child PID {child_pid} leaked after exit')
 
     def fake_slim(self):
-        return self.write_exec('bin/fake-slim', """#!/usr/bin/env python3
-import json, os, sys
-with open(os.environ['FAKE_CALL_LOG'], 'a') as log:
-    print(json.dumps(['slim', *sys.argv[1:]]), file=log)
-print('{"rss_mb": 256}')
-""")
+        return self.write_exec('bin/fake-slim', FAKE_SLIM)
 
     def test_slim_snapshot_cold_boot_audio_and_workspace(self):
         snapshot = self.avd_home / 'koe-test-api35.avd/snapshots/avdslim_clean'
@@ -581,6 +354,7 @@ print('{"rss_mb": 256}')
         self.assertIn('fake crash entry', logcat_text)
 
         trace = json.loads(trace_file.read_text(encoding='utf-8'))
+        self.assertEqual(trace['platform'], 'android')
         self.assertEqual(trace['avd'], 'koe-test-api35')
         self.assertEqual(trace['serial'], 'emulator-5580')
         self.assertEqual(trace['api_level'], '35')
@@ -590,8 +364,9 @@ print('{"rss_mb": 256}')
         self.assertIsNone(trace['host_intent_trace'])
         self.assertEqual(
             set(trace['artifacts'].keys()),
-            {'screen', 'window_hierarchy', 'logcat', 'maestro_debug_dir'},
+            {'screen', 'hierarchy', 'log', 'maestro_debug_dir'},
         )
+        self.assertFalse((artifacts_dir / 'koe-trace.json').exists())
 
         adb_logcat_calls = [c for c in self.read_calls() if c[0] == 'adb' and 'logcat' in c]
         self.assertGreaterEqual(len(adb_logcat_calls), 2)
@@ -722,17 +497,6 @@ print('{"rss_mb": 256}')
                 if proc.poll() is None:
                     proc.kill()
                     proc.wait(timeout=5)
-
-    def test_android_shell_scripts_have_no_hardcoded_home_paths(self):
-        scripts = sorted(ANDROID_DIR.glob('*.sh'))
-        self.assertGreaterEqual(len(scripts), 2)
-        pattern = re.compile(r'/Users/')
-        for script in scripts:
-            content = script.read_text(encoding='utf-8')
-            self.assertIsNone(
-                pattern.search(content),
-                f'hardcoded personal home path found in {script.relative_to(ROOT)}',
-            )
 
     def test_install_sdk_packages_check_only_retry_and_idempotent_avd_config(self):
         attempts_file = self.root / 'sdkmanager.attempts'

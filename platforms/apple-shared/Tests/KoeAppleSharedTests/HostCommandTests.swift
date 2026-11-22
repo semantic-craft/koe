@@ -45,20 +45,18 @@ struct HostCommandTests {
         #expect(capture["mode"] as? String == "quick_note")
         #expect(capture["stayOnPage"] as? Bool == true)
 
-        let micStart = try encodeObject(.startMicrophone(inputId: "built-in", includeSystem: true, clockNs: 99))
-        #expect(micStart["type"] as? String == "start_microphone")
-        #expect(micStart["inputId"] as? String == "built-in")
-        #expect(micStart["includeSystem"] as? Bool == true)
-        #expect(micStart["clockNs"] as? UInt64 == 99)
+        let resumeTimed = try encodeObject(.captureAction(action: .resume, clockNs: 99))
+        #expect(resumeTimed["type"] as? String == "capture_action")
+        #expect(resumeTimed["action"] as? String == "resume")
+        #expect(resumeTimed["clockNs"] as? UInt64 == 99)
 
-        let micBare = try encodeObject(.startMicrophone(inputId: "built-in"))
-        #expect(micBare["includeSystem"] as? Bool == false)
-        #expect(micBare["clockNs"] == nil)
-
-        #expect(try encodeObject(.pauseMicrophone)["type"] as? String == "pause_microphone")
-        #expect(try encodeObject(.stopMicrophone)["type"] as? String == "stop_microphone")
-        #expect(try encodeObject(.cancelMicrophone)["type"] as? String == "cancel_microphone")
-        #expect(try encodeObject(.retryMicrophoneSave)["type"] as? String == "retry_microphone_save")
+        let pauseAction = try encodeObject(.captureAction(action: .pause))
+        #expect(pauseAction["type"] as? String == "capture_action")
+        #expect(pauseAction["action"] as? String == "pause")
+        #expect(pauseAction["clockNs"] == nil)
+        #expect(try encodeObject(.captureAction(action: .end))["action"] as? String == "end")
+        #expect(try encodeObject(.captureAction(action: .cancel))["action"] as? String == "cancel")
+        #expect(try encodeObject(.captureAction(action: .retrySave))["action"] as? String == "retry_save")
         #expect(try encodeObject(.checkAppUpdate)["type"] as? String == "check_app_update")
 
         let syncMetaData = try JSONEncoder().encode(
@@ -100,7 +98,12 @@ struct HostCommandTests {
         #expect(cfgObj["enableThinking"] as? Bool == true)
         #expect(cfgObj["qwenWorkspaceId"] as? String == "ws-01")
 
-        let clearDsObj = try encodeObject(.clearProviderCredentialFor(provider: "deepseek"))
+        let clearDefaultObj = try encodeObject(.clearProviderCredential())
+        #expect(clearDefaultObj["type"] as? String == "clear_provider_credential")
+        #expect(clearDefaultObj["provider"] == nil)
+        #expect(clearDefaultObj.count == 1)
+
+        let clearDsObj = try encodeObject(.clearProviderCredential(provider: "deepseek"))
         #expect(clearDsObj["type"] as? String == "clear_provider_credential")
         #expect(clearDsObj["provider"] as? String == "deepseek")
         #expect(try encodeObject(.deviceDownloadAll)["type"] as? String == "device_download_all")

@@ -1,9 +1,24 @@
 import AVFoundation
 import os
 
+public final class NotificationToken {
+    private let center: NotificationCenter
+    private let token: NSObjectProtocol
+
+    public init(center: NotificationCenter = .default, token: NSObjectProtocol) {
+        self.center = center
+        self.token = token
+    }
+
+    deinit {
+        center.removeObserver(token)
+    }
+}
+
 @MainActor
 public final class NativePlayback {
     public weak var store: HostSessionStore?
+    public var currentItem: AVPlayerItem? { player.currentItem }
     private let player: AVPlayer
     private let logger: Logger
     private let setSessionActive: (Bool) throws -> Void
@@ -15,7 +30,7 @@ public final class NativePlayback {
     private var seekRequest: UInt64?
     private var failedRequest: UInt64?
     private var loadTask: Task<Void, Never>?
-    private var itemObservers: [NSObjectProtocol] = []
+    private var itemObservers: [NotificationToken] = []
     private var statusObservation: NSKeyValueObservation?
     private var sessionActive = false
     private var isSyncingPlayback = false
@@ -118,16 +133,16 @@ public final class NativePlayback {
     private func observe(_ item: AVPlayerItem) {
         let center = NotificationCenter.default
         itemObservers = [
-            center.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self, weak item] _ in
+            NotificationToken(center: center, token: center.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self, weak item] _ in
                 MainActor.assumeIsolated { if let item { self?.ended(item) } }
-            },
-            center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self, weak item] note in
+            }),
+            NotificationToken(center: center, token: center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self, weak item] note in
+                let noteError = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
                 MainActor.assumeIsolated {
                     guard let self, let item, item === self.player.currentItem, self.selected != nil else { return }
-                    self.fail(note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-                              ?? item.error ?? CaptureError("播放意外终止。"))
+                    self.fail(noteError ?? item.error ?? CaptureError("播放意外终止。"))
                 }
-            },
+            }),
         ]
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
             Task { @MainActor in
@@ -196,16 +211,22 @@ public final class NativePlayback {
         }
     }
 
+    private var activeDiagnostics: HostDiagnosticLog { store?.diagnostics ?? .shared }
+
     private func fail(_ error: Error) {
         let desired = store?.playbackRequest
         let current = desired.map(settledPosition) ?? 0
         discardItem()
         failedRequest = desired?.requestId
+        activeDiagnostics.error(category: "playback", event: "playback_failed", error: error)
         var message = "无法播放这段音频：\(error.localizedDescription)"
-        do { try updateSession(false) }
-        catch { message += " 停用音频会话失败：\(error.localizedDescription)" }
+        do {
+            try updateSession(false)
+        } catch {
+            activeDiagnostics.warning(category: "playback", event: "session_deactivate_failed", error: error)
+            message += " 停用音频会话失败：\(error.localizedDescription)"
+        }
         if let desired { report(desired, current, playing: false) }
-        logger.error("\(message, privacy: .public)")
         store?.reportNativeError(message)
     }
 
@@ -213,7 +234,6 @@ public final class NativePlayback {
         loadTask?.cancel()
         loadTask = nil
         statusObservation = nil
-        itemObservers.forEach(NotificationCenter.default.removeObserver)
         itemObservers.removeAll()
         if player.currentItem != nil {
             player.pause()
@@ -244,6 +264,4 @@ public final class NativePlayback {
             fail(error)
         }
     }
-
-    deinit { itemObservers.forEach(NotificationCenter.default.removeObserver) }
 }

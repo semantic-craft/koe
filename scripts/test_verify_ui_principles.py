@@ -19,42 +19,14 @@ def load_verifier():
 verifier = load_verifier()
 
 
-LEGACY_LIGHT_THEME = """
-pub struct AppFontSizes;
-impl AppFontSizes {
-    pub const XS: f32 = 12.0;
-    pub const SM: f32 = 14.0;
-    pub const MD: f32 = 16.0;
-    pub const LG: f32 = 22.0;
-}
-pub struct AppRadii;
-impl AppRadii {
-    pub const fn concentric(outer: f32, padding: f32) -> f32 { outer - padding }
-}
-pub struct AppColors;
-impl AppColors {
-    pub const SURFACE_0: u32 = 0xFFFFFFFF;
-    pub const BG_PANEL: u32 = 0xFFF7F7F8;
-    pub const SURFACE_1: u32 = 0xFFFFFFFF;
-    pub const BG_CARD: u32 = 0xFFFFFFFF;
-    pub const BG_SUBTLE: u32 = 0xFFF1F1F3;
-    pub const BG_CARD_HOVER: u32 = 0xFFECECEF;
-    pub const BG_MUTED: u32 = 0xFFF1F1F3;
-    pub const BORDER: u32 = 0xFFE3E3E7;
-    pub const BORDER_SOFT: u32 = 0xFFEBEBEE;
-    pub const TEXT_PRIMARY: u32 = 0xFF202022;
-    pub const TEXT_SECONDARY: u32 = 0xFF54545B;
-    pub const TEXT_MUTED: u32 = 0xFF686870;
-    pub const ACCENT: u32 = 0xFF242426;
-    pub const ON_ACCENT: u32 = 0xFFFFFFFF;
-    pub const CARD_SHADOW: &[u32] = &[];
-}
-"""
-
-
 VALID_LIGHT_THEME = (
     Path(__file__).resolve().parent.parent
     / "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+).read_text(encoding="utf-8")
+
+VALID_ANDROID_THEME = (
+    Path(__file__).resolve().parent.parent
+    / "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/theme/KoeTheme.kt"
 ).read_text(encoding="utf-8")
 
 
@@ -310,9 +282,17 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         bad_install = "#!/usr/bin/env bash\necho 'missing plist keys'\n"
         install_violations = verifier.check_install_script(bad_install)
         self.assertTrue(
-            any("NSLocalNetworkUsageDescription" in v for v in install_violations),
+            any("NSMicrophoneUsageDescription" in v for v in install_violations),
             install_violations,
         )
+        for removed in (
+            "NSLocalNetworkUsageDescription",
+            "NSCalendarsUsageDescription",
+            "NSCalendarsFullAccessUsageDescription",
+            "NSRemindersUsageDescription",
+            "NSRemindersFullAccessUsageDescription",
+        ):
+            self.assertNotIn(removed, verifier.REQUIRED_INSTALL_PLIST_KEYS)
 
     def test_install_script_icon_and_lsregister_contracts(self) -> None:
         valid_lines = [
@@ -430,19 +410,170 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
                 native_path = fixture_root / theme_path
                 native_path.parent.mkdir(parents=True)
                 native_path.write_text(native_theme, encoding="utf-8")
-                legacy_path = fixture_root / "crates/koe-client-core/src/theme.rs"
-                legacy_path.parent.mkdir(parents=True)
-                legacy_path.write_text(LEGACY_LIGHT_THEME, encoding="utf-8")
                 self.assertEqual(verifier.analyze_repository(fixture_root, "all")["violations"], [])
                 native_path.write_text(native_theme.replace(before, after), encoding="utf-8")
                 report = verifier.analyze_repository(fixture_root, "all")
                 self.assertTrue(any(violation in v for v in report["violations"]), report["violations"])
+
+    def test_android_theme_palette_contrast_and_font_scale_contracts(self) -> None:
+        res_valid = verifier.check_android_theme_file(VALID_ANDROID_THEME)
+        self.assertEqual(res_valid["violations"], [])
+        self.assertGreaterEqual(res_valid["accent"]["foreground_contrast"], 4.5)
+
+        for before, after, expected in (
+            ("accent = Color(0xFF242426)", "accent = Color(0xFFD9480F)", "approved charcoal"),
+            ("textMuted = Color(0xFF686870)", "textMuted = Color(0xFFBBBBBB)", "Contrast violation: textMuted"),
+            ("textMuted = Color(0xFF94949E)", "textMuted = Color(0xFF3A3A40)", "Contrast violation: textMuted"),
+            ("onAccent = Color(0xFF0E0E10)", "onAccent = Color(0xFFE0E0E4)", "Contrast violation: onAccent"),
+            ("surface0 = Color(0xFFFFFFFF)", "surface0 = Color(0xFF1A1A1D)", "light surface"),
+            ("textPrimary = Color(0xFF202022)", "textPrimary = Color(0x00202022)", "opaque 8-digit ARGB"),
+            ("accent = Color(0xFF242426)", "accent = Color(0x242426)", "opaque 8-digit ARGB"),
+            ("accent = Color(0xFF242426)", "accent = Color(0xF242426)", "opaque 8-digit ARGB"),
+            ("val lg = 22.sp", "val lg = 28.sp", "KoeFontSizes"),
+        ):
+            with self.subTest(before=before):
+                mutated = VALID_ANDROID_THEME.replace(before, after, 1)
+                self.assertNotEqual(mutated, VALID_ANDROID_THEME)
+                res = verifier.check_android_theme_file(mutated)
+                self.assertTrue(any(expected in v for v in res["violations"]), res["violations"])
+
+        typed_and_long_theme = (
+            VALID_ANDROID_THEME
+            .replace("private val LightKoePalette = KoePalette(", "private val LightKoePalette: KoePalette = KoePalette(", 1)
+            .replace("accent = Color(0xFF242426)", "accent = Color(0xFF242426L)", 1)
+        )
+        self.assertEqual(verifier.check_android_theme_file(typed_and_long_theme)["violations"], [])
+
+    def test_catches_scoped_observation_inside_string_interpolations(self) -> None:
+        swift_interpolated = r'''
+        import SwiftUI
+        struct InterpView: View {
+            let store: HostSessionStore
+            var body: some View {
+                Text("gen=\(store.snapshot.generation) playing=\(store.playback.isPlaying)")
+                    .font(.system(size: AppFontSizes.sm))
+            }
+        }
+        '''
+        for path in (
+            "platforms/apple-shared/Sources/KoeAppleShared/InterpView.swift",
+            "platforms/ios/App/Sources/InterpView.swift",
+            "platforms/macos/Sources/Koe/InterpView.swift",
+        ):
+            with self.subTest(path=path):
+                res = verifier.check_ui_file(path, swift_interpolated, strict_scale=True)
+                self.assertTrue(
+                    any("reads store.snapshot directly" in v for v in res["violations"]),
+                    (path, res["violations"]),
+                )
+                self.assertTrue(
+                    any("4 Hz high-frequency slice(s)" in v for v in res["violations"]),
+                    (path, res["violations"]),
+                )
+
+        kotlin_interpolated = '''
+        package com.semanticcraft.koe.ui
+        fun InterpScreen(store: HostSessionStore) {
+            val label = "gen=${store.snapshot.generation} playing=${store.playback.isPlaying}"
+            println(label)
+        }
+        '''
+        res_kt = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/InterpScreen.kt",
+            kotlin_interpolated,
+            strict_scale=True,
+        )
+        self.assertTrue(any("reads store.snapshot directly" in v for v in res_kt["violations"]), res_kt["violations"])
+        self.assertTrue(any("4 Hz high-frequency slice(s)" in v for v in res_kt["violations"]), res_kt["violations"])
+
+    def test_mask_source_handles_kotlin_char_literals_raw_quote_runs_and_swift_raw_strings(self) -> None:
+        kotlin_chars_and_raw = '''
+        package com.semanticcraft.koe.core
+        private val INVALID = setOf('/', '\\\\', '\\'', '"', '<')
+        private val RAW = """hello""""
+        import androidx.compose.runtime.Composable
+        '''
+        res_kt = verifier.check_ui_file(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/SafHelper.kt",
+            kotlin_chars_and_raw,
+            strict_scale=True,
+        )
+        self.assertTrue(
+            any("androidx.compose" in v for v in res_kt["violations"]),
+            res_kt["violations"],
+        )
+
+        swift_raw_strings = '''
+        import Foundation
+        public enum Patterns {
+            static let a = #"quote " and trailing \\"#
+            static let b = ##"escaped \\##" still inside and import SwiftUI"##
+            static let c = #"""
+            import AppKit
+            """#
+        }
+        import UIKit
+        '''
+        res_swift = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleCore/Patterns.swift",
+            swift_raw_strings,
+            strict_scale=True,
+        )
+        joined = "\n".join(res_swift["violations"])
+        self.assertIn("UIKit", joined)
+        self.assertNotIn("SwiftUI", joined)
+        self.assertNotIn("AppKit", joined)
+
+        android_theme_rel = Path(
+            "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/theme/KoeTheme.kt"
+        )
+        swift_theme_rel = Path("platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift")
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture_root = Path(tmp)
+            (fixture_root / swift_theme_rel).parent.mkdir(parents=True)
+            (fixture_root / swift_theme_rel).write_text(VALID_LIGHT_THEME, encoding="utf-8")
+            (fixture_root / android_theme_rel).parent.mkdir(parents=True)
+            (fixture_root / android_theme_rel).write_text(
+                VALID_ANDROID_THEME.replace("textMuted = Color(0xFF686870)", "textMuted = Color(0xFFBBBBBB)", 1),
+                encoding="utf-8",
+            )
+            report = verifier.analyze_repository(fixture_root, "all")
+            self.assertTrue(
+                any("Contrast violation: textMuted" in v and "Android LightKoePalette" in v for v in report["violations"]),
+                report["violations"],
+            )
+
+    def test_code_only_checks_ignore_comments_and_drop_dead_red_button_fields(self) -> None:
+        commented_swift = """
+        import SwiftUI
+        struct CommentedView: View {
+            // Avoid .italic(), .uppercased(), legacy 0xFFB66C50, .buttonStyle(.plain), TextField("x")
+            /*
+             * .italic()
+             * .uppercased()
+             * 0xFFB66C50
+             * .buttonStyle(.plain)
+             * TextField("blocked", text: $x)
+             */
+            var body: some View {
+                Text("正文").font(.system(size: AppFontSizes.sm))
+            }
+        }
+        """
+        res = verifier.check_ui_file(
+            "platforms/apple-shared/Sources/KoeAppleShared/CommentedView.swift",
+            commented_swift,
+            strict_scale=True,
+        )
+        self.assertEqual(res["violations"], [], res["violations"])
+        self.assertNotIn("full_red_buttons", res)
 
     def test_repository_shared_theme_passes_all_principles(self) -> None:
         root = Path(__file__).resolve().parent.parent
         report = verifier.analyze_repository(root, "all")
         self.assertEqual(report["violations"], [])
         self.assertGreaterEqual(report["checked_files_count"], 1)
+        self.assertNotIn("total_full_red_buttons", report["summary"])
 
     def test_enforces_two_tier_scoped_observation_slice_gates(self) -> None:
         bad_snapshot_view = """

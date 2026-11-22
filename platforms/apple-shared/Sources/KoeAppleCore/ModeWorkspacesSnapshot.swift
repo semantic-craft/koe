@@ -26,14 +26,13 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         includeAnalysis: Bool = true,
         includeSources: Bool = true
     ) -> WorkspaceExportRequest {
-        let baseTitle = card.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = (baseTitle.isEmpty ? CaptureMode.quickNote.title : baseTitle)
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        return WorkspaceExportRequest(
+        WorkspaceExportRequest(
             recordId: card.id,
             date: nil,
-            suggestedFilename: "\(sanitized).md",
+            suggestedFilename: ExportFilenameSanitizer.markdownFilename(
+                stem: card.title,
+                fallback: CaptureMode.quickNote.title
+            ),
             includeAnalysis: includeAnalysis,
             includeSources: includeSources
         )
@@ -44,11 +43,17 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         includeAnalysis: Bool = true,
         includeSources: Bool = true
     ) -> WorkspaceExportRequest {
-        let safeDate = date.replacingOccurrences(of: "/", with: "-")
+        let trimmedDate = date.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stem = trimmedDate.isEmpty
+            ? CaptureMode.allDay.title
+            : "\(CaptureMode.allDay.title)-\(trimmedDate)"
         return WorkspaceExportRequest(
             recordId: nil,
             date: date,
-            suggestedFilename: "\(CaptureMode.allDay.title)-\(safeDate).md",
+            suggestedFilename: ExportFilenameSanitizer.markdownFilename(
+                stem: stem,
+                fallback: CaptureMode.allDay.title
+            ),
             includeAnalysis: includeAnalysis,
             includeSources: includeSources
         )
@@ -60,14 +65,13 @@ public struct WorkspaceExportRequest: Equatable, Sendable {
         includeAnalysis: Bool = true,
         includeSources: Bool = true
     ) -> WorkspaceExportRequest {
-        let raw = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = (raw.isEmpty ? CaptureMode.meeting.title : raw)
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        return WorkspaceExportRequest(
+        WorkspaceExportRequest(
             recordId: recordId,
             date: nil,
-            suggestedFilename: "\(sanitized).md",
+            suggestedFilename: ExportFilenameSanitizer.markdownFilename(
+                stem: title,
+                fallback: CaptureMode.meeting.title
+            ),
             includeAnalysis: includeAnalysis,
             includeSources: includeSources
         )
