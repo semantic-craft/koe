@@ -23,6 +23,7 @@ import com.semanticcraft.koe.core.CaptureMode
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.SourceSnapshot
+import com.semanticcraft.koe.core.SummarySectionItem
 import com.semanticcraft.koe.core.TimeLabel
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
@@ -78,7 +79,8 @@ internal fun LiveMinutesWorkspaceScreen(
                 KoePrimaryButton("重新生成", { store.send(HostCommand.Summarize(recordId)) })
             }
         }
-        items(sections) { section ->
+        items(SummarySectionItem.keyed(sections), key = { it.id }) { keyed ->
+            val section = keyed.section
             KoeCard {
                 WorkspaceTitle(section.title)
                 Text(section.text)

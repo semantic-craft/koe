@@ -46,6 +46,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     #if os(iOS)
     var sceneInBackground = false
     var pendingRestoration: (peripherals: [any BlePeripheral], scanServices: [CBUUID])?
+    var awaitingStateRestoration = false
     var makeIOSCentral: (CBCentralManagerDelegate, [String: Any]) -> any BleCentral = {
         CBCentralManager(delegate: $0, queue: .main, options: $1)
     }
@@ -80,6 +81,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         if let device = store?.runtimeDevice {
             syncWithRuntimeDevice(device)
             #if os(iOS)
+            if awaitingStateRestoration || pendingRestoration != nil { return }
             guard let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
                   UUID(uuidString: saved) != nil else { return }
             #endif
@@ -149,6 +151,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         isHostActivated = false
         #if os(iOS)
         pendingRestoration = nil
+        awaitingStateRestoration = false
         #endif
         scanAfterTeardown = false
         if isScanRequested || reportedReady || peripheral != nil || reconnectingPeripheral != nil {
@@ -267,7 +270,12 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         Self.logger.info("CoreBluetooth manager state=\(state.rawValue)")
         lastCentralState = state
         #if os(iOS)
-        if state == .poweredOn, let central { resumeRestoration(on: central) }
+        if state == .poweredOn, let central {
+            let wasAwaitingWithoutState = awaitingStateRestoration && pendingRestoration == nil
+            awaitingStateRestoration = false
+            resumeRestoration(on: central)
+            if wasAwaitingWithoutState { beginDeferredKnownReconnectIfAvailable() }
+        }
         #endif
         guard isScanRequested || peripheral != nil || reconnectingPeripheral != nil || reportedReady else { return }
         switch state {

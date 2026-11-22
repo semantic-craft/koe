@@ -16,8 +16,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,6 +38,8 @@ public final class KoeJniHostTest {
     testPendingExceptionPreserved();
     testRealRuntimeSessionEndToEnd();
     testPlainSessionCreateAndDestroy();
+    testNegativeLongInputsRejected();
+    testConcurrentSessionDestroy();
 
     System.out.println("KoeJniHostTest: all checks passed.");
   }
@@ -417,6 +421,190 @@ public final class KoeJniHostTest {
         KoeNativeBridge.nativeSessionDestroy(handle);
       }
       deleteRecursively(tempDir);
+    }
+  }
+
+  private static void testNegativeLongInputsRejected() throws IOException {
+    Path tempDir = Files.createTempDirectory("koe-jni-neg-");
+    long handle = 0;
+    try {
+      handle = KoeNativeBridge.nativeSessionCreate(utf8(tempDir.toString()));
+      assertTrue(handle > 0, "session handle must be positive");
+      long now = 1_800_020_000L;
+
+      assertTrue(!KoeNativeBridge.nativeSessionDestroy(-1L), "negative handle destroy must return false");
+      assertTrue(!KoeNativeBridge.nativeSessionDestroy(0L), "zero handle destroy must return false");
+      assertEquals(0L, KoeNativeBridge.nativeSessionGeneration(-1L), "negative handle generation must be 0");
+
+      assertTrue(
+          KoeNativeBridge.nativeSessionSnapshotJson(-1L, now) == null,
+          "negative handle snapshotJson must return null");
+      assertTrue(
+          KoeNativeBridge.nativeSessionSnapshotJson(handle, -1L) == null,
+          "negative nowEpochSec snapshotJson must return null");
+
+      byte[] navCmd = utf8("{\"type\":\"navigate\",\"section\":\"records\"}");
+      assertTrue(
+          KoeNativeBridge.nativeSessionDispatchJson(-1L, navCmd, now) == null,
+          "negative handle dispatchJson must return null");
+      assertTrue(
+          KoeNativeBridge.nativeSessionDispatchJson(handle, navCmd, -1L) == null,
+          "negative nowEpochSec dispatchJson must return null");
+
+      assertEquals(
+          0L,
+          KoeNativeBridge.nativeSessionIngestBle(-1L, new byte[] {1, 2}, now),
+          "negative handle ingestBle must return 0");
+      assertEquals(
+          0L,
+          KoeNativeBridge.nativeSessionIngestBle(handle, new byte[] {1, 2}, -1L),
+          "negative nowEpochSec ingestBle must return 0");
+
+      String startedMic = dispatch(
+          handle,
+          "{\"type\":\"start_microphone\",\"inputId\":\"mic\",\"clockNs\":1000000000}",
+          now);
+      String micObj = extractJsonObject(startedMic, "microphone");
+      String recId = extractJsonString(micObj, "\"recordId\"\\s*:\\s*\"([^\"]+)\"");
+      String sesId = extractJsonString(micObj, "\"sessionId\"\\s*:\\s*\"([^\"]+)\"");
+      dispatch(
+          handle,
+          "{\"type\":\"microphone_started\",\"recordId\":\"" + recId
+              + "\",\"sessionId\":\"" + sesId
+              + "\",\"lane\":\"microphone\",\"sampleRate\":16000}",
+          now);
+
+      short[] pcm = new short[] {1, 2, 3, 4};
+      long[][] badPcmReceipts = new long[][] {
+          KoeNativeBridge.nativeSessionIngestPcm(
+              -1L, utf8(recId), utf8(sesId), utf8("microphone"), 0L, 0L, 1L, true, pcm, 4, now),
+          KoeNativeBridge.nativeSessionIngestPcm(
+              handle, utf8(recId), utf8(sesId), utf8("microphone"), -1L, 0L, 1L, true, pcm, 4, now),
+          KoeNativeBridge.nativeSessionIngestPcm(
+              handle, utf8(recId), utf8(sesId), utf8("microphone"), 0L, -1L, 1L, true, pcm, 4, now),
+          KoeNativeBridge.nativeSessionIngestPcm(
+              handle, utf8(recId), utf8(sesId), utf8("microphone"), 0L, 0L, -1L, true, pcm, 4, now),
+          KoeNativeBridge.nativeSessionIngestPcm(
+              handle, utf8(recId), utf8(sesId), utf8("microphone"), 0L, 0L, 1L, true, pcm, 4, -1L),
+      };
+      for (int i = 0; i < badPcmReceipts.length; i++) {
+        long[] r = badPcmReceipts[i];
+        assertEquals(3, r.length, "rejected PCM receipt length at index " + i);
+        assertEquals(0L, r[0], "rejected PCM generation must be 0 at index " + i);
+        assertEquals(0L, r[1], "rejected PCM nextSequence must be 0 at index " + i);
+        assertEquals(2L, r[2], "rejected PCM status must be 2 at index " + i);
+      }
+
+      long[] okPcm = KoeNativeBridge.nativeSessionIngestPcm(
+          handle, utf8(recId), utf8(sesId), utf8("microphone"), 0L, 0L, 1_000_000_000L, true, pcm, 4, now);
+      assertEquals(0L, okPcm[2], "valid PCM after rejected negative inputs must still succeed");
+
+      dispatch(handle, "{\"type\":\"stop_microphone\"}", now + 1);
+      dispatch(
+          handle,
+          "{\"type\":\"microphone_stopped\",\"recordId\":\"" + recId
+              + "\",\"sessionId\":\"" + sesId
+              + "\",\"lane\":\"microphone\",\"sequence\":1,\"epoch\":0}",
+          now + 1);
+      String playingSnap = dispatch(handle, "{\"type\":\"playback\",\"isPlaying\":true}", now + 2);
+      long reqId = Long.parseLong(
+          extractJsonString(extractJsonObject(playingSnap, "playback"), "\"requestId\"\\s*:\\s*([0-9]+)"));
+
+      long[][] badPlaybackReceipts = new long[][] {
+          KoeNativeBridge.nativeSessionReportPlaybackProgress(-1L, utf8(recId), reqId, 10L, true, now + 2, now + 2),
+          KoeNativeBridge.nativeSessionReportPlaybackProgress(handle, utf8(recId), -1L, 10L, true, now + 2, now + 2),
+          KoeNativeBridge.nativeSessionReportPlaybackProgress(handle, utf8(recId), reqId, -1L, true, now + 2, now + 2),
+          KoeNativeBridge.nativeSessionReportPlaybackProgress(handle, utf8(recId), reqId, 10L, true, -1L, now + 2),
+          KoeNativeBridge.nativeSessionReportPlaybackProgress(handle, utf8(recId), reqId, 10L, true, now + 2, -1L),
+      };
+      for (int i = 0; i < badPlaybackReceipts.length; i++) {
+        long[] r = badPlaybackReceipts[i];
+        assertEquals(7, r.length, "rejected playback receipt length at index " + i);
+        assertEquals(0L, r[0], "rejected playback generation must be 0 at index " + i);
+        assertEquals(0L, r[5], "rejected playback applied must be 0 at index " + i);
+      }
+
+      assertEquals(0L, KoeNativeBridge.nativeSessionPollTimers(-1L, 100L, now + 3), "negative handle pollTimers must return 0");
+      assertEquals(0L, KoeNativeBridge.nativeSessionPollTimers(handle, -1L, now + 3), "negative elapsedMs pollTimers must return 0");
+      assertEquals(0L, KoeNativeBridge.nativeSessionPollTimers(handle, 100L, -1L), "negative nowEpochSec pollTimers must return 0");
+
+      byte[] badBleTx = KoeNativeBridge.nativeSessionDrainBleTx(-1L);
+      assertTrue(badBleTx != null && badBleTx.length == 0, "negative handle drainBleTx must return empty bytes");
+      byte[] badAsr = KoeNativeBridge.nativeSessionDrainLocalAsr(-1L);
+      assertTrue(badAsr != null && badAsr.length == 0, "negative handle drainLocalAsr must return empty bytes");
+    } finally {
+      if (handle != 0) {
+        KoeNativeBridge.nativeSessionDestroy(handle);
+      }
+      deleteRecursively(tempDir);
+    }
+  }
+
+  private static void testConcurrentSessionDestroy() throws Exception {
+    final int rounds = 12;
+    final int threads = 8;
+    for (int round = 0; round < rounds; round++) {
+      Path tempDir = Files.createTempDirectory("koe-jni-concurrent-destroy-");
+      long handle = 0;
+      try {
+        Map<String, String> store = Collections.synchronizedMap(new HashMap<>());
+        KoeNativeBridge.CredentialBridge bridge = (op, refBytes, valBytes) -> {
+          String ref = refBytes == null ? "" : new String(refBytes, StandardCharsets.UTF_8);
+          String val = valBytes == null ? "" : new String(valBytes, StandardCharsets.UTF_8);
+          if (op == 0) {
+            String found = store.get(ref);
+            return found == null ? null : found.getBytes(StandardCharsets.UTF_8);
+          }
+          if (op == 1) {
+            store.put(ref, val);
+            return ref.getBytes(StandardCharsets.UTF_8);
+          }
+          if (op == 5) {
+            return ("slot-" + ref).getBytes(StandardCharsets.UTF_8);
+          }
+          return new byte[0];
+        };
+        handle = KoeNativeBridge.nativeSessionCreateWithCredentials(utf8(tempDir.toString()), bridge, false);
+        assertTrue(handle > 0, "concurrent destroy session creation must succeed");
+        dispatch(
+            handle,
+            "{\"type\":\"configure_provider\",\"apiKey\":\"sk-concurrent-12345678\",\"model\":\"qwen-plus\"}",
+            1_800_030_000L);
+
+        final long targetHandle = handle;
+        CyclicBarrier barrier = new CyclicBarrier(threads);
+        AtomicInteger destroyedCount = new AtomicInteger();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        List<Thread> workers = new ArrayList<>();
+        for (int t = 0; t < threads; t++) {
+          Thread worker = new Thread(() -> {
+            try {
+              barrier.await();
+              if (KoeNativeBridge.nativeSessionDestroy(targetHandle)) {
+                destroyedCount.incrementAndGet();
+              }
+            } catch (Throwable ex) {
+              failure.compareAndSet(null, ex);
+            }
+          }, "destroy-racer-" + round + "-" + t);
+          workers.add(worker);
+          worker.start();
+        }
+        for (Thread worker : workers) {
+          worker.join(10_000);
+          assertTrue(!worker.isAlive(), "concurrent destroy worker timed out");
+        }
+        if (failure.get() != null) {
+          throw new AssertionError("concurrent destroy threw", failure.get());
+        }
+        assertEquals(1L, destroyedCount.get(), "exactly one thread must destroy session in round " + round);
+        handle = 0;
+      } finally {
+        if (handle != 0) {
+          KoeNativeBridge.nativeSessionDestroy(handle);
+        }
+        deleteRecursively(tempDir);
+      }
     }
   }
 

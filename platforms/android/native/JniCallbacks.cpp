@@ -159,6 +159,9 @@ void *credential_bridge_create(JNIEnv *env, jobject bridge) noexcept {
   jobject global_bridge = env->NewGlobalRef(bridge);
   if (global_bridge == nullptr || env->ExceptionCheck()) {
     env->ExceptionClear();
+    if (global_bridge != nullptr) {
+      env->DeleteGlobalRef(global_bridge);
+    }
     return nullptr;
   }
 

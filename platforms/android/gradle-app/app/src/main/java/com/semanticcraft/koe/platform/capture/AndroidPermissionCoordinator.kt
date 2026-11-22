@@ -89,6 +89,7 @@ class AndroidPermissionCoordinator(
                     }
                     return
                 }
+                queuedBuckets.remove(bucket)
                 activeBucket = bucket
                 requesterToInvoke = currentRequester
             }
@@ -112,29 +113,39 @@ class AndroidPermissionCoordinator(
     }
 
     private fun completeBucket(bucket: Bucket, granted: Boolean) {
-        val callbacks: List<(Boolean) -> Unit>
-        var nextLaunch: Pair<Bucket, PermissionRequester>? = null
-        val alreadyGrantedQueued = mutableListOf<List<(Boolean) -> Unit>>()
-        synchronized(lock) {
-            callbacks = pendingByBucket.remove(bucket).orEmpty()
+        val callbacks = synchronized(lock) {
             if (activeBucket == bucket) {
                 activeBucket = null
+            }
+            pendingByBucket.remove(bucket).orEmpty()
+        }
+        callbacks.forEach { it(granted) }
+
+        var nextLaunch: Pair<Bucket, PermissionRequester>? = null
+        val alreadyGrantedQueued = mutableListOf<List<(Boolean) -> Unit>>()
+        val deniedQueued = mutableListOf<List<(Boolean) -> Unit>>()
+        synchronized(lock) {
+            if (activeBucket == null) {
                 val currentRequester = activityRequester
                 while (queuedBuckets.isNotEmpty() && nextLaunch == null) {
                     val candidate = queuedBuckets.removeFirst()
+                    if (pendingByBucket[candidate].isNullOrEmpty()) {
+                        pendingByBucket.remove(candidate)
+                        continue
+                    }
                     if (hasPermission(candidate)) {
                         pendingByBucket.remove(candidate)?.let { alreadyGrantedQueued.add(it) }
                     } else if (currentRequester != null) {
                         activeBucket = candidate
                         nextLaunch = candidate to currentRequester
                     } else {
-                        pendingByBucket.remove(candidate)
+                        pendingByBucket.remove(candidate)?.let { deniedQueued.add(it) }
                     }
                 }
             }
         }
-        callbacks.forEach { it(granted) }
         alreadyGrantedQueued.forEach { waiting -> waiting.forEach { it(true) } }
+        deniedQueued.forEach { waiting -> waiting.forEach { it(false) } }
         nextLaunch?.let { (nextBucket, requester) ->
             launchBucket(nextBucket, requester)
         }

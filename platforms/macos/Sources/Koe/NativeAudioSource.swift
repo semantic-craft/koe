@@ -137,12 +137,12 @@ public final class NativeAudioSource: MicrophoneSource {
     }
     private static func stringProperty(_ device: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String? {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        var value: CFString = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let status = withUnsafeMutablePointer(to: &value) { pointer in
             AudioObjectGetPropertyData(device, &address, 0, nil, &size, pointer)
         }
-        guard status == noErr else { return nil }
-        return value as String
+        guard status == noErr, let cfString = value?.takeRetainedValue() else { return nil }
+        return cfString as String
     }
 }

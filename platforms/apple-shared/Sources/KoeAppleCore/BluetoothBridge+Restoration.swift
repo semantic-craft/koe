@@ -98,6 +98,7 @@ extension BluetoothBridge {
 
     public func restoreCentralIfNeeded(restoreIdentifiers: [String]) {
         guard allowsCoreBluetooth, central == nil, restoreIdentifiers.contains(Self.iosRestoreIdentifier) else { return }
+        awaitingStateRestoration = true
         central = createIOSCentral()
     }
 
@@ -119,6 +120,7 @@ extension BluetoothBridge {
     }
 
     func stageRestoration(peripherals: [any BlePeripheral], scanServices: [CBUUID]) {
+        awaitingStateRestoration = false
         peripherals.forEach { $0.delegate = self }
         pendingRestoration = (peripherals, scanServices)
     }
@@ -156,7 +158,21 @@ extension BluetoothBridge {
             isScanRequested = true
             connectionID = UUID().uuidString
             emit("scanning")
+        } else {
+            beginDeferredKnownReconnectIfAvailable()
         }
+    }
+
+    func beginDeferredKnownReconnectIfAvailable() {
+        guard isHostActivated, store?.runtimeDevice.autoConnect != false,
+              peripheral == nil, reconnectingPeripheral == nil, !reportedReady, !isScanRequested,
+              let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+              UUID(uuidString: saved) != nil else { return }
+        stopScanning()
+        isScanRequested = true
+        connectionID = UUID().uuidString
+        scanStartCount += 1
+        emit("scanning")
     }
 
     private func restoreChannels(for peer: any BlePeripheral) {

@@ -22,11 +22,15 @@ enum SystemAudioHAL {
     }
     static func deviceUID(_ device: AudioObjectID) throws -> String {
         var address = address(kAudioDevicePropertyDeviceUID)
-        var value: CFString = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let status = withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(device, &address, 0, nil, &size, $0) }
-        guard status == noErr, !(value as String).isEmpty else { throw CaptureError("无法读取音频输出设备。") }
-        return value as String
+        guard status == noErr, let cfString = value?.takeRetainedValue() else {
+            throw CaptureError("无法读取音频输出设备。")
+        }
+        let uid = cfString as String
+        guard !uid.isEmpty else { throw CaptureError("无法读取音频输出设备。") }
+        return uid
     }
     static func processObject(pid: pid_t) -> AudioObjectID? {
         var address = address(kAudioHardwarePropertyTranslatePIDToProcessObject)

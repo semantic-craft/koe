@@ -24,7 +24,8 @@ final class IOSHostCoordinator {
 
     init(store: HostSessionStore, actions: HostBridgeActions, source: MicrophoneSource? = nil,
          audioSession: IOSAudioSession = IOSAudioSession(),
-         allowsCoreBluetooth: Bool = true, mediaCenter: (any IOSMediaCenter)? = nil,
+         allowsCoreBluetooth: Bool = true, bluetoothBridge: BluetoothBridge? = nil,
+         restoreIdentifiers: [String] = [], mediaCenter: (any IOSMediaCenter)? = nil,
          recognizer: (any LocalSpeechRecognizer)? = nil, allowsLocalSpeech: Bool = true,
          beginBackgroundTask: @escaping BeginBackgroundTask = { name, expire in
              UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expire)
@@ -34,7 +35,9 @@ final class IOSHostCoordinator {
         self.endBackgroundTask = endBackgroundTask
         self.store = store
         localTranscription = NativeLocalTranscription(recognizer: recognizer)
-        bluetoothBridge = BluetoothBridge(store: store)
+        let bridge = bluetoothBridge ?? BluetoothBridge(store: store)
+        bridge.store = store
+        self.bluetoothBridge = bridge
         let microphone = source ?? IOSAudioSource(audioSession: audioSession) { [weak store] message in
             Task { @MainActor in store?.reportNativeError(message) }
         }
@@ -60,19 +63,22 @@ final class IOSHostCoordinator {
         }
         store.bridgeActions = actions
         store.bridgeActions.resumeMicrophone = { [weak capture] in capture?.resume() }
-        store.bridgeActions.requestBleScan = { [weak bluetoothBridge] in bluetoothBridge?.requestScan() }
-        store.bridgeActions.flushBleOutbound = { [weak bluetoothBridge] in bluetoothBridge?.flushOutboundFrames() }
+        store.bridgeActions.requestBleScan = { [weak bridge] in bridge?.requestScan() }
+        store.bridgeActions.flushBleOutbound = { [weak bridge] in bridge?.flushOutboundFrames() }
         store.onSnapshotChanged = { [weak self] snapshot in
             guard let self else { return }
             nowPlaying.sync(snapshot)
-            bluetoothBridge.syncWithRuntimeDevice(snapshot.device)
-            bluetoothBridge.flushOutboundFrames()
+            self.bluetoothBridge.syncWithRuntimeDevice(snapshot.device)
+            self.bluetoothBridge.flushOutboundFrames()
             updatePolling()
         }
         if allowsLocalSpeech { localTranscription.store = store }
         nowPlaying.sync(store.snapshot)
-        bluetoothBridge.setSceneInBackground(scenePhase != .active)
-        bluetoothBridge.activateHost(allowsCoreBluetooth: allowsCoreBluetooth)
+        bridge.setSceneInBackground(scenePhase != .active)
+        if allowsCoreBluetooth {
+            bridge.restoreCentralIfNeeded(restoreIdentifiers: restoreIdentifiers)
+        }
+        bridge.activateHost(allowsCoreBluetooth: allowsCoreBluetooth)
         updatePolling()
     }
 

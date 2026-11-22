@@ -3,12 +3,33 @@ import SwiftUI
 
 @MainActor
 final class IOSAppDelegate: NSObject, UIApplicationDelegate {
-    lazy var session = IOSLaunchSession(bridgeActions: HostBridgeActions())
+    private var pendingRestoreIdentifiers: [String] = []
+    private var initializedSession: IOSLaunchSession?
+    var makeSession: ([String]) -> IOSLaunchSession = { restoreIdentifiers in
+        IOSLaunchSession(bridgeActions: HostBridgeActions(), restoreIdentifiers: restoreIdentifiers)
+    }
+
+    var session: IOSLaunchSession {
+        get {
+            if let initializedSession { return initializedSession }
+            let created = makeSession(pendingRestoreIdentifiers)
+            initializedSession = created
+            return created
+        }
+        set {
+            initializedSession = newValue
+        }
+    }
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         if let identifiers = options?[.bluetoothCentrals] as? [String] {
-            session.coordinator.bluetoothBridge.restoreCentralIfNeeded(restoreIdentifiers: identifiers)
+            pendingRestoreIdentifiers = identifiers
+            if let initializedSession {
+                initializedSession.coordinator.bluetoothBridge.restoreCentralIfNeeded(restoreIdentifiers: identifiers)
+            } else {
+                _ = session
+            }
         }
         return true
     }

@@ -212,7 +212,6 @@ data class AppUpdateSnapshot(
     val phase: String = "idle",
     val checkedAtEpochSec: Long? = null,
     val latestVersion: String? = null,
-    val availableVersion: String? = null,
     val releaseTitle: String? = null,
     val publishedAt: String? = null,
     val releaseNotes: String? = null,
@@ -221,7 +220,6 @@ data class AppUpdateSnapshot(
     val assetName: String? = null,
     val assetSizeBytes: Long? = null,
     val message: String? = null,
-    val error: String? = null,
 ) {
     val isChecking: Boolean get() = phase == "checking"
     val isUpdateAvailable: Boolean get() = phase == "available"

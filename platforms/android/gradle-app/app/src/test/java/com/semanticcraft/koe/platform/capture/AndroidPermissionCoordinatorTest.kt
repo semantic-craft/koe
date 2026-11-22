@@ -1,6 +1,14 @@
 package com.semanticcraft.koe.platform.capture
 
 import android.Manifest
+import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.platform.ble.AndroidBleCoordinator
+import com.semanticcraft.koe.platform.ble.BleAdapterState
+import com.semanticcraft.koe.platform.ble.BleAddressStore
+import com.semanticcraft.koe.platform.ble.BleTransportListener
+import com.semanticcraft.koe.platform.ble.AndroidBleTransport
+import com.semanticcraft.koe.ui.KoeComposeUiTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -148,5 +156,127 @@ class AndroidPermissionCoordinatorTest {
         assertEquals(listOf(Manifest.permission.ACCESS_FINE_LOCATION), launchedPermissions)
         assertEquals(true, outcome)
         assertTrue(coordinator.hasBlePermissions())
+    }
+
+    @Test
+    fun queuedBlePermissionResolvesFalseAndDoesNotWedgeBleCoordinatorWhenActivityDetaches() {
+        val granted = mutableSetOf<String>()
+        val coordinator = AndroidPermissionCoordinator(checkPermission = { it in granted })
+        val launched = mutableListOf<Pair<List<String>, (Map<String, Boolean>) -> Unit>>()
+        val requesterA: PermissionRequester = { permissions, callback ->
+            launched.add(permissions.toList() to callback)
+        }
+        coordinator.attachActivity(requesterA)
+
+        var scanStarts = 0
+        val transport = object : AndroidBleTransport {
+            override fun setListener(listener: BleTransportListener?) = Unit
+            override fun adapterState(): BleAdapterState = BleAdapterState.SUPPORTED_READY
+            override fun startScan(preferredAddress: String?) { scanStarts += 1 }
+            override fun stopScan() = Unit
+            override fun connect(address: String, displayName: String) = Unit
+            override fun writeCharacteristic(bytes: ByteArray): Boolean = true
+            override fun disconnect() = Unit
+        }
+        val addressStore = object : BleAddressStore {
+            override fun read(): String? = null
+            override fun write(address: String) = Unit
+            override fun clear() = Unit
+        }
+        val bleOutcomes = mutableListOf<Boolean>()
+        val bleCoordinator = AndroidBleCoordinator(
+            transport = transport,
+            addressStore = addressStore,
+            requestBlePermission = { cb ->
+                coordinator.requestBlePermissions { ok ->
+                    bleOutcomes.add(ok)
+                    cb(ok)
+                }
+            },
+        )
+        val store = HostSessionStore(
+            "/tmp/koe-perm-detach",
+            bridge = KoeComposeUiTest.FakeUiBridgeClient(HostSnapshot.empty),
+        )
+        bleCoordinator.onSessionBound(store)
+
+        val micOutcomes = mutableListOf<Boolean>()
+        coordinator.requestRecordAudio { ok ->
+            micOutcomes.add(ok)
+            coordinator.detachActivity(requesterA)
+        }
+        bleCoordinator.requestScan()
+        assertEquals(1, launched.size)
+
+        launched[0].second(mapOf(Manifest.permission.RECORD_AUDIO to false))
+        assertEquals(listOf(false), micOutcomes)
+        assertEquals(listOf(false), bleOutcomes)
+        assertEquals(1, launched.size)
+
+        val requesterB: PermissionRequester = { _, cb ->
+            granted.add(Manifest.permission.BLUETOOTH_SCAN)
+            granted.add(Manifest.permission.BLUETOOTH_CONNECT)
+            cb(mapOf(Manifest.permission.BLUETOOTH_SCAN to true, Manifest.permission.BLUETOOTH_CONNECT to true))
+        }
+        coordinator.attachActivity(requesterB)
+        bleCoordinator.requestScan()
+        assertEquals(listOf(false, true), bleOutcomes)
+        assertEquals(1, scanStarts)
+
+        bleCoordinator.onDisconnected(null)
+        granted.clear()
+        val lateLaunched = mutableListOf<(Map<String, Boolean>) -> Unit>()
+        val requesterC: PermissionRequester = { _, cb -> lateLaunched.add(cb) }
+        coordinator.attachActivity(requesterC)
+        val lateMicOutcomes = mutableListOf<Boolean>()
+        coordinator.requestRecordAudio { lateMicOutcomes.add(it) }
+        bleCoordinator.requestScan()
+        assertEquals(1, lateLaunched.size)
+        coordinator.detachActivity(requesterC)
+        lateLaunched[0](mapOf(Manifest.permission.RECORD_AUDIO to true))
+        assertEquals(listOf(false), lateMicOutcomes)
+        assertEquals(listOf(false, true, false), bleOutcomes)
+        coordinator.attachActivity(requesterB)
+        bleCoordinator.requestScan()
+        assertEquals(listOf(false, true, false, true), bleOutcomes)
+        assertEquals(2, scanStarts)
+    }
+
+    @Test
+    fun reentrantDetachAttachAndBleRequestInsideMicCallbackLaunchesNewRequesterOnce() {
+        val granted = mutableSetOf<String>()
+        val coordinator = AndroidPermissionCoordinator(checkPermission = { it in granted })
+        val launchedA = mutableListOf<(Map<String, Boolean>) -> Unit>()
+        val launchedB = mutableListOf<Pair<List<String>, (Map<String, Boolean>) -> Unit>>()
+        val requesterA: PermissionRequester = { _, cb -> launchedA.add(cb) }
+        val requesterB: PermissionRequester = { permissions, cb ->
+            launchedB.add(permissions.toList() to cb)
+        }
+        coordinator.attachActivity(requesterA)
+
+        val initialBleOutcomes = mutableListOf<Boolean>()
+        val retryBleOutcomes = mutableListOf<Boolean>()
+        coordinator.requestRecordAudio {
+            coordinator.detachActivity(requesterA)
+            coordinator.attachActivity(requesterB)
+            coordinator.requestBlePermissions { retryBleOutcomes.add(it) }
+        }
+        coordinator.requestBlePermissions { initialBleOutcomes.add(it) }
+        assertEquals(1, launchedA.size)
+        assertEquals(0, launchedB.size)
+
+        launchedA[0](mapOf(Manifest.permission.RECORD_AUDIO to false))
+        assertEquals(listOf(false), initialBleOutcomes)
+        assertEquals(1, launchedB.size)
+
+        granted.add(Manifest.permission.BLUETOOTH_SCAN)
+        granted.add(Manifest.permission.BLUETOOTH_CONNECT)
+        launchedB[0].second(
+            mapOf(
+                Manifest.permission.BLUETOOTH_SCAN to true,
+                Manifest.permission.BLUETOOTH_CONNECT to true,
+            ),
+        )
+        assertEquals(listOf(true), retryBleOutcomes)
     }
 }

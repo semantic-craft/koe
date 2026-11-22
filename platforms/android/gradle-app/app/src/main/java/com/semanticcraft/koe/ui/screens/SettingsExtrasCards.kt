@@ -43,12 +43,18 @@ internal fun SettingsExtrasCards(store: HostSessionStore, update: AppUpdateSnaps
             if (BuildConfig.ALLOW_SELF_UPDATE && supportsSelfUpdate) {
                 KoePrimaryButton(if (update.isChecking) "正在检查…" else "检查更新",
                     { store.send(HostCommand.CheckAppUpdate) }, enabled = !update.isChecking)
-                update.message?.let { Text(it) }
-                update.error?.let { Text(it, color = KoeTheme.colors.danger) }
-                update.availableVersion?.let { version ->
-                    Text("新版本 " + version)
+                update.message?.takeIf { it.isNotBlank() }?.let { message ->
+                    if (update.phase == "failed") {
+                        Text(message, color = KoeTheme.colors.danger)
+                    } else {
+                        Text(message)
+                    }
+                }
+                if (update.isUpdateAvailable) {
+                    Text("新版本 " + (update.latestVersion ?: ""))
                     update.releaseNotes?.takeIf { it.isNotBlank() }?.let { Text(it) }
-                    val uri = Uri.parse(update.releaseUrl)
+                    val targetUrl = update.downloadUrl?.takeIf { it.isNotBlank() } ?: update.releaseUrl
+                    val uri = Uri.parse(targetUrl)
                     if (uri.scheme == "https" && !uri.host.isNullOrBlank()) {
                         KoePrimaryButton("下载更新", { launch(Intent(Intent.ACTION_VIEW, uri)) })
                     }
