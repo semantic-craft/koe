@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import com.semanticcraft.koe.core.KoeLogger
 
 typealias PermissionRequester = (Array<String>, (Map<String, Boolean>) -> Unit) -> Unit
 
@@ -107,7 +108,8 @@ class AndroidPermissionCoordinator(
             requester(permissions) { results ->
                 completeBucket(bucket, evaluateResults(bucket, results))
             }
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            KoeLogger.w("KoeCapture", "request_permission", "bucket=${bucket.name.lowercase()}", error.javaClass.simpleName, error)
             completeBucket(bucket, hasPermission(bucket))
         }
     }

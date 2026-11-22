@@ -162,8 +162,21 @@ final class IOSHostCoordinator {
         backgroundInterval = interval
         backgroundTask = beginBackgroundTask("KoeSaveRecording") { [weak self] in
             guard let self, self.backgroundInterval == interval else { return }
-            // Do not renew an expired grant until a new interval needs background time.
+            self.store.diagnostics.warning(
+                category: "ios_host",
+                event: "background_task_expired",
+                detail: "background save task expired before completion",
+                errorCode: "background_task_expired"
+            )
             self.finishBackgroundTask()
+        }
+        if backgroundTask == .invalid {
+            store.diagnostics.warning(
+                category: "ios_host",
+                event: "background_task_denied",
+                detail: "system denied KoeSaveRecording background task grant",
+                errorCode: "background_task_denied"
+            )
         }
     }
 

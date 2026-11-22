@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.semanticcraft.koe.core.HostBridgeActions
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.core.KoeLogger
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -42,7 +43,8 @@ class CoroutineTickScheduler(
                     onTick()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    KoeLogger.e("KoeHost", "tick", "periodic tick failed", error.javaClass.simpleName, error)
                 }
             }
         }
@@ -200,7 +202,8 @@ class AndroidHostCoordinator(
                 }
                 if (shouldDeliver) adapterSnapshot.forEach { it.onSnapshotChanged(snapshot) }
             }
-        } catch (_: RejectedExecutionException) {
+        } catch (error: RejectedExecutionException) {
+            KoeLogger.w("KoeHost", "deliver_snapshot", "adapter executor rejected delivery", "executor_rejected", error)
         }
     }
 

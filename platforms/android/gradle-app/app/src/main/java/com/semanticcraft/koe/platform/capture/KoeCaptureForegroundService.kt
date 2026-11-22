@@ -14,6 +14,7 @@ import android.os.IBinder
 import com.semanticcraft.koe.KoeApplication
 import com.semanticcraft.koe.MainActivity
 import com.semanticcraft.koe.core.CaptureAction
+import com.semanticcraft.koe.core.KoeLogger
 
 open class KoeCaptureForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -150,13 +151,15 @@ open class KoeCaptureForegroundService : Service() {
             } else {
                 promoteToForeground(notification, null)
             }
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            KoeLogger.w("KoeFgs", "start_foreground", "permission denied flags=$fgsFlags", "security_exception", error)
             notifyForegroundSyncInvalidated()
             stopSelf()
         } catch (error: RuntimeException) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 error is ForegroundServiceStartNotAllowedException
             ) {
+                KoeLogger.w("KoeFgs", "start_foreground", "start not allowed flags=$fgsFlags", "fgs_not_allowed", error)
                 notifyForegroundSyncInvalidated()
                 stopSelf()
             } else {
@@ -192,9 +195,8 @@ open class KoeCaptureForegroundService : Service() {
             val appContext = context.applicationContext
             if (!state.active) {
                 val stopIntent = Intent(appContext, KoeCaptureForegroundService::class.java)
-                runCatching {
-                    appContext.stopService(stopIntent)
-                }
+                runCatching { appContext.stopService(stopIntent) }
+                    .onFailure { KoeLogger.w("KoeFgs", "stop_service", "stopService failed", error = it) }
                 return true
             }
             val intent = Intent(appContext, KoeCaptureForegroundService::class.java).apply {
@@ -207,12 +209,14 @@ open class KoeCaptureForegroundService : Service() {
             return try {
                 appContext.startForegroundService(intent)
                 true
-            } catch (_: SecurityException) {
+            } catch (error: SecurityException) {
+                KoeLogger.w("KoeFgs", "sync_start_service", "permission denied flags=$fgsFlags", "security_exception", error)
                 false
             } catch (error: RuntimeException) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     error is ForegroundServiceStartNotAllowedException
                 ) {
+                    KoeLogger.w("KoeFgs", "sync_start_service", "start not allowed flags=$fgsFlags", "fgs_not_allowed", error)
                     false
                 } else {
                     throw error

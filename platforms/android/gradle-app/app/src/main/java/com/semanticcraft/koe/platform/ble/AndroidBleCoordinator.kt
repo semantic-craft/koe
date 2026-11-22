@@ -6,6 +6,7 @@ import com.semanticcraft.koe.core.HostAdapterEvent
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.HostSnapshot
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.platform.AndroidHostAdapter
 import java.util.UUID
 
@@ -231,6 +232,7 @@ class AndroidBleCoordinator(
             state.store?.send(HostAdapterEvent.DeviceDisconnect)
         }
         if (!state.wasTeardown && errorMessage != null) {
+            KoeLogger.w("KoeBle", "disconnected", errorMessage, "ble_disconnected")
             state.store?.reportNativeError(errorMessage)
         }
     }
@@ -348,7 +350,10 @@ class AndroidBleCoordinator(
         previousDeadline?.close()
         transport.stopScan()
         val deadline = scheduleDelayed(TEARDOWN_WRITE_TIMEOUT_MS) {
-            if (synchronized(lock) { teardownPending && teardownEpoch == epoch }) teardownLocalBleLink()
+            if (synchronized(lock) { teardownPending && teardownEpoch == epoch }) {
+                KoeLogger.w("KoeBle", "teardown_timeout", "stop frame ack timed out", "teardown_timeout")
+                teardownLocalBleLink()
+            }
         }
         val stored = synchronized(lock) {
             if (teardownPending && teardownEpoch == epoch && teardownDeadline == null) {
@@ -428,6 +433,7 @@ class AndroidBleCoordinator(
                 if (!again) return
             }
         } catch (error: Throwable) {
+            KoeLogger.e("KoeBle", "pump_outbound", "outbound queue pump failed", error.javaClass.simpleName, error)
             synchronized(lock) { pumping = false }
             throw error
         }

@@ -19,6 +19,7 @@ import com.semanticcraft.koe.BuildConfig
 import com.semanticcraft.koe.core.AppUpdateSnapshot
 import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
+import com.semanticcraft.koe.core.KoeLogger
 import com.semanticcraft.koe.platform.capture.AndroidPermissionCoordinator
 import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
@@ -31,9 +32,11 @@ internal fun SettingsExtrasCards(store: HostSessionStore, update: AppUpdateSnaps
     fun launch(intent: Intent) {
         try {
             context.startActivity(intent)
-        } catch (_: ActivityNotFoundException) {
+        } catch (error: ActivityNotFoundException) {
+            KoeLogger.w("KoeApp", "launch_settings_intent", "no target activity", "activity_not_found", error)
             store.reportNativeError("系统没有可打开此操作的应用。")
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            KoeLogger.w("KoeApp", "launch_settings_intent", "intent denied", "security_exception", error)
             store.reportNativeError("系统未允许打开此操作。")
         }
     }

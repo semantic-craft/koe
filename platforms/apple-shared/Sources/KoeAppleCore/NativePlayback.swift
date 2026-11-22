@@ -211,19 +211,22 @@ public final class NativePlayback {
         }
     }
 
+    private var activeDiagnostics: HostDiagnosticLog { store?.diagnostics ?? .shared }
+
     private func fail(_ error: Error) {
         let desired = store?.playbackRequest
         let current = desired.map(settledPosition) ?? 0
         discardItem()
         failedRequest = desired?.requestId
+        activeDiagnostics.error(category: "playback", event: "playback_failed", error: error)
         var message = "无法播放这段音频：\(error.localizedDescription)"
         do {
             try updateSession(false)
         } catch {
+            activeDiagnostics.warning(category: "playback", event: "session_deactivate_failed", error: error)
             message += " 停用音频会话失败：\(error.localizedDescription)"
         }
         if let desired { report(desired, current, playing: false) }
-        logger.error("\(message, privacy: .public)")
         store?.reportNativeError(message)
     }
 

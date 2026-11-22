@@ -64,7 +64,7 @@ extension BluetoothBridge {
             attachAndConnect(existing, on: central, displayName: existing.name ?? "soundcore Work")
             return
         }
-        if let savedString = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+        if let savedString = defaultsStore.string(forKey: Self.savedPeripheralKey),
            let savedUUID = UUID(uuidString: savedString),
            let known = central.knownPeripherals(withIdentifiers: [savedUUID]).first
         {
@@ -164,7 +164,7 @@ extension BluetoothBridge {
     func beginDeferredKnownReconnectIfAvailable() {
         guard isHostActivated, store?.runtimeDevice.autoConnect != false,
               peripheral == nil, reconnectingPeripheral == nil, !reportedReady, !isScanRequested,
-              let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+              let saved = defaultsStore.string(forKey: Self.savedPeripheralKey),
               UUID(uuidString: saved) != nil else { return }
         stopScanning()
         isScanRequested = true

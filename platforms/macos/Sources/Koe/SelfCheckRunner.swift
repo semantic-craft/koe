@@ -1,5 +1,55 @@
+import AppKit
 import Foundation
 import KoeAppleShared
+import os
+import UniformTypeIdentifiers
+
+private final class SmokeBluetoothDefaultsStore: BluetoothDefaultsStore {
+    private let storage = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
+    func string(forKey defaultName: String) -> String? {
+        storage.withLock { $0[defaultName] }
+    }
+
+    func set(_ value: String, forKey defaultName: String) {
+        storage.withLock { $0[defaultName] = value }
+    }
+
+    func removeObject(forKey defaultName: String) {
+        storage.withLock { _ = $0.removeValue(forKey: defaultName) }
+    }
+}
+
+private final class SmokeCoreAudioPropertyListener: CoreAudioPropertyListening {
+    private let active = OSAllocatedUnfairLock(initialState: false)
+
+    func startListening(queue: DispatchQueue, onPropertyChanged: @escaping @Sendable () -> Void) {
+        active.withLock { $0 = true }
+    }
+
+    func stopListening(queue: DispatchQueue) {
+        active.withLock { $0 = false }
+    }
+
+    var isActive: Bool { active.withLock { $0 } }
+}
+
+@MainActor
+private final class SmokeFilePanelPresenter: FilePanelPresenting {
+    let exportURL: URL
+
+    init(exportURL: URL) {
+        self.exportURL = exportURL
+    }
+
+    func chooseImportURL(allowedContentTypes: [UTType]) -> URL? { nil }
+
+    func chooseExportFileURL(title: String, suggestedFilename: String, allowedContentTypes: [UTType]) -> URL? {
+        exportURL
+    }
+
+    func chooseExportDirectoryURL(title: String, message: String) -> URL? { nil }
+}
 
 public enum KoeSelfCheckRunner {
     @MainActor
@@ -147,8 +197,90 @@ public enum KoeSelfCheckRunner {
               restored.snapshot.memories.contains(where: { $0.id == memory.id && $0.state == "accepted" }),
               restored.snapshot.device.autoConnect == false,
               restored.snapshot.error == nil, restored.nativeError == nil else { return fail("restore saved state") }
-        print("koe-smoke-test: PASS (version=2, persisted_record=1, accepted_memory=1)")
+        restored.shutdown()
+
+        if let wiringFailure = runHostDelegateSmokeWiring(workspaceDirectory: directory, recordId: detail.id) {
+            return fail(wiringFailure)
+        }
+        print("koe-smoke-test: PASS (version=2, persisted_record=1, accepted_memory=1, host_wiring=ok)")
         return 0
+    }
+
+    @MainActor
+    private static func runHostDelegateSmokeWiring(workspaceDirectory: URL, recordId: String) -> String? {
+        let diagnostics = HostDiagnosticLog()
+        let bleDefaults = SmokeBluetoothDefaultsStore()
+        let audioListener = SmokeCoreAudioPropertyListener()
+        let exportFileURL = workspaceDirectory.appendingPathComponent("smoke-export.md")
+        let panelPresenter = SmokeFilePanelPresenter(exportURL: exportFileURL)
+        let smokeInputs = [
+            MicrophoneInput(id: "smoke-mic", name: "Smoke Mic", transport: "built_in", isDefault: true)
+        ]
+
+        let delegate = KoeAppDelegate(
+            playback: NativePlayback(),
+            bluetoothBridge: BluetoothBridge(defaultsStore: bleDefaults),
+            files: NativeFileActions(panelPresenter: panelPresenter),
+            audioInputMonitor: CoreAudioInputMonitor(listener: audioListener),
+            defaultInputsProvider: { smokeInputs },
+            makeDefaultStore: {
+                HostSessionStore(
+                    workspacePath: workspaceDirectory.path,
+                    credentials: NativeCredentials(workspaceOverride: true),
+                    diagnostics: diagnostics
+                )
+            }
+        )
+
+        let store = delegate.ensureSessionStore()
+        guard store.handle != 0 else { return "host delegate ensureSessionStore" }
+
+        let metadata: [String: Any]
+        if let bundleInfo = Bundle.main.infoDictionary,
+           let version = bundleInfo["CFBundleShortVersionString"] as? String,
+           !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            metadata = bundleInfo
+        } else {
+            metadata = [
+                "CFBundleShortVersionString": AppUpdateSnapshot.defaultVersion,
+                "CFBundleVersion": AppUpdateSnapshot.defaultBuild
+            ]
+        }
+        delegate.syncAppMetadataIfNeeded(infoDictionary: metadata)
+        delegate.syncAudioInputsIfNeeded(force: true, inputsProvider: { smokeInputs })
+        guard store.snapshot.capture.inputs.contains(where: { $0.id == "smoke-mic" }) else {
+            delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            return "host delegate syncAudioInputsIfNeeded"
+        }
+
+        let menu = delegate.buildStatusMenu()
+        guard menu.items.count >= HostSection.menuSections.count else {
+            delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            return "host delegate buildStatusMenu"
+        }
+
+        delegate.bluetoothBridge.activateHost(allowsCoreBluetooth: false)
+        guard delegate.bluetoothBridge.isHostActivated else {
+            delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            return "host delegate bluetooth activateHost"
+        }
+
+        delegate.files.exportRecord(recordId)
+        guard FileManager.default.fileExists(atPath: exportFileURL.path) else {
+            delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            return "host delegate file export"
+        }
+
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        guard store.handle == 0,
+              !delegate.bluetoothBridge.isHostActivated,
+              !audioListener.isActive,
+              store.snapshot.error == nil,
+              store.nativeError == nil,
+              diagnostics.recentEntries().filter({ $0.level == "error" }).isEmpty else {
+            return "host delegate clean teardown"
+        }
+        return nil
     }
 
     private static func fail(_ stage: String) -> Int32 {
