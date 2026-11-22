@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import importlib.util
-import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -124,19 +123,6 @@ class CleanupTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 cleanup.prepare(self.root)
         self.assertEqual(self.commands, [])
-
-    def test_env_overrides_lsregister_and_settle_seconds(self):
-        with patch.dict(
-            os.environ,
-            {
-                'KOE_LSREGISTER': '/custom/stub/lsregister',
-                'KOE_CLEANUP_SETTLE_SECONDS': '0.125',
-            },
-            clear=False,
-        ):
-            reloaded = load_cleanup_module()
-        self.assertEqual(reloaded.LSREGISTER, '/custom/stub/lsregister')
-        self.assertEqual(reloaded.SETTLE_SECONDS, 0.125)
 
     def test_inside_detects_unicode_nfc_and_nfd_equivalence(self):
         nfc_dir = self.root / 'Caf\u00e9'

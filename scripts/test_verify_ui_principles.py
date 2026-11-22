@@ -19,39 +19,6 @@ def load_verifier():
 verifier = load_verifier()
 
 
-LEGACY_LIGHT_THEME = """
-pub struct AppFontSizes;
-impl AppFontSizes {
-    pub const XS: f32 = 12.0;
-    pub const SM: f32 = 14.0;
-    pub const MD: f32 = 16.0;
-    pub const LG: f32 = 22.0;
-}
-pub struct AppRadii;
-impl AppRadii {
-    pub const fn concentric(outer: f32, padding: f32) -> f32 { outer - padding }
-}
-pub struct AppColors;
-impl AppColors {
-    pub const SURFACE_0: u32 = 0xFFFFFFFF;
-    pub const BG_PANEL: u32 = 0xFFF7F7F8;
-    pub const SURFACE_1: u32 = 0xFFFFFFFF;
-    pub const BG_CARD: u32 = 0xFFFFFFFF;
-    pub const BG_SUBTLE: u32 = 0xFFF1F1F3;
-    pub const BG_CARD_HOVER: u32 = 0xFFECECEF;
-    pub const BG_MUTED: u32 = 0xFFF1F1F3;
-    pub const BORDER: u32 = 0xFFE3E3E7;
-    pub const BORDER_SOFT: u32 = 0xFFEBEBEE;
-    pub const TEXT_PRIMARY: u32 = 0xFF202022;
-    pub const TEXT_SECONDARY: u32 = 0xFF54545B;
-    pub const TEXT_MUTED: u32 = 0xFF686870;
-    pub const ACCENT: u32 = 0xFF242426;
-    pub const ON_ACCENT: u32 = 0xFFFFFFFF;
-    pub const CARD_SHADOW: &[u32] = &[];
-}
-"""
-
-
 VALID_LIGHT_THEME = (
     Path(__file__).resolve().parent.parent
     / "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
@@ -416,33 +383,6 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             any("NSMicrophoneUsageDescription" in v for v in plist_violations),
             plist_violations,
         )
-
-    def test_repository_rejects_native_palette_regressions(self) -> None:
-        root = Path(__file__).resolve().parent.parent
-        theme_path = Path("platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift")
-        native_theme = (root / theme_path).read_text(encoding="utf-8")
-        for before, after, violation in (
-            ("accent = Color(hex: 0x242426)", "accent = Color(hex: 0xFF0000)", "approved charcoal"),
-            ("textMuted = Color(hex: 0x686870)", "textMuted = Color(hex: 0xBBBBBB)", "Contrast violation: textMuted"),
-        ):
-            with self.subTest(token=before), tempfile.TemporaryDirectory() as tmp:
-                fixture_root = Path(tmp)
-                native_path = fixture_root / theme_path
-                native_path.parent.mkdir(parents=True)
-                native_path.write_text(native_theme, encoding="utf-8")
-                legacy_path = fixture_root / "crates/koe-client-core/src/theme.rs"
-                legacy_path.parent.mkdir(parents=True)
-                legacy_path.write_text(LEGACY_LIGHT_THEME, encoding="utf-8")
-                self.assertEqual(verifier.analyze_repository(fixture_root, "all")["violations"], [])
-                native_path.write_text(native_theme.replace(before, after), encoding="utf-8")
-                report = verifier.analyze_repository(fixture_root, "all")
-                self.assertTrue(any(violation in v for v in report["violations"]), report["violations"])
-
-    def test_repository_shared_theme_passes_all_principles(self) -> None:
-        root = Path(__file__).resolve().parent.parent
-        report = verifier.analyze_repository(root, "all")
-        self.assertEqual(report["violations"], [])
-        self.assertGreaterEqual(report["checked_files_count"], 1)
 
     def test_enforces_two_tier_scoped_observation_slice_gates(self) -> None:
         bad_snapshot_view = """

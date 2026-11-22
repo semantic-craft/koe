@@ -617,21 +617,23 @@ fn idle_poll_timers_does_not_bump_generation_while_lifecycle_transitions_do() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
     let base_gen = runtime.generation();
-    let initial_state = runtime.lifecycle_state();
+    let initial_lifecycle = runtime.snapshot(NOW)["lifecycle"].clone();
     assert_eq!(
         json!({
             "keepAwake": false,
             "quitPhase": "running",
             "message": Value::Null
         }),
-        runtime.lifecycle_json()
+        initial_lifecycle
     );
 
     runtime.poll_timers(250, NOW);
     assert_eq!(runtime.generation(), base_gen);
-    assert_eq!(runtime.lifecycle_state(), initial_state);
+    assert_eq!(runtime.snapshot(NOW)["lifecycle"], initial_lifecycle);
 
-    runtime.request_quit();
-    assert_ne!(runtime.lifecycle_state(), initial_state);
-    assert_eq!(runtime.lifecycle_json()["quitPhase"], "ready");
+    let after_quit = dispatch(&mut runtime, json!({"type": "request_quit"}));
+    assert!(runtime.generation() > base_gen);
+    assert_ne!(after_quit["lifecycle"], initial_lifecycle);
+    assert_eq!(after_quit["lifecycle"]["quitPhase"], "ready");
+    assert_eq!(runtime.snapshot(NOW)["lifecycle"]["quitPhase"], "ready");
 }

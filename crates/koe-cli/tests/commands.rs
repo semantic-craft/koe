@@ -1011,3 +1011,464 @@ fn cli_version_flags_run_without_workspace_and_doctor_exposes_version_build_and_
     assert_eq!(online_json["appUpdate"]["phase"], "available");
     assert_eq!(online_json["appUpdate"]["latestVersion"], "2.11.0");
 }
+
+#[test]
+fn cli_parity_and_benchmark_safe_succeed_without_touching_workspace() {
+    let workspace = Workspace::new();
+
+    let first_parity = cli(&workspace.0, &["parity"]);
+    assert!(
+        first_parity.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first_parity.stderr)
+    );
+    let second_parity = cli(&workspace.0, &["parity"]);
+    assert!(
+        second_parity.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_parity.stderr)
+    );
+    assert_eq!(first_parity.stdout, second_parity.stdout);
+
+    let vectors: Vec<Value> = serde_json::from_slice(&first_parity.stdout).unwrap();
+    assert_eq!(vectors.len(), 20);
+    for (idx, vector) in vectors.iter().enumerate() {
+        assert_eq!(vector["seed"].as_u64(), Some(idx as u64));
+        assert_eq!(vector["rx_count"].as_u64(), Some(2));
+        let tx_hex = vector["tx_hex"].as_str().unwrap();
+        assert!(!tx_hex.is_empty());
+        assert!(tx_hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b)));
+        let ogg_fnv = vector["ogg_fnv"].as_str().unwrap();
+        assert_eq!(ogg_fnv.len(), 16);
+        assert!(ogg_fnv
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b)));
+    }
+    assert!(!workspace.0.exists());
+
+    let bench = cli(&workspace.0, &["benchmark", "--safe"]);
+    assert!(
+        bench.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bench.stderr)
+    );
+    let bench_json: Value = serde_json::from_slice(&bench.stdout).unwrap();
+    assert_eq!(bench_json["decoded_packets"].as_u64(), Some(10_000));
+    assert_eq!(bench_json["decrypted_bytes"].as_u64(), Some(14_400_000));
+    assert_eq!(bench_json["wav_hdr_len"].as_u64(), Some(44));
+    assert_eq!(bench_json["ogg_fnv"].as_str().unwrap().len(), 16);
+    assert!(!workspace.0.exists());
+}
+
+#[cfg(unix)]
+struct ShortSocketWorkspace(PathBuf);
+
+#[cfg(unix)]
+impl ShortSocketWorkspace {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let path = PathBuf::from("/tmp").join(format!(
+            "koe-b-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            path.join("koe.sock").as_os_str().as_encoded_bytes().len() < 103,
+            "short socket workspace path exceeded sun_path cap: {}",
+            path.display()
+        );
+        Self(path)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ShortSocketWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn bridge_client_rejects_non_socket_permissive_mode_and_oversized_response() {
+    use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+    use std::sync::{
+        atomic::AtomicBool,
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+
+    let run_status = |ws: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_koe"))
+            .env_remove("KOE_BRIDGE_SOCKET")
+            .args(["status", "--workspace"])
+            .arg(ws)
+            .output()
+            .unwrap()
+    };
+
+    let ws_file = ShortSocketWorkspace::new();
+    let regular_sock = ws_file.0.join("koe.sock");
+    std::fs::write(&regular_sock, b"regular-file-sentinel").unwrap();
+    let file_out = run_status(&ws_file.0);
+    assert!(!file_out.status.success());
+    assert!(file_out.stdout.is_empty());
+    let file_err: Value = serde_json::from_slice(&file_out.stderr).unwrap();
+    assert!(
+        file_err["error"].as_str().unwrap().contains("不是 Unix 套接字"),
+        "{file_err}"
+    );
+    assert_eq!(
+        std::fs::read(&regular_sock).unwrap(),
+        b"regular-file-sentinel"
+    );
+
+    let ws_perm = ShortSocketWorkspace::new();
+    let perm_sock = ws_perm.0.join("koe.sock");
+    let perm_listener = UnixListener::bind(&perm_sock).unwrap();
+    perm_listener.set_nonblocking(true).unwrap();
+    std::fs::set_permissions(&perm_sock, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let stop_perm = Arc::new(AtomicBool::new(false));
+    let stop_perm_worker = Arc::clone(&stop_perm);
+    let perm_server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut accepted = 0usize;
+        while !stop_perm_worker.load(Ordering::Acquire) && Instant::now() < deadline {
+            match perm_listener.accept() {
+                Ok((mut stream, _)) => {
+                    accepted += 1;
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.write_all(
+                        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"bypassed\":true}}\n",
+                    );
+                    let _ = stream.flush();
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+        accepted
+    });
+    let perm_out = run_status(&ws_perm.0);
+    stop_perm.store(true, Ordering::Release);
+    let perm_accepted = perm_server.join().unwrap();
+    assert_eq!(
+        perm_accepted, 0,
+        "permissive 0644 socket must never be connected"
+    );
+    assert!(!perm_out.status.success());
+    assert!(perm_out.stdout.is_empty());
+    let perm_err: Value = serde_json::from_slice(&perm_out.stderr).unwrap();
+    assert!(
+        perm_err["error"].as_str().unwrap().contains("权限不安全"),
+        "{perm_err}"
+    );
+
+    let ws_big = ShortSocketWorkspace::new();
+    let big_sock = ws_big.0.join("koe.sock");
+    let big_listener = UnixListener::bind(&big_sock).unwrap();
+    big_listener.set_nonblocking(true).unwrap();
+    std::fs::set_permissions(&big_sock, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let stop_big = Arc::new(AtomicBool::new(false));
+    let stop_big_worker = Arc::clone(&stop_big);
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stream = loop {
+            match big_listener.accept() {
+                Ok((stream, _)) => break Some(stream),
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop_big_worker.load(Ordering::Acquire) || Instant::now() >= deadline {
+                        break None;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("unix accept failed: {err}"),
+            }
+        };
+        let Some(stream) = stream else {
+            return false;
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut req_line = String::new();
+        let _ = reader.read_line(&mut req_line);
+        let mut writer = stream;
+        let payload = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"{}\"}}\n",
+            "a".repeat(2 * 1024 * 1024 + 64)
+        );
+        let _ = writer.write_all(payload.as_bytes());
+        let _ = writer.flush();
+        true
+    });
+    let big_out = run_status(&ws_big.0);
+    stop_big.store(true, Ordering::Release);
+    assert!(server.join().unwrap(), "bridge client did not connect to 0600 socket");
+    assert!(!big_out.status.success());
+    assert!(big_out.stdout.is_empty());
+    let big_err: Value = serde_json::from_slice(&big_out.stderr).unwrap();
+    assert!(
+        big_err["error"].as_str().unwrap().contains("2 MiB"),
+        "{big_err}"
+    );
+}
+
+#[test]
+fn mcp_stdio_rejects_malformed_json_uninitialized_tools_list_and_oversized_request() {
+    let workspace = Workspace::new();
+    let mut process = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .env_remove("KOE_BRIDGE_SOCKET")
+        .args(["mcp-stdio", "--workspace"])
+        .arg(&workspace.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = process.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        let _ = writeln!(stdin, "{{not-valid-json");
+        let _ = writeln!(
+            stdin,
+            "{}",
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        );
+        let oversized = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\",\"params\":\"{}\"}}\n",
+            "z".repeat(2 * 1024 * 1024 + 64)
+        );
+        let _ = stdin.write_all(oversized.as_bytes());
+        let _ = stdin.flush();
+    });
+    let output = process.wait_with_output().unwrap();
+    writer.join().unwrap();
+
+    assert!(!output.status.success());
+    let responses: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(responses.len(), 3, "{responses:?}");
+    assert_eq!(responses[0]["error"]["code"], -32700);
+    assert_eq!(responses[1]["id"], 1);
+    assert_eq!(responses[1]["error"]["code"], -32600);
+    assert_eq!(responses[2]["error"]["code"], -32600);
+    assert!(responses[2]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("2 MiB"));
+    let stderr_json: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert!(stderr_json["error"].as_str().unwrap().contains("过长"));
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_stdio_online_ask_polls_live_host_session_over_unix_socket() {
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::sync::{atomic::AtomicBool, Arc};
+    use std::time::{Duration, Instant};
+
+    let workspace = ShortSocketWorkspace::new();
+    let Some(sock_path) = koe_runtime::resolve_bridge_socket_path(&workspace.0) else {
+        return;
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let chat_url = format!("http://{}/chat/completions", listener.local_addr().unwrap());
+    let stop_http = Arc::new(AtomicBool::new(false));
+    let stop_http_worker = Arc::clone(&stop_http);
+
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break Some(stream),
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop_http_worker.load(Ordering::Acquire) || Instant::now() >= deadline {
+                        break None;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("chat accept failed: {err}"),
+            }
+        };
+        let Some(mut stream) = stream else {
+            return false;
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut req_bytes = Vec::new();
+        let mut buf = [0u8; 4096];
+        let header_end = loop {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF reading chat request headers");
+            req_bytes.extend_from_slice(&buf[..n]);
+            if let Some(pos) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&req_bytes[..header_end]);
+        let content_len = headers
+            .lines()
+            .find_map(|line| {
+                let (k, v) = line.split_once(':')?;
+                k.eq_ignore_ascii_case("content-length")
+                    .then(|| v.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        while req_bytes.len() < header_end + content_len {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF reading chat request body");
+            req_bytes.extend_from_slice(&buf[..n]);
+        }
+        let body_text = String::from_utf8_lossy(&req_bytes[header_end..header_end + content_len]);
+        assert!(body_text.contains("何时交付原生界面"), "{body_text}");
+
+        std::thread::sleep(Duration::from_millis(60));
+
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "content": "周五前交付原生界面，并保留录音来源 [S1]。"
+                }
+            }]
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+        stream.flush().unwrap();
+        true
+    });
+
+    let now_sec = 1_820_000_000u64;
+    let host = HostSessionGuard::open(&workspace.0).expect("host session must open");
+    assert!(
+        sock_path.exists(),
+        "HostSessionGuard did not bind expected bridge socket at {}",
+        sock_path.display()
+    );
+    let created: Value = serde_json::from_str(
+        &host
+            .dispatch_json(
+                &json!({
+                    "type": "create_note",
+                    "title": "在线问答交付计划",
+                    "text": "周五前交付原生界面，并保留录音来源。"
+                })
+                .to_string(),
+                now_sec,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(created["error"].is_null(), "{created}");
+    let seed_id = created["detail"]["id"].as_str().unwrap().to_owned();
+
+    let configured: Value = serde_json::from_str(
+        &host
+            .dispatch_json(
+                &json!({
+                    "type": "configure_provider",
+                    "apiKey": "online-ask-key",
+                    "model": "deepseek-chat",
+                    "chatEndpoint": chat_url
+                })
+                .to_string(),
+                now_sec,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(configured["error"].is_null(), "{configured}");
+    assert_eq!(configured["provider"]["configured"], true);
+
+    let mut process = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .env("KOE_BRIDGE_SOCKET", &sock_path)
+        .args(["mcp-stdio", "--workspace"])
+        .arg(&workspace.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = process.stdin.take().unwrap();
+    let requests = [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"online-ask-test","version":"1"}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ask","arguments":{"question":"何时交付原生界面？","record_id":seed_id}}}),
+    ];
+    let writer = std::thread::spawn(move || {
+        for req in requests {
+            writeln!(stdin, "{req}").unwrap();
+        }
+    });
+    let output = process.wait_with_output().unwrap();
+    writer.join().unwrap();
+    stop_http.store(true, Ordering::Release);
+    assert!(
+        server.join().unwrap(),
+        "online ask did not hit loopback chat server"
+    );
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(responses.len(), 2, "{responses:?}");
+    assert_eq!(responses[1]["id"], 2);
+    assert_eq!(responses[1]["result"]["isError"], false, "{}", responses[1]);
+
+    let ask_payload: Value =
+        serde_json::from_str(responses[1]["result"]["content"][0]["text"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(ask_payload["phase"], "ready");
+    assert_eq!(ask_payload["recordId"], seed_id);
+    let last_msg = ask_payload["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(last_msg["role"], "assistant");
+    assert_eq!(last_msg["mode"], "answer");
+    assert!(last_msg["text"]
+        .as_str()
+        .unwrap()
+        .contains("周五前交付原生界面"));
+    assert_eq!(last_msg["sources"][0]["recordId"], seed_id);
+    assert_eq!(last_msg["sources"][0]["segmentId"], "S1");
+
+    drop(host);
+    let reopened = KoeRuntime::open(&workspace.0).unwrap();
+    let persisted = reopened
+        .workspace()
+        .ask_session()
+        .messages
+        .last()
+        .expect("grounded ask answer must persist across reopen");
+    assert!(persisted.grounded);
+    assert!(!persisted.notice);
+    assert!(persisted.text.contains("周五前交付原生界面"));
+    assert_eq!(persisted.sources[0].source.recording_key, seed_id);
+}
