@@ -8,6 +8,7 @@ use tokio_tungstenite::tungstenite::Message;
 use super::{asr, ProviderConfig, TranscriptSegment};
 
 const AUDIO_QUEUE_CAPACITY: usize = 256;
+const EVENT_QUEUE_CAPACITY: usize = 64;
 const MAX_CHUNK_BYTES: usize = 64 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -43,8 +44,6 @@ pub enum LiveEvent {
 pub struct LiveTranscription {
     audio: mpsc::Sender<Vec<u8>>,
     events: mpsc::Receiver<LiveEvent>,
-    terminal: watch::Receiver<Option<LiveEvent>>,
-    terminal_delivered: bool,
     finishing: watch::Sender<bool>,
     cancel: watch::Sender<bool>,
     accepting: AtomicBool,
@@ -60,8 +59,7 @@ impl LiveTranscription {
             .build()
             .map_err(|_| "无法创建实时转写线程".to_string())?;
         let (audio, input) = mpsc::channel(AUDIO_QUEUE_CAPACITY);
-        let (output, events) = mpsc::channel(64);
-        let (terminal_tx, terminal) = watch::channel(None);
+        let (output, events) = mpsc::channel(EVENT_QUEUE_CAPACITY);
         let (finishing, finish) = watch::channel(false);
         let (cancel, mut cancellation) = watch::channel(false);
         let thread = std::thread::Builder::new().name("koe-live-asr".into()).spawn(move || {
@@ -69,13 +67,22 @@ impl LiveTranscription {
                 let result = tokio::select! {
                     biased;
                     _ = cancellation.changed() => None,
-                    result = tokio::time::timeout(SESSION_TIMEOUT, stream(config, input, finish, output)) => {
+                    result = tokio::time::timeout(
+                        SESSION_TIMEOUT,
+                        stream(config, input, finish, output.clone()),
+                    ) => {
                         Some(result.unwrap_or_else(|_| Err("实时转写已达到四小时会话上限".into())))
                     }
                 };
                 if let Some(result) = result {
-                    let event = result.map_or_else(LiveEvent::Failed, |()| LiveEvent::Finished);
-                    let _ = terminal_tx.send(Some(event));
+                    let terminal = result.map_or_else(LiveEvent::Failed, |()| LiveEvent::Finished);
+                    if !*cancellation.borrow() {
+                        tokio::select! {
+                            biased;
+                            _ = cancellation.changed() => {}
+                            _ = output.send(terminal) => {}
+                        }
+                    }
                 }
             });
             runtime.shutdown_timeout(Duration::from_millis(100));
@@ -83,8 +90,6 @@ impl LiveTranscription {
         Ok(Self {
             audio,
             events,
-            terminal,
-            terminal_delivered: false,
             finishing,
             cancel,
             accepting: AtomicBool::new(true),
@@ -123,19 +128,10 @@ impl LiveTranscription {
     pub fn poll(&mut self) -> Vec<LiveEvent> {
         let mut result = Vec::new();
         while let Ok(event) = self.events.try_recv() {
-            result.push(event);
-        }
-        if !self.terminal_delivered {
-            if let Some(event) = self.terminal.borrow().clone() {
-                // The terminal signal may arrive just after the first drain. Every
-                // accepted sentence precedes it and must reach the caller first.
-                while let Ok(sentence) = self.events.try_recv() {
-                    result.push(sentence);
-                }
+            if matches!(event, LiveEvent::Finished | LiveEvent::Failed(_)) {
                 self.accepting.store(false, Ordering::Release);
-                self.terminal_delivered = true;
-                result.push(event);
             }
+            result.push(event);
         }
         result
     }
@@ -172,7 +168,6 @@ async fn stream(
                 biased;
                 _ = finish.changed(), if !closing => {
                     closing = true;
-                    // Closing rejects racing submissions but retains every accepted chunk.
                     audio.close();
                     continue;
                 }
@@ -209,8 +204,7 @@ async fn stream(
                 .map_err(|_| "实时转写读取中断或响应超过限制")?;
             match message {
                 Message::Text(text) => {
-                    // Results are released to the consumer; only each wire message is retained here.
-                    let live_event = match asr::decode_event(&text, &task_id, &mut 0)? {
+                    let live_event = match asr::decode_event(&text, &task_id)? {
                         asr::Event::Interim(Some((sequence, segment))) => {
                             Some(LiveEvent::Interim { sequence, segment })
                         }

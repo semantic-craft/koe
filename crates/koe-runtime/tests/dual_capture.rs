@@ -53,15 +53,15 @@ fn start(r: &mut KoeRuntime, t: &Value, lane: &str) {
 }
 fn chunk(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64, n: i16) -> Value {
     let samples = vec![n; 160];
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
         lane,
-        seq,
-        &samples,
-        None,
-        100,
-    );
+        sequence: seq,
+        samples: &samples,
+        timing: None,
+        now: 100,
+    });
     r.snapshot(100)
 }
 fn stop(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64) -> Value {
@@ -237,15 +237,15 @@ fn timed(r: &mut KoeRuntime, t: &Value, lane: &str, mut v: Value, epoch: u64) ->
 fn timed_chunk(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64, epoch: u64, ns: u64, n: i16) {
     let count = if lane == "system" { 480 } else { 160 };
     let samples = vec![n; count];
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
         lane,
-        seq,
-        &samples,
-        Some((epoch, ns)),
-        100,
-    );
+        sequence: seq,
+        samples: &samples,
+        timing: Some((epoch, ns)),
+        now: 100,
+    });
     let s = r.snapshot(100);
     assert!(s["error"].is_null(), "{lane} chunk {seq}: {}", s["error"]);
 }

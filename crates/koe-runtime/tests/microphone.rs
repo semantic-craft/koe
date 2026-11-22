@@ -50,15 +50,15 @@ fn started(r: &mut KoeRuntime) -> Value {
     t
 }
 fn chunk(r: &mut KoeRuntime, t: &Value, seq: u64, samples: Vec<i16>) -> Value {
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
-        t["lane"].as_str().unwrap_or("microphone"),
-        seq,
-        &samples,
-        None,
-        100,
-    );
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
+        lane: t["lane"].as_str().unwrap_or("microphone"),
+        sequence: seq,
+        samples: &samples,
+        timing: None,
+        now: 100,
+    });
     r.snapshot(100)
 }
 fn finish(r: &mut KoeRuntime, t: &Value, seq: u64) -> Value {

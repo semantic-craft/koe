@@ -50,17 +50,17 @@ impl ProductWorkspace {
             let speech_engine = record.speech_engine;
             let retention = record.retention;
             let live_summary = record.live_summary;
-            let mut record = ProductRecord::restore(
-                record.aggregate,
-                record.title,
-                record.origin,
-                record.analysis,
-                record.content_revision,
-                record.minutes_revision,
-                record.highlighted_segments,
-                record.final_keys,
-                record.completed_request,
-            )?;
+            let mut record = ProductRecord::restore(RestoredProductRecord {
+                aggregate: record.aggregate,
+                title: record.title,
+                origin: record.origin,
+                analysis: record.analysis,
+                content_revision: record.content_revision,
+                minutes_revision: record.minutes_revision,
+                highlighted_segments: record.highlighted_segments,
+                final_keys: record.final_keys,
+                completed_request: record.completed_request,
+            })?;
             record.restore_live_summary(live_summary)?;
             record.mode = if all_day.is_some() {
                 RecordMode::AllDay

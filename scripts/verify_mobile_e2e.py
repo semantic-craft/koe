@@ -157,10 +157,10 @@ def verify_workspace(directory, before):
     microphones = [r for r in records if r.get('origin') == 'microphone' and r.get('duration_ms', 0) > 0]
     require(microphones, f'{directory}: missing captured microphone record')
     previous = json.loads((before / 'product-workspace.json').read_text())
-    old_records = {r['id']: r for r in previous['records']}
+    records_by_persisted_id = {r['id']: r for r in previous['records']}
     require(state['provider'] == previous['provider'], f'{directory}: provider settings changed on restart')
     for survivor in [*notes, *synced, *archived, *microphones]:
-        old = old_records.get(survivor['id'])
+        old = records_by_persisted_id.get(survivor['id'])
         fields = ('title', 'origin', 'project', 'content_revision', 'segments', 'highlighted_segments', 'duration_ms', 'archived')
         require(old is not None and all(old.get(k) == survivor.get(k) for k in fields),
                 f'{directory}: record content changed on restart')

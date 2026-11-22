@@ -42,6 +42,7 @@ fn session_lifecycle_has_no_seed_data_and_rejects_duplicate_writer() {
     let root = TempWorkspace::new("v2");
     let path = CString::new(root.0.to_str().unwrap()).unwrap();
     // SAFETY: path is a valid NUL-terminated CString; snapshot is verified non-null before CStr::from_ptr and every returned C string or byte buffer is freed once with its paired FFI free function.
+    #[allow(unsafe_code)]
     unsafe {
         let handle = koe_host_session_create(path.as_ptr());
         assert_ne!(handle, 0);
@@ -111,6 +112,7 @@ fn receipt_abi_layouts_and_invalid_pointer_boundaries_reject_without_accepting()
     let valid_samples = [42i16; 16];
 
     // SAFETY: CString pointers and valid_samples remain live for every call; koe_host_session_ingest_pcm validates null pointers and sample_count <= 8192 before dereferencing samples, and koe_host_session_report_playback_progress rejects null record_id before reading.
+    #[allow(unsafe_code)]
     unsafe {
         let bad_handle = koe_host_session_ingest_pcm(
             999_999,
@@ -247,15 +249,15 @@ fn ingest_pcm_handles_chunk0_dual_lanes_rejection_and_stale_session() {
     let sys_chunk_0: Vec<i16> = (0..960).map(|i| ((i % 97) * 113 - 4000) as i16).collect();
     let sys_chunk_1: Vec<i16> = (0..960).map(|i| ((i % 53) * 211 - 5000) as i16).collect();
 
-    let r0 = session.ingest_pcm(
-        &rec,
-        &ses,
-        "microphone",
-        0,
-        Some((0, base_clock_ns)),
-        &mic_chunk_0,
-        now + 1,
-    );
+    let r0 = session.ingest_pcm(PcmIngestInput {
+        record_id: &rec,
+        session_id: &ses,
+        lane: "microphone",
+        sequence: 0,
+        timing: Some((0, base_clock_ns)),
+        samples: &mic_chunk_0,
+        now: now + 1,
+    });
     assert_eq!(r0.status, PcmIngestStatus::Accepted as u32);
     assert_eq!(r0.next_sequence, 1);
     assert_eq!(
@@ -272,42 +274,42 @@ fn ingest_pcm_handles_chunk0_dual_lanes_rejection_and_stale_session() {
         ("system", 1, base_clock_ns + 25_000_000, &sys_chunk_1),
     ];
     for &(lane, seq, ts_ns, samples) in steps {
-        let receipt = session.ingest_pcm(
-            &rec,
-            &ses,
+        let receipt = session.ingest_pcm(PcmIngestInput {
+            record_id: &rec,
+            session_id: &ses,
             lane,
-            seq,
-            Some((0, ts_ns)),
+            sequence: seq,
+            timing: Some((0, ts_ns)),
             samples,
-            now + 2,
-        );
+            now: now + 2,
+        });
         assert_eq!(receipt.status, PcmIngestStatus::Accepted as u32);
         assert_eq!(receipt.next_sequence, seq + 1);
     }
 
-    let rejected = session.ingest_pcm(
-        &rec,
-        &ses,
-        "microphone",
-        9,
-        Some((0, base_clock_ns + 40_000_000)),
-        &mic_chunk_0,
-        now + 3,
-    );
+    let rejected = session.ingest_pcm(PcmIngestInput {
+        record_id: &rec,
+        session_id: &ses,
+        lane: "microphone",
+        sequence: 9,
+        timing: Some((0, base_clock_ns + 40_000_000)),
+        samples: &mic_chunk_0,
+        now: now + 3,
+    });
     assert_eq!(rejected.status, PcmIngestStatus::Rejected as u32);
     assert_eq!(rejected.next_sequence, 2);
     assert!(parse_snapshot(&session, now + 3)["error"].is_string());
 
     for (stale_rec, stale_lane) in [("mic-stale", "microphone"), (rec.as_str(), "unknown")] {
-        let stale = session.ingest_pcm(
-            stale_rec,
-            &ses,
-            stale_lane,
-            0,
-            Some((0, base_clock_ns)),
-            &mic_chunk_0,
-            now + 4,
-        );
+        let stale = session.ingest_pcm(PcmIngestInput {
+            record_id: stale_rec,
+            session_id: &ses,
+            lane: stale_lane,
+            sequence: 0,
+            timing: Some((0, base_clock_ns)),
+            samples: &mic_chunk_0,
+            now: now + 4,
+        });
         assert_eq!(stale.status, PcmIngestStatus::StaleSession as u32);
         assert_eq!(stale.next_sequence, 0);
         assert!(parse_snapshot(&session, now + 4)["error"].is_null());
@@ -329,15 +331,15 @@ fn ingest_pcm_handles_chunk0_dual_lanes_rejection_and_stale_session() {
     assert!(audio_dir.join(format!("{rec}.wav")).is_file());
     assert!(audio_dir.join(format!("{rec}-system.wav")).is_file());
 
-    let post_stop = session.ingest_pcm(
-        &rec,
-        &ses,
-        "microphone",
-        2,
-        Some((0, base_clock_ns + 60_000_000)),
-        &mic_chunk_0,
-        now + 6,
-    );
+    let post_stop = session.ingest_pcm(PcmIngestInput {
+        record_id: &rec,
+        session_id: &ses,
+        lane: "microphone",
+        sequence: 2,
+        timing: Some((0, base_clock_ns + 60_000_000)),
+        samples: &mic_chunk_0,
+        now: now + 6,
+    });
     assert_eq!(post_stop.status, PcmIngestStatus::StaleSession as u32);
     assert_eq!(post_stop.next_sequence, 0);
 
@@ -369,15 +371,15 @@ fn report_playback_progress_clamps_elides_duplicates_and_tracks_day_and_trash_wa
         day1,
     );
     let samples = vec![500i16; 1_600];
-    let pcm = session.ingest_pcm(
-        &rec_id,
-        &ses_id,
-        "microphone",
-        0,
-        Some((0, 1_000_000_000)),
-        &samples,
-        day1,
-    );
+    let pcm = session.ingest_pcm(PcmIngestInput {
+        record_id: &rec_id,
+        session_id: &ses_id,
+        lane: "microphone",
+        sequence: 0,
+        timing: Some((0, 1_000_000_000)),
+        samples: &samples,
+        now: day1,
+    });
     assert_eq!(pcm.status, PcmIngestStatus::Accepted as u32);
     send_json(&session, json!({"type": "stop_microphone"}), day1);
     let saved = send_json(
@@ -555,7 +557,15 @@ fn ingest_pcm_rejects_sample_count_8193_without_advancing_sequence_or_generation
 
     let gen_before = koe_host_session_generation(session.handle());
     let oversized = vec![7i16; 8193];
-    let receipt = session.ingest_pcm(&rec_id, &ses_id, "microphone", 0, None, &oversized, now);
+    let receipt = session.ingest_pcm(PcmIngestInput {
+        record_id: &rec_id,
+        session_id: &ses_id,
+        lane: "microphone",
+        sequence: 0,
+        timing: None,
+        samples: &oversized,
+        now,
+    });
     assert_eq!(receipt.status, PcmIngestStatus::Rejected as u32);
     assert_eq!(receipt.next_sequence, 0);
     assert_eq!(receipt.generation, 0);
@@ -604,7 +614,15 @@ fn binary_drains_transfer_non_empty_ble_frames_and_local_asr_effects() {
         json!({"type": "microphone_started", "recordId": rec, "sessionId": ses, "lane": "microphone", "sampleRate": 16_000}),
         now,
     );
-    let receipt = session.ingest_pcm(&rec, &ses, "microphone", 0, None, &[11i16, -22, 33, -44], now);
+    let receipt = session.ingest_pcm(PcmIngestInput {
+        record_id: &rec,
+        session_id: &ses,
+        lane: "microphone",
+        sequence: 0,
+        timing: None,
+        samples: &[11i16, -22, 33, -44],
+        now,
+    });
     assert_eq!(receipt.status, PcmIngestStatus::Accepted as u32);
     send_json(&session, json!({"type": "capture_action", "action": "end"}), now);
     send_json(
@@ -687,6 +705,7 @@ fn session_b_reads_succeed_while_session_a_blocks_in_credential_callback() {
         release: Mutex<mpsc::Receiver<()>>,
     }
 
+    #[allow(unsafe_code)]
     unsafe extern "C" fn blocking_credential_callback(
         context: *mut c_void,
         operation: u32,
@@ -743,6 +762,7 @@ fn session_b_reads_succeed_while_session_a_blocks_in_credential_callback() {
 
     let c_path_a = CString::new(ws_a.0.to_str().unwrap()).unwrap();
     // SAFETY: `c_path_a` is NUL-terminated UTF-8 and `ctx` outlives Session A.
+    #[allow(unsafe_code)]
     let handle_a = unsafe {
         koe_host_session_create_with_credentials(
             c_path_a.as_ptr(),
@@ -768,9 +788,11 @@ fn session_b_reads_succeed_while_session_a_blocks_in_credential_callback() {
         )
         .unwrap();
         // SAFETY: `cmd` is a valid NUL-terminated UTF-8 command JSON.
+        #[allow(unsafe_code)]
         let out = unsafe { koe_host_session_dispatch_json(handle_a, cmd.as_ptr(), now) };
         assert!(!out.is_null());
         // SAFETY: `out` was returned by `koe_host_session_dispatch_json`.
+        #[allow(unsafe_code)]
         unsafe { koe_host_string_free(out) };
     });
 
@@ -786,6 +808,7 @@ fn session_b_reads_succeed_while_session_a_blocks_in_credential_callback() {
             None
         } else {
             // SAFETY: `snap_ptr` was returned by `koe_host_session_snapshot_json`.
+            #[allow(unsafe_code)]
             let owned = unsafe { CString::from_raw(snap_ptr) };
             owned.into_string().ok()
         };
@@ -816,8 +839,168 @@ fn koe_host_bytes_free_ignores_invalid_len_greater_than_cap() {
         cap: 4,
     };
     // SAFETY: `koe_host_bytes_free` rejects `len > cap` before touching `ptr`.
+    #[allow(unsafe_code)]
     unsafe { koe_host_bytes_free(malformed) };
     assert_eq!(stack_buf, [0x5Au8; 8]);
+}
+
+#[test]
+fn reentrant_credential_callback_is_rejected_without_deadlock() {
+    use koe_runtime::credentials::CredentialStore;
+    use std::ffi::c_void;
+    use std::sync::atomic::AtomicBool;
+
+    struct ReentrantContext {
+        handle: AtomicU64,
+        observed_reentry: AtomicBool,
+        snapshot_rejected: AtomicBool,
+        generation_rejected: AtomicBool,
+        destroy_rejected: AtomicBool,
+        nested_credential_rejected: AtomicBool,
+        nested_callback_invoked: AtomicBool,
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn inner_sentinel_callback(
+        context: *mut c_void,
+        _operation: u32,
+        _reference: *const c_char,
+        _value: *const c_char,
+        _output: *mut c_char,
+        _output_cap: usize,
+    ) -> i32 {
+        // SAFETY: Test owns `ReentrantContext` for the entire duration of the test.
+        let ctx = unsafe { &*context.cast::<ReentrantContext>() };
+        ctx.nested_callback_invoked.store(true, Ordering::SeqCst);
+        0
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn reentrant_callback(
+        context: *mut c_void,
+        operation: u32,
+        reference: *const c_char,
+        _value: *const c_char,
+        output: *mut c_char,
+        output_cap: usize,
+    ) -> i32 {
+        // SAFETY: Test owns `ReentrantContext` for the entire lifetime of the session.
+        let ctx = unsafe { &*context.cast::<ReentrantContext>() };
+        let handle = ctx.handle.load(Ordering::SeqCst);
+        if operation == 5 && handle != 0 {
+            ctx.observed_reentry.store(true, Ordering::SeqCst);
+            let snap = koe_host_session_snapshot_json(handle, 1_800_006_000);
+            ctx.snapshot_rejected.store(snap.is_null(), Ordering::SeqCst);
+            if !snap.is_null() {
+                // SAFETY: `snap` would only be non-null if returned by `koe_host_session_snapshot_json`.
+                unsafe { koe_host_string_free(snap) };
+            }
+            ctx.generation_rejected.store(
+                koe_host_session_generation(handle) == 0,
+                Ordering::SeqCst,
+            );
+            ctx.destroy_rejected
+                .store(!koe_host_session_destroy(handle), Ordering::SeqCst);
+            let mut nested = credentials::PlatformCredentials {
+                callback: inner_sentinel_callback,
+                context,
+                isolated: true,
+            };
+            ctx.nested_credential_rejected
+                .store(nested.read("ref-reentrant").is_err(), Ordering::SeqCst);
+        }
+        match operation {
+            0 | 3 => 1,
+            2 | 4 => 0,
+            5 => {
+                let prepared = b"cred-ref-reentry\0";
+                if prepared.len() > output_cap {
+                    return -1;
+                }
+                // SAFETY: `output` has capacity `output_cap >= prepared.len()`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        prepared.as_ptr(),
+                        output.cast::<u8>(),
+                        prepared.len(),
+                    );
+                }
+                0
+            }
+            1 => {
+                // SAFETY: `reference` is a valid NUL-terminated C string from `PlatformCredentials`.
+                let bytes = unsafe { CStr::from_ptr(reference) }.to_bytes_with_nul();
+                if bytes.len() > output_cap {
+                    return -1;
+                }
+                // SAFETY: `output` has capacity `output_cap >= bytes.len()`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), output.cast::<u8>(), bytes.len());
+                }
+                0
+            }
+            _ => -1,
+        }
+    }
+
+    let ws = TempWorkspace::new("reentrant-cred");
+    let ctx = Box::new(ReentrantContext {
+        handle: AtomicU64::new(0),
+        observed_reentry: AtomicBool::new(false),
+        snapshot_rejected: AtomicBool::new(false),
+        generation_rejected: AtomicBool::new(false),
+        destroy_rejected: AtomicBool::new(false),
+        nested_credential_rejected: AtomicBool::new(false),
+        nested_callback_invoked: AtomicBool::new(false),
+    });
+    let ctx_ptr = (&raw const *ctx).cast_mut().cast::<c_void>();
+    let c_path = CString::new(ws.0.to_str().unwrap()).unwrap();
+    // SAFETY: `c_path` is valid NUL-terminated UTF-8 and `ctx` outlives the session.
+    #[allow(unsafe_code)]
+    let handle = unsafe {
+        koe_host_session_create_with_credentials(
+            c_path.as_ptr(),
+            Some(reentrant_callback),
+            ctx_ptr,
+            true,
+        )
+    };
+    assert_ne!(handle, 0);
+    ctx.handle.store(handle, Ordering::SeqCst);
+
+    let cmd = CString::new(
+        json!({
+            "type": "configure_provider",
+            "apiKey": "sk-reentry-test",
+            "model": "fixture"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let now = 1_800_006_000u64;
+    // SAFETY: `cmd` is valid NUL-terminated UTF-8.
+    #[allow(unsafe_code)]
+    let out = unsafe { koe_host_session_dispatch_json(handle, cmd.as_ptr(), now) };
+    assert!(!out.is_null());
+    // SAFETY: `out` was returned by `koe_host_session_dispatch_json`.
+    #[allow(unsafe_code)]
+    unsafe { koe_host_string_free(out) };
+
+    assert!(ctx.observed_reentry.load(Ordering::SeqCst));
+    assert!(ctx.snapshot_rejected.load(Ordering::SeqCst));
+    assert!(ctx.generation_rejected.load(Ordering::SeqCst));
+    assert!(ctx.destroy_rejected.load(Ordering::SeqCst));
+    assert!(ctx.nested_credential_rejected.load(Ordering::SeqCst));
+    assert!(!ctx.nested_callback_invoked.load(Ordering::SeqCst));
+
+    let post_snap = koe_host_session_snapshot_json(handle, now);
+    assert!(!post_snap.is_null());
+    // SAFETY: `post_snap` was returned by `koe_host_session_snapshot_json`.
+    #[allow(unsafe_code)]
+    unsafe { koe_host_string_free(post_snap) };
+    assert!(koe_host_session_generation(handle) > 0);
+    assert!(koe_host_session_destroy(handle));
+    drop(ctx);
 }
 
 #[test]

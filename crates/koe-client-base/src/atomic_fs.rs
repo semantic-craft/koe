@@ -167,6 +167,32 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn workspace_lock_drop_retains_lockfile_inode_across_reacquire() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = std::env::temp_dir().join(format!("koe-base-lock-ino-{}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let lock_file = dir.join(".koe-workspace.lock");
+        let ino_while_held = {
+            let guard = WorkspaceLockGuard::acquire(&dir).expect("acquire lock");
+            fs::symlink_metadata(guard.path())
+                .expect("stat lockfile while held")
+                .ino()
+        };
+        let ino_after_drop = fs::symlink_metadata(&lock_file)
+            .expect("lockfile must remain after drop")
+            .ino();
+        assert_eq!(ino_after_drop, ino_while_held);
+        let reacquired = WorkspaceLockGuard::acquire(&dir).expect("reacquire released OS lock");
+        let ino_after_reacquire = fs::symlink_metadata(reacquired.path())
+            .expect("stat lockfile after reacquire")
+            .ino();
+        assert_eq!(ino_after_reacquire, ino_while_held);
+        drop(reacquired);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn write_atomic_and_read_checked_string_reject_symlinks() {
         use std::os::unix::fs::symlink;
         let dir = std::env::temp_dir().join(format!("koe-base-symlink-{}", process::id()));

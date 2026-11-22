@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
-# Reference-code retrieval over a local XERJ node (see docs/agents/reference-code.md).
-#   scripts/ref sync            fetch pinned repos + locked deps into the cache, then index
-#   scripts/ref koe             re-index Koe's own source (main checkout)
-#   scripts/ref search "<words>" [-k N]   passages from reference projects (prefix ref)
-#   scripts/ref self "<words>"  passages from Koe itself (prefix koe)
-#   scripts/ref def "<symbol>"  go-to-definition across reference projects
-#   scripts/ref start|stop|status
-#   scripts/ref clean           stop the node, delete clones and indices (sync rebuilds them)
 set -euo pipefail
 
 XERJ="${XERJ_BIN:-$HOME/.local/bin/xerj}"
 URL="http://127.0.0.1:9200"
-HOME_DIR="$HOME/.local/share/xerj"        # node data, state journals, pid, log
-CACHE="$HOME/.cache/xerj-ref/koe"         # clones and dep copies; safe to delete and re-sync
+HOME_DIR="$HOME/.local/share/xerj"
+CACHE="$HOME/.cache/xerj-ref/koe"
+readonly XERJ_EXIT_SKIPPED_JUNK=3
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 # The koe index always tracks the main checkout: an autoindex journal is bound to one root.
 MAIN="$(git -C "$ROOT" worktree list --porcelain | awk 'NR==1{print $2}')"
 
-# name  url  pinned commit  sparse path ("-" = whole repo)
 REPOS=(
   "soundcore-upstream https://github.com/tacshi/Soundcore 0e100df287ef44f8c343935ada8093b61da1f207 -"
   "omi https://github.com/BasedHardware/omi 82357c8224ef13627f4e88eff1338afee0ab02b5 -"
@@ -48,10 +40,23 @@ stop() {
   rm -f "$HOME_DIR/node.pid"
 }
 
-index() { # folder prefix
-  local rc=0
-  "$XERJ" autoindex "$1" --url "$URL" --prefix "$2" --state-dir "$HOME_DIR/state/$2" || rc=$?
-  [ "$rc" = 0 ] || [ "$rc" = 3 ] || die "autoindex $1 exited $rc"   # 3 = completed with skipped junk
+usage() {
+  cat <<'EOF'
+Reference-code retrieval over a local XERJ node (see docs/agents/reference-code.md).
+  scripts/ref sync            fetch pinned repos + locked deps into the cache, then index
+  scripts/ref koe             re-index Koe's own source (main checkout)
+  scripts/ref search "<words>" [-k N]   passages from reference projects (prefix ref)
+  scripts/ref self "<words>"  passages from Koe itself (prefix koe)
+  scripts/ref def "<symbol>"  go-to-definition across reference projects
+  scripts/ref start|stop|status
+  scripts/ref clean           stop the node, delete clones and indices (sync rebuilds them)
+EOF
+}
+
+index() {
+  local folder="$1" prefix="$2" rc=0
+  "$XERJ" autoindex "$folder" --url "$URL" --prefix "$prefix" --state-dir "$HOME_DIR/state/$prefix" || rc=$?
+  [ "$rc" = 0 ] || [ "$rc" = "$XERJ_EXIT_SKIPPED_JUNK" ] || die "autoindex $folder exited $rc"
 }
 
 sync() {
@@ -96,5 +101,5 @@ case "$cmd" in
   search) start; "$XERJ" search --url "$URL" --prefix ref "$@" ;;
   self) start; "$XERJ" search --url "$URL" --prefix koe "$@" ;;
   def) start; "$XERJ" def --url "$URL" --prefix ref "$@" ;;
-  *) sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) usage; exit 2 ;;
 esac

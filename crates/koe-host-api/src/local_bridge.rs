@@ -209,6 +209,7 @@ fn unlink_matching_socket(path: &Path, expected_ino: Option<u64>) {
 fn set_nosigpipe(stream: &UnixStream) {
     let one: libc::c_int = 1;
     // SAFETY: `stream` owns a valid AF_UNIX socket file descriptor.
+    #[allow(unsafe_code)]
     unsafe {
         let _ = libc::setsockopt(
             stream.as_raw_fd(),
@@ -224,6 +225,7 @@ fn verify_same_uid(stream: &UnixStream) -> bool {
     let mut euid: libc::uid_t = u32::MAX;
     let mut egid: libc::gid_t = u32::MAX;
     // SAFETY: `stream` owns an active connected AF_UNIX socket descriptor; `getuid` has no preconditions.
+    #[allow(unsafe_code)]
     unsafe {
         let rc = libc::getpeereid(stream.as_raw_fd(), &mut euid, &mut egid);
         rc == 0 && euid == libc::getuid()

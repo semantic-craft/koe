@@ -95,15 +95,15 @@ fn begin_mode(runtime: &mut KoeRuntime, endpoint: &str, mode: &str) -> (Value, u
         runtime,
         json!({"type":"microphone_started","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sampleRate":16000}),
     );
-    runtime.ingest_microphone_pcm(
-        mic["recordId"].as_str().unwrap(),
-        mic["sessionId"].as_str().unwrap(),
-        "microphone",
-        0,
-        &vec![100i16; 3200],
-        None,
-        100,
-    );
+    runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: mic["recordId"].as_str().unwrap(),
+        session_id: mic["sessionId"].as_str().unwrap(),
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![100i16; 3200],
+        timing: None,
+        now: 100,
+    });
     let effects = runtime.drain_local_asr_effects();
     let operation = effects
         .iter()

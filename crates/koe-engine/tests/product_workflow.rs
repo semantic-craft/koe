@@ -189,7 +189,6 @@ fn highlighting_one_untimed_sentence_does_not_highlight_all_zero_offsets() {
     w.append_transcript("a", "second sentence", 0, 0, "manual")
         .unwrap();
     w.add_highlight(source("a", 2)).unwrap();
-    // The old timestamp representation cannot distinguish these sources.
     assert_eq!(
         w.record("a").unwrap().aggregate.bookmarks.len(),
         0,

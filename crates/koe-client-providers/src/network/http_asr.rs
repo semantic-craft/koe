@@ -13,8 +13,8 @@ const DEEPSEEK_CHUNK_MAX_BYTES: usize = 110 * BYTES_PER_SEC;
 const DEEPSEEK_SEARCH_MIN_BYTES: usize = 80 * BYTES_PER_SEC;
 const DEEPSEEK_MAX_WAV_BYTES: usize = 8 * 1024 * 1024;
 const QWEN_FLASH_MAX_BYTES: usize = 300 * BYTES_PER_SEC;
-const FRAME_BYTES: usize = (SAMPLE_RATE / 50) * 2; // 20 ms = 320 samples = 640 bytes
-const SILENCE_WINDOW_FRAMES: usize = 10; // 200 ms
+const FRAME_BYTES: usize = (SAMPLE_RATE / 50) * 2;
+const SILENCE_WINDOW_FRAMES: usize = 10;
 
 /// Splits 16 kHz mono PCM16 into DeepSeek-compatible chunks.
 ///
@@ -466,22 +466,22 @@ fn parse_qwen_flash_response(value: &Value, duration_ms: u64) -> Vec<TranscriptS
     Vec::new()
 }
 
-pub(super) async fn transcribe_qwen_filetrans(
-    config: &ProviderConfig,
-    pcm16: &[u8],
-) -> Result<ProviderOutput, String> {
-    let (origin, allow_loopback_http) = origin_and_loopback(&config.endpoint)?;
-    if config.model.is_empty()
-        || !config
-            .model
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-    {
-        return Err("Qwen 语音模型名称格式无效".into());
-    }
-    let client = build_http_client()?;
+struct OssUploadPolicy {
+    upload_host: reqwest::Url,
+    oss_access_key_id: String,
+    signature: String,
+    policy: String,
+    upload_dir: String,
+    acl: String,
+    forbid_overwrite: String,
+}
 
-    // Step 1: Request temporary OSS upload policy.
+async fn request_oss_upload_policy(
+    client: &reqwest::Client,
+    origin: &str,
+    config: &ProviderConfig,
+    allow_loopback_http: bool,
+) -> Result<OssUploadPolicy, String> {
     let policy_url = format!("{origin}/api/v1/uploads?action=getPolicy&model={}", config.model);
     let mut policy_req = client.get(&policy_url);
     if !config.api_key.trim().is_empty() {
@@ -507,45 +507,65 @@ pub(super) async fn transcribe_qwen_filetrans(
         .get("upload_host")
         .and_then(Value::as_str)
         .ok_or("Qwen 上传凭据缺少 upload_host")?;
-    let validated_upload_host = validate_remote_http_url_parsed(upload_host, allow_loopback_http)?;
+    let upload_host = validate_remote_http_url_parsed(upload_host, allow_loopback_http)?;
     let oss_access_key_id = data
         .get("oss_access_key_id")
         .and_then(Value::as_str)
-        .ok_or("Qwen 上传凭据缺少 oss_access_key_id")?;
+        .ok_or("Qwen 上传凭据缺少 oss_access_key_id")?
+        .to_owned();
     let signature = data
         .get("signature")
         .and_then(Value::as_str)
-        .ok_or("Qwen 上传凭据缺少 signature")?;
+        .ok_or("Qwen 上传凭据缺少 signature")?
+        .to_owned();
     let policy = data
         .get("policy")
         .and_then(Value::as_str)
-        .ok_or("Qwen 上传凭据缺少 policy")?;
+        .ok_or("Qwen 上传凭据缺少 policy")?
+        .to_owned();
     let upload_dir = data
         .get("upload_dir")
         .and_then(Value::as_str)
-        .ok_or("Qwen 上传凭据缺少 upload_dir")?;
+        .ok_or("Qwen 上传凭据缺少 upload_dir")?
+        .to_owned();
     let acl = data
         .get("x_oss_object_acl")
         .and_then(Value::as_str)
-        .unwrap_or("private");
+        .unwrap_or("private")
+        .to_owned();
     let forbid_overwrite = data
         .get("x_oss_forbid_overwrite")
         .and_then(Value::as_str)
-        .unwrap_or("true");
+        .unwrap_or("true")
+        .to_owned();
+    Ok(OssUploadPolicy {
+        upload_host,
+        oss_access_key_id,
+        signature,
+        policy,
+        upload_dir,
+        acl,
+        forbid_overwrite,
+    })
+}
 
-    // Step 2: Upload WAV to temporary OSS bucket.
+async fn upload_wav_to_oss(
+    client: &reqwest::Client,
+    policy: OssUploadPolicy,
+    pcm16: &[u8],
+) -> Result<String, String> {
     let wav = pcm16_to_wav(pcm16)?;
     let filename = format!("koe-{}.wav", uuid::Uuid::new_v4().simple());
-    let obj_key = format!("{}/{filename}", upload_dir.trim_end_matches('/'));
+    let obj_key = format!("{}/{filename}", policy.upload_dir.trim_end_matches('/'));
     let boundary = format!("----KoeQwenUpload{}", uuid::Uuid::new_v4().simple());
     let body = build_multipart(
         &boundary,
         &[
-            ("OSSAccessKeyId", oss_access_key_id),
-            ("Signature", signature),
-            ("policy", policy),
-            ("x-oss-object-acl", acl),
-            ("x-oss-forbid-overwrite", forbid_overwrite),
+            ("OSSAccessKeyId", &policy.oss_access_key_id),
+            ("Signature", &policy.signature),
+            ("policy", &policy.policy),
+            ("x-oss-object-acl", &policy.acl),
+            ("x-oss-forbid-overwrite", &policy.forbid_overwrite),
             ("key", &obj_key),
             ("success_action_status", "200"),
         ],
@@ -555,7 +575,7 @@ pub(super) async fn transcribe_qwen_filetrans(
         &wav,
     );
     let upload_resp = client
-        .post(validated_upload_host)
+        .post(policy.upload_host)
         .header(
             reqwest::header::CONTENT_TYPE,
             format!("multipart/form-data; boundary={boundary}"),
@@ -570,9 +590,14 @@ pub(super) async fn transcribe_qwen_filetrans(
             upload_resp.status().as_u16()
         ));
     }
+    Ok(format!("oss://{obj_key}"))
+}
 
-    // Step 3: Submit asynchronous transcription task.
-    let oss_url = format!("oss://{obj_key}");
+async fn submit_filetrans_task(
+    client: &reqwest::Client,
+    config: &ProviderConfig,
+    oss_url: &str,
+) -> Result<String, String> {
     let mut submit_req = client
         .post(&config.endpoint)
         .header("X-DashScope-Async", "enable")
@@ -613,16 +638,23 @@ pub(super) async fn transcribe_qwen_filetrans(
         })
         .ok_or("Qwen 异步转写响应缺少有效的 task_id")?
         .to_owned();
+    Ok(task_id)
+}
 
-    // Step 4: Poll task until completion.
+async fn poll_filetrans_task(
+    client: &reqwest::Client,
+    origin: &str,
+    api_key: &str,
+    task_id: &str,
+) -> Result<String, String> {
     let poll_url = format!("{origin}/api/v1/tasks/{task_id}");
     let mut poll_delay = Duration::from_millis(250);
-    let transcription_url = loop {
+    loop {
         tokio::time::sleep(poll_delay).await;
         poll_delay = (poll_delay * 2).min(Duration::from_millis(1500));
         let mut poll_req = client.get(&poll_url);
-        if !config.api_key.trim().is_empty() {
-            poll_req = poll_req.bearer_auth(&config.api_key);
+        if !api_key.trim().is_empty() {
+            poll_req = poll_req.bearer_auth(api_key);
         }
         let poll_resp = poll_req
             .send()
@@ -668,7 +700,7 @@ pub(super) async fn transcribe_qwen_filetrans(
                 .into_iter()
                 .find_map(|ptr| poll_json.pointer(ptr).and_then(Value::as_str))
                 .ok_or("Qwen 异步转写已完成，但未返回结果链接")?;
-                break url.to_owned();
+                return Ok(url.to_owned());
             }
             Some("FAILED" | "CANCELED" | "UNKNOWN") => {
                 let code = poll_json
@@ -700,12 +732,15 @@ pub(super) async fn transcribe_qwen_filetrans(
                 ));
             }
         }
-    };
+    }
+}
 
-    // Step 5: Download final transcription JSON from OSS result URL (no Bearer header).
-    let validated_result_url = validate_remote_http_url_parsed(&transcription_url, allow_loopback_http)?;
+async fn fetch_unauthenticated_json(
+    client: &reqwest::Client,
+    result_url: &reqwest::Url,
+) -> Result<Value, String> {
     let dl_resp = client
-        .get(validated_result_url)
+        .get(result_url.clone())
         .send()
         .await
         .map_err(|_| "下载 Qwen 异步转写结果失败；未自动重试")?;
@@ -716,8 +751,30 @@ pub(super) async fn transcribe_qwen_filetrans(
         ));
     }
     let dl_bytes = read_bounded_bytes(dl_resp, MAX_RESPONSE_BYTES).await?;
-    let dl_json: Value =
-        serde_json::from_slice(&dl_bytes).map_err(|_| "Qwen 异步转写结果 JSON 无效")?;
+    serde_json::from_slice(&dl_bytes).map_err(|_| "Qwen 异步转写结果 JSON 无效".into())
+}
+
+pub(super) async fn transcribe_qwen_filetrans(
+    config: &ProviderConfig,
+    pcm16: &[u8],
+) -> Result<ProviderOutput, String> {
+    let (origin, allow_loopback_http) = origin_and_loopback(&config.endpoint)?;
+    if config.model.is_empty()
+        || !config
+            .model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err("Qwen 语音模型名称格式无效".into());
+    }
+    let client = build_http_client()?;
+    let policy = request_oss_upload_policy(&client, &origin, config, allow_loopback_http).await?;
+    let oss_url = upload_wav_to_oss(&client, policy, pcm16).await?;
+    let task_id = submit_filetrans_task(&client, config, &oss_url).await?;
+    let transcription_url =
+        poll_filetrans_task(&client, &origin, &config.api_key, &task_id).await?;
+    let result_url = validate_remote_http_url_parsed(&transcription_url, allow_loopback_http)?;
+    let dl_json = fetch_unauthenticated_json(&client, &result_url).await?;
     let duration_ms = (pcm16.len() as u64 * 1000) / BYTES_PER_SEC as u64;
     let segments = parse_filetrans_transcript(&dl_json, duration_ms);
     Ok(ProviderOutput::Transcript { segments })
@@ -773,7 +830,6 @@ mod tests {
 
     #[test]
     fn deepseek_splitter_cuts_long_audio_at_silence_within_110s() {
-        // 150 seconds of loud tone with a 1-second silent gap at 95..96s
         let total_samples = 150 * SAMPLE_RATE;
         let mut pcm = Vec::with_capacity(total_samples * 2);
         for i in 0..total_samples {
@@ -783,7 +839,6 @@ mod tests {
         }
         let chunks = split_pcm16_for_deepseek(&pcm);
         assert_eq!(chunks.len(), 2);
-        // Cut should land inside the silent second [95_000, 96_000]
         assert!(
             chunks[0].1 >= 95_000 && chunks[0].1 <= 96_000,
             "expected cut inside 95..96s silence, got {}ms",

@@ -66,15 +66,15 @@ fn append_retry_preserves_forced_stop_reason() {
     unsafe {
         assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limited), 0);
     }
-    r.ingest_microphone_pcm(
-        t["recordId"].as_str().unwrap(),
-        t["sessionId"].as_str().unwrap(),
-        "microphone",
-        0,
-        &vec![7; 160],
-        None,
-        100,
-    );
+    r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: t["recordId"].as_str().unwrap(),
+        session_id: t["sessionId"].as_str().unwrap(),
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![7; 160],
+        timing: None,
+        now: 100,
+    });
     // SAFETY: previous was initialized by getrlimit above and restores the child's original RLIMIT_FSIZE.
     unsafe {
         assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &previous), 0);
@@ -86,15 +86,15 @@ fn append_retry_preserves_forced_stop_reason() {
     );
     assert_eq!(failed["microphone"]["phase"], "stopping");
     for lane in ["microphone", "system"] {
-        r.ingest_microphone_pcm(
-            t["recordId"].as_str().unwrap(),
-            t["sessionId"].as_str().unwrap(),
+        r.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+            record_id: t["recordId"].as_str().unwrap(),
+            session_id: t["sessionId"].as_str().unwrap(),
             lane,
-            0,
-            &vec![7; 160],
-            None,
-            100,
-        );
+            sequence: 0,
+            samples: &vec![7; 160],
+            timing: None,
+            now: 100,
+        });
         let s = r.snapshot(100);
         assert!(s["error"].is_null(), "retry failed: {}", s["error"]);
     }

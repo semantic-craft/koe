@@ -78,15 +78,15 @@ fn verify_all_day(runtime: &mut KoeRuntime, audio: &std::path::Path) -> Result<V
             let chunk: Vec<_> = (offset..offset + n)
                 .map(|i| samples[i % samples.len()])
                 .collect();
-            let receipt = runtime.ingest_microphone_pcm(
-                capture["recordId"].as_str().ok_or("missing recordId")?,
-                capture["sessionId"].as_str().ok_or("missing sessionId")?,
-                "microphone",
+            let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+                record_id: capture["recordId"].as_str().ok_or("missing recordId")?,
+                session_id: capture["sessionId"].as_str().ok_or("missing sessionId")?,
+                lane: "microphone",
                 sequence,
-                &chunk,
-                None,
-                now(),
-            );
+                samples: &chunk,
+                timing: None,
+                now: now(),
+            });
             if receipt.status != koe_runtime::PcmIngestStatus::Accepted {
                 return Err(format!("ingest_microphone_pcm rejected at seq {sequence}"));
             }

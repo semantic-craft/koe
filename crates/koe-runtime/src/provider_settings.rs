@@ -370,7 +370,6 @@ impl KoeRuntime {
             .validate()
             .map_err(|_| "请检查模型名称与服务地址；地址不能包含账户、密码、查询参数或片段。")?;
 
-        // Validate keys before making any storage mutations.
         if let Some(ref key) = params.api_key {
             if !key.trim().is_empty() {
                 validate_key(key)?;

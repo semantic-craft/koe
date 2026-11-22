@@ -4,7 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use koe_engine::{ogg_opus::OggOpus, wav::parse_pcm_wave};
+use koe_engine::{
+    ogg_opus::{OggOpus, OPUS_PRE_SKIP_SAMPLES},
+    wav::parse_pcm_wave,
+};
 use koe_runtime::KoeRuntime;
 use serde_json::json;
 
@@ -121,8 +124,7 @@ fn opus_without_preview_is_recovered_from_real_decoder_output() {
     for _ in 0..10 {
         assert!(decoder.decode_trimmed_packet(&frame[..3], &mut decoded));
     }
-    // OggOpus writes an OpusHead pre-skip of 3840 samples at 48 kHz.
-    assert_eq!(&wav[44..], &decoded[3840 * 2..]);
+    assert_eq!(&wav[44..], &decoded[OPUS_PRE_SKIP_SAMPLES * 2..]);
     assert_eq!(fs::read(dir.0.join("42.opus")).unwrap(), opus);
 }
 

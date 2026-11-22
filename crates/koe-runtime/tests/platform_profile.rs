@@ -62,15 +62,15 @@ fn record_short_microphone_clip(runtime: &mut KoeRuntime, input_id: &str, now: u
     );
     assert!(ready["error"].is_null(), "microphone_started failed: {ready}");
     let samples = vec![320i16; 320];
-    let receipt = runtime.ingest_microphone_pcm(
-        &rec_id,
-        &ses_id,
-        "microphone",
-        0,
-        &samples,
-        Some((0, 1_000_000_000)),
+    let receipt = runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &rec_id,
+        session_id: &ses_id,
+        lane: "microphone",
+        sequence: 0,
+        samples: &samples,
+        timing: Some((0, 1_000_000_000)),
         now,
-    );
+    });
     assert_eq!(receipt.status, koe_runtime::PcmIngestStatus::Accepted);
     let _ = send(runtime, json!({"type": "stop_microphone"}), now + 1);
     let saved = send(

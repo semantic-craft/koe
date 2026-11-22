@@ -1,5 +1,4 @@
 //! Versioned, panic-contained C boundary for the native product runtime.
-#![allow(unsafe_code)]
 #![deny(missing_docs)]
 
 mod credentials;
@@ -8,7 +7,7 @@ mod guard;
 mod local_bridge;
 
 pub use credentials::KoeCredentialCallback;
-pub use guard::HostSessionGuard;
+pub use guard::{HostSessionGuard, PcmIngestInput};
 pub(crate) use guard::{
     guarded, now, read_string, register_session, remove_session, string, with_session,
 };
@@ -92,6 +91,7 @@ fn owned_bytes(mut bytes: Vec<u8>) -> KoeOwnedBytes {
 }
 
 /// Returns the native contract version.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_api_version() -> u32 {
     KOE_HOST_API_VERSION
@@ -100,6 +100,7 @@ pub extern "C" fn koe_host_api_version() -> u32 {
 /// Opens an isolated product workspace, returning zero if unavailable or already in use.
 /// # Safety
 /// `directory` must point to a valid terminated UTF-8 string, or be null.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_session_create(directory: *const c_char) -> u64 {
     guarded(|| {
@@ -123,7 +124,8 @@ pub unsafe extern "C" fn koe_host_session_create(directory: *const c_char) -> u6
 /// # Safety
 /// `directory` must be terminated UTF-8. The callback and context must remain
 /// valid until session destruction, support serialized calls on any thread,
-/// and obey `KoeCredentialCallback`'s buffer and non-reentrancy contract.
+/// and obey `KoeCredentialCallback`'s buffer contract.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_session_create_with_credentials(
     directory: *const c_char,
@@ -157,18 +159,21 @@ pub unsafe extern "C" fn koe_host_session_create_with_credentials(
 }
 
 /// Closes a session and cancels its outstanding network work.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_destroy(handle: u64) -> bool {
     guarded(|| remove_session(handle))
 }
 
 /// Returns a session's current generation, or zero for an invalid handle.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_generation(handle: u64) -> u64 {
     guarded(|| with_session(handle, |rt| rt.generation()).unwrap_or(0))
 }
 
 /// Returns immutable JSON; release the result with `koe_host_string_free`.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_snapshot_json(handle: u64, epoch: u64) -> *mut c_char {
     guarded(|| {
@@ -180,6 +185,7 @@ pub extern "C" fn koe_host_session_snapshot_json(handle: u64, epoch: u64) -> *mu
 /// Applies a command; domain failures are represented in the returned snapshot.
 /// # Safety
 /// `command` must point to a valid terminated UTF-8 string, or be null.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_session_dispatch_json(
     handle: u64,
@@ -205,6 +211,7 @@ pub unsafe extern "C" fn koe_host_session_dispatch_json(
 /// `record_id`, `session_id`, and `lane` must point to valid terminated UTF-8 strings, or be null.
 /// When `sample_count` is nonzero, `samples` must be aligned and address `sample_count` initialized
 /// `i16` values, or be null.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn koe_host_session_ingest_pcm(
@@ -242,15 +249,15 @@ pub unsafe extern "C" fn koe_host_session_ingest_pcm(
         let slice = unsafe { std::slice::from_raw_parts(samples, sample_count) };
         let timing = has_timing.then_some((epoch, captured_start_ns));
         let Some(receipt) = with_session(handle, |rt| {
-            rt.ingest_microphone_pcm(
-                &record_id,
-                &session_id,
-                &lane,
+            rt.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+                record_id: &record_id,
+                session_id: &session_id,
+                lane: &lane,
                 sequence,
-                slice,
+                samples: slice,
                 timing,
-                now(now_epoch_sec),
-            )
+                now: now(now_epoch_sec),
+            })
         }) else {
             return KoePcmReceipt::default();
         };
@@ -266,6 +273,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_pcm(
 /// Reports native playhead progress without re-projecting the workspace when clock state is clean.
 /// # Safety
 /// `record_id` must point to a valid terminated UTF-8 string, or be null.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_session_report_playback_progress(
     handle: u64,
@@ -309,6 +317,7 @@ pub unsafe extern "C" fn koe_host_session_report_playback_progress(
 /// Accepts a bounded BLE notification; returns the resulting view generation.
 /// # Safety
 /// `bytes` must address `length` initialized bytes when length is nonzero.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_session_ingest_ble(
     handle: u64,
@@ -336,6 +345,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
 
 /// Transfers queued BLE frames as length-prefixed binary records (`[u32 le len][bytes]`).
 /// Release non-empty buffers with [`koe_host_bytes_free`].
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_drain_ble_tx(handle: u64) -> KoeOwnedBytes {
     guarded(|| {
@@ -368,6 +378,7 @@ pub extern "C" fn koe_host_session_drain_ble_tx(handle: u64) -> KoeOwnedBytes {
 
 /// Transfers queued local speech effects as framed binary records (`[u8 kind][u64 le id][u32 le len][payload]`).
 /// Release non-empty buffers with [`koe_host_bytes_free`].
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_drain_local_asr(handle: u64) -> KoeOwnedBytes {
     guarded(|| {
@@ -378,6 +389,7 @@ pub extern "C" fn koe_host_session_drain_local_asr(handle: u64) -> KoeOwnedBytes
 /// Releases a binary buffer returned by this library. Empty/null buffers are accepted.
 /// # Safety
 /// Non-null `bytes` must be an unreleased buffer returned by this library.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_bytes_free(bytes: KoeOwnedBytes) {
     if !bytes.ptr.is_null() && bytes.cap > 0 && bytes.len <= bytes.cap {
@@ -387,6 +399,7 @@ pub unsafe extern "C" fn koe_host_bytes_free(bytes: KoeOwnedBytes) {
 }
 
 /// Advances runtime deadlines and publishes completed background results.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epoch: u64) -> u64 {
     guarded(|| {
@@ -401,6 +414,7 @@ pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epo
 /// Releases a JSON string returned by this library. Null is accepted.
 /// # Safety
 /// A non-null pointer must be an unreleased string returned by this library.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn koe_host_string_free(pointer: *mut c_char) {
     if !pointer.is_null() {

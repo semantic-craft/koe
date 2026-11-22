@@ -68,6 +68,25 @@ use std::{
 pub const KOE_HOST_SNAPSHOT_VERSION: u32 = 2;
 
 
+/// Borrowed native microphone or system audio PCM16 chunk ingested into [`KoeRuntime`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MicrophonePcmChunk<'a> {
+    /// Active recording identifier.
+    pub record_id: &'a str,
+    /// Active capture session identifier.
+    pub session_id: &'a str,
+    /// Audio lane name (`"microphone"` or `"system"`).
+    pub lane: &'a str,
+    /// Monotonic per-lane chunk sequence number.
+    pub sequence: u64,
+    /// Mono 16-bit PCM sample slice.
+    pub samples: &'a [i16],
+    /// Optional `(epoch, captured_start_ns)` capture clock timestamp.
+    pub timing: Option<(u64, u64)>,
+    /// Wall-clock timestamp in Unix epoch seconds.
+    pub now: u64,
+}
+
 /// Outcome of attempting to ingest a native microphone PCM chunk.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,17 +281,16 @@ impl KoeRuntime {
     }
 
     /// Appends a microphone PCM16 chunk without JSON command serialization or full snapshot projection.
-    #[allow(clippy::too_many_arguments)]
-    pub fn ingest_microphone_pcm(
-        &mut self,
-        record_id: &str,
-        session_id: &str,
-        lane: &str,
-        sequence: u64,
-        samples: &[i16],
-        timing: Option<(u64, u64)>,
-        now: u64,
-    ) -> PcmIngestReceipt {
+    pub fn ingest_microphone_pcm(&mut self, chunk: MicrophonePcmChunk<'_>) -> PcmIngestReceipt {
+        let MicrophonePcmChunk {
+            record_id,
+            session_id,
+            lane,
+            sequence,
+            samples,
+            timing,
+            now,
+        } = chunk;
         self.error = None;
         self.notice = None;
         if now > 0 {

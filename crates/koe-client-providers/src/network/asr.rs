@@ -64,7 +64,7 @@ pub(super) async fn connect(config: &ProviderConfig) -> Result<Ready, String> {
             .ok_or("语音服务在启动前断开")?
             .map_err(|_| "语音服务启动响应读取失败")?;
         match message {
-            Message::Text(text) => match decode_event(&text, &task_id, &mut response_bytes)? {
+            Message::Text(text) => match decode_event_bounded(&text, &task_id, &mut response_bytes)? {
                 Event::Started => break,
                 _ => return Err("语音服务未按协议启动任务".into()),
             },
@@ -126,7 +126,7 @@ pub(super) async fn transcribe(
                 .ok_or("语音服务提前断开，结果未完成")?
                 .map_err(|_| "语音结果读取中断或超过大小限制")?;
             match message {
-                Message::Text(text) => match decode_event(&text, &task_id, &mut response_bytes)? {
+                Message::Text(text) => match decode_event_bounded(&text, &task_id, &mut response_bytes)? {
                     Event::Final { sequence, segment } => {
                         segments.insert(sequence, segment);
                     }
@@ -150,9 +150,20 @@ pub(super) async fn transcribe(
     Ok(ProviderOutput::Transcript { segments })
 }
 
-pub(super) fn decode_event(text: &str, task_id: &str, bytes: &mut usize) -> Result<Event, String> {
+pub(super) fn decode_event_bounded(
+    text: &str,
+    task_id: &str,
+    bytes: &mut usize,
+) -> Result<Event, String> {
     *bytes = bytes.saturating_add(text.len());
     if *bytes > MAX_RESPONSE_BYTES {
+        return Err("语音响应超过 4 MiB 限制".into());
+    }
+    decode_event(text, task_id)
+}
+
+pub(super) fn decode_event(text: &str, task_id: &str) -> Result<Event, String> {
+    if text.len() > MAX_RESPONSE_BYTES {
         return Err("语音响应超过 4 MiB 限制".into());
     }
     let value: Value = serde_json::from_str(text).map_err(|_| "语音服务返回无效 JSON")?;

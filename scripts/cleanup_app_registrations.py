@@ -322,8 +322,6 @@ def prepare(root):
     # Executables can have cwd=/ even while their bundle is inside the build tree.
     if any(inside(path, root) for path in running_executables()):
         raise RuntimeError(f'Running executable inside {root}; retained')
-    # Read registered paths, including nested helpers and already-deleted products.
-    # Do not follow a symlink out of the disposable tree.
     empty_seen = False
     previous_count = None
     stalled = 0

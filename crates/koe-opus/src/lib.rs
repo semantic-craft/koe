@@ -1,8 +1,6 @@
 //! Safe `OpusStreamDecoder` adapter over `libopus` (`opus_decoder_create`,
 //! `opus_decode`, `opus_decoder_ctl`, `opus_decoder_destroy`).
 
-// FFI boundary crate: links the pinned, source-built static libopus.
-#![allow(unsafe_code)]
 #![deny(missing_docs)]
 
 use std::ffi::c_int;
@@ -22,8 +20,10 @@ pub struct LibOpusDecoder {
 }
 
 // SAFETY: LibOpusDecoder uniquely owns its heap-allocated OpusDecoder* and mutates it only via &mut self.
+#[allow(unsafe_code)]
 unsafe impl Send for LibOpusDecoder {}
 // SAFETY: Shared &self methods never dereference the raw OpusDecoder* pointer.
+#[allow(unsafe_code)]
 unsafe impl Sync for LibOpusDecoder {}
 
 impl LibOpusDecoder {
@@ -35,6 +35,7 @@ impl LibOpusDecoder {
         }
         let mut err: c_int = 0;
         // SAFETY: sample_rate was validated by OpusWave::is_valid_sample_rate, channels is 1, and err is a valid stack out-pointer.
+        #[allow(unsafe_code)]
         let raw = unsafe { opus_decoder_create(sample_rate as i32, 1, &mut err) };
         if raw.is_null() || err != OPUS_OK {
             return None;
@@ -52,6 +53,7 @@ impl Drop for LibOpusDecoder {
     fn drop(&mut self) {
         if !self.raw.is_null() {
             // SAFETY: self.raw is non-null, uniquely owned by self, and nulled immediately after destroy.
+            #[allow(unsafe_code)]
             unsafe {
                 opus_decoder_destroy(self.raw);
             }
@@ -76,6 +78,7 @@ impl OpusStreamDecoder for LibOpusDecoder {
             return false;
         };
         // SAFETY: self.raw is a valid initialized OpusDecoder*, packet is valid for packet_len bytes, and scratch_pcm has capacity for frame_size samples.
+        #[allow(unsafe_code)]
         let decoded_samples = unsafe {
             opus_decode(
                 self.raw,
@@ -100,6 +103,7 @@ impl OpusStreamDecoder for LibOpusDecoder {
     fn reset(&mut self) {
         if !self.raw.is_null() {
             // SAFETY: self.raw is a valid uniquely owned OpusDecoder* initialized by opus_decoder_create.
+            #[allow(unsafe_code)]
             unsafe {
                 let _ = opus_decoder_ctl(self.raw, OPUS_RESET_STATE);
             }
