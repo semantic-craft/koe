@@ -280,14 +280,20 @@ public final class NativeLocalTranscription {
     }
 
     private func cancelSession() async {
-        if let cancellation { await cancellation.value }
-        else { await session?.cancel() }
+        if let cancellation {
+            await cancellation.value
+        } else {
+            await session?.cancel()
+        }
         cancellation = nil
         session = nil
     }
 
     private func send(_ event: HostAdapterEvent) {
-        if let sendEvent { sendEvent(event) }
-        else { store?.send(event) }
+        if let sendEvent {
+            sendEvent(event)
+        } else {
+            store?.send(event)
+        }
     }
 }

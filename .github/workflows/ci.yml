@@ -1,6 +1,5 @@
 name: CI
 
-# Runs on GitHub-hosted macOS ARM64 runners. Routing rules: docs/agents/ci-runner.md.
 on:
   pull_request:
   push:
@@ -15,6 +14,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      swift: ${{ steps.filter.outputs.swift }}
+      ios: ${{ steps.filter.outputs.ios }}
+      android: ${{ steps.filter.outputs.android }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          swift=false
+          ios=false
+          android=false
+          scripts=false
+          if [[ "$EVENT_NAME" != "pull_request" || -z "$BASE_SHA" || -z "$HEAD_SHA" ]]; then
+            swift=true
+            ios=true
+            android=true
+            scripts=true
+          elif changed="$(git -c core.quotepath=false diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" --)"; then
+            while IFS= read -r path; do
+              [[ -z "$path" ]] && continue
+              case "$path" in
+                platforms/macos/*|platforms/ios/*|platforms/apple-shared/*|.swiftlint.yml|.github/workflows/ci.yml)
+                  swift=true
+                  ;;
+              esac
+              case "$path" in
+                platforms/ios/*|platforms/apple-shared/*|crates/*|Cargo.toml|Cargo.lock|.swiftlint.yml|.github/workflows/ci.yml)
+                  ios=true
+                  ;;
+              esac
+              case "$path" in
+                platforms/android/*|platforms/apple-shared/Sources/CKoeHostApi/*|crates/*|Cargo.toml|Cargo.lock|.github/workflows/ci.yml)
+                  android=true
+                  ;;
+              esac
+              case "$path" in
+                scripts/*|scripts/check|scripts/ref|progress/*|platforms/*.sh|platforms/*/*.sh|platforms/*/*/*.sh|ruff.toml|.github/workflows/ci.yml)
+                  scripts=true
+                  ;;
+              esac
+            done <<< "$changed"
+          else
+            swift=true
+            ios=true
+            android=true
+            scripts=true
+          fi
+          {
+            echo "swift=$swift"
+            echo "ios=$ios"
+            echo "android=$android"
+            echo "scripts=$scripts"
+          } >> "$GITHUB_OUTPUT"
+
   test:
     runs-on: macos-26
     timeout-minutes: 30
@@ -22,7 +87,138 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
       - name: Run required checks
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
           python3 scripts/ci.py
+
+  swiftlint:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.swift == 'true'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure swiftlint
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          command -v swiftlint >/dev/null 2>&1 || brew install swiftlint
+      - name: Lint Swift sources
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          swiftlint lint --strict
+
+  ios:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure xcodegen
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Build iOS simulator native library
+        run: |
+          rustup target add aarch64-apple-ios-sim
+          platforms/ios/build-native.sh simulator
+      - name: Generate Xcode project
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          xcodegen generate --spec platforms/ios/project.yml
+      - name: Run iOS simulator unit tests
+        run: |
+          SIM_ID="$(xcrun simctl list devices available -j | python3 -c '
+          import json, re, sys
+          data = json.load(sys.stdin)
+          def runtime_version(key):
+              return tuple(int(part) for part in re.findall(r"\d+", key))
+          runtimes = sorted(
+              (r for r in data.get("devices", {}) if "iOS" in r),
+              key=runtime_version,
+              reverse=True,
+          )
+          for runtime in runtimes:
+              for device in data["devices"][runtime]:
+                  if device.get("isAvailable") and "iPhone" in device.get("name", ""):
+                      print(device["udid"])
+                      sys.exit(0)
+          sys.exit("no available iPhone simulator found")
+          ')"
+          xcodebuild test \
+            -project platforms/ios/KoeiOS.xcodeproj \
+            -scheme KoeiOSApp \
+            -destination "id=$SIM_ID" \
+            -parallel-testing-enabled NO
+
+  android:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Ensure native build tools and Android SDK
+        run: |
+          set -euo pipefail
+          run_with_yes() {
+            local status=0
+            set +o pipefail
+            if yes 2>/dev/null | "$@"; then
+              status="${PIPESTATUS[1]:-0}"
+            else
+              status="${PIPESTATUS[1]:-1}"
+            fi
+            set -o pipefail
+            return "$status"
+          }
+          if ! command -v g++ >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y g++
+          fi
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -d "$SDK_ROOT/platforms/android-36" || ! -d "$SDK_ROOT/build-tools/35.0.0" ]]; then
+            run_with_yes "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+            run_with_yes "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+          fi
+      - name: Run desktop JNI host contract tests
+        run: platforms/android/tests/jni/test-jni-host.sh
+      - name: Run Android unit tests and release lint
+        run: |
+          cd platforms/android/gradle-app
+          ./gradlew testGithubDebugUnitTest testPlayDebugUnitTest lintGithubRelease lintPlayRelease --console=plain
+
+  lint-scripts:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck shell scripts
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck -S warning scripts/check scripts/ref scripts/*.sh platforms/*/*.sh platforms/android/tests/jni/*.sh
+      - name: Ruff lint Python scripts
+        run: |
+          python3 -m venv /tmp/ruff-venv
+          /tmp/ruff-venv/bin/pip install -q ruff==0.17.6
+          /tmp/ruff-venv/bin/ruff check scripts progress

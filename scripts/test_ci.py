@@ -26,8 +26,11 @@ class CiRoutingTest(unittest.TestCase):
         self.log = self.root / 'calls.jsonl'
         stub = '''#!/usr/bin/env python3
 import json, os, sys
+entry = [os.path.basename(sys.argv[0]), *sys.argv[1:]]
+if entry[0] == 'check' and os.environ.get('KOE_SKIP_PROGRESS_CHECK') == '1':
+    entry.append('KOE_SKIP_PROGRESS_CHECK=1')
 with open(os.environ['CI_TEST_LOG'], 'a') as log:
-    log.write(json.dumps([os.path.basename(sys.argv[0]), *sys.argv[1:]]) + '\\n')
+    log.write(json.dumps(entry) + '\\n')
 sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
 '''
         for relative in ('bin/cargo', 'scripts/check', 'progress/progress.py'):
@@ -66,7 +69,7 @@ sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
     def assert_full(self, result, calls):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [['progress.py', 'check'], ['cargo', '--version'],
-                                ['check']])
+                                ['check', 'KOE_SKIP_PROGRESS_CHECK=1']])
 
     def test_document_only_skips_rust(self):
         self.write('docs/guide with spaces.md', '# Guide\n')

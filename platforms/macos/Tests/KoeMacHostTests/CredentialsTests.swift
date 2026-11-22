@@ -1,30 +1,57 @@
 import Foundation
 import KoeAppleShared
+import os
 import Testing
 @testable import Koe
 
 private final class FixtureCredentials: HostCredentials {
+    private struct State: Sendable {
+        var items: [String: String] = [:]
+        var failRead = false
+        var operations: [UInt32] = []
+        var afterCreate: (@Sendable () -> Void)?
+    }
+
     let isolated = false
-    var items: [String: String] = [:]
-    var failRead = false
-    var operations: [UInt32] = []
-    var afterCreate: (() -> Void)?
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    var items: [String: String] {
+        get { state.withLock(\.items) }
+        set { state.withLock { $0.items = newValue } }
+    }
+    var failRead: Bool {
+        get { state.withLock(\.failRead) }
+        set { state.withLock { $0.failRead = newValue } }
+    }
+    var operations: [UInt32] {
+        state.withLock(\.operations)
+    }
+    var afterCreate: (@Sendable () -> Void)? {
+        get { state.withLock(\.afterCreate) }
+        set { state.withLock { $0.afterCreate = newValue } }
+    }
+
     func perform(operation: UInt32, reference: String, value: String) throws -> String? {
-        operations.append(operation)
-        switch operation {
-        case 0:
-            if failRead { throw NativeCredentials.Failure.unavailable }
-            return items[reference]
-        case 1:
-            items[reference] = value
-            afterCreate?()
-            return reference
-        case 2: items.removeValue(forKey: reference); return ""
-        case 3: return nil
-        case 4: return ""
-        case 5: return UUID().uuidString.lowercased()
-        default: throw NativeCredentials.Failure.unavailable
+        let (result, callback): (String?, (@Sendable () -> Void)?) = try state.withLock { state in
+            state.operations.append(operation)
+            switch operation {
+            case 0:
+                if state.failRead { throw NativeCredentials.Failure.unavailable }
+                return (state.items[reference], nil)
+            case 1:
+                state.items[reference] = value
+                return (reference, state.afterCreate)
+            case 2:
+                state.items.removeValue(forKey: reference)
+                return ("", nil)
+            case 3: return (nil, nil)
+            case 4: return ("", nil)
+            case 5: return (UUID().uuidString.lowercased(), nil)
+            default: throw NativeCredentials.Failure.unavailable
+            }
         }
+        callback?()
+        return result
     }
 }
 
@@ -90,8 +117,8 @@ struct CredentialsTests {
         #expect(neighbour.snapshot.provider.qwenConfigured)
         neighbour.shutdown()
         let file = root.appendingPathComponent("product-workspace.json")
-        var crashed: Data?
-        vault.afterCreate = { crashed = try? Data(contentsOf: file) }
+        let crashed = OSAllocatedUnfairLock<Data?>(initialState: nil)
+        vault.afterCreate = { crashed.withLock { $0 = try? Data(contentsOf: file) } }
         let first = HostSessionStore(workspacePath: root.path, credentials: vault)
         first.send(.configureProvider(apiKey: "orphan-fixture-secret", model: "fixture-model"))
         #expect(first.snapshot.provider.qwenConfigured)
@@ -99,7 +126,7 @@ struct CredentialsTests {
         vault.afterCreate = nil
         // Replay the disk state captured at the moment the item was created.
         try? FileManager.default.removeItem(at: file)
-        if let crashed { try crashed.write(to: file) }
+        if let crashedData = crashed.withLock({ $0 }) { try crashedData.write(to: file) }
         #expect(vault.items.values.contains("orphan-fixture-secret"))
         let reopened = HostSessionStore(workspacePath: root.path, credentials: vault)
         defer { reopened.shutdown() }

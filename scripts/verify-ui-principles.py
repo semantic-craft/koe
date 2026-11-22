@@ -10,6 +10,7 @@ import plistlib
 import re
 import sys
 from typing import Any
+import xml.parsers.expat
 
 ALLOWED_FONT_SIZES = {12.0, 14.0, 16.0, 22.0}
 
@@ -862,7 +863,7 @@ def check_install_script(script_text: str) -> list[str]:
         )
         try:
             plist_data = plistlib.loads(xml_doc.encode("utf-8"))
-        except Exception as exc:
+        except (plistlib.InvalidFileException, xml.parsers.expat.ExpatError, ValueError, TypeError) as exc:
             violations.append(
                 f"Packaging violation: scripts/install-macos.sh contains invalid Info.plist XML ({exc})"
             )

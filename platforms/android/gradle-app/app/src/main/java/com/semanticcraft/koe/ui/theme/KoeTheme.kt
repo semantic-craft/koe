@@ -146,6 +146,7 @@ private val KoeMaterialShapes = Shapes(
     large = KoeShapes.largeCard,
 )
 
+@Suppress("ComposeCompositionLocalUsage")
 private val LocalKoeColors = staticCompositionLocalOf { LightKoePalette }
 
 object KoeTheme {

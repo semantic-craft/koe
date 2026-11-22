@@ -12,6 +12,10 @@ let hostApiLinkerSettings: [LinkerSetting] = [
     .linkedFramework("Accelerate"),
 ]
 
+let strictConcurrencySettings: [SwiftSetting] = [
+    .enableExperimentalFeature("StrictConcurrency"),
+]
+
 let package = Package(
     name: "KoeMacHost",
     platforms: [
@@ -30,6 +34,7 @@ let package = Package(
                 .product(name: "KoeAppleShared", package: "apple-shared"),
             ],
             path: "Sources/Koe",
+            swiftSettings: strictConcurrencySettings,
             linkerSettings: hostApiLinkerSettings + [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreBluetooth"),
@@ -44,6 +49,7 @@ let package = Package(
                 .product(name: "KoeAppleShared", package: "apple-shared"),
             ],
             path: "Tests/KoeMacHostTests",
+            swiftSettings: strictConcurrencySettings,
             linkerSettings: hostApiLinkerSettings
         ),
     ]

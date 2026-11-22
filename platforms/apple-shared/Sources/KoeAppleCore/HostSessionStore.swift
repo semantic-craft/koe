@@ -178,7 +178,10 @@ public final class HostSessionStore {
         if !preservesNativeError, nativeError != nil {
             nativeError = nil
         }
-        let command = String(decoding: data, as: UTF8.self)
+        guard let command = String(bytes: data, encoding: .utf8) else {
+            nativeError = "操作未能完成，请重试。工作区数据仍然保留。"
+            return nativeError
+        }
         let effectiveNow = nowEpochSec > 0 ? nowEpochSec : UInt64(Date().timeIntervalSince1970)
         let result: String? = command.withCString { ptr in
             guard let response = koe_host_session_dispatch_json(handle, ptr, effectiveNow) else { return nil }

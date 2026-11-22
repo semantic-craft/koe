@@ -43,6 +43,7 @@ import com.semanticcraft.koe.core.HostCommand
 import com.semanticcraft.koe.core.HostSessionStore
 import com.semanticcraft.koe.core.RecordDetailSnapshot
 import com.semanticcraft.koe.core.SummarySectionItem
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.core.TimeLabel
 import com.semanticcraft.koe.ui.components.KoeBadge
 import com.semanticcraft.koe.ui.components.KoeCard
@@ -175,7 +176,7 @@ fun RecordDetailScreen(
                                                 fontSize = KoeFontSizes.sm,
                                             )
                                         }
-                                        WorkspaceSources(item.sources, ::followSource, "summary")
+                                        WorkspaceSources(StableList(item.sources), ::followSource, "summary")
                                     }
                                 }
                             }

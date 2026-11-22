@@ -38,12 +38,13 @@ import com.semanticcraft.koe.ui.components.KoeCard
 import com.semanticcraft.koe.ui.components.KoeFilterChip
 import com.semanticcraft.koe.ui.components.KoeModalSheet
 import com.semanticcraft.koe.ui.components.KoePrimaryButton
+import com.semanticcraft.koe.ui.components.StableList
 import com.semanticcraft.koe.ui.theme.KoeTheme
 
 @Composable
 internal fun QuickNoteWorkspaceScreen(
     store: HostSessionStore, onSelectRecord: (String) -> Unit, onOpenSource: (SourceSnapshot) -> Unit,
-    onOpenCaptureSource: () -> Unit, modifier: Modifier,
+    onOpenCaptureSource: () -> Unit, modifier: Modifier = Modifier,
 ) {
     val workspace by store.quickNoteWorkspace.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf<QuickNoteFilterSelection>(QuickNoteFilterSelection.All) }
@@ -106,7 +107,7 @@ internal fun QuickNoteWorkspaceScreen(
         }
     }
     assignIds?.let { targets ->
-        ProjectSheet(workspace.projects, onDismiss = { assignIds = null }) { project ->
+        ProjectSheet(StableList(workspace.projects), onDismiss = { assignIds = null }) { project ->
             val ids = cards.map { it.id }.filter { it in targets }
             if (ids.isNotEmpty()) {
                 val command = if (selection == null) HostCommand.SetRecordProject(ids.single(), project)
@@ -134,7 +135,7 @@ private fun LazyListScope.quickNoteDetail(
         KoeCard {
             WorkspaceTitle(topic.title)
             Text(topic.summary)
-            WorkspaceSources(topic.sources, onOpenSource, "topic")
+            WorkspaceSources(StableList(topic.sources), onOpenSource, "topic")
         }
     }
     if (card.nextSteps.isNotEmpty()) item { WorkspaceTitle("下一步") }
@@ -150,12 +151,12 @@ private fun LazyListScope.quickNoteDetail(
 }
 
 @Composable
-private fun ProjectSheet(projects: List<QuickNoteProjectCountSnapshot>, onDismiss: () -> Unit, assign: (String?) -> Unit) {
+private fun ProjectSheet(projects: StableList<QuickNoteProjectCountSnapshot>, onDismiss: () -> Unit, assign: (String?) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     KoeModalSheet(onDismiss) {
         WorkspaceTitle("项目归类")
         TextButton({ assign(null) }) { Text("移回收件箱") }
-        projects.forEach { project ->
+        projects.items.forEach { project ->
             TextButton({ assign(project.name) }) { Text(project.name) }
         }
         OutlinedTextField(name, { name = it }, label = { Text("新项目名称") }, singleLine = true,

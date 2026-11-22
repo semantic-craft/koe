@@ -35,7 +35,7 @@ public struct SegmentSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let isEdited: Bool
     public let startMs: UInt64
     public let endMs: UInt64
-    public var timed: Bool? = nil
+    public var timed: Bool?
     public let speaker: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -73,10 +73,10 @@ public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let segmentCount: Int
     public let preview: String
     public let archived: Bool
-    public var runId: String? = nil
-    public var ordinal: UInt64? = nil
-    public var mode: String? = nil
-    public var project: String? = nil
+    public var runId: String?
+    public var ordinal: UInt64?
+    public var mode: String?
+    public var project: String?
     public var isTranscribing: Bool { status == "转写中" || status == "等待转写" }
 
     private enum CodingKeys: String, CodingKey {
@@ -175,8 +175,8 @@ public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let source: String
     public let status: String
     public let archived: Bool
-    public var mode: String? = nil
-    public var project: String? = nil
+    public var mode: String?
+    public var project: String?
     public let segments: [SegmentSnapshot]
     public let summary: [SummarySnapshot]
     public let highlights: [SourceSnapshot]
@@ -365,12 +365,12 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public var platform: HostPlatformSnapshot = .macosDefault
     public var speech: SpeechSnapshot = .empty
     public var appUpdate: AppUpdateSnapshot = .empty
-    public var liveCaption: LiveCaptionSnapshot? = nil
-    public var microphone: MicrophoneSnapshot? = nil
+    public var liveCaption: LiveCaptionSnapshot?
+    public var microphone: MicrophoneSnapshot?
     public var capture: CaptureStudioSnapshot = .empty
-    public var lifecycle: LifecycleSnapshot? = nil
-    public var activeCapture: ActiveCaptureSnapshot? = nil
-    public var workspaces: ModeWorkspacesSnapshot? = nil
+    public var lifecycle: LifecycleSnapshot?
+    public var activeCapture: ActiveCaptureSnapshot?
+    public var workspaces: ModeWorkspacesSnapshot?
     public let version: UInt32
     public let generation: UInt64
     public let section: String

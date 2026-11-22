@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import tempfile
 import unittest
@@ -319,9 +318,11 @@ class AndroidAppHarnessContractTest(unittest.TestCase):
         self.assertRegex(gradle_text, r'\btargetSdk\s*=\s*36\b')
         self.assertRegex(gradle_text, r'\bminSdk\s*=\s*29\b')
         self.assertRegex(gradle_text, r'\buseLegacyPackaging\s*=\s*false\b')
-        self.assertIn('"NewApi"', gradle_text)
-        self.assertIn('"InlinedApi"', gradle_text)
+        self.assertNotIn('checkOnly', gradle_text)
+        self.assertRegex(gradle_text, r'\babortOnError\s*=\s*true\b')
         self.assertRegex(gradle_text, r'\bwarningsAsErrors\s*=\s*true\b')
+        self.assertIn('allWarningsAsErrors.set(true)', gradle_text)
+        self.assertIn('com.slack.lint.compose:compose-lint-checks:', gradle_text)
         self.assertIn('create("github")', gradle_text)
         self.assertIn('create("play")', gradle_text)
         jni_match = re.search(r'jniLibs\.srcDirs\("([^"]+)"\)', gradle_text)

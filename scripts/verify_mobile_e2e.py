@@ -180,4 +180,4 @@ if __name__ == '__main__':
     try:
         main()
     except (OSError, ValueError, KeyError, TypeError, EOFError, wave.Error, zlib.error) as error:
-        raise SystemExit(f'Evidence verification failed: {error}')
+        raise SystemExit(f'Evidence verification failed: {error}') from error

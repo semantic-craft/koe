@@ -80,7 +80,6 @@ android {
     }
 
     lint {
-        checkOnly += setOf("NewApi", "InlinedApi")
         abortOnError = true
         warningsAsErrors = true
         checkReleaseBuilds = true
@@ -96,6 +95,7 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+        allWarningsAsErrors.set(true)
     }
 }
 
@@ -125,4 +125,6 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")
+
+    lintChecks("com.slack.lint.compose:compose-lint-checks:1.4.2")
 }

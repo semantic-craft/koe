@@ -97,6 +97,7 @@ private fun ProviderSnapshot.modelSyncKey(): ProviderModelSyncKey = ProviderMode
 fun SettingsSheet(
     store: HostSessionStore,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val platform by store.platform.collectAsStateWithLifecycle()
     val settings by store.settings.collectAsStateWithLifecycle()
@@ -139,7 +140,7 @@ fun SettingsSheet(
 
     val matchedPreset = draft.matchedPreset(speech.engine)
 
-    KoeModalSheet(onDismissRequest = onDismiss) {
+    KoeModalSheet(onDismissRequest = onDismiss, modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

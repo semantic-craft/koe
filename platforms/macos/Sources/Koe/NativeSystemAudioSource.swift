@@ -1,6 +1,7 @@
 import CoreAudio
 import Foundation
 import KoeAppleShared
+import os
 
 enum SystemAudioHAL {
     static func check(_ status: OSStatus, _ message: String) throws {
@@ -235,7 +236,7 @@ final class SystemAudioTapGraph {
         }
     }
 
-    func start(_ handler: @escaping (UnsafePointer<AudioBufferList>, UnsafePointer<AudioTimeStamp>) -> Void) throws {
+    func start(_ handler: @escaping @Sendable (UnsafePointer<AudioBufferList>, UnsafePointer<AudioTimeStamp>) -> Void) throws {
         let fence = self.fence
         var proc: AudioDeviceIOProcID?
         try SystemAudioHAL.check(AudioDeviceCreateIOProcIDWithBlock(&proc, aggregateID, nil) { _, input, inputTime, _, _ in
@@ -273,8 +274,8 @@ final class NativeSystemAudioSource: SystemAudioSource {
         Task.detached { completion(await authorizer.authorize(shouldAbort: shouldAbort)) }
     }
 
-    func start(expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void,
-               failed: @escaping (String) -> Void) throws -> UInt32 {
+    func start(expectedSampleRate: UInt32?, receive: @escaping @Sendable (CapturedPCM) -> Void,
+               failed: @escaping @Sendable (String) -> Void) throws -> UInt32 {
         guard #available(macOS 14.2, *) else { throw CaptureError("录制系统音频需要 macOS 14.2 或更高版本。") }
         stop()
         let capture = try SystemAudioCapture(failed: failed)
@@ -299,18 +300,18 @@ final class NativeSystemAudioSource: SystemAudioSource {
 @available(macOS 14.2, *)
 private final class SystemAudioCapture {
     let graph: SystemAudioTapGraph
-    private let failed: (String) -> Void
+    private let failed: @Sendable (String) -> Void
     private let listenerFence = AudioCallbackFence()
     private let queue = DispatchQueue(label: "com.semanticcraft.koe.system-audio.listeners")
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
 
-    init(failed: @escaping (String) -> Void) throws {
+    init(failed: @escaping @Sendable (String) -> Void) throws {
         let own = SystemAudioHAL.processObject(pid: ProcessInfo.processInfo.processIdentifier)
         graph = try SystemAudioTapGraph(excludingProcesses: own.map { [$0] } ?? [], name: "Koe 系统音频")
         self.failed = failed
     }
 
-    func start(receive: @escaping (CapturedPCM) -> Void) throws {
+    func start(receive: @escaping @Sendable (CapturedPCM) -> Void) throws {
         let changed = "系统音频输出设备发生变化，已停止系统音频采集并保留此前收到的音频。"
         listen(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, changed)
         listen(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyServiceRestarted,
@@ -320,20 +321,22 @@ private final class SystemAudioCapture {
         listen(graph.tapID, kAudioTapPropertyFormat, "系统音频格式发生变化，已停止系统音频采集。")
         let format = graph.format
         let failed = self.failed
-        var mixScratch = [Float](repeating: 0, count: SystemAudioConversion.maxFrames)
+        let mixScratch = OSAllocatedUnfairLock(initialState: [Float](repeating: 0, count: SystemAudioConversion.maxFrames))
         try graph.start { input, time in
             do {
                 guard time.pointee.mFlags.contains(.hostTimeValid) else {
                     throw CaptureError("系统音频缺少有效采样时钟。")
                 }
                 let startNs = try HostAudioClock.nanoseconds(time.pointee.mHostTime)
-                try SystemAudioConversion.emitMonoSlices(
-                    input,
-                    format: format,
-                    startNs: startNs,
-                    mixScratch: &mixScratch,
-                    emit: receive
-                )
+                try mixScratch.withLockUnchecked { scratch in
+                    try SystemAudioConversion.emitMonoSlices(
+                        input,
+                        format: format,
+                        startNs: startNs,
+                        mixScratch: &scratch,
+                        emit: receive
+                    )
+                }
             } catch {
                 failed(error.localizedDescription)
             }

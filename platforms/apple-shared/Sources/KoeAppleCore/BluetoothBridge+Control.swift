@@ -44,8 +44,11 @@ extension BluetoothBridge {
 
         if !device.autoConnect { UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey) }
         if teardownPending {
-            if !device.autoConnect { scanAfterTeardown = false }
-            else if wasAutoConnectDisabled { scanAfterTeardown = true }
+            if !device.autoConnect {
+                scanAfterTeardown = false
+            } else if wasAutoConnectDisabled {
+                scanAfterTeardown = true
+            }
             return
         }
         let disabledAutoConnect = !device.autoConnect && !wasAutoConnectDisabled
@@ -112,8 +115,11 @@ extension BluetoothBridge {
     func teardownLocalBleLink() {
         Self.logger.info("Disconnecting local D3200 link")
         stopScanning()
-        if let writeLink { writeLink.cancel() }
-        else if let peripheral { central?.cancelPeer(peripheral) }
+        if let writeLink {
+            writeLink.cancel()
+        } else if let peripheral {
+            central?.cancelPeer(peripheral)
+        }
         if let pending = reconnectingPeripheral { central?.cancelPeer(pending) }
         resetLinkState()
     }

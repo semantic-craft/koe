@@ -74,8 +74,9 @@ public final class LocalSpeechPCMConverter {
 
     public init(outputFormat: AVAudioFormat) throws {
         self.outputFormat = outputFormat
-        if outputFormat == Self.inputFormat { converter = nil }
-        else {
+        if outputFormat == Self.inputFormat {
+            converter = nil
+        } else {
             guard let created = AVAudioConverter(from: Self.inputFormat, to: outputFormat) else {
                 throw LocalSpeechError("无法转换离线转写所需的音频格式。")
             }

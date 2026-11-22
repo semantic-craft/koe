@@ -4,13 +4,13 @@ import Foundation
 import OSLog
 
 @MainActor
-public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     nonisolated public static var d3200ServiceUUID: CBUUID { CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB") }
     nonisolated public static var writeCharacteristicUUID: CBUUID { CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB") }
     nonisolated public static var notifyCharacteristicUUID: CBUUID { CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB") }
     nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool { uuid == writeCharacteristicUUID || uuid.uuidString == "7777" }
     nonisolated static func isWritableD3200Characteristic(_ characteristic: CBCharacteristic) -> Bool {
-        isWriteCharacteristic(characteristic.uuid) && !characteristic.properties.intersection([.write, .writeWithoutResponse]).isEmpty
+        isWriteCharacteristic(characteristic.uuid) && !characteristic.properties.isDisjoint(with: [.write, .writeWithoutResponse])
     }
     nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool { uuid == notifyCharacteristicUUID || uuid.uuidString == "8888" }
     nonisolated public static func isD3200WriteCharacteristic(_ uuid: CBUUID, serviceUUID: CBUUID?) -> Bool {
@@ -242,8 +242,8 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         guard bytes.count.isMultiple(of: 2) else { return nil }
         var data = Data()
         for index in stride(from: 0, to: bytes.count, by: 2) {
-            let pair = String(decoding: bytes[index..<index + 2], as: UTF8.self)
-            guard let byte = UInt8(pair, radix: 16) else { return nil }
+            guard let pair = String(bytes: bytes[index..<index + 2], encoding: .utf8),
+                  let byte = UInt8(pair, radix: 16) else { return nil }
             data.append(byte)
         }
         return data
@@ -383,8 +383,11 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             let stopPending = self.teardownPending
             self.resetLinkState()
             self.emit("disconnected")
-            if stopPending { self.reportError("录音豆已断开，未能确认停录指令写入。", error: error) }
-            else if let error { self.reportError("录音豆连接中断。", error: error) }
+            if stopPending {
+                self.reportError("录音豆已断开，未能确认停录指令写入。", error: error)
+            } else if let error {
+                self.reportError("录音豆连接中断。", error: error)
+            }
         }
     }
 
@@ -478,3 +481,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 }
+
+#if os(iOS)
+extension BluetoothBridge: @preconcurrency CBCentralManagerDelegate {}
+#else
+extension BluetoothBridge: CBCentralManagerDelegate {}
+#endif

@@ -63,7 +63,7 @@ public struct CaptureStudioSnapshot: Codable, Equatable, Sendable {
     public let inputs: [AudioInputSnapshot]
     public var includeSystemAudio: Bool = false
     public var canIncludeSystemAudio: Bool = false
-    public var audioStorage: AudioStorageSnapshot? = nil
+    public var audioStorage: AudioStorageSnapshot?
 
     private enum CodingKeys: String, CodingKey {
         case selectedSource, selectedInputId, selectedLabel, selectedBadge

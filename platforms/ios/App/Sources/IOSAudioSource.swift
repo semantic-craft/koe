@@ -47,8 +47,11 @@ final class IOSAudioSource: MicrophoneSource {
             node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, when in
                 guard fence.enter() else { return }
                 defer { fence.leave() }
-                do { receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate)) }
-                catch { failed(error.localizedDescription) }
+                do {
+                    receive(try CapturedPCM.capture(buffer, when: when, expectedSampleRate: rate))
+                } catch {
+                    failed(error.localizedDescription)
+                }
             }
             self.engine = engine
             try engine.start()
