@@ -1,6 +1,7 @@
 //! Real partial-write regression in a disposable child: never change the test runner's limits.
 #![cfg(unix)]
 #![allow(unsafe_code)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use koe_runtime::KoeRuntime;
 use serde_json::{json, Value};
 fn send(r: &mut KoeRuntime, v: Value) -> Value {
@@ -52,6 +53,7 @@ fn append_retry_preserves_forced_stop_reason() {
         rlim_cur: 0,
         rlim_max: 0,
     };
+    // SAFETY: previous is a valid mutable rlimit struct and SIG_IGN is a valid POSIX signal disposition in this disposable child test process.
     unsafe {
         assert_eq!(libc::getrlimit(libc::RLIMIT_FSIZE, &mut previous), 0);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
@@ -60,6 +62,7 @@ fn append_retry_preserves_forced_stop_reason() {
         rlim_cur: 100,
         rlim_max: previous.rlim_max,
     };
+    // SAFETY: limited is a valid rlimit struct bounded by previous.rlim_max in this disposable child test process.
     unsafe {
         assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limited), 0);
     }
@@ -72,6 +75,7 @@ fn append_retry_preserves_forced_stop_reason() {
         None,
         100,
     );
+    // SAFETY: previous was initialized by getrlimit above and restores the child's original RLIMIT_FSIZE.
     unsafe {
         assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &previous), 0);
     }

@@ -21,6 +21,13 @@ publish = false
 [workspace.lints.rust]
 unsafe_code = "deny"
 
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+undocumented_unsafe_blocks = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"
+
 [profile.dev]
 debug = 0
 incremental = false

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use koe_engine::{SemanticVersion, KOE_GITHUB_DOWNLOAD_PREFIX, KOE_GITHUB_RELEASES_URL};
 use serde_json::Value;
 
@@ -111,16 +109,7 @@ pub(super) async fn check_latest(
     let initial_loopback = validate_update_endpoint(endpoint)?;
     validate_user_agent(user_agent)?;
 
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .connect_timeout(Duration::from_secs(10))
-        .read_timeout(Duration::from_secs(10));
-    if initial_loopback {
-        builder = builder.no_proxy();
-    }
-    let client = builder
-        .build()
+    let client = crate::http_client::update_check_client(initial_loopback)
         .map_err(|_| "无法初始化 HTTPS 客户端".to_string())?;
 
     let mut current_url =

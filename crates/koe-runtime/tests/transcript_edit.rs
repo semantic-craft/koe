@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

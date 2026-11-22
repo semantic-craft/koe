@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use koe_engine::{
     crypto::{AesCtrStreamDecrypt, DeviceCrypto},
     frame::ProtocolFrame,

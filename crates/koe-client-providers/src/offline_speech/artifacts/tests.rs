@@ -1,8 +1,18 @@
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use super::*;
+
+fn download_client() -> reqwest::Client {
+    crate::http_client::validated_download_client(
+        Duration::from_secs(5),
+        Duration::from_secs(5),
+        true,
+    )
+    .unwrap()
+}
 
 struct Directory(PathBuf);
 
@@ -56,7 +66,7 @@ async fn verified_download_is_atomic_and_reusable_without_network() {
     let artifact = artifact(url);
     let control = Control::new();
     let mut progress = Vec::new();
-    let client = reqwest::Client::new();
+    let client = download_client();
     let path = ensure_artifact(&directory.0, &artifact, &client, &control, 0, |bytes| {
         progress.push(bytes)
     })
@@ -80,7 +90,7 @@ async fn corrupt_cached_artifact_is_replaced_with_verified_download() {
     let path = ensure_artifact(
         &directory.0,
         &artifact(url),
-        &reqwest::Client::new(),
+        &download_client(),
         &Control::new(),
         0,
         |_| {},
@@ -98,7 +108,7 @@ async fn corrupt_download_is_never_published() {
     let error = ensure_artifact(
         &directory.0,
         &artifact(url),
-        &reqwest::Client::new(),
+        &download_client(),
         &Control::new(),
         0,
         |_| {},
@@ -117,7 +127,7 @@ async fn truncated_download_is_never_published() {
     let result = ensure_artifact(
         &directory.0,
         &artifact(url),
-        &reqwest::Client::new(),
+        &download_client(),
         &Control::new(),
         0,
         |_| {},
@@ -135,7 +145,7 @@ async fn mismatched_download_length_is_rejected() {
     let result = ensure_artifact(
         &directory.0,
         &artifact(url),
-        &reqwest::Client::new(),
+        &download_client(),
         &Control::new(),
         0,
         |_| {},
@@ -153,7 +163,7 @@ async fn http_failure_is_not_a_model() {
     let error = ensure_artifact(
         &directory.0,
         &artifact(url),
-        &reqwest::Client::new(),
+        &download_client(),
         &Control::new(),
         0,
         |_| {},
@@ -190,7 +200,7 @@ async fn cancellation_interrupts_a_stalled_download_and_removes_partial_file() {
         ensure_artifact(
             &directory.0,
             &artifact(url),
-            &reqwest::Client::new(),
+            &download_client(),
             &control,
             0,
             |bytes| {

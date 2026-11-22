@@ -14,6 +14,8 @@ mod live;
 mod update;
 
 pub use http_asr::validate_remote_http_url;
+#[cfg(any(feature = "offline-speech", test))]
+pub(crate) use http_asr::validate_remote_http_url_parsed;
 pub use live::{LiveEvent, LiveTranscription};
 pub use update::{
     parse_release_payload, validate_update_endpoint, ReleaseAsset, RemoteRelease,
@@ -433,7 +435,7 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
     validate_endpoint_inner(config, secure, local, true)
 }
 
-pub(super) fn is_loopback_host(url: &reqwest::Url) -> bool {
+pub(crate) fn is_loopback_host(url: &reqwest::Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };

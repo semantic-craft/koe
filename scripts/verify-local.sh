@@ -54,6 +54,7 @@ python3 progress/progress.py check
 note "compile & clippy: rust workspace"
 cargo check --workspace --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
 cargo clippy --workspace --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} -- -D warnings
+cargo clippy -p koe-host-api -p koe-runtime -p koe-client-providers --no-default-features --all-targets ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} -- -D warnings
 
 if [[ "$quick" -eq 1 ]]; then
   echo "verify-local (--quick): all compile and contract gates passed."
@@ -62,6 +63,7 @@ fi
 
 note "test: rust workspace"
 cargo test --workspace ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
+cargo test -p koe-host-api -p koe-runtime -p koe-client-providers --no-default-features ${cargo_offline_args[@]+"${cargo_offline_args[@]}"} --quiet
 
 if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && "$(uname -s)" == "Darwin" ]]; then
   note "native host: platforms/apple-shared & platforms/macos"

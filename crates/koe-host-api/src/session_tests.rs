@@ -41,11 +41,13 @@ fn send_json(session: &HostSessionGuard, payload: Value, now: u64) -> Value {
 fn session_lifecycle_has_no_seed_data_and_rejects_duplicate_writer() {
     let root = TempWorkspace::new("v2");
     let path = CString::new(root.0.to_str().unwrap()).unwrap();
+    // SAFETY: path is a valid NUL-terminated CString; snapshot is verified non-null before CStr::from_ptr and every returned C string or byte buffer is freed once with its paired FFI free function.
     unsafe {
         let handle = koe_host_session_create(path.as_ptr());
         assert_ne!(handle, 0);
         assert_eq!(koe_host_session_create(path.as_ptr()), 0);
         let snapshot = koe_host_session_snapshot_json(handle, 1000);
+        assert!(!snapshot.is_null());
         let text = CStr::from_ptr(snapshot).to_str().unwrap();
         assert!(text.contains("\"records\":[]"));
         assert!(text.contains("\"version\":2"));
@@ -108,6 +110,7 @@ fn receipt_abi_layouts_and_invalid_pointer_boundaries_reject_without_accepting()
     let c_lane = CString::new("microphone").unwrap();
     let valid_samples = [42i16; 16];
 
+    // SAFETY: CString pointers and valid_samples remain live for every call; koe_host_session_ingest_pcm validates null pointers and sample_count <= 8192 before dereferencing samples, and koe_host_session_report_playback_progress rejects null record_id before reading.
     unsafe {
         let bad_handle = koe_host_session_ingest_pcm(
             999_999,

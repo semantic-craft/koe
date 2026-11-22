@@ -10,6 +10,7 @@ pub use offline_speech::{
     OfflineSpeechWorker,
 };
 
+mod http_client;
 mod network;
 pub use network::{
     parse_release_payload, validate_remote_http_url, validate_update_endpoint, AsrTransportMode,

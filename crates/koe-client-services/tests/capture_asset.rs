@@ -10,6 +10,7 @@ impl Drop for Sandbox {
 #[cfg(unix)]
 #[test]
 fn failed_first_write_can_be_cancelled_and_restarted() {
+    #[allow(clippy::disallowed_methods)]
     if let Ok(root) = std::env::var("KOE_CAPTURE_LIMIT_CHILD") {
         let mut asset = CaptureAsset::create(std::path::Path::new(&root), "mic-limit", 16000)
             .expect("reserving a stream must not strand a partial header on write failure");

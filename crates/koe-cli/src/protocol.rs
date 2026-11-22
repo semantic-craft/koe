@@ -27,8 +27,8 @@ pub(crate) fn verify() -> Result<Value, String> {
         return Err("AES known-answer vector differs".into());
     }
     for seed in 0..20 {
-        let vector: Value =
-            serde_json::from_str(&run_parity_seed(seed)).map_err(|e| e.to_string())?;
+        let raw = run_parity_seed(seed)?;
+        let vector: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
         if vector["rx_count"] != 2 {
             return Err("BLE frame decode differs".into());
         }
@@ -48,7 +48,7 @@ pub(crate) fn verify() -> Result<Value, String> {
         "hardwareVerified":false,"cloudVerified":false}))
 }
 
-pub(crate) fn run_parity_seed(seed: u64) -> String {
+pub(crate) fn run_parity_seed(seed: u64) -> Result<String, String> {
     let mut rng = SplitMix64::new(seed);
     let cmd_type = rng.next_byte();
     let cmd_id = rng.next_byte();
@@ -101,7 +101,8 @@ pub(crate) fn run_parity_seed(seed: u64) -> String {
     let nonce = rng.next_bytes(16);
     let seq = (rng.next_u64() & 0xFFFF) as u32;
     let chunk_in = rng.next_bytes(160);
-    let stream_dec = AesCtrStreamDecrypt::new(&session_key, &nonce).expect("valid 32B key");
+    let stream_dec =
+        AesCtrStreamDecrypt::new(&session_key, &nonce).ok_or("invalid 32-byte AES-CTR key")?;
     let chunk_dec = stream_dec.decrypt_chunk(&chunk_in, seq);
 
     let frame_count = (rng.next_byte() as usize % 110) + 5;
@@ -120,7 +121,7 @@ pub(crate) fn run_parity_seed(seed: u64) -> String {
     let ogg_bytes = OggOpus::mux_raw_frames(&raw_opus);
     let wav_hdr = OpusWave::wav_header((frame_count * 960 * 2) as u32);
 
-    format!(
+    Ok(format!(
         "{{\"seed\":{},\"tx_hex\":\"{}\",\"rx_count\":{},\"rx_rem\":{},\"rx0_payload\":\"{}\",\"rx1_payload\":\"{}\",\"hkdf_hex\":\"{}\",\"aes_fnv\":\"{}\",\"ogg_len\":{},\"ogg_fnv\":\"{}\",\"wav_hex\":\"{}\"}}",
         seed,
         to_hex_upper(&tx_frame),
@@ -133,10 +134,10 @@ pub(crate) fn run_parity_seed(seed: u64) -> String {
         ogg_bytes.len(),
         fnv1a64_hex(&ogg_bytes),
         to_hex_upper(&wav_hdr),
-    )
+    ))
 }
 
-pub(crate) fn run_benchmark(soa_fast_path: bool) {
+pub(crate) fn run_benchmark(soa_fast_path: bool) -> Result<(), String> {
     const NUM_CHUNKS: usize = 90_000;
     const NUM_BLE_PACKETS: usize = 10_000;
 
@@ -178,7 +179,8 @@ pub(crate) fn run_benchmark(soa_fast_path: bool) {
 
     let session_key = DeviceCrypto::hkdf_sha256(&ikm, &[1, 2, 3], &[1, 2, 3], 32);
     let (decrypted_len, ogg_bytes) = if soa_fast_path {
-        let stream_dec = AesCtrStreamDecrypt::new(&session_key, &nonce).expect("valid key");
+        let stream_dec =
+            AesCtrStreamDecrypt::new(&session_key, &nonce).ok_or("invalid AES-CTR key")?;
         let mut decrypted = raw_encrypted;
         stream_dec.decrypt_contiguous_in_place(&mut decrypted, 0);
         let ogg = OggOpus::mux_raw_frames(&decrypted);
@@ -186,7 +188,8 @@ pub(crate) fn run_benchmark(soa_fast_path: bool) {
     } else {
         let mut decrypted = Vec::with_capacity(NUM_CHUNKS * 160);
         for seq in 0..NUM_CHUNKS {
-            let stream_dec = AesCtrStreamDecrypt::new(&session_key, &nonce).expect("valid key");
+            let stream_dec =
+                AesCtrStreamDecrypt::new(&session_key, &nonce).ok_or("invalid AES-CTR key")?;
             let slice = &raw_encrypted[seq * 160..(seq + 1) * 160];
             decrypted.extend_from_slice(&stream_dec.decrypt_chunk(slice, seq as u32));
         }
@@ -207,4 +210,5 @@ pub(crate) fn run_benchmark(soa_fast_path: bool) {
         digest,
         wav_hdr.len()
     );
+    Ok(())
 }

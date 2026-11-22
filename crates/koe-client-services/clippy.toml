@@ -1,0 +1,15 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+disallowed-methods = [
+  { path = "reqwest::Client::new", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "reqwest::Client::builder", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "reqwest::ClientBuilder::new", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "reqwest::get", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "std::env::var", reason = "Pure domain/service/provider crates must not read ambient process env; pass configuration explicitly from host/runtime." },
+  { path = "std::env::var_os", reason = "Pure domain/service/provider crates must not read ambient process env; pass configuration explicitly from host/runtime." },
+  { path = "std::env::vars", reason = "Pure domain/service/provider crates must not read ambient process env; pass configuration explicitly from host/runtime." },
+  { path = "std::env::vars_os", reason = "Pure domain/service/provider crates must not read ambient process env; pass configuration explicitly from host/runtime." },
+]
+disallowed-types = [
+  { path = "reqwest::ClientBuilder", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+]

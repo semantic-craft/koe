@@ -4,10 +4,24 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 
 SOURCE = Path(__file__).with_name('ci.py')
+WORKSPACE_CARGO_TOML = Path(__file__).resolve().parent.parent / 'Cargo.toml'
+
+
+def check_release_panic_unwind(cargo_toml_path: Path) -> None:
+    data = tomllib.loads(cargo_toml_path.read_text(encoding='utf-8'))
+    release = data.get('profile', {}).get('release', {})
+    panic_mode = release.get('panic') if isinstance(release, dict) else None
+    if panic_mode != 'unwind':
+        raise ValueError(
+            f'{cargo_toml_path}: [profile.release] panic is {panic_mode!r}, '
+            'which breaks koe-host-api std::panic::catch_unwind across the C ABI boundary; '
+            'set panic = "unwind" under [profile.release] in Cargo.toml'
+        )
 
 
 class CiRoutingTest(unittest.TestCase):
@@ -136,6 +150,28 @@ sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
         result, calls = self.push(self.commit('README.md'))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, [])
+
+
+class ReleaseProfileContractTest(unittest.TestCase):
+    def test_rejects_panic_abort_and_missing_panic_unwind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, content in (
+                ('abort.toml', '[profile.release]\nopt-level = 3\npanic = "abort"\n'),
+                ('missing_key.toml', '[profile.release]\nopt-level = 3\n'),
+                ('missing_section.toml', '[workspace]\nmembers = []\n'),
+            ):
+                manifest = root / name
+                manifest.write_text(content, encoding='utf-8')
+                with self.assertRaises(ValueError) as ctx:
+                    check_release_panic_unwind(manifest)
+                message = str(ctx.exception)
+                self.assertIn('koe-host-api', message)
+                self.assertIn('std::panic::catch_unwind', message)
+                self.assertIn('set panic = "unwind" under [profile.release] in Cargo.toml', message)
+
+    def test_workspace_cargo_toml_uses_panic_unwind(self):
+        check_release_panic_unwind(WORKSPACE_CARGO_TOML)
 
 
 if __name__ == '__main__':

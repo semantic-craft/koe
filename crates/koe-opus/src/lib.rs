@@ -21,9 +21,9 @@ pub struct LibOpusDecoder {
     scratch_pcm: Vec<i16>,
 }
 
-// Each `LibOpusDecoder` owns a unique `OpusDecoder*` heap allocation and is only
-// mutated through `&mut self`.
+// SAFETY: LibOpusDecoder uniquely owns its heap-allocated OpusDecoder* and mutates it only via &mut self.
 unsafe impl Send for LibOpusDecoder {}
+// SAFETY: Shared &self methods never dereference the raw OpusDecoder* pointer.
 unsafe impl Sync for LibOpusDecoder {}
 
 impl LibOpusDecoder {
@@ -34,6 +34,7 @@ impl LibOpusDecoder {
             return None;
         }
         let mut err: c_int = 0;
+        // SAFETY: sample_rate was validated by OpusWave::is_valid_sample_rate, channels is 1, and err is a valid stack out-pointer.
         let raw = unsafe { opus_decoder_create(sample_rate as i32, 1, &mut err) };
         if raw.is_null() || err != OPUS_OK {
             return None;
@@ -50,6 +51,7 @@ impl LibOpusDecoder {
 impl Drop for LibOpusDecoder {
     fn drop(&mut self) {
         if !self.raw.is_null() {
+            // SAFETY: self.raw is non-null, uniquely owned by self, and nulled immediately after destroy.
             unsafe {
                 opus_decoder_destroy(self.raw);
             }
@@ -67,13 +69,20 @@ impl OpusStreamDecoder for LibOpusDecoder {
         if packet.is_empty() || self.raw.is_null() {
             return false;
         }
+        let Ok(packet_len) = i32::try_from(packet.len()) else {
+            return false;
+        };
+        let Ok(frame_size) = c_int::try_from(self.scratch_pcm.len()) else {
+            return false;
+        };
+        // SAFETY: self.raw is a valid initialized OpusDecoder*, packet is valid for packet_len bytes, and scratch_pcm has capacity for frame_size samples.
         let decoded_samples = unsafe {
             opus_decode(
                 self.raw,
                 packet.as_ptr(),
-                packet.len() as i32,
+                packet_len,
                 self.scratch_pcm.as_mut_ptr(),
-                self.scratch_pcm.len() as c_int,
+                frame_size,
                 0,
             )
         };
@@ -90,6 +99,7 @@ impl OpusStreamDecoder for LibOpusDecoder {
 
     fn reset(&mut self) {
         if !self.raw.is_null() {
+            // SAFETY: self.raw is a valid uniquely owned OpusDecoder* initialized by opus_decoder_create.
             unsafe {
                 let _ = opus_decoder_ctl(self.raw, OPUS_RESET_STATE);
             }

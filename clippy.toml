@@ -1,0 +1,11 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+disallowed-methods = [
+  { path = "reqwest::Client::new", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "reqwest::Client::builder", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "reqwest::ClientBuilder::new", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+  { path = "reqwest::get", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+]
+disallowed-types = [
+  { path = "reqwest::ClientBuilder", reason = "Use crate::http_client builders to enforce retry::never(), redirect policy, and SSRF bounds." },
+]
