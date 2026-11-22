@@ -32,6 +32,9 @@ __pycache__/
 .scratch/
 .audit/
 .sites/
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/verify-koe/
 .collab/
 .envrc
