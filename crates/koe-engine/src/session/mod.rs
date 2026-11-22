@@ -17,7 +17,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::commands::{DeviceCommands, RxCmd};
 use crate::frame::FrameReassembler;
-use crate::hash::is_valid_sha256_hex;
 use crate::models::{DeviceInfoModel, OfflineFileEntry};
 use crate::transport::OPUS_FRAME_BYTES;
 use crate::wav::{ASR_SAMPLE_RATE, OpusDecoderFactory, OpusStreamDecoder};
@@ -99,8 +98,7 @@ pub struct TransportSession {
     pub marks_ms: Vec<u64>,
     /// FIFO queue of finalized recordings produced during multi-file batches.
     pub finalized_queue: VecDeque<FinalizedRecording>,
-    /// Verified disk `fsync` custody receipts keyed by D3200 `file_id`, guarding `0x1A/0x10` deletion.
-    pub custody_receipts: BTreeMap<u32, CustodyReceipt>,
+    custody_receipts: BTreeMap<u32, VerifiedCustodyReceipt>,
     pub(super) decoder_factory: Option<OpusDecoderFactory>,
     pub(super) live_decoder_16k: Option<Box<dyn OpusStreamDecoder>>,
 }
@@ -246,14 +244,22 @@ impl TransportSession {
     /// Records a verified disk `fsync` [`CustodyReceipt`] for `receipt.file_id`.
     /// Returns `false` if `file_id == 0`, `byte_count == 0`, or `sha256_hex` is not a valid 64-hex SHA-256 digest.
     pub fn confirm_disk_custody(&mut self, receipt: CustodyReceipt) -> bool {
-        if receipt.file_id == 0
-            || receipt.byte_count == 0
-            || !is_valid_sha256_hex(&receipt.sha256_hex)
-        {
+        let Some(verified) = receipt.verify() else {
             return false;
-        }
-        self.custody_receipts.insert(receipt.file_id, receipt);
+        };
+        self.custody_receipts.insert(verified.file_id(), verified);
         true
+    }
+
+    /// Returns the verified disk `fsync` [`VerifiedCustodyReceipt`] for `file_id`, if recorded.
+    #[must_use]
+    pub fn custody_receipt(&self, file_id: u32) -> Option<&VerifiedCustodyReceipt> {
+        self.custody_receipts.get(&file_id)
+    }
+
+    /// Drops verified custody receipts that fail `keep` without permitting unverified insertion.
+    pub fn retain_custody_receipts(&mut self, mut keep: impl FnMut(u32) -> bool) {
+        self.custody_receipts.retain(|&file_id, _| keep(file_id));
     }
 
     /// Returns `true` if a verified disk `fsync` [`CustodyReceipt`] has been recorded for `file_id`.
@@ -265,12 +271,12 @@ impl TransportSession {
     /// Builds a D3200 `0x1A/0x10` hardware file deletion command ONLY if a verified
     /// disk `fsync` [`CustodyReceipt`] exists for `file_id` (enforcing Omi's `PendantRingCustody` invariant).
     pub fn request_reclaim_bean_file(&self, file_id: u32) -> Result<Vec<u8>, &'static str> {
-        if !self.has_disk_custody(file_id) {
+        let Some(receipt) = self.custody_receipt(file_id) else {
             return Err(
                 "refusing to delete D3200 hardware file 0x1A/0x10 before disk fsync custody receipt",
             );
-        }
-        Ok(DeviceCommands::delete_file(file_id))
+        };
+        Ok(DeviceCommands::delete_file(receipt))
     }
 
     /// Pops and returns the next finalized recording from the FIFO queue.

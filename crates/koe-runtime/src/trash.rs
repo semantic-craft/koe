@@ -37,10 +37,10 @@ impl KoeRuntime {
                         || req.evidence.iter().any(|e| e.source.record_id == id))
             })
         };
-        let record_pending = self.workspace().record(id).is_some_and(|r| {
-            matches!(r.analysis, AnalysisState::Pending { .. })
-                || matches!(r.live_summary, AnalysisState::Pending { .. })
-        });
+        let record_pending = self
+            .workspace()
+            .record(id)
+            .is_some_and(ProductRecord::has_pending_analysis);
         let pending_work_busy = self.pending.values().any(|work| match work {
             PendingWork::Transcription(key)
             | PendingWork::Summary(key)
@@ -132,8 +132,7 @@ impl KoeRuntime {
             if !purged_bean_ids.is_empty() {
                 self.device
                     .session
-                    .custody_receipts
-                    .retain(|fid, _| !purged_bean_ids.contains(fid));
+                    .retain_custody_receipts(|fid| !purged_bean_ids.contains(&fid));
             }
         }
     }

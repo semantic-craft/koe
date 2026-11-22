@@ -713,11 +713,7 @@ impl RecordDto {
             None => self.minutes_revision,
         };
         for timestamp in self.bookmarks {
-            a.add_bookmark(if a.duration_ms > 0 {
-                timestamp.min(a.duration_ms)
-            } else {
-                timestamp
-            });
+            a.add_bookmark(timestamp);
         }
         let final_keys = self
             .final_keys

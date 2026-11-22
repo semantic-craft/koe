@@ -24,12 +24,7 @@ impl ProductWorkspace {
             record.aggregate.bookmarks.dedup();
         }
         for &mark in bookmarks {
-            let clamped = if record.aggregate.duration_ms > 0 {
-                mark.min(record.aggregate.duration_ms)
-            } else {
-                mark
-            };
-            record.aggregate.add_bookmark(clamped);
+            record.aggregate.add_bookmark(mark);
         }
         self.changed();
         Ok(())
@@ -543,6 +538,58 @@ impl ProductWorkspace {
 }
 
 impl ProductRecord {
+    /// Returns `true` when any analysis slot on this recording has an in-flight request.
+    #[must_use]
+    pub fn has_pending_analysis(&self) -> bool {
+        self.analysis_slots()
+            .into_iter()
+            .any(|slot| matches!(slot, AnalysisState::Pending { .. }))
+    }
+
+    pub(crate) fn analysis_slots(&self) -> [&AnalysisState; 2] {
+        let Self {
+            analysis,
+            live_summary,
+            aggregate: _,
+            title: _,
+            origin: _,
+            mode: _,
+            project: _,
+            content_revision: _,
+            minutes_revision: _,
+            highlighted_segments: _,
+            capture_lanes: _,
+            all_day: _,
+            speech_engine: _,
+            retention: _,
+            final_keys: _,
+            completed_request: _,
+        } = self;
+        [analysis, live_summary]
+    }
+
+    pub(crate) fn analysis_slots_mut(&mut self) -> [&mut AnalysisState; 2] {
+        let Self {
+            analysis,
+            live_summary,
+            aggregate: _,
+            title: _,
+            origin: _,
+            mode: _,
+            project: _,
+            content_revision: _,
+            minutes_revision: _,
+            highlighted_segments: _,
+            capture_lanes: _,
+            all_day: _,
+            speech_engine: _,
+            retention: _,
+            final_keys: _,
+            completed_request: _,
+        } = self;
+        [analysis, live_summary]
+    }
+
     /// Returns `true` when this recording is a live, non-archived `QuickNote` in the inbox (`project.is_none()`).
     #[must_use]
     pub const fn is_quick_note_inbox(&self) -> bool {
