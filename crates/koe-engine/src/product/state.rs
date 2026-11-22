@@ -96,19 +96,15 @@ impl ProductWorkspace {
         workspace.validate_scope(&workspace.ask_scope)?;
         let mut max_operation = workspace.last_ask_operation.unwrap_or(0);
         for record in workspace.records.values() {
-            let key = match &record.analysis {
-                AnalysisState::Pending { key, .. }
+            for slot in record.analysis_slots() {
+                if let AnalysisState::Pending { key, .. }
                 | AnalysisState::Failed { key, .. }
-                | AnalysisState::Interrupted { key } => Some(key),
-                _ => None,
-            };
-            for key in key.into_iter().chain(record.completed_request.as_ref()) {
-                max_operation = max_operation.max(key.attempt);
+                | AnalysisState::Interrupted { key } = slot
+                {
+                    max_operation = max_operation.max(key.attempt);
+                }
             }
-            if let AnalysisState::Pending { key, .. }
-            | AnalysisState::Failed { key, .. }
-            | AnalysisState::Interrupted { key } = &record.live_summary
-            {
+            if let Some(key) = &record.completed_request {
                 max_operation = max_operation.max(key.attempt);
             }
         }
@@ -201,13 +197,11 @@ impl ProductWorkspace {
     pub fn interrupt_pending(&mut self) -> bool {
         let mut changed = false;
         for record in self.records.values_mut() {
-            if let AnalysisState::Pending { key, .. } = &record.live_summary {
-                record.live_summary = AnalysisState::Interrupted { key: key.clone() };
-                changed = true;
-            }
-            if let AnalysisState::Pending { key, .. } = &record.analysis {
-                record.analysis = AnalysisState::Interrupted { key: key.clone() };
-                changed = true;
+            for slot in record.analysis_slots_mut() {
+                if let AnalysisState::Pending { key, .. } = slot {
+                    *slot = AnalysisState::Interrupted { key: key.clone() };
+                    changed = true;
+                }
             }
         }
         if self.pending_ask.take().is_some() {

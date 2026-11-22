@@ -1,6 +1,7 @@
 //! High-level D3200 BLE TX command builders and RX command identifiers (`PROTOCOL.md` §5).
 
 use crate::frame::{u16_le, u32_le, ProtocolFrame};
+use crate::session::VerifiedCustodyReceipt;
 
 /// Stateless packet builders for D3200 BLE TX commands.
 pub struct DeviceCommands;
@@ -36,10 +37,48 @@ impl DeviceCommands {
         ProtocolFrame::encode(0x1B, 0x0E, &u16_le(page))
     }
 
-    /// Deletes a stored recording by `file_id` (`0x1A 0x10`).
+    /// Deletes a stored recording (`0x1A 0x10`) authorized by a verified disk `fsync` receipt.
+    ///
+    /// Raw file IDs and forged [`VerifiedCustodyReceipt`] construction are rejected at compile time:
+    ///
+    /// ```compile_fail,E0308
+    /// use koe_engine::commands::DeviceCommands;
+    ///
+    /// let _ = DeviceCommands::delete_file(42);
+    /// ```
+    ///
+    /// ```compile_fail,E0423
+    /// use koe_engine::commands::DeviceCommands;
+    /// use koe_engine::session::{CustodyReceipt, VerifiedCustodyReceipt};
+    ///
+    /// let raw = CustodyReceipt {
+    ///     file_id: 42,
+    ///     byte_count: 1024,
+    ///     sha256_hex: "a".repeat(64),
+    ///     fsynced_at_epoch_sec: 1_700_000_000,
+    /// };
+    /// let forged = VerifiedCustodyReceipt(raw);
+    /// let _ = DeviceCommands::delete_file(&forged);
+    /// ```
+    ///
+    /// ```
+    /// use koe_engine::commands::DeviceCommands;
+    /// use koe_engine::session::CustodyReceipt;
+    ///
+    /// let verified = CustodyReceipt {
+    ///     file_id: 42,
+    ///     byte_count: 1024,
+    ///     sha256_hex: "a".repeat(64),
+    ///     fsynced_at_epoch_sec: 1_700_000_000,
+    /// }
+    /// .verify()
+    /// .unwrap();
+    /// let frame = DeviceCommands::delete_file(&verified);
+    /// assert_eq!(&frame[9..13], &42u32.to_le_bytes());
+    /// ```
     #[must_use]
-    pub fn delete_file(file_id: u32) -> Vec<u8> {
-        ProtocolFrame::encode(0x1A, 0x10, &u32_le(file_id))
+    pub fn delete_file(receipt: &VerifiedCustodyReceipt) -> Vec<u8> {
+        ProtocolFrame::encode(0x1A, 0x10, &u32_le(receipt.file_id()))
     }
 
     /// Starts streaming or resuming an offline audio file (`0x1A 0x07`).
@@ -141,7 +180,15 @@ mod tests {
         assert_eq!(pull[17], 0);
         assert!(ProtocolFrame::verify_checksum(&pull));
 
-        let del = DeviceCommands::delete_file(42);
+        let receipt = crate::session::CustodyReceipt {
+            file_id: 42,
+            byte_count: 1024,
+            sha256_hex: "a".repeat(64),
+            fsynced_at_epoch_sec: 1_700_000_000,
+        }
+        .verify()
+        .expect("valid custody receipt must verify");
+        let del = DeviceCommands::delete_file(&receipt);
         assert_eq!(del[5], 0x1A);
         assert_eq!(del[6], 0x10);
         assert_eq!(&del[9..13], &42u32.to_le_bytes());

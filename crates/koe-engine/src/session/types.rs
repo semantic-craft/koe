@@ -172,6 +172,50 @@ pub struct CustodyReceipt {
     pub fsynced_at_epoch_sec: u64,
 }
 
+/// Verified disk `fsync` custody proof authorizing D3200 `0x1A/0x10` hardware deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedCustodyReceipt(CustodyReceipt);
+
+impl CustodyReceipt {
+    /// Validates `file_id != 0`, `byte_count > 0`, and 64-character hex SHA-256 format.
+    #[must_use]
+    pub fn verify(self) -> Option<VerifiedCustodyReceipt> {
+        if self.file_id == 0
+            || self.byte_count == 0
+            || !crate::hash::is_valid_sha256_hex(&self.sha256_hex)
+        {
+            return None;
+        }
+        Some(VerifiedCustodyReceipt(self))
+    }
+}
+
+impl VerifiedCustodyReceipt {
+    /// Returns the verified D3200 hardware file identifier.
+    #[must_use]
+    pub const fn file_id(&self) -> u32 {
+        self.0.file_id
+    }
+
+    /// Returns the verified `.opus` byte count flushed to local storage.
+    #[must_use]
+    pub const fn byte_count(&self) -> usize {
+        self.0.byte_count as usize
+    }
+
+    /// Returns the validated 64-character hex SHA-256 digest.
+    #[must_use]
+    pub fn sha256_hex(&self) -> &str {
+        &self.0.sha256_hex
+    }
+
+    /// Borrows the underlying validated [`CustodyReceipt`].
+    #[must_use]
+    pub const fn receipt(&self) -> &CustodyReceipt {
+        &self.0
+    }
+}
+
 /// Coarse batch outcome of ingesting a BLE notification chunk into `TransportSession`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionIngestOutcome {

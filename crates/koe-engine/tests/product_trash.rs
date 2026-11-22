@@ -523,6 +523,7 @@ fn pending_live_summary_blocks_trash_purge_empty_and_expiry() {
     ws.append_transcript("rec-live", "正在讨论下季度路线图", 0, 2_000, "asr")
         .unwrap();
     let live_key = ws.begin_live_summary("rec-live").unwrap();
+    assert!(ws.record("rec-live").unwrap().has_pending_analysis());
 
     assert_eq!(ws.trash_record("rec-live", 10_000), Err(ProductError::Busy));
 
@@ -539,6 +540,11 @@ fn pending_live_summary_blocks_trash_purge_empty_and_expiry() {
     assert!(trashed_ws.record("rec-live").is_some());
 
     ws.fail_live_summary(&live_key, "已取消").unwrap();
+    assert!(!ws.record("rec-live").unwrap().has_pending_analysis());
+    let summary_key = ws.begin_analysis("rec-live", AnalysisStage::Summarizing).unwrap();
+    assert!(ws.record("rec-live").unwrap().has_pending_analysis());
+    ws.fail_analysis(&summary_key, "已取消").unwrap();
+    assert!(!ws.record("rec-live").unwrap().has_pending_analysis());
     ws.trash_record("rec-live", 10_000).unwrap();
     assert!(ws.has_expired_trash(expires_at));
     let purged = ws.purge_expired_trash(expires_at).unwrap();

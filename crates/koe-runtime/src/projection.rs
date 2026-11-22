@@ -1,11 +1,207 @@
+use std::borrow::Cow;
+
 use super::*;
+use crate::live_minutes::{SourceView, TranscriptLine};
 use chrono::{DateTime, Local};
 use koe_engine::{
     context::{AskRole, AskStatus},
     session::TransferPhaseTag,
     transport::OPUS_FRAME_BYTES,
 };
-use serde_json::json;
+use serde::Serialize;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveRecordRowDto<'a> {
+    id: &'a str,
+    title: &'a str,
+    created_at_epoch_sec: u64,
+    duration_ms: u64,
+    source: String,
+    mode: &'static str,
+    project: Option<&'a str>,
+    run_id: Option<&'a str>,
+    ordinal: Option<u64>,
+    status: &'static str,
+    segment_count: usize,
+    preview: String,
+    archived: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcedItemRowDto<'a> {
+    id: &'a str,
+    text: &'a str,
+    state: &'static str,
+    completed: bool,
+    due: Option<&'a str>,
+    sources: Vec<SourceView<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AskMessageDto<'a> {
+    id: &'a str,
+    role: &'static str,
+    text: &'a str,
+    mode: &'static str,
+    sources: Vec<SourceView<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AskSnapshotDto<'a> {
+    scope: &'static str,
+    record_id: Option<&'a str>,
+    phase: &'static str,
+    messages: Vec<AskMessageDto<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderSnapshotDto<'a> {
+    meeting_audio_policy: &'static str,
+    meeting_audio_policy_error: Option<&'a str>,
+    meeting_audio_status: Option<String>,
+    configured: bool,
+    qwen_configured: bool,
+    deepseek_configured: bool,
+    asr_configured: bool,
+    asr_is_realtime: bool,
+    asr_provider: &'static str,
+    asr_model: &'a str,
+    llm_provider: &'static str,
+    model: &'a str,
+    enable_thinking: bool,
+    qwen_workspace_id: &'a str,
+    asr_endpoint: &'a str,
+    chat_endpoint: &'a str,
+    credential_state: &'static str,
+    deepseek_credential_state: &'static str,
+    isolated: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashRecordRowDto<'a> {
+    id: &'a str,
+    title: &'a str,
+    created_at_epoch_sec: u64,
+    duration_ms: u64,
+    source: String,
+    segment_count: usize,
+    preview: String,
+    trashed_at_ms: u64,
+    expires_at_ms: u64,
+    remaining_days: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UndoTrashDto<'a> {
+    record_id: &'a str,
+    title: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    record_ids: Option<&'a [String]>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeakerSummaryDto {
+    name: String,
+    segment_count: usize,
+    first_segment_id: String,
+}
+
+#[derive(Serialize)]
+struct DetailSummarySectionDto<'a> {
+    title: Cow<'a, str>,
+    text: &'a str,
+    sources: Vec<SourceView<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSpanDto {
+    epoch: u64,
+    start_ns: u64,
+    sample_offset: u64,
+    sample_count: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureLaneDto<'a> {
+    lane: &'a str,
+    audio_path: Option<String>,
+    sample_rate: Option<u32>,
+    duration_ms: u64,
+    interruption: Option<&'a str>,
+    timeline: Vec<CaptureSpanDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordDetailDto<'a> {
+    id: &'a str,
+    title: &'a str,
+    created_at_epoch_sec: u64,
+    duration_ms: u64,
+    source: String,
+    mode: &'static str,
+    project: Option<&'a str>,
+    run_id: Option<&'a str>,
+    ordinal: Option<u64>,
+    status: &'static str,
+    archived: bool,
+    segments: Vec<TranscriptLine<'a>>,
+    speakers: Vec<SpeakerSummaryDto>,
+    minutes_stale: bool,
+    can_edit_transcript: bool,
+    capture_lanes: Vec<CaptureLaneDto<'a>>,
+    summary: Vec<DetailSummarySectionDto<'a>>,
+    highlights: Vec<SourceView<'a>>,
+    audio_path: Option<String>,
+    can_retranscribe: bool,
+    is_processing: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotDto<'a> {
+    platform: Value,
+    speech: Value,
+    lifecycle: Value,
+    active_capture: Value,
+    microphone: Value,
+    capture: Value,
+    version: u32,
+    generation: u64,
+    section: Page,
+    can_go_back: bool,
+    selected_record_id: Option<&'a str>,
+    focus_segment_id: Option<&'a str>,
+    records: Vec<LiveRecordRowDto<'a>>,
+    trash_records: Vec<TrashRecordRowDto<'a>>,
+    undo_trash: Option<UndoTrashDto<'a>>,
+    detail: Option<RecordDetailDto<'a>>,
+    tasks: Vec<SourcedItemRowDto<'a>>,
+    memories: Vec<SourcedItemRowDto<'a>>,
+    workspaces: Value,
+    ask: AskSnapshotDto<'a>,
+    device: Value,
+    live_caption: Value,
+    app_update: Value,
+    provider: ProviderSnapshotDto<'a>,
+    playback: Value,
+    error: Option<&'a str>,
+    notice: Option<&'a str>,
+}
+
+fn serialize_value<T: Serialize>(value: T) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
 
 impl KoeRuntime {
     pub(super) fn sorted_records(&self) -> Vec<&ProductRecord> {
@@ -19,12 +215,12 @@ impl KoeRuntime {
         records
     }
 
-    pub(super) fn live_record_row_json(
+    fn live_record_row_dto<'a>(
         &self,
-        record: &ProductRecord,
+        record: &'a ProductRecord,
         live_record_id: Option<&str>,
         live_duration_ms: u64,
-    ) -> Value {
+    ) -> LiveRecordRowDto<'a> {
         let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
         let duration_ms = if is_live {
             record.aggregate.duration_ms.max(live_duration_ms)
@@ -54,31 +250,40 @@ impl KoeRuntime {
         })
         .map(|text| text.chars().take(100).collect::<String>())
         .unwrap_or_default();
-        json!({
-            "id": record.aggregate.recording_id,
-            "title": record.title,
-            "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
-            "durationMs": duration_ms,
-            "source": self.origin_label(record.origin),
-            "mode": record.mode.as_str(),
-            "project": record.project,
-            "runId": record.all_day.as_ref().map(|s| &s.run_id),
-            "ordinal": record.all_day.as_ref().map(|s| s.ordinal),
-            "status": status(record),
-            "segmentCount": record.aggregate.spine.len(),
-            "preview": preview,
-            "archived": record.is_archived(),
-        })
+        LiveRecordRowDto {
+            id: &record.aggregate.recording_id,
+            title: &record.title,
+            created_at_epoch_sec: record.aggregate.created_at_epoch_sec,
+            duration_ms,
+            source: self.origin_label(record.origin),
+            mode: record.mode.as_str(),
+            project: record.project.as_deref(),
+            run_id: record.all_day.as_ref().map(|s| s.run_id.as_str()),
+            ordinal: record.all_day.as_ref().map(|s| s.ordinal),
+            status: status(record),
+            segment_count: record.aggregate.spine.len(),
+            preview,
+            archived: record.is_archived(),
+        }
     }
 
-    pub(super) fn tasks_and_memories_json(&self) -> (Vec<Value>, Vec<Value>) {
+    pub(super) fn live_record_row_json(
+        &self,
+        record: &ProductRecord,
+        live_record_id: Option<&str>,
+        live_duration_ms: u64,
+    ) -> Value {
+        serialize_value(self.live_record_row_dto(record, live_record_id, live_duration_ms))
+    }
+
+    fn tasks_and_memories_dtos(&self) -> (Vec<SourcedItemRowDto<'_>>, Vec<SourcedItemRowDto<'_>>) {
         let mut tasks = Vec::new();
         let mut memories = Vec::new();
         for item in self.workspace().items().values() {
             let sources: Vec<_> = item
                 .sources
                 .iter()
-                .filter_map(|s| self.source_json(s))
+                .filter_map(|s| self.source_view(&s.record_id, s.segment_id))
                 .collect();
             if sources.is_empty() {
                 continue;
@@ -88,14 +293,14 @@ impl KoeRuntime {
                 ReviewState::Accepted => "accepted",
                 ReviewState::Dismissed => "dismissed",
             };
-            let row = json!({
-                "id": item.id,
-                "text": item.text,
-                "state": state,
-                "completed": item.completed,
-                "due": item.due,
-                "sources": sources,
-            });
+            let row = SourcedItemRowDto {
+                id: &item.id,
+                text: &item.text,
+                state,
+                completed: item.completed,
+                due: item.due.as_deref(),
+                sources,
+            };
             if item.kind == ItemKind::Task {
                 tasks.push(row);
             } else {
@@ -103,6 +308,14 @@ impl KoeRuntime {
             }
         }
         (tasks, memories)
+    }
+
+    pub(super) fn tasks_and_memories_json(&self) -> (Vec<Value>, Vec<Value>) {
+        let (tasks, memories) = self.tasks_and_memories_dtos();
+        (
+            tasks.into_iter().map(serialize_value).collect(),
+            memories.into_iter().map(serialize_value).collect(),
+        )
     }
 
     pub(super) fn ask_phase(&self) -> &'static str {
@@ -122,7 +335,7 @@ impl KoeRuntime {
         }
     }
 
-    pub(super) fn ask_json(&self) -> Value {
+    fn ask_dto(&self) -> AskSnapshotDto<'_> {
         let ask = self.workspace().ask_session();
         let messages: Vec<_> = ask
             .messages
@@ -132,60 +345,69 @@ impl KoeRuntime {
                     .sources
                     .iter()
                     .filter_map(|line| {
-                        self.source_json(&SourceRef {
-                            record_id: line.source.recording_key.clone(),
-                            segment_id: line.source.segment_id,
-                        })
+                        self.source_view(&line.source.recording_key, line.source.segment_id)
                     })
                     .collect();
-                json!({
-                    "id": m.id,
-                    "role": if m.role == AskRole::User { "user" } else { "assistant" },
-                    "text": m.text,
-                    "mode": if m.notice { "retrieval" } else { "answer" },
-                    "sources": sources,
-                })
+                AskMessageDto {
+                    id: &m.id,
+                    role: if m.role == AskRole::User {
+                        "user"
+                    } else {
+                        "assistant"
+                    },
+                    text: &m.text,
+                    mode: if m.notice { "retrieval" } else { "answer" },
+                    sources,
+                }
             })
             .collect();
-        let (scope, ask_record) = match self.workspace().ask_scope() {
+        let (scope, record_id) = match self.workspace().ask_scope() {
             SearchScope::All => ("all", None),
-            SearchScope::Record(id) => ("record", Some(id)),
+            SearchScope::Record(id) => ("record", Some(id.as_str())),
         };
-        json!({
-            "scope": scope,
-            "recordId": ask_record,
-            "phase": self.ask_phase(),
-            "messages": messages,
-        })
+        AskSnapshotDto {
+            scope,
+            record_id,
+            phase: self.ask_phase(),
+            messages,
+        }
     }
 
-    pub(super) fn provider_json(&self) -> Value {
+    pub(super) fn ask_json(&self) -> Value {
+        serialize_value(self.ask_dto())
+    }
+
+    fn provider_dto(&self) -> ProviderSnapshotDto<'_> {
         let config = self.workspace().provider_configuration();
-        json!({
-            "meetingAudioPolicy": config.meeting_audio_policy.as_str(),
-            "meetingAudioPolicyError": self.audio_policy_error,
-            "meetingAudioStatus": if config.meeting_audio_policy == MeetingAudioPolicy::LocalOnly {
+        ProviderSnapshotDto {
+            meeting_audio_policy: config.meeting_audio_policy.as_str(),
+            meeting_audio_policy_error: self.audio_policy_error.as_deref(),
+            meeting_audio_status: if config.meeting_audio_policy == MeetingAudioPolicy::LocalOnly {
                 Some("音频只保存在本机；云端语音上传已关闭。".to_string())
             } else {
                 self.ensure_meeting_audio_upload().err()
             },
-            "configured": self.text_provider_configured(),
-            "qwenConfigured": !self.settings.key.is_empty(),
-            "deepseekConfigured": !self.settings.deepseek_key.is_empty(),
-            "asrConfigured": self.cloud_asr_configured(),
-            "asrIsRealtime": config.is_realtime_cloud_asr(),
-            "asrProvider": config.asr_provider.as_str(),
-            "asrModel": config.asr_model,
-            "llmProvider": config.llm_provider.as_str(),
-            "model": config.model,
-            "enableThinking": config.enable_thinking,
-            "qwenWorkspaceId": config.qwen_workspace_id,
-            "asrEndpoint": config.asr_endpoint,
-            "chatEndpoint": config.chat_endpoint,
-            "credentialState": self.credential_state(),
-            "deepseekCredentialState": self.deepseek_credential_state(),
-            "isolated": self.credentials.isolated(),
-        })
+            configured: self.text_provider_configured(),
+            qwen_configured: !self.settings.key.is_empty(),
+            deepseek_configured: !self.settings.deepseek_key.is_empty(),
+            asr_configured: self.cloud_asr_configured(),
+            asr_is_realtime: config.is_realtime_cloud_asr(),
+            asr_provider: config.asr_provider.as_str(),
+            asr_model: &config.asr_model,
+            llm_provider: config.llm_provider.as_str(),
+            model: &config.model,
+            enable_thinking: config.enable_thinking,
+            qwen_workspace_id: &config.qwen_workspace_id,
+            asr_endpoint: &config.asr_endpoint,
+            chat_endpoint: &config.chat_endpoint,
+            credential_state: self.credential_state(),
+            deepseek_credential_state: self.deepseek_credential_state(),
+            isolated: self.credentials.isolated(),
+        }
+    }
+
+    pub(super) fn provider_json(&self) -> Value {
+        serialize_value(self.provider_dto())
     }
 
     pub(super) fn project(&self, now: u64) -> Value {
@@ -196,7 +418,7 @@ impl KoeRuntime {
             .iter()
             .copied()
             .filter(|r| r.is_live())
-            .map(|record| self.live_record_row_json(record, live_record_id, live_duration_ms))
+            .map(|record| self.live_record_row_dto(record, live_record_id, live_duration_ms))
             .collect();
         let mut trashed_records: Vec<_> = self
             .workspace()
@@ -228,26 +450,24 @@ impl KoeRuntime {
                     .first()
                     .map(|s| s.text.chars().take(100).collect::<String>())
                     .unwrap_or_default();
-                Some(json!({
-                    "id": record.aggregate.recording_id,
-                    "title": record.title,
-                    "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
-                    "durationMs": record.aggregate.duration_ms,
-                    "source": self.origin_label(record.origin),
-                    "segmentCount": record.aggregate.spine.len(),
-                    "preview": preview,
-                    "trashedAtMs": trashed_at_ms,
-                    "expiresAtMs": expires_at_ms,
-                    "remainingDays": remaining_days,
-                }))
+                Some(TrashRecordRowDto {
+                    id: &record.aggregate.recording_id,
+                    title: &record.title,
+                    created_at_epoch_sec: record.aggregate.created_at_epoch_sec,
+                    duration_ms: record.aggregate.duration_ms,
+                    source: self.origin_label(record.origin),
+                    segment_count: record.aggregate.spine.len(),
+                    preview,
+                    trashed_at_ms,
+                    expires_at_ms,
+                    remaining_days,
+                })
             })
             .collect();
-        let undo_trash = self.undo_trash.as_ref().map(|b| {
-            if b.record_ids.len() > 1 {
-                json!({"recordId": b.record_id, "title": b.title, "recordIds": b.record_ids})
-            } else {
-                json!({"recordId": b.record_id, "title": b.title})
-            }
+        let undo_trash = self.undo_trash.as_ref().map(|b| UndoTrashDto {
+            record_id: &b.record_id,
+            title: &b.title,
+            record_ids: (b.record_ids.len() > 1).then_some(b.record_ids.as_slice()),
         });
         let detail = self
             .selection
@@ -256,10 +476,10 @@ impl KoeRuntime {
             .as_deref()
             .and_then(|id| self.workspace().record(id))
             .filter(|r| r.is_live())
-            .map(|r| self.detail(r, live_record_id, live_duration_ms));
-        let (tasks, memories) = self.tasks_and_memories_json();
-        let ask_json = self.ask_json();
-        let device_json = self.device_json_with_live(live_record_id, live_duration_ms);
+            .map(|r| self.detail_dto(r, live_record_id, live_duration_ms));
+        let (tasks, memories) = self.tasks_and_memories_dtos();
+        let ask = self.ask_dto();
+        let device = self.device_json_with_live(live_record_id, live_duration_ms);
         let microphone = self.microphone_status();
         let capture_selection = self.capture_selection();
         let workspaces = self.mode_workspaces_json(
@@ -270,27 +490,43 @@ impl KoeRuntime {
             microphone.as_ref(),
             &capture_selection,
         );
-        json!({"platform":self.platform.to_json(),"speech":self.speech_json(),"lifecycle": self.lifecycle_json(),
-            "activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
-            "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.selection.location.page,
-            "canGoBack":!self.selection.back.is_empty(),"selectedRecordId":self.selection.location.record,"focusSegmentId":self.selection.location.segment,
-            "records":rows,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
-            "workspaces":workspaces,
-            "ask":ask_json,
-            "device":device_json,
-            "liveCaption":self.live_caption_json(),
-            "appUpdate":self.app_update_json(),
-            "provider":self.provider_json(),
-            "playback":self.playback_json(),
-            "error":self.error,"notice":self.notice})
+        serialize_value(SnapshotDto {
+            platform: self.platform.to_json(),
+            speech: self.speech_json(),
+            lifecycle: self.lifecycle_json(),
+            active_capture: self.active_capture_json(microphone.as_ref(), live_duration_ms),
+            microphone: self.microphone_json(microphone.as_ref()),
+            capture: self.capture_studio_json(&capture_selection),
+            version: KOE_HOST_SNAPSHOT_VERSION,
+            generation: self.generation,
+            section: self.selection.location.page,
+            can_go_back: !self.selection.back.is_empty(),
+            selected_record_id: self.selection.location.record.as_deref(),
+            focus_segment_id: self.selection.location.segment.as_deref(),
+            records: rows,
+            trash_records: trash_rows,
+            undo_trash,
+            detail,
+            tasks,
+            memories,
+            workspaces,
+            ask,
+            device,
+            live_caption: self.live_caption_json(),
+            app_update: self.app_update_json(),
+            provider: self.provider_dto(),
+            playback: self.playback_json(),
+            error: self.error.as_deref(),
+            notice: self.notice.as_deref(),
+        })
     }
 
-    fn detail(
-        &self,
-        record: &ProductRecord,
+    fn detail_dto<'a>(
+        &'a self,
+        record: &'a ProductRecord,
         live_record_id: Option<&str>,
         live_duration_ms: u64,
-    ) -> Value {
+    ) -> RecordDetailDto<'a> {
         let aggregate = &record.aggregate;
         let duration_ms = if Some(aggregate.recording_id.as_str()) == live_record_id {
             aggregate.duration_ms.max(live_duration_ms)
@@ -301,17 +537,15 @@ impl KoeRuntime {
             .spine
             .segments()
             .iter()
-            .map(crate::live_minutes::TranscriptLine::from)
+            .map(TranscriptLine::from)
             .collect();
         let speakers: Vec<_> = record
             .distinct_speakers()
             .into_iter()
-            .map(|sp| {
-                json!({
-                    "name": sp.name,
-                    "segmentCount": sp.segment_count,
-                    "firstSegmentId": sp.first_segment_id.to_string(),
-                })
+            .map(|sp| SpeakerSummaryDto {
+                name: sp.name,
+                segment_count: sp.segment_count,
+                first_segment_id: sp.first_segment_id.to_string(),
             })
             .collect();
         let mut summary = Vec::new();
@@ -322,9 +556,19 @@ impl KoeRuntime {
             .flat_map(|m| &m.summaries)
             .filter(|s| s.record_id == aggregate.recording_id)
         {
-            summary.push(json!({"title":format!("旧版纪要（未验证来源） {}", imported.slot),"text":imported.text,"sources":[]}));
+            summary.push(DetailSummarySectionDto {
+                title: Cow::Owned(format!("旧版纪要（未验证来源） {}", imported.slot)),
+                text: &imported.text,
+                sources: Vec::new(),
+            });
         }
-        summary.extend(self.minutes_sections(record).iter().map(|section| json!(section)));
+        summary.extend(self.minutes_sections(record).into_iter().map(|section| {
+            DetailSummarySectionDto {
+                title: Cow::Borrowed(section.title),
+                text: section.text,
+                sources: section.sources,
+            }
+        }));
         let mut highlighted = record.highlighted_segments.clone();
         for mark in &aggregate.bookmarks {
             if let Some(segment) = aggregate
@@ -338,30 +582,67 @@ impl KoeRuntime {
         }
         let highlights: Vec<_> = highlighted
             .iter()
-            .filter_map(|s| {
-                self.source_json(&SourceRef {
-                    record_id: aggregate.recording_id.clone(),
-                    segment_id: *s,
-                })
-            })
+            .filter_map(|s| self.source_view(&aggregate.recording_id, *s))
             .collect();
         let audio = recording_assets::audio_path(&self.root, &aggregate.recording_id)
             .ok()
             .filter(|p| p.exists());
-        let capture_lanes: Vec<_> = record.capture_lanes.iter().map(|l| {
-            let path = l.asset_id.as_ref().and_then(|id| recording_assets::audio_path(&self.root, id).ok()).filter(|p| p.is_file());
-            json!({"lane":l.lane,"audioPath":path.map(|p|p.to_string_lossy().into_owned()),"sampleRate":l.sample_rate,"durationMs":l.duration_ms,"interruption":l.interruption,"timeline":l.timeline.iter().map(|s| json!({"epoch":s.epoch,"startNs":s.start_ns,"sampleOffset":s.sample_offset,"sampleCount":s.sample_count})).collect::<Vec<_>>()})
-        }).collect();
+        let capture_lanes: Vec<_> = record
+            .capture_lanes
+            .iter()
+            .map(|l| {
+                let path = l
+                    .asset_id
+                    .as_ref()
+                    .and_then(|id| recording_assets::audio_path(&self.root, id).ok())
+                    .filter(|p| p.is_file());
+                CaptureLaneDto {
+                    lane: &l.lane,
+                    audio_path: path.map(|p| p.to_string_lossy().into_owned()),
+                    sample_rate: l.sample_rate,
+                    duration_ms: l.duration_ms,
+                    interruption: l.interruption.as_deref(),
+                    timeline: l
+                        .timeline
+                        .iter()
+                        .map(|s| CaptureSpanDto {
+                            epoch: s.epoch,
+                            start_ns: s.start_ns,
+                            sample_offset: s.sample_offset,
+                            sample_count: s.sample_count,
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
         let can_retranscribe = audio.is_some()
             && matches!(
                 record.analysis,
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
-        json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":duration_ms,"source":self.origin_label(record.origin),"mode":record.mode.as_str(),"project":record.project,"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
-            "minutesStale":record.is_minutes_stale(),"canEditTranscript":self.can_edit_record(&aggregate.recording_id),
-            "captureLanes":capture_lanes,"summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
-            "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
+        RecordDetailDto {
+            id: &aggregate.recording_id,
+            title: &record.title,
+            created_at_epoch_sec: aggregate.created_at_epoch_sec,
+            duration_ms,
+            source: self.origin_label(record.origin),
+            mode: record.mode.as_str(),
+            project: record.project.as_deref(),
+            run_id: record.all_day.as_ref().map(|s| s.run_id.as_str()),
+            ordinal: record.all_day.as_ref().map(|s| s.ordinal),
+            status: status(record),
+            archived: record.is_archived(),
+            segments,
+            speakers,
+            minutes_stale: record.is_minutes_stale(),
+            can_edit_transcript: self.can_edit_record(&aggregate.recording_id),
+            capture_lanes,
+            summary,
+            highlights,
+            audio_path: audio.map(|p| p.to_string_lossy().to_string()),
+            can_retranscribe,
+            is_processing: matches!(record.analysis, AnalysisState::Pending { .. }),
+        }
     }
 
     pub(crate) fn origin_label(&self, source: RecordOrigin) -> String {
@@ -402,12 +683,16 @@ impl KoeRuntime {
         let record = self.workspace().record(id).ok_or("记录不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
         let (live_record_id, live_duration_ms) = self.live_bean_capture_progress();
-        Ok(self.detail(record, live_record_id, live_duration_ms))
+        Ok(serialize_value(self.detail_dto(
+            record,
+            live_record_id,
+            live_duration_ms,
+        )))
     }
 
     pub(crate) fn source_json(&self, source: &SourceRef) -> Option<Value> {
         self.source_view(&source.record_id, source.segment_id)
-            .map(|source| json!(source))
+            .map(serialize_value)
     }
 }
 

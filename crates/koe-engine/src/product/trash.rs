@@ -150,9 +150,7 @@ impl ProductRecord {
 
 impl ProductWorkspace {
     fn is_record_busy(&self, id: &str, record: &ProductRecord) -> bool {
-        matches!(record.analysis, AnalysisState::Pending { .. })
-            || matches!(record.live_summary, AnalysisState::Pending { .. })
-            || pending_ask_references(&self.pending_ask, id)
+        record.has_pending_analysis() || pending_ask_references(&self.pending_ask, id)
     }
 
     /// Enables or clears accidental-deletion archive protection on a live recording.

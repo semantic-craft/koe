@@ -63,7 +63,7 @@ pub use minutes::{
     MinutesValidationError,
 };
 pub use product::RecordMode;
-pub use session::{CustodyReceipt, RecordingEntry};
+pub use session::{CustodyReceipt, RecordingEntry, VerifiedCustodyReceipt};
 pub use version::{
     validate_build_number, SemanticVersion, KOE_APP_BUILD, KOE_APP_VERSION,
     KOE_GITHUB_DOWNLOAD_PREFIX, KOE_GITHUB_LATEST_RELEASE_API_URL, KOE_GITHUB_RELEASES_URL,

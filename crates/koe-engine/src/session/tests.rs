@@ -859,6 +859,12 @@
         assert!(session.request_reclaim_bean_file(20_261_109).is_err());
 
         assert!(!session.confirm_disk_custody(CustodyReceipt {
+            file_id: 0,
+            byte_count: 9818,
+            sha256_hex: "a".repeat(64),
+            fsynced_at_epoch_sec: 1_775_000_000,
+        }));
+        assert!(!session.confirm_disk_custody(CustodyReceipt {
             file_id: 20_261_109,
             byte_count: 0,
             sha256_hex: "a".repeat(64),
@@ -871,18 +877,26 @@
             fsynced_at_epoch_sec: 1_775_000_000,
         }));
 
+        let sha =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string();
         assert!(session.confirm_disk_custody(CustodyReceipt {
             file_id: 20_261_109,
             byte_count: 9818,
-            sha256_hex:
-                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+            sha256_hex: sha.clone(),
             fsynced_at_epoch_sec: 1_775_000_000,
         }));
         assert!(session.has_disk_custody(20_261_109));
+        let receipt = session
+            .custody_receipt(20_261_109)
+            .expect("verified custody receipt must be retrievable");
+        assert_eq!(receipt.file_id(), 20_261_109);
+        assert_eq!(receipt.byte_count(), 9818);
+        assert_eq!(receipt.sha256_hex(), sha);
+        assert_eq!(receipt.receipt().fsynced_at_epoch_sec, 1_775_000_000);
         let delete_cmd = session
             .request_reclaim_bean_file(20_261_109)
             .expect("custody verified must permit 0x1A/0x10 delete command");
-        assert_eq!(delete_cmd, DeviceCommands::delete_file(20_261_109));
+        assert_eq!(delete_cmd, DeviceCommands::delete_file(receipt));
     }
 
     #[test]
