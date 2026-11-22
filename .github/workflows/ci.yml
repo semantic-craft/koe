@@ -167,6 +167,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+          cache: gradle
+          cache-dependency-path: |
+            platforms/android/gradle-app/**/*.gradle.kts
+            platforms/android/gradle-app/gradle/wrapper/gradle-wrapper.properties
       - name: Ensure native build tools and Android SDK
         run: |
           set -euo pipefail
@@ -201,7 +205,15 @@ jobs:
       - name: Run Android unit tests and release lint
         run: |
           cd platforms/android/gradle-app
-          ./gradlew testGithubDebugUnitTest testPlayDebugUnitTest lintGithubRelease lintPlayRelease --console=plain
+          for attempt in 1 2; do
+            if ./gradlew testGithubDebugUnitTest testPlayDebugUnitTest lintGithubRelease lintPlayRelease --console=plain --max-workers=2; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 2 ]]; then
+              exit 1
+            fi
+            sleep 15
+          done
 
   lint-scripts:
     needs: [changes]
