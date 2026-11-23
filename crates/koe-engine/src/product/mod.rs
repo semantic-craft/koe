@@ -14,10 +14,11 @@ pub use migration::{ImportedSummary, MigrationReceipt};
 mod capture;
 mod record;
 pub use capture::CaptureLaneRecord;
-pub use record::{RestoredProductRecord, TranscriptFinal};
+pub use record::{PersistedProductRecord, RestoredProductRecord, TranscriptFinal};
 mod capture_timeline;
 pub use capture_timeline::{CaptureSpan, place_capture_span};
 mod state;
+pub use state::PersistedWorkspaceState;
 mod transcript_edit;
 pub use transcript_edit::{
     MAX_SEGMENT_TEXT_CHARS, MAX_SPEAKER_NAME_CHARS, MinutesFreshness, SpeakerName, SpeakerSummary,

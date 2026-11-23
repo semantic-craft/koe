@@ -11,6 +11,7 @@ impl TransportSession {
         self.active_file_id = None;
         self.active_file_key = None;
         self.active_nonce = None;
+        self.clear_active_file_decryptor();
         self.active_is_realtime = false;
         self.stream_base_slices = 0;
         self.opus_buffer.clear();
@@ -339,6 +340,7 @@ impl TransportSession {
     /// and resets the active transfer state to `Idle`.
     pub fn finalize_active_transfer(&mut self, now_epoch_sec: u64) -> Option<FinalizedRecording> {
         let fid = self.active_file_id?;
+        self.clear_active_file_decryptor();
         if self.opus_buffer.is_empty() {
             self.capture_events.push_back(CaptureEvent::Finished {
                 file_id: fid,

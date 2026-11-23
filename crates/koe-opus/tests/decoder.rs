@@ -3,7 +3,7 @@
 use koe_engine::ogg_opus::OggOpus;
 use koe_engine::session::REAL_OPUS_20MS_440HZ_PACKET;
 use koe_engine::wav::{OpusStreamDecoder, OpusWave, ASR_SAMPLE_RATE, WAV_SAMPLE_RATE};
-use koe_opus::{create_libopus_decoder, LibOpusDecoder};
+use koe_opus::{create_libopus_decoder, LibOpusDecoder, OpusError};
 
 const SILENCE_20MS_MONO: [u8; 3] = [0xF8, 0xFF, 0xFE];
 const SILENCE_20MS_STEREO_TOC: [u8; 3] = [0xFC, 0xFF, 0xFE];
@@ -168,4 +168,33 @@ fn end_to_end_opus_wave_decodes_zero_padded_d3200_frames() {
     .expect("padded D3200 Opus frames must decode to 48 kHz WAV");
     assert!(OggOpus::is_wav(&wav));
     assert_eq!(wav.len(), 44 + 4 * 1920);
+}
+
+#[test]
+fn structured_errors_cover_invalid_rates_empty_and_corrupted_packets() {
+    assert_eq!(
+        LibOpusDecoder::try_new(44_100).err(),
+        Some(OpusError::InvalidSampleRate(44_100))
+    );
+    assert_eq!(
+        LibOpusDecoder::try_new(u32::MAX).err(),
+        Some(OpusError::InvalidSampleRate(u32::MAX))
+    );
+
+    let mut dec = LibOpusDecoder::try_new(ASR_SAMPLE_RATE).expect("valid 16 kHz decoder");
+    let mut out = Vec::new();
+    assert_eq!(
+        dec.try_decode_trimmed_packet(&[], &mut out),
+        Err(OpusError::EmptyPacket)
+    );
+    assert!(matches!(
+        dec.try_decode_trimmed_packet(&[0x03], &mut out),
+        Err(OpusError::DecodeFailed(code)) if code < 0
+    ));
+    assert!(out.is_empty());
+    assert_eq!(
+        dec.try_decode_trimmed_packet(&REAL_OPUS_20MS_440HZ_PACKET, &mut out),
+        Ok(320)
+    );
+    assert_eq!(out.len(), 640);
 }

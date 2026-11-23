@@ -1,6 +1,5 @@
 use super::*;
 use crate::commands::{DeviceCommands, RxCmd};
-use crate::crypto::AesCtrStreamDecrypt;
 use crate::frame::{read_u32_le, DecodedPacket};
 use crate::slice_marks::SliceMark;
 use crate::transport::{OPUS_FRAME_BYTES, SLICE_RECORD_BYTES, TransportSliceProcessor};
@@ -259,6 +258,7 @@ impl TransportSession {
                     self.active_is_realtime = false;
                     self.active_file_key = None;
                     self.active_nonce = None;
+                    self.clear_active_file_decryptor();
                     self.opus_buffer.clear();
                     self.marks_ms.clear();
                     self.stream_base_slices = 0;
@@ -430,19 +430,15 @@ impl TransportSession {
             {
                 *waited = 0;
             }
-            let dec = self
-                .active_file_key
-                .as_ref()
-                .zip(self.active_nonce.as_ref())
-                .and_then(|(fk, n)| AesCtrStreamDecrypt::new(fk, n));
             let min_seq = if self.active_is_realtime {
                 self.total_slice_offset()
             } else {
                 self.received_slice_count()
             };
+            let dec = self.resolve_active_file_decryptor();
             let batch = TransportSliceProcessor::unpack_frame_from(
                 &pkt.raw,
-                dec.as_ref(),
+                dec,
                 min_seq,
             );
             if batch.slice_count > 0 {
@@ -581,5 +577,185 @@ impl TransportSession {
                     outcome.transfer_updated = true;
                 }
             }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::DeviceCrypto;
+    use crate::transport::UNFINISHED_FILE_SIZE;
+
+    fn build_head_frame(
+        session_key: &[u8; 32],
+        file_id: u32,
+        file_size: u32,
+        file_key: &[u8; 32],
+        file_nonce: &[u8; 16],
+    ) -> Vec<u8> {
+        let mut plain_key_mat = Vec::with_capacity(46);
+        plain_key_mat.extend_from_slice(b"soundcored3200");
+        plain_key_mat.extend_from_slice(file_key);
+        let session_nonce = [0x33u8; 16];
+        let enc_file_key =
+            DeviceCrypto::aes_ctr_decrypt(&plain_key_mat, session_key, &session_nonce).unwrap();
+        let mut head_payload = Vec::with_capacity(87);
+        head_payload.extend_from_slice(&file_id.to_le_bytes());
+        head_payload.extend_from_slice(&file_size.to_le_bytes());
+        head_payload.extend_from_slice(file_nonce);
+        head_payload.extend_from_slice(&enc_file_key);
+        head_payload.extend_from_slice(&session_nonce);
+        head_payload.push(0);
+        TransportSession::build_rx_frame(0x1A, 0x07, &head_payload)
+    }
+
+    fn build_encrypted_slice_frame(
+        file_key: &[u8; 32],
+        file_nonce: &[u8; 16],
+        seq: u32,
+        plain_frame: &[u8; OPUS_FRAME_BYTES],
+    ) -> Vec<u8> {
+        let decryptor = AesCtrStreamDecrypt::new(file_key, file_nonce).unwrap();
+        let mut payload = Vec::with_capacity(SLICE_RECORD_BYTES);
+        payload.extend_from_slice(&seq.to_le_bytes());
+        payload.push(0x00);
+        let mut cipher = *plain_frame;
+        decryptor.decrypt_contiguous_in_place(&mut cipher, seq);
+        payload.extend_from_slice(&cipher);
+        payload.push(0x00);
+        TransportSession::build_rx_frame(0x1A, 0x08, &payload)
+    }
+
+    fn make_plain_frame(seed: u8) -> [u8; OPUS_FRAME_BYTES] {
+        let mut frame = [0u8; OPUS_FRAME_BYTES];
+        frame[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+            .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+        frame[1] ^= seed;
+        frame
+    }
+
+    #[test]
+    fn encrypted_slice_stream_reuses_cached_decryptor_across_packets_retransmits_and_key_switches() {
+        let session_key = [0x11u8; 32];
+        let file_key_a = [0x22u8; 32];
+        let file_nonce_a = [0x33u8; 16];
+        let file_key_b = [0x44u8; 32];
+        let file_nonce_b = [0x55u8; 16];
+
+        let mut session = TransportSession::new();
+        session.set_session_key(session_key);
+        let head_a = build_head_frame(&session_key, 101, 6 * SLICE_RECORD_BYTES as u32, &file_key_a, &file_nonce_a);
+        session.ingest_ble_chunk(&head_a, 1_000);
+        assert_eq!(session.decryptor_builds, 0);
+
+        let mut expected_a = Vec::with_capacity(6 * OPUS_FRAME_BYTES);
+        for seq in 0..6u32 {
+            let plain = make_plain_frame(seq as u8 + 1);
+            expected_a.extend_from_slice(&plain);
+            let pkt = build_encrypted_slice_frame(&file_key_a, &file_nonce_a, seq, &plain);
+            let out = session.ingest_ble_chunk(&pkt, 1_000 + u64::from(seq));
+            assert_eq!(out.slices_unpacked_count, 1);
+        }
+        assert_eq!(session.opus_buffer, expected_a);
+        assert_eq!(
+            session.decryptor_builds, 1,
+            "6 consecutive encrypted BLE packets must construct AesCtrStreamDecrypt only once"
+        );
+
+        let dup_pkt = build_encrypted_slice_frame(&file_key_a, &file_nonce_a, 2, &make_plain_frame(3));
+        let dup_out = session.ingest_ble_chunk(&dup_pkt, 1_010);
+        assert_eq!(dup_out.slices_unpacked_count, 0);
+        assert_eq!(session.opus_buffer, expected_a);
+        assert_eq!(session.decryptor_builds, 1);
+
+        let head_b = build_head_frame(&session_key, 102, 2 * SLICE_RECORD_BYTES as u32, &file_key_b, &file_nonce_b);
+        session.ingest_ble_chunk(&head_b, 1_020);
+        let plain_b0 = make_plain_frame(99);
+        let pkt_b0 = build_encrypted_slice_frame(&file_key_b, &file_nonce_b, 0, &plain_b0);
+        let out_b = session.ingest_ble_chunk(&pkt_b0, 1_021);
+        assert_eq!(out_b.slices_unpacked_count, 1);
+        assert_eq!(session.opus_buffer, plain_b0.as_slice());
+        assert_eq!(
+            session.decryptor_builds, 2,
+            "switching to a different file key must rebuild AesCtrStreamDecrypt once"
+        );
+        assert!(session.active_file_decryptor.is_some());
+
+        let cloned = session.clone();
+        assert!(
+            cloned.active_file_decryptor.is_none(),
+            "Clone must skip active_file_decryptor cache"
+        );
+    }
+
+    #[test]
+    fn lifecycle_transitions_clear_active_file_decryptor_and_zeroize_buffers() {
+        let session_key = [0x11u8; 32];
+        let file_key = [0x22u8; 32];
+        let file_nonce = [0x33u8; 16];
+        let plain = make_plain_frame(7);
+
+        let seed_active = |realtime: bool| -> TransportSession {
+            let mut session = TransportSession::new();
+            session.set_session_key(session_key);
+            let file_size = if realtime {
+                UNFINISHED_FILE_SIZE
+            } else {
+                4 * SLICE_RECORD_BYTES as u32
+            };
+            let head = build_head_frame(&session_key, 200, file_size, &file_key, &file_nonce);
+            session.ingest_ble_chunk(&head, 2_000);
+            assert!(session.active_file_decryptor.is_none());
+            let pkt = build_encrypted_slice_frame(&file_key, &file_nonce, 0, &plain);
+            let out = session.ingest_ble_chunk(&pkt, 2_001);
+            assert_eq!(out.slices_unpacked_count, 1);
+            assert!(session.active_file_decryptor.is_some());
+            session
+        };
+
+        let mut s_reset = seed_active(false);
+        s_reset.reset_active_transfer();
+        assert!(s_reset.active_file_decryptor.is_none());
+
+        let mut s_clear = seed_active(false);
+        s_clear.clear_file_decryption();
+        assert!(s_clear.active_file_decryptor.is_none());
+
+        let mut s_rebind = seed_active(false);
+        s_rebind.bind_file_decryption(200);
+        assert!(s_rebind.active_file_decryptor.is_none());
+
+        let mut s_fin = seed_active(false);
+        assert!(s_fin.finalize_active_transfer(2_010).is_some());
+        assert!(s_fin.active_file_decryptor.is_none());
+
+        let mut s_disc = seed_active(false);
+        s_disc.on_disconnected();
+        assert!(s_disc.active_file_decryptor.is_none());
+
+        let mut s_intr = seed_active(false);
+        s_intr.on_transport_interrupted();
+        assert!(s_intr.active_file_decryptor.is_none());
+
+        let mut s_watchdog = seed_active(false);
+        for _ in 0..=OFFLINE_MAX_RETRIES {
+            s_watchdog.poll_timers(OFFLINE_WATCHDOG_TIMEOUT_MS, 2_100);
+        }
+        assert_eq!(s_watchdog.transfer.phase, TransferPhaseTag::Failed);
+        assert!(s_watchdog.active_file_decryptor.is_none());
+
+        let mut s_quiet = seed_active(true);
+        s_quiet.stop_realtime_recording();
+        assert!(s_quiet.is_realtime_quiet_draining());
+        let drain_out = s_quiet.poll_timers(REALTIME_QUIET_DRAIN_MS, 2_200);
+        assert!(drain_out.finalized.is_some());
+        assert!(s_quiet.active_file_decryptor.is_none());
+
+        let mut cached = CachedStreamDecryptor::new(file_key, file_nonce).unwrap();
+        assert_eq!(cached.key, file_key);
+        assert_eq!(cached.nonce, file_nonce);
+        cached.zeroize();
+        assert_eq!(cached.key, [0u8; 32]);
+        assert_eq!(cached.nonce, [0u8; 16]);
     }
 }

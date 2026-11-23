@@ -321,18 +321,121 @@ fn parse_sentence_array(sentences: &[Value]) -> Vec<TranscriptSegment> {
     out
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PreparedDeepSeekChunk {
+    start_ms: u64,
+    end_ms: u64,
+    wav: Vec<u8>,
+}
+
+fn map_blocking_result<T>(
+    outcome: Result<Result<T, String>, tokio::task::JoinError>,
+) -> Result<T, String> {
+    match outcome {
+        Ok(inner) => inner,
+        Err(join_err) if join_err.is_cancelled() => Err("语音预处理任务已取消".to_string()),
+        Err(_) => Err("语音预处理任务异常中断".to_string()),
+    }
+}
+
+async fn prepare_deepseek_chunks(pcm16: Vec<u8>) -> Result<Vec<PreparedDeepSeekChunk>, String> {
+    let outcome = tokio::task::spawn_blocking(move || {
+        let chunks = split_pcm16_for_deepseek(&pcm16);
+        let mut prepared = Vec::with_capacity(chunks.len());
+        for (start_ms, end_ms, chunk_pcm) in chunks {
+            let wav = pcm16_to_wav(chunk_pcm)?;
+            prepared.push(PreparedDeepSeekChunk {
+                start_ms,
+                end_ms,
+                wav,
+            });
+        }
+        Ok(prepared)
+    })
+    .await;
+    map_blocking_result(outcome)
+}
+
+async fn prepare_qwen_flash_data_uri(pcm16: Vec<u8>) -> Result<(u64, String), String> {
+    if pcm16.len() > QWEN_FLASH_MAX_BYTES {
+        return Err(
+            "qwen-audio-3.1-asr-flash 仅支持 5 分钟以内的音频；长录音请改用 qwen-audio-3.1-asr-flash-filetrans 或流式模型"
+                .into(),
+        );
+    }
+    let duration_ms = (pcm16.len() as u64 * 1000) / BYTES_PER_SEC as u64;
+    let outcome = tokio::task::spawn_blocking(move || {
+        let wav = pcm16_to_wav(&pcm16)?;
+        Ok(format!("data:audio/wav;base64,{}", encode_base64(&wav)))
+    })
+    .await;
+    let data_uri = map_blocking_result(outcome)?;
+    Ok((duration_ms, data_uri))
+}
+
+struct PreparedOssUpload {
+    obj_key: String,
+    boundary: String,
+    body: Vec<u8>,
+}
+
+async fn prepare_oss_upload(
+    policy: &OssUploadPolicy,
+    pcm16: Vec<u8>,
+) -> Result<PreparedOssUpload, String> {
+    let filename = format!("koe-{}.wav", uuid::Uuid::new_v4().simple());
+    let obj_key = format!("{}/{filename}", policy.upload_dir.trim_end_matches('/'));
+    let boundary = format!("----KoeQwenUpload{}", uuid::Uuid::new_v4().simple());
+    let fields = [
+        ("OSSAccessKeyId", policy.oss_access_key_id.clone()),
+        ("Signature", policy.signature.clone()),
+        ("policy", policy.policy.clone()),
+        ("x-oss-object-acl", policy.acl.clone()),
+        ("x-oss-forbid-overwrite", policy.forbid_overwrite.clone()),
+        ("key", obj_key.clone()),
+        ("success_action_status", "200".to_string()),
+    ];
+    let boundary_for_worker = boundary.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let wav = pcm16_to_wav(&pcm16)?;
+        let field_refs: [(&str, &str); 7] = [
+            (fields[0].0, fields[0].1.as_str()),
+            (fields[1].0, fields[1].1.as_str()),
+            (fields[2].0, fields[2].1.as_str()),
+            (fields[3].0, fields[3].1.as_str()),
+            (fields[4].0, fields[4].1.as_str()),
+            (fields[5].0, fields[5].1.as_str()),
+            (fields[6].0, fields[6].1.as_str()),
+        ];
+        Ok(build_multipart(
+            &boundary_for_worker,
+            &field_refs,
+            "file",
+            &filename,
+            "audio/wav",
+            &wav,
+        ))
+    })
+    .await;
+    let body = map_blocking_result(outcome)?;
+    Ok(PreparedOssUpload {
+        obj_key,
+        boundary,
+        body,
+    })
+}
+
 pub(super) async fn transcribe_deepseek(
     config: &ProviderConfig,
-    pcm16: &[u8],
+    pcm16: Vec<u8>,
 ) -> Result<ProviderOutput, String> {
     let client = build_http_client()?;
-    let chunks = split_pcm16_for_deepseek(pcm16);
+    let chunks = prepare_deepseek_chunks(pcm16).await?;
     let mut segments = Vec::new();
-    for (index, (start_ms, end_ms, chunk_pcm)) in chunks.into_iter().enumerate() {
-        let wav = pcm16_to_wav(chunk_pcm)?;
+    for (index, chunk) in chunks.into_iter().enumerate() {
         let boundary = format!("----KoeDeepSeekAsr{}", uuid::Uuid::new_v4().simple());
         let filename = format!("chunk-{index}.wav");
-        let body = build_multipart(&boundary, &[], "file", &filename, "audio/wav", &wav);
+        let body = build_multipart(&boundary, &[], "file", &filename, "audio/wav", &chunk.wav);
         let mut req = client
             .post(&config.endpoint)
             .header(
@@ -366,8 +469,8 @@ pub(super) async fn transcribe_deepseek(
             .filter(|t| !t.is_empty())
         {
             segments.push(TranscriptSegment {
-                start_ms,
-                end_ms: end_ms.max(start_ms),
+                start_ms: chunk.start_ms,
+                end_ms: chunk.end_ms.max(chunk.start_ms),
                 text: text.to_owned(),
                 speaker: None,
             });
@@ -378,16 +481,9 @@ pub(super) async fn transcribe_deepseek(
 
 pub(super) async fn transcribe_qwen_flash(
     config: &ProviderConfig,
-    pcm16: &[u8],
+    pcm16: Vec<u8>,
 ) -> Result<ProviderOutput, String> {
-    if pcm16.len() > QWEN_FLASH_MAX_BYTES {
-        return Err(
-            "qwen-audio-3.1-asr-flash 仅支持 5 分钟以内的音频；长录音请改用 qwen-audio-3.1-asr-flash-filetrans 或流式模型"
-                .into(),
-        );
-    }
-    let wav = pcm16_to_wav(pcm16)?;
-    let data_uri = format!("data:audio/wav;base64,{}", encode_base64(&wav));
+    let (duration_ms, data_uri) = prepare_qwen_flash_data_uri(pcm16).await?;
     let client = build_http_client()?;
     let mut req = client.post(&config.endpoint).json(&json!({
         "model": config.model,
@@ -422,7 +518,6 @@ pub(super) async fn transcribe_qwen_flash(
     }
     let bytes = read_bounded_bytes(response, MAX_RESPONSE_BYTES).await?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Qwen 语音服务返回无效 JSON")?;
-    let duration_ms = (pcm16.len() as u64 * 1000) / BYTES_PER_SEC as u64;
     let segments = parse_qwen_flash_response(&value, duration_ms);
     Ok(ProviderOutput::Transcript { segments })
 }
@@ -552,35 +647,16 @@ async fn request_oss_upload_policy(
 async fn upload_wav_to_oss(
     client: &reqwest::Client,
     policy: OssUploadPolicy,
-    pcm16: &[u8],
+    pcm16: Vec<u8>,
 ) -> Result<String, String> {
-    let wav = pcm16_to_wav(pcm16)?;
-    let filename = format!("koe-{}.wav", uuid::Uuid::new_v4().simple());
-    let obj_key = format!("{}/{filename}", policy.upload_dir.trim_end_matches('/'));
-    let boundary = format!("----KoeQwenUpload{}", uuid::Uuid::new_v4().simple());
-    let body = build_multipart(
-        &boundary,
-        &[
-            ("OSSAccessKeyId", &policy.oss_access_key_id),
-            ("Signature", &policy.signature),
-            ("policy", &policy.policy),
-            ("x-oss-object-acl", &policy.acl),
-            ("x-oss-forbid-overwrite", &policy.forbid_overwrite),
-            ("key", &obj_key),
-            ("success_action_status", "200"),
-        ],
-        "file",
-        &filename,
-        "audio/wav",
-        &wav,
-    );
+    let prepared = prepare_oss_upload(&policy, pcm16).await?;
     let upload_resp = client
         .post(policy.upload_host)
         .header(
             reqwest::header::CONTENT_TYPE,
-            format!("multipart/form-data; boundary={boundary}"),
+            format!("multipart/form-data; boundary={}", prepared.boundary),
         )
-        .body(body)
+        .body(prepared.body)
         .send()
         .await
         .map_err(|_| "音频上传到 Qwen 临时存储失败；未自动重试")?;
@@ -590,7 +666,7 @@ async fn upload_wav_to_oss(
             upload_resp.status().as_u16()
         ));
     }
-    Ok(format!("oss://{obj_key}"))
+    Ok(format!("oss://{}", prepared.obj_key))
 }
 
 async fn submit_filetrans_task(
@@ -756,7 +832,7 @@ async fn fetch_unauthenticated_json(
 
 pub(super) async fn transcribe_qwen_filetrans(
     config: &ProviderConfig,
-    pcm16: &[u8],
+    pcm16: Vec<u8>,
 ) -> Result<ProviderOutput, String> {
     let (origin, allow_loopback_http) = origin_and_loopback(&config.endpoint)?;
     if config.model.is_empty()
@@ -767,6 +843,7 @@ pub(super) async fn transcribe_qwen_filetrans(
     {
         return Err("Qwen 语音模型名称格式无效".into());
     }
+    let duration_ms = (pcm16.len() as u64 * 1000) / BYTES_PER_SEC as u64;
     let client = build_http_client()?;
     let policy = request_oss_upload_policy(&client, &origin, config, allow_loopback_http).await?;
     let oss_url = upload_wav_to_oss(&client, policy, pcm16).await?;
@@ -775,7 +852,6 @@ pub(super) async fn transcribe_qwen_filetrans(
         poll_filetrans_task(&client, &origin, &config.api_key, &task_id).await?;
     let result_url = validate_remote_http_url_parsed(&transcription_url, allow_loopback_http)?;
     let dl_json = fetch_unauthenticated_json(&client, &result_url).await?;
-    let duration_ms = (pcm16.len() as u64 * 1000) / BYTES_PER_SEC as u64;
     let segments = parse_filetrans_transcript(&dl_json, duration_ms);
     Ok(ProviderOutput::Transcript { segments })
 }
@@ -894,5 +970,114 @@ mod tests {
                 "expected loopback mode to still reject non-loopback non-global {blocked_even_in_loopback_mode}"
             );
         }
+    }
+
+    #[test]
+    fn offloaded_audio_preparation_matches_sync_output_and_never_stalls_current_thread_reactor() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current_thread runtime");
+
+        let total_samples = 150 * SAMPLE_RATE;
+        let mut long_pcm = Vec::with_capacity(total_samples * 2);
+        for i in 0..total_samples {
+            let sec = i / SAMPLE_RATE;
+            let sample: i16 = if sec == 95 { 0 } else { 12_000 };
+            long_pcm.extend_from_slice(&sample.to_le_bytes());
+        }
+        let expected_chunks: Vec<PreparedDeepSeekChunk> = split_pcm16_for_deepseek(&long_pcm)
+            .into_iter()
+            .map(|(start_ms, end_ms, slice)| PreparedDeepSeekChunk {
+                start_ms,
+                end_ms,
+                wav: pcm16_to_wav(slice).expect("sync wav"),
+            })
+            .collect();
+
+        let short_pcm = vec![0x34u8; 4 * BYTES_PER_SEC];
+        let expected_flash_uri = format!(
+            "data:audio/wav;base64,{}",
+            encode_base64(&pcm16_to_wav(&short_pcm).expect("sync flash wav"))
+        );
+
+        rt.block_on(async {
+            let prep_done = AtomicBool::new(false);
+            let sibling_ran_during_deepseek = AtomicBool::new(false);
+            let (chunks_res, ()) = tokio::join!(
+                async {
+                    let res = prepare_deepseek_chunks(long_pcm).await;
+                    prep_done.store(true, Ordering::SeqCst);
+                    res
+                },
+                async {
+                    sibling_ran_during_deepseek
+                        .store(!prep_done.load(Ordering::SeqCst), Ordering::SeqCst);
+                }
+            );
+            let prepared = chunks_res.expect("offloaded deepseek prep succeeds");
+            assert_eq!(prepared, expected_chunks);
+            assert!(
+                sibling_ran_during_deepseek.load(Ordering::SeqCst),
+                "sibling task on current_thread reactor must run while deepseek preparation is offloaded"
+            );
+
+            let flash_done = AtomicBool::new(false);
+            let sibling_ran_during_flash = AtomicBool::new(false);
+            let (flash_res, ()) = tokio::join!(
+                async {
+                    let res = prepare_qwen_flash_data_uri(short_pcm).await;
+                    flash_done.store(true, Ordering::SeqCst);
+                    res
+                },
+                async {
+                    sibling_ran_during_flash
+                        .store(!flash_done.load(Ordering::SeqCst), Ordering::SeqCst);
+                }
+            );
+            let (dur_ms, data_uri) = flash_res.expect("offloaded flash prep succeeds");
+            assert_eq!(dur_ms, 4_000);
+            assert_eq!(data_uri, expected_flash_uri);
+            assert!(
+                sibling_ran_during_flash.load(Ordering::SeqCst),
+                "sibling task on current_thread reactor must run while flash base64 preparation is offloaded"
+            );
+
+            assert!(prepare_deepseek_chunks(Vec::new())
+                .await
+                .expect("empty deepseek input")
+                .is_empty());
+            assert!(prepare_deepseek_chunks(vec![0x01])
+                .await
+                .expect("single-byte deepseek input")
+                .is_empty());
+            let (empty_dur, empty_uri) = prepare_qwen_flash_data_uri(Vec::new())
+                .await
+                .expect("empty flash input");
+            assert_eq!(empty_dur, 0);
+            assert_eq!(
+                empty_uri,
+                format!(
+                    "data:audio/wav;base64,{}",
+                    encode_base64(&pcm16_to_wav(&[]).expect("empty wav"))
+                )
+            );
+            assert!(
+                prepare_qwen_flash_data_uri(vec![0u8; QWEN_FLASH_MAX_BYTES + 2])
+                    .await
+                    .is_err()
+            );
+
+            let cancelled = tokio::spawn(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok::<(), String>(())
+            });
+            cancelled.abort();
+            let err = map_blocking_result(cancelled.await)
+                .expect_err("cancelled blocking task must return structured error");
+            assert!(err.contains("取消"));
+        });
     }
 }

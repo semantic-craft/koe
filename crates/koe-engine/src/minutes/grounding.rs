@@ -1,5 +1,25 @@
 use crate::domain::{MeetingMinutes, MinutePoint, SegmentId, UtteranceSpine};
 
+#[cfg(test)]
+std::thread_local! {
+    static MINUTES_VALIDATION_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_validation_pass_count() {
+    MINUTES_VALIDATION_PASSES.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn validation_pass_count() -> usize {
+    MINUTES_VALIDATION_PASSES.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn record_validation_pass() {
+    MINUTES_VALIDATION_PASSES.with(|c| c.set(c.get() + 1));
+}
+
 /// Validation failure returned when a [`MeetingMinutes`] document or claim violates `S1..Sn` grounding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MinutesValidationError {
@@ -285,6 +305,8 @@ pub fn validate_minutes_grounding(
     minutes: &MeetingMinutes,
     spine: &UtteranceSpine,
 ) -> Result<(), MinutesValidationError> {
+    #[cfg(test)]
+    record_validation_pass();
     if !spine.is_empty() && !minutes.overview.trim().is_empty() {
         let all_ids: Vec<SegmentId> = spine.segments().iter().map(|s| s.id).collect();
         validate_claim_grounding_inner(&minutes.overview, &all_ids, spine, false)?;
@@ -388,6 +410,8 @@ pub fn validate_minutes_citations(
     minutes: &MeetingMinutes,
     spine: &UtteranceSpine,
 ) -> Result<(), MinutesValidationError> {
+    #[cfg(test)]
+    record_validation_pass();
     for topic in &minutes.topics {
         if !topic.citations.is_empty() {
             validate_citation_slice(&topic.title, &topic.citations, spine)?;

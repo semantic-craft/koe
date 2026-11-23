@@ -1,6 +1,8 @@
 use super::*;
 use crate::domain::{MeetingMinutes, UtteranceSpine};
-use crate::minutes::{validate_minutes_citations, validate_minutes_grounding};
+use crate::minutes::{
+    parse_persisted_meeting_minutes_json, validate_minutes_citations, validate_minutes_grounding,
+};
 
 /// Finalized provider transcript segment accepted into a pending transcription attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,50 @@ pub struct RestoredProductRecord {
     pub final_keys: BTreeMap<String, SegmentId>,
     /// Most recently completed request key, if any.
     pub completed_request: Option<RequestKey>,
+}
+
+/// Persisted record fields decoded at the storage boundary for single-pass validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedProductRecord {
+    /// Core recording aggregate with `minutes == None`; raw minutes JSON lives in `minutes_json`.
+    pub aggregate: RecordingAggregate,
+    /// Raw serialized meeting minutes JSON awaiting single-pass parse and validation, if present.
+    pub minutes_json: Option<String>,
+    /// Display title of the record.
+    pub title: String,
+    /// Source origin of the record.
+    pub origin: RecordOrigin,
+    /// Workspace mode attributed to the record.
+    pub mode: RecordMode,
+    /// Optional trimmed project name.
+    pub project: Option<String>,
+    /// Persisted analysis lifecycle state.
+    pub analysis: AnalysisState,
+    /// Persisted live summary lifecycle state.
+    pub live_summary: AnalysisState,
+    /// Monotonic revision of transcript and content mutations.
+    pub content_revision: u64,
+    /// Content revision at which persisted minutes were generated, if any.
+    pub minutes_revision: Option<u64>,
+    /// Highlighted segment identifiers validated against the spine.
+    pub highlighted_segments: BTreeSet<SegmentId>,
+    /// Persisted native capture lanes.
+    pub capture_lanes: Vec<CaptureLaneRecord>,
+    /// Optional all-day capture grouping.
+    pub all_day: Option<AllDaySegment>,
+    /// Optional bound speech engine.
+    pub speech_engine: Option<SpeechEngine>,
+    /// Persisted archive/trash retention state.
+    pub retention: RecordRetention,
+    /// Deduplicated delivery-key to segment-id map.
+    pub final_keys: BTreeMap<String, SegmentId>,
+    /// Most recently completed request key, if any.
+    pub completed_request: Option<RequestKey>,
+}
+
+enum RestoreMinutes {
+    PreParsed,
+    PersistedJson(Option<String>),
 }
 
 impl ProductWorkspace {
@@ -712,8 +758,47 @@ impl ProductRecord {
 
     /// Reconstructs a pure record from persisted values, validating all local references.
     pub fn restore(state: RestoredProductRecord) -> Result<Self, ProductError> {
+        Self::restore_inner(state, RestoreMinutes::PreParsed)
+    }
+
+    pub(super) fn restore_persisted_record(
+        input: PersistedProductRecord,
+    ) -> Result<Self, ProductError> {
+        let project = validate_persisted_project(input.project)?;
+        let mut record = Self::restore_inner(
+            RestoredProductRecord {
+                aggregate: input.aggregate,
+                title: input.title,
+                origin: input.origin,
+                analysis: input.analysis,
+                content_revision: input.content_revision,
+                minutes_revision: input.minutes_revision,
+                highlighted_segments: input.highlighted_segments,
+                final_keys: input.final_keys,
+                completed_request: input.completed_request,
+            },
+            RestoreMinutes::PersistedJson(input.minutes_json),
+        )?;
+        record.restore_live_summary(input.live_summary)?;
+        record.mode = if input.all_day.is_some() {
+            RecordMode::AllDay
+        } else {
+            input.mode
+        };
+        record.project = project;
+        record.all_day = input.all_day;
+        record.speech_engine = input.speech_engine;
+        record.restore_capture_lanes(input.capture_lanes)?;
+        record.restore_retention(input.retention);
+        Ok(record)
+    }
+
+    fn restore_inner(
+        state: RestoredProductRecord,
+        minutes_mode: RestoreMinutes,
+    ) -> Result<Self, ProductError> {
         let RestoredProductRecord {
-            aggregate,
+            mut aggregate,
             title,
             origin,
             analysis,
@@ -725,9 +810,18 @@ impl ProductRecord {
         } = state;
         nonempty(&aggregate.recording_id)?;
         let title = nonempty(&title)?;
+        let has_minutes = match &minutes_mode {
+            RestoreMinutes::PreParsed => aggregate.minutes.is_some(),
+            RestoreMinutes::PersistedJson(raw) => {
+                if aggregate.minutes.is_some() {
+                    return Err(ProductError::InvalidEvidence);
+                }
+                raw.is_some()
+            }
+        };
         if aggregate.recording_id != aggregate.spine.session_id()
             || content_revision < aggregate.spine.len() as u64
-            || aggregate.minutes.is_some() != minutes_revision.is_some()
+            || has_minutes != minutes_revision.is_some()
         {
             return Err(ProductError::InvalidEvidence);
         }
@@ -743,16 +837,34 @@ impl ProductRecord {
         {
             return Err(ProductError::InvalidSource);
         }
-        if let (Some(minutes), Some(min_rev)) = (&aggregate.minutes, minutes_revision) {
-            if min_rev == 0 || min_rev > content_revision || aggregate.spine.is_empty() {
-                return Err(ProductError::InvalidEvidence);
+        match minutes_mode {
+            RestoreMinutes::PreParsed => {
+                if let (Some(minutes), Some(min_rev)) = (&aggregate.minutes, minutes_revision) {
+                    if min_rev == 0 || min_rev > content_revision || aggregate.spine.is_empty() {
+                        return Err(ProductError::InvalidEvidence);
+                    }
+                    let valid = if min_rev == content_revision {
+                        validate_minutes_grounding(minutes, &aggregate.spine)
+                    } else {
+                        validate_minutes_citations(minutes, &aggregate.spine)
+                    };
+                    valid.map_err(|_| ProductError::InvalidEvidence)?;
+                }
             }
-            let valid = if min_rev == content_revision {
-                validate_minutes_grounding(minutes, &aggregate.spine)
-            } else {
-                validate_minutes_citations(minutes, &aggregate.spine)
-            };
-            valid.map_err(|_| ProductError::InvalidEvidence)?;
+            RestoreMinutes::PersistedJson(Some(raw)) => {
+                let min_rev = minutes_revision.ok_or(ProductError::InvalidEvidence)?;
+                if min_rev == 0 || min_rev > content_revision || aggregate.spine.is_empty() {
+                    return Err(ProductError::InvalidEvidence);
+                }
+                let parsed = parse_persisted_meeting_minutes_json(
+                    &raw,
+                    &aggregate.spine,
+                    min_rev == content_revision,
+                )
+                .map_err(|e| ProductError::InvalidInput(format!("invalid minutes: {e:?}")))?;
+                aggregate.minutes = Some(parsed);
+            }
+            RestoreMinutes::PersistedJson(None) => {}
         }
         let request = match &analysis {
             AnalysisState::Pending { key, .. }
@@ -794,5 +906,24 @@ impl ProductRecord {
             final_keys,
             completed_request,
         })
+    }
+}
+
+pub(super) fn validate_persisted_project(
+    project: Option<String>,
+) -> Result<Option<String>, ProductError> {
+    match project {
+        None => Ok(None),
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty()
+                || trimmed != raw
+                || raw.chars().any(char::is_control)
+                || trimmed.chars().count() > MAX_PROJECT_NAME_CHARS
+            {
+                return Err(ProductError::InvalidEvidence);
+            }
+            Ok(Some(raw))
+        }
     }
 }

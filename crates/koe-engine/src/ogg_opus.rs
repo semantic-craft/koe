@@ -119,7 +119,8 @@ impl OggOpus {
     /// ```
     /// use koe_engine::ogg_opus::OggOpus;
     ///
-    /// assert_eq!(OggOpus::ogg_crc(b"OggS"), OggOpus::ogg_crc_bitwise(b"OggS"));
+    /// assert_eq!(OggOpus::ogg_crc(b"OggS"), 0x5FB0_A94F);
+    /// assert_eq!(OggOpus::ogg_crc(b""), 0);
     /// ```
     #[must_use]
     pub fn ogg_crc(data: &[u8]) -> u32 {
@@ -131,37 +132,10 @@ impl OggOpus {
         crc
     }
 
-    /// Bit-by-bit Ogg CRC-32 port used to benchmark Stage 2 (`safe_rust`) before table lookup.
-    #[must_use]
-    pub fn ogg_crc_bitwise(data: &[u8]) -> u32 {
-        let mut crc: u32 = 0;
-        for &byte in data {
-            crc ^= u32::from(byte) << 24;
-            for _ in 0..8 {
-                if (crc & 0x8000_0000) != 0 {
-                    crc = (crc << 1) ^ OGG_CRC_POLY;
-                } else {
-                    crc <<= 1;
-                }
-            }
-        }
-        crc
-    }
-
     /// Muxes concatenated 160-byte Opus frames into a complete Ogg Opus byte buffer
-    /// using pre-sized single-buffer allocation and table-driven CRC-32 (`soa_simd` fast path).
+    /// using pre-sized single-buffer allocation and table-driven CRC-32.
     #[must_use]
     pub fn mux_raw_frames(raw: &[u8]) -> Vec<u8> {
-        Self::mux_raw_frames_with_crc(raw, true)
-    }
-
-    /// Idiomatic Stage 2 port using bitwise CRC-32 for benchmark staircase comparison.
-    #[must_use]
-    pub fn mux_raw_frames_naive(raw: &[u8]) -> Vec<u8> {
-        Self::mux_raw_frames_with_crc(raw, false)
-    }
-
-    fn mux_raw_frames_with_crc(raw: &[u8], fast_crc: bool) -> Vec<u8> {
         if raw.is_empty() {
             return Vec::new();
         }
@@ -187,7 +161,6 @@ impl OggOpus {
                 granule: 0,
                 bos: true,
                 eos: false,
-                fast_crc,
             },
         );
         seq += 1;
@@ -200,7 +173,6 @@ impl OggOpus {
                 granule: 0,
                 bos: false,
                 eos: false,
-                fast_crc,
             },
         );
         seq += 1;
@@ -218,7 +190,6 @@ impl OggOpus {
                     granule,
                     bos: false,
                     eos: true,
-                    fast_crc,
                 },
             );
             return out;
@@ -245,7 +216,6 @@ impl OggOpus {
                     granule,
                     bos: false,
                     eos,
-                    fast_crc,
                 },
             );
             seq += 1;
@@ -305,11 +275,7 @@ impl OggOpus {
             out.extend_from_slice(pkt);
         }
 
-        let crc = if spec.fast_crc {
-            Self::ogg_crc(&out[page_start..])
-        } else {
-            Self::ogg_crc_bitwise(&out[page_start..])
-        };
+        let crc = Self::ogg_crc(&out[page_start..]);
         let crc_bytes = crc.to_le_bytes();
         out[page_start + 22..page_start + 26].copy_from_slice(&crc_bytes);
     }
@@ -322,7 +288,6 @@ struct OggPageSpec {
     granule: u64,
     bos: bool,
     eos: bool,
-    fast_crc: bool,
 }
 
 #[cfg(test)]
@@ -330,22 +295,80 @@ mod tests {
     use super::*;
     use crate::prng::SplitMix64;
 
+    fn ogg_crc_bitwise(data: &[u8]) -> u32 {
+        let mut crc: u32 = 0;
+        for &byte in data {
+            crc ^= u32::from(byte) << 24;
+            for _ in 0..8 {
+                if (crc & 0x8000_0000) != 0 {
+                    crc = (crc << 1) ^ OGG_CRC_POLY;
+                } else {
+                    crc <<= 1;
+                }
+            }
+        }
+        crc
+    }
+
     #[test]
     fn fast_table_crc_matches_bitwise_crc() {
         let mut rng = SplitMix64::new(2026);
         for len in [0, 1, 19, 29, 160, 1024, 8192] {
             let data = rng.next_bytes(len);
-            assert_eq!(OggOpus::ogg_crc(&data), OggOpus::ogg_crc_bitwise(&data));
+            assert_eq!(OggOpus::ogg_crc(&data), ogg_crc_bitwise(&data));
         }
     }
 
     #[test]
-    fn fast_mux_and_naive_mux_are_byte_identical() {
+    fn muxed_pages_match_bitwise_crc_oracle_and_sequence_headers() {
         let mut rng = SplitMix64::new(77);
         let raw = rng.next_bytes(160 * 65);
-        let fast = OggOpus::mux_raw_frames(&raw);
-        let naive = OggOpus::mux_raw_frames_naive(&raw);
-        assert_eq!(fast, naive);
-        assert!(OggOpus::is_ogg(&fast));
+        let muxed = OggOpus::mux_raw_frames(&raw);
+        assert!(OggOpus::is_ogg(&muxed));
+
+        let mut pos = 0usize;
+        let mut expected_seq = 0u32;
+        let mut saw_bos = false;
+        let mut saw_eos = false;
+        while pos < muxed.len() {
+            assert_eq!(&muxed[pos..pos + 4], b"OggS");
+            let header_type = muxed[pos + 5];
+            let seq = u32::from_le_bytes([
+                muxed[pos + 18],
+                muxed[pos + 19],
+                muxed[pos + 20],
+                muxed[pos + 21],
+            ]);
+            let stored_crc = u32::from_le_bytes([
+                muxed[pos + 22],
+                muxed[pos + 23],
+                muxed[pos + 24],
+                muxed[pos + 25],
+            ]);
+            let seg_count = usize::from(muxed[pos + 26]);
+            let body_len: usize = muxed[pos + 27..pos + 27 + seg_count]
+                .iter()
+                .map(|&b| usize::from(b))
+                .sum();
+            let page_end = pos + 27 + seg_count + body_len;
+
+            let mut page_copy = muxed[pos..page_end].to_vec();
+            page_copy[22..26].fill(0);
+            assert_eq!(stored_crc, ogg_crc_bitwise(&page_copy));
+            assert_eq!(seq, expected_seq);
+            if expected_seq == 0 {
+                assert_ne!(header_type & 0x02, 0);
+                saw_bos = true;
+            }
+            if page_end == muxed.len() {
+                assert_ne!(header_type & 0x04, 0);
+                saw_eos = true;
+            }
+
+            expected_seq += 1;
+            pos = page_end;
+        }
+        assert!(saw_bos && saw_eos);
+        assert_eq!(expected_seq, 4);
     }
 }

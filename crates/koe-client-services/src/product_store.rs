@@ -81,9 +81,11 @@ impl ProductStore {
             _lock: lock,
             uncertain: false,
         };
-        let mut recovered = store.workspace.clone();
-        if recovered.interrupt_pending() {
-            store.commit(recovered)?;
+        if store.workspace.has_pending_work() {
+            let mut recovered = store.workspace.clone();
+            if recovered.interrupt_pending() {
+                store.commit(recovered)?;
+            }
         }
         Ok(store)
     }
@@ -110,7 +112,7 @@ impl ProductStore {
         }
         let mut candidate = self.workspace.clone();
         let output = change(&mut candidate)?;
-        if candidate != self.workspace {
+        if candidate.revision() != self.workspace.revision() || candidate != self.workspace {
             self.commit(candidate)?;
         }
         Ok(output)
