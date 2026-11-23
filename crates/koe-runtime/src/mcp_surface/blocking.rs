@@ -141,3 +141,41 @@ pub(super) fn evidence_json(evidence: &Evidence) -> Value {
         "startMs": evidence.start_ms
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drive_mcp_tool_blocking_returns_timeout_message_when_ask_never_settles() {
+        let mut polls = 0usize;
+        let result = drive_mcp_tool_blocking_with_limits(
+            &mut polls,
+            Duration::from_millis(15),
+            Duration::from_millis(2),
+            |_| Ok(McpToolCallState::PendingAsk),
+            |count, _| {
+                **count += 1;
+                Ok(None)
+            },
+        );
+        assert_eq!(result, Ok(Err(MCP_ASK_TIMEOUT_MESSAGE.to_string())));
+        assert!(polls >= 1);
+    }
+
+    #[test]
+    fn drive_mcp_tool_blocking_propagates_internal_poll_error() {
+        let expected = McpToolError {
+            code: -32603,
+            message: "bridge poll failed".into(),
+        };
+        let result = drive_mcp_tool_blocking_with_limits(
+            (),
+            Duration::from_secs(1),
+            Duration::from_millis(1),
+            |_| Ok(McpToolCallState::PendingAsk),
+            |_, _| Err(expected.clone()),
+        );
+        assert_eq!(result, Err(expected));
+    }
+}

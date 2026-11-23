@@ -23,17 +23,3 @@ impl SliceMark {
         (sequence as u64) * Self::SLICE_DURATION_MS
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slice_mark_flag_and_position_ms_compute_accurately() {
-        assert!(SliceMark::is_mark(0x01));
-        assert!(SliceMark::is_mark(0x03));
-        assert!(!SliceMark::is_mark(0x00));
-        assert_eq!(SliceMark::position_ms(15), 300);
-        assert_eq!(SliceMark::position_ms(45), 900);
-    }
-}

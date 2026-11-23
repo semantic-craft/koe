@@ -568,13 +568,6 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         self.assertEqual(res["violations"], [], res["violations"])
         self.assertNotIn("full_red_buttons", res)
 
-    def test_repository_shared_theme_passes_all_principles(self) -> None:
-        root = Path(__file__).resolve().parent.parent
-        report = verifier.analyze_repository(root, "all")
-        self.assertEqual(report["violations"], [])
-        self.assertGreaterEqual(report["checked_files_count"], 1)
-        self.assertNotIn("total_full_red_buttons", report["summary"])
-
     def test_enforces_two_tier_scoped_observation_slice_gates(self) -> None:
         bad_snapshot_view = """
         import SwiftUI

@@ -1018,3 +1018,273 @@ fn poisoned_session_returns_default_and_destroys_cleanly() {
     assert!(koe_host_session_snapshot_json(handle, 1_800_005_000).is_null());
     drop(session);
 }
+
+#[test]
+fn c_abi_ingest_ble_rejects_null_invalid_handle_and_oversized_buffer() {
+    let ws = TempWorkspace::new("ble-abi");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
+    let handle = session.handle();
+    let now = 1_800_007_000u64;
+    let base_gen = koe_host_session_generation(handle);
+    assert!(base_gen > 0);
+
+    let valid_bytes = [0x09u8, 0xFF, 0x00, 0x00];
+    let oversized = vec![0u8; 1024 * 1024 + 1];
+
+    // SAFETY: `valid_bytes` and `oversized` address their full lengths for each call; `koe_host_session_ingest_ble` checks null pointers and `length > 1 MiB` before forming any slice.
+    #[allow(unsafe_code)]
+    unsafe {
+        assert_eq!(
+            koe_host_session_ingest_ble(handle, std::ptr::null(), 16, now),
+            0
+        );
+        assert_eq!(koe_host_session_generation(handle), base_gen);
+
+        assert_eq!(
+            koe_host_session_ingest_ble(999_999, valid_bytes.as_ptr(), valid_bytes.len(), now),
+            0
+        );
+
+        assert_eq!(
+            koe_host_session_ingest_ble(handle, oversized.as_ptr(), oversized.len(), now),
+            0
+        );
+        assert_eq!(koe_host_session_generation(handle), base_gen);
+
+        assert_eq!(
+            koe_host_session_ingest_ble(handle, std::ptr::null(), 0, now),
+            base_gen
+        );
+    }
+}
+
+#[test]
+fn c_abi_dispatch_json_rejects_null_invalid_utf8_and_oversized_command() {
+    let ws = TempWorkspace::new("dispatch-abi");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
+    let handle = session.handle();
+    let now = 1_800_008_000u64;
+    let base_gen = koe_host_session_generation(handle);
+    let valid_cmd = CString::new(r#"{"type":"navigate","section":"today"}"#).unwrap();
+    let invalid_utf8: [u8; 4] = [0xFF, 0xFE, 0xFD, 0x00];
+    let oversized_cmd = CString::new(format!(
+        "{{\"type\":\"create_note\",\"title\":\"oversized\",\"text\":\"{}\"}}",
+        "x".repeat(2 * 1024 * 1024 + 64)
+    ))
+    .unwrap();
+
+    // SAFETY: Every non-null pointer is NUL-terminated for the duration of the call, and the non-null snapshot returned for the oversized command is read before being released with `koe_host_string_free`.
+    #[allow(unsafe_code)]
+    unsafe {
+        assert!(koe_host_session_dispatch_json(handle, std::ptr::null(), now).is_null());
+        assert_eq!(koe_host_session_generation(handle), base_gen);
+
+        assert!(koe_host_session_dispatch_json(999_999, valid_cmd.as_ptr(), now).is_null());
+
+        assert!(
+            koe_host_session_dispatch_json(handle, invalid_utf8.as_ptr().cast::<c_char>(), now)
+                .is_null()
+        );
+        assert_eq!(koe_host_session_generation(handle), base_gen);
+
+        let oversized_ptr =
+            koe_host_session_dispatch_json(handle, oversized_cmd.as_ptr(), now);
+        assert!(!oversized_ptr.is_null());
+        let oversized_text = CStr::from_ptr(oversized_ptr).to_str().unwrap().to_owned();
+        koe_host_string_free(oversized_ptr);
+
+        let oversized_snap: Value = serde_json::from_str(&oversized_text).unwrap();
+        assert_eq!(oversized_snap["error"], "操作内容过大");
+        assert!(oversized_snap["records"].as_array().unwrap().is_empty());
+        assert_eq!(koe_host_session_generation(handle), base_gen + 1);
+    }
+}
+
+#[test]
+fn c_abi_non_isolated_credentials_persist_across_destroy_and_reopen() {
+    use std::collections::BTreeMap;
+    use std::ffi::c_void;
+    use std::sync::Mutex;
+
+    struct InMemoryKeychain {
+        entries: Mutex<BTreeMap<String, String>>,
+        next_id: AtomicU64,
+    }
+
+    struct RawSessionHandle(u64);
+
+    impl RawSessionHandle {
+        fn destroy(mut self) -> bool {
+            let handle = std::mem::replace(&mut self.0, 0);
+            handle != 0 && koe_host_session_destroy(handle)
+        }
+    }
+
+    impl Drop for RawSessionHandle {
+        fn drop(&mut self) {
+            if self.0 != 0 {
+                let _ = koe_host_session_destroy(self.0);
+            }
+        }
+    }
+
+    fn write_c_output(text: &str, out: &mut [u8]) -> i32 {
+        let bytes = text.as_bytes();
+        if bytes.contains(&0) || bytes.len() + 1 > out.len() {
+            return -1;
+        }
+        out[..bytes.len()].copy_from_slice(bytes);
+        out[bytes.len()] = 0;
+        0
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn keychain_callback(
+        context: *mut c_void,
+        operation: u32,
+        reference: *const c_char,
+        value: *const c_char,
+        output: *mut c_char,
+        output_cap: usize,
+    ) -> i32 {
+        if context.is_null()
+            || reference.is_null()
+            || value.is_null()
+            || output.is_null()
+            || output_cap == 0
+        {
+            return -1;
+        }
+        // SAFETY: `ctx` is declared before every `RawSessionHandle` and outlives all active sessions even on unwind.
+        let store = unsafe { &*context.cast::<InMemoryKeychain>() };
+        // SAFETY: `PlatformCredentials` passes valid NUL-terminated UTF-8 strings for `reference` and `value`.
+        let ref_str = unsafe { CStr::from_ptr(reference) }.to_str().unwrap_or("");
+        // SAFETY: `PlatformCredentials` passes valid NUL-terminated UTF-8 strings for `reference` and `value`.
+        let val_str = unsafe { CStr::from_ptr(value) }.to_str().unwrap_or("");
+        // SAFETY: `output` was verified non-null above and `PlatformCredentials` provides `output_cap` writable bytes.
+        let out_buf = unsafe { std::slice::from_raw_parts_mut(output.cast::<u8>(), output_cap) };
+        match operation {
+            0 => {
+                let entries = store.entries.lock().unwrap();
+                match entries.get(ref_str) {
+                    Some(secret) => write_c_output(secret, out_buf),
+                    None => 1,
+                }
+            }
+            1 => {
+                store
+                    .entries
+                    .lock()
+                    .unwrap()
+                    .insert(ref_str.to_owned(), val_str.to_owned());
+                write_c_output(ref_str, out_buf)
+            }
+            2 => {
+                store.entries.lock().unwrap().remove(ref_str);
+                0
+            }
+            3 => 1,
+            4 => 0,
+            5 => {
+                let id = store.next_id.fetch_add(1, Ordering::Relaxed);
+                let generated = format!("kc-ref-{ref_str}-{id}");
+                write_c_output(&generated, out_buf)
+            }
+            _ => -1,
+        }
+    }
+
+    let ws = TempWorkspace::new("non-isolated-cred");
+    let c_path = CString::new(ws.0.to_str().unwrap()).unwrap();
+    let ctx = Box::new(InMemoryKeychain {
+        entries: Mutex::new(BTreeMap::new()),
+        next_id: AtomicU64::new(1),
+    });
+    let ctx_ptr = (&raw const *ctx).cast_mut().cast::<c_void>();
+    let now = 1_800_009_000u64;
+    let qwen_secret = "sk-c-abi-qwen-secret-918273645";
+    let deepseek_secret = "sk-c-abi-deepseek-secret-546372819";
+
+    // SAFETY: `c_path` is NUL-terminated UTF-8, `ctx` outlives `session1` via reverse drop order, and every returned C string is freed once via `koe_host_string_free`.
+    #[allow(unsafe_code)]
+    let (session1, snap1_text) = unsafe {
+        let session = RawSessionHandle(koe_host_session_create_with_credentials(
+            c_path.as_ptr(),
+            Some(keychain_callback),
+            ctx_ptr,
+            false,
+        ));
+        assert_ne!(session.0, 0);
+        let cmd = CString::new(
+            json!({
+                "type": "configure_provider",
+                "apiKey": qwen_secret,
+                "deepseekApiKey": deepseek_secret,
+                "model": "deepseek-flash"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let dispatch_ptr = koe_host_session_dispatch_json(session.0, cmd.as_ptr(), now);
+        assert!(!dispatch_ptr.is_null());
+        koe_host_string_free(dispatch_ptr);
+
+        let snap_ptr = koe_host_session_snapshot_json(session.0, now);
+        assert!(!snap_ptr.is_null());
+        let text = CStr::from_ptr(snap_ptr).to_str().unwrap().to_owned();
+        koe_host_string_free(snap_ptr);
+        (session, text)
+    };
+
+    assert!(!snap1_text.contains(qwen_secret));
+    assert!(!snap1_text.contains(deepseek_secret));
+    let snap1: Value = serde_json::from_str(&snap1_text).unwrap();
+    assert!(snap1["error"].is_null(), "{}", snap1["error"]);
+    assert_eq!(snap1["provider"]["configured"], true);
+    assert_eq!(snap1["provider"]["qwenConfigured"], true);
+    assert_eq!(snap1["provider"]["deepseekConfigured"], true);
+    assert_eq!(snap1["provider"]["isolated"], false);
+    assert_eq!(snap1["provider"]["credentialState"], "ready");
+    assert_eq!(snap1["provider"]["deepseekCredentialState"], "ready");
+    assert_eq!(ctx.entries.lock().unwrap().len(), 2);
+
+    let disk_json = std::fs::read_to_string(ws.0.join("product-workspace.json")).unwrap();
+    assert!(!disk_json.contains(qwen_secret));
+    assert!(!disk_json.contains(deepseek_secret));
+    let disk_val: Value = serde_json::from_str(&disk_json).unwrap();
+    assert_eq!(disk_val["provider"]["credential"]["state"], "saved");
+    assert_eq!(disk_val["provider"]["deepseek_credential"]["state"], "saved");
+
+    assert!(session1.destroy());
+
+    // SAFETY: `c_path` is NUL-terminated UTF-8, `ctx` outlives `session2` via reverse drop order, and the returned snapshot string is freed once via `koe_host_string_free`.
+    #[allow(unsafe_code)]
+    let (session2, snap2_text) = unsafe {
+        let session = RawSessionHandle(koe_host_session_create_with_credentials(
+            c_path.as_ptr(),
+            Some(keychain_callback),
+            ctx_ptr,
+            false,
+        ));
+        assert_ne!(session.0, 0);
+        let snap_ptr = koe_host_session_snapshot_json(session.0, now + 10);
+        assert!(!snap_ptr.is_null());
+        let text = CStr::from_ptr(snap_ptr).to_str().unwrap().to_owned();
+        koe_host_string_free(snap_ptr);
+        (session, text)
+    };
+
+    assert!(!snap2_text.contains(qwen_secret));
+    assert!(!snap2_text.contains(deepseek_secret));
+    let snap2: Value = serde_json::from_str(&snap2_text).unwrap();
+    assert!(snap2["error"].is_null(), "{}", snap2["error"]);
+    assert_eq!(snap2["provider"]["configured"], true);
+    assert_eq!(snap2["provider"]["qwenConfigured"], true);
+    assert_eq!(snap2["provider"]["deepseekConfigured"], true);
+    assert_eq!(snap2["provider"]["isolated"], false);
+    assert_eq!(snap2["provider"]["credentialState"], "ready");
+    assert_eq!(snap2["provider"]["deepseekCredentialState"], "ready");
+
+    assert!(session2.destroy());
+    drop(ctx);
+}

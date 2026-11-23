@@ -1049,3 +1049,448 @@ fn record_mode_and_project_roundtrip_and_legacy_fallback_on_reopen() {
         Err(StoreError::InvalidData(_))
     ));
 }
+
+#[test]
+fn corrupt_or_truncated_workspace_json_fails_closed_without_clobbering_disk() {
+    let dir = Directory::new();
+    {
+        let mut store = ProductStore::open(&dir.0).unwrap();
+        seed(&mut store);
+    }
+    let path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let valid_bytes = fs::read(&path).unwrap();
+    let truncated = valid_bytes[..valid_bytes.len() / 2].to_vec();
+    fs::write(&path, &truncated).unwrap();
+
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+    assert_eq!(fs::read(&path).unwrap(), truncated);
+
+    let corrupt_dir = Directory::new();
+    let corrupt_path = corrupt_dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let malformed = br#"{"version":1,"revision":7,"records":[{"id":"rec-partial""#;
+    fs::write(&corrupt_path, malformed).unwrap();
+
+    assert!(matches!(
+        ProductStore::open(&corrupt_dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+    assert_eq!(fs::read(&corrupt_path).unwrap(), malformed);
+}
+
+#[test]
+fn leftover_atomic_tmp_file_does_not_prevent_reopen_or_corrupt_workspace() {
+    let dir = Directory::new();
+    {
+        let mut store = ProductStore::open(&dir.0).unwrap();
+        seed(&mut store);
+        store
+            .transact(|w| {
+                w.set_ble_auto_connect(false);
+                w.add_highlight(source("a"))?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    let atomic_residue = dir.0.join(format!(".{PRODUCT_WORKSPACE_FILE}.99999.1.tmp"));
+    let suffix_residue = dir.0.join(format!("{PRODUCT_WORKSPACE_FILE}.tmp.99999"));
+    fs::write(&atomic_residue, br#"{"version":1,"revision":999,"records":["#).unwrap();
+    fs::write(&suffix_residue, b"corrupt crash residue").unwrap();
+
+    let mut reopened = ProductStore::open(&dir.0).unwrap();
+    assert!(!reopened.workspace().ble_auto_connect());
+    assert_eq!(reopened.workspace().records().len(), 2);
+    assert_eq!(
+        reopened.workspace().resolve_source(&source("a")).unwrap().quote,
+        "alpha decision"
+    );
+    assert!(reopened
+        .workspace()
+        .record("a")
+        .unwrap()
+        .highlighted_segments
+        .contains(&SegmentId::new(1).unwrap()));
+
+    reopened
+        .transact(|w| w.rename_record("a", "alpha durable"))
+        .unwrap();
+    drop(reopened);
+
+    let verified = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        verified.workspace().record("a").unwrap().title,
+        "alpha durable"
+    );
+    assert!(!verified.workspace().ble_auto_connect());
+}
+
+#[test]
+fn historical_schema_corpus_round_trip_is_idempotent() {
+    let dir = Directory::new();
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+
+    let minutes_json = serde_json::json!({
+        "schemaVersion": 2,
+        "title": "历史架构复盘",
+        "overview": "确认历史工作区迁移后字段保持幂等。",
+        "topics": [{
+            "text": "存储兼容",
+            "summary": "历史字段自动收敛并保留纪要。",
+            "sources": ["S1"]
+        }],
+        "decisions": [{
+            "text": "保留历史纪要并标记待重算",
+            "speaker": "发言人 1",
+            "sources": ["S1"]
+        }],
+        "actions": [{
+            "text": "周五前完成双轨回放验证",
+            "owner": "张工",
+            "sources": ["S2"]
+        }],
+        "questions": [],
+        "terms": [],
+        "reviewItems": []
+    })
+    .to_string();
+
+    let provider_json = serde_json::json!({
+        "meeting_audio_policy": "local_only",
+        "speech_engine": "apple_speech",
+        "speech_model_id": null,
+        "asr_provider": "qwen",
+        "asr_model": DEFAULT_ASR_MODEL,
+        "llm_provider": "qwen",
+        "enable_thinking": false,
+        "qwen_workspace_id": "ws-legacy",
+        "model": "qwen-plus",
+        "asr_endpoint": DEFAULT_DASHSCOPE_WS_URL,
+        "chat_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "credential": { "state": "saved", "reference": "cred-qwen-active" },
+        "deepseek_credential": { "state": "saved", "reference": "cred-ds-active" },
+        "retired_credentials": ["cred-retired-1", "cred-retired-2"],
+        "pending_credentials": ["cred-pending-crash"]
+    });
+    let segments_json = serde_json::json!([
+        {
+            "id": 1,
+            "text": "历史工作区字段迁移后保持幂等。",
+            "original_text": "历史工作区字段迁移后保持一致。",
+            "start_ms": 0,
+            "end_ms": 5_000,
+            "language": "zh",
+            "provider": "apple",
+            "speaker": "发言人 1：",
+            "translation": null,
+            "target_language": null
+        },
+        {
+            "id": 2,
+            "text": "周五前完成双轨回放验证。",
+            "start_ms": 5_000,
+            "end_ms": 11_000,
+            "language": "zh",
+            "provider": "apple",
+            "speaker": "张工",
+            "translation": "Finish dual-lane playback verification by Friday.",
+            "target_language": "en"
+        }
+    ]);
+    let lanes_json = serde_json::json!([
+        {
+            "lane": "microphone",
+            "asset_id": "rec-corpus-dual",
+            "sample_rate": 16_000u32,
+            "duration_ms": 12_000u64,
+            "interruption": null,
+            "timeline": [
+                { "epoch": 0, "start_ns": 0, "sample_offset": 0, "sample_count": 96_000 },
+                { "epoch": 1, "start_ns": 6_000_000_000u64, "sample_offset": 96_000, "sample_count": 96_000 }
+            ]
+        },
+        {
+            "lane": "system",
+            "asset_id": "rec-corpus-dual-system",
+            "sample_rate": 48_000u32,
+            "duration_ms": 12_000u64,
+            "interruption": null,
+            "timeline": [
+                { "epoch": 0, "start_ns": 0, "sample_offset": 0, "sample_count": 288_000 },
+                { "epoch": 1, "start_ns": 6_000_000_000u64, "sample_offset": 288_000, "sample_count": 288_000 }
+            ]
+        }
+    ]);
+    let record_json = serde_json::json!({
+        "id": "rec-corpus-dual",
+        "title": "历史双轨会议",
+        "origin": "microphone",
+        "mode": "dictation",
+        "project": "  核心项目  ",
+        "speech_engine": "apple_speech",
+        "speech_model_id": null,
+        "all_day_run_id": null,
+        "all_day_ordinal": null,
+        "file_id": 0,
+        "created_at": 1_795_000_000u64,
+        "duration_ms": 12_000u64,
+        "content_revision": 3,
+        "minutes_revision": 1,
+        "archived": false,
+        "trashed_at_ms": null,
+        "coarse_place": "上海市·徐汇区",
+        "selected_format": "decision_memo",
+        "segments": segments_json,
+        "minutes": minutes_json,
+        "bookmarks": [4_500u64, 18_500u64],
+        "highlighted_segments": [1u32],
+        "capture_lanes": lanes_json,
+        "analysis": { "state": "ready", "input_revision": 1 },
+        "live_summary": null,
+        "final_keys": { "seg-0": 1 },
+        "completed_request": { "record_id": "rec-corpus-dual", "attempt": 1, "input_revision": 1 }
+    });
+    let corpus = serde_json::json!({
+        "version": 1,
+        "revision": 9,
+        "next_operation": 14,
+        "ble_auto_connect": true,
+        "companion_mode": "collar_standby",
+        "standby_scratch_file_ids": [0, 501],
+        "reclaimed_standby_file_ids": [502],
+        "purged_bean_file_ids": [401],
+        "migrations": [],
+        "provider": provider_json,
+        "records": [record_json],
+        "items": [{
+            "id": "item-1",
+            "kind": "task",
+            "text": "周五前完成双轨回放验证",
+            "sources": [{ "record_id": "rec-corpus-dual", "segment_id": 2 }],
+            "review": "accepted",
+            "completed": false,
+            "due": "周五"
+        }],
+        "ask": {
+            "id": "ask-1",
+            "created_at": 1_795_000_000u64,
+            "messages": [],
+            "draft": "",
+            "in_flight": false,
+            "scope": null,
+            "pending": null,
+            "last_operation": null
+        }
+    });
+    fs::write(&json_path, serde_json::to_string(&corpus).unwrap()).unwrap();
+
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    {
+        let ws = store.workspace();
+        assert_eq!(ws.purged_bean_file_ids(), &BTreeSet::from([401, 501, 502]));
+        let provider = ws.provider_configuration();
+        assert_eq!(provider.llm_provider, LlmProvider::DeepSeek);
+        assert_eq!(provider.model, DEFAULT_TEXT_MODEL);
+        assert_eq!(provider.chat_endpoint, DEFAULT_DEEPSEEK_CHAT_URL);
+        assert_eq!(
+            provider.credential,
+            CredentialBinding::Saved("cred-qwen-active".into())
+        );
+        assert_eq!(
+            provider.deepseek_credential,
+            CredentialBinding::Saved("cred-ds-active".into())
+        );
+        assert_eq!(
+            provider.retired_credentials,
+            vec!["cred-retired-1".to_string(), "cred-retired-2".to_string()]
+        );
+        assert_eq!(
+            provider.pending_credentials,
+            vec!["cred-pending-crash".to_string()]
+        );
+
+        let rec = ws.record("rec-corpus-dual").unwrap();
+        assert_eq!(rec.mode, RecordMode::QuickNote);
+        assert_eq!(rec.project.as_deref(), Some("核心项目"));
+        assert!(rec.is_minutes_stale());
+        assert!(rec.aggregate.minutes.is_some());
+        assert_eq!(rec.aggregate.bookmarks, vec![4_500, 12_000]);
+        assert_eq!(rec.capture_lanes.len(), 2);
+        assert_eq!(rec.capture_lanes[0].lane, "microphone");
+        assert_eq!(rec.capture_lanes[0].timeline.len(), 2);
+        assert_eq!(rec.capture_lanes[1].lane, "system");
+        assert_eq!(rec.capture_lanes[1].sample_rate, Some(48_000));
+        assert_eq!(
+            rec.aggregate.spine.segments()[0].speaker.as_deref(),
+            Some("发言人 1")
+        );
+        assert!(rec.aggregate.spine.segments()[0].is_edited());
+        assert_eq!(
+            rec.aggregate.spine.segments()[1].translation.as_deref(),
+            Some("Finish dual-lane playback verification by Friday.")
+        );
+    }
+
+    store
+        .transact(|w| {
+            w.set_ble_auto_connect(false);
+            Ok(())
+        })
+        .unwrap();
+    let after_commit = store.workspace().clone();
+    drop(store);
+
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert!(on_disk.get("companion_mode").is_none());
+    assert!(on_disk.get("standby_scratch_file_ids").is_none());
+    assert!(on_disk.get("reclaimed_standby_file_ids").is_none());
+    let disk_rec = on_disk["records"][0].as_object().unwrap();
+    assert!(!disk_rec.contains_key("coarse_place"));
+    assert!(!disk_rec.contains_key("selected_format"));
+    assert_eq!(disk_rec["bookmarks"], serde_json::json!([4_500, 12_000]));
+
+    let mut reopened = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(reopened.workspace(), &after_commit);
+    reopened
+        .transact(|w| {
+            w.set_ble_auto_connect(false);
+            Ok(())
+        })
+        .unwrap();
+    let second_disk_raw = fs::read_to_string(&json_path).unwrap();
+    drop(reopened);
+
+    let reopened_again = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(reopened_again.workspace(), &after_commit);
+    assert_eq!(fs::read_to_string(&json_path).unwrap(), second_disk_raw);
+}
+
+#[test]
+fn koepack_v2_on_disk_round_trip_and_trailing_bytes_rejection() {
+    use koe_client_base::write_atomic;
+    use koe_client_services::recording_assets::{import_recording, save_audio};
+    use koe_engine::hash::sha256_hex;
+    use koe_engine::koepack::{
+        decode_koepack, MaterialPackError, KOEPACK_FORMAT_NAME, KOEPACK_MAGIC,
+    };
+    use koe_engine::wav::OpusWave;
+
+    let dir = Directory::new();
+    let mut wav_payload = OpusWave::wav_header_with_rate(3200, 16_000).to_vec();
+    wav_payload.extend((0..3200usize).map(|i| (i % 251) as u8));
+    let audio_hash = sha256_hex(&wav_payload);
+    let saved_audio_path = save_audio(&dir.0, "koepack-audio-ref", &wav_payload).unwrap();
+    assert_eq!(sha256_hex(&fs::read(&saved_audio_path).unwrap()), audio_hash);
+
+    let sources = vec![
+        "季度架构复盘确认端到端加密音频落盘。".to_string(),
+        "资料包导入必须拒绝尾部附加字节。".to_string(),
+    ];
+    let source_hash = sha256_hex(sources.join("\n").as_bytes());
+    let minutes_text = serde_json::json!({
+        "schemaVersion": 2,
+        "title": "季度架构复盘",
+        "overview": "端到端落盘与资料包完整性校验。",
+        "topics": [{
+            "text": "落盘完整性",
+            "summary": "校验音频哈希与尾部字节拒绝。",
+            "sources": ["S1", "S2"]
+        }],
+        "decisions": [{
+            "text": "严格校验资料包长度",
+            "sources": ["S2"]
+        }],
+        "actions": [],
+        "questions": [],
+        "terms": [],
+        "reviewItems": []
+    })
+    .to_string();
+
+    let make_manifest = |audio_included: bool| {
+        serde_json::json!({
+            "format": KOEPACK_FORMAT_NAME,
+            "version": 2,
+            "exportedAt": "2026-11-20T10:00:00Z",
+            "material": {
+                "contentHash": audio_hash,
+                "title": "季度架构复盘",
+                "source": "device",
+                "deviceFileId": 19,
+                "recordedAt": "2026-11-20T09:00:00Z",
+                "audioExtension": ".wav"
+            },
+            "minutes": {
+                "current": {
+                    "text": minutes_text,
+                    "sourceHash": source_hash,
+                    "model": "deepseek-flash",
+                    "instruction": "整理季度复盘纪要",
+                    "sources": sources,
+                    "createdAt": "2026-11-20T09:30:00Z",
+                    "templateId": "minutes",
+                    "templateVersion": 4,
+                    "isDraft": false
+                },
+                "history": [{
+                    "text": minutes_text,
+                    "sourceHash": source_hash,
+                    "model": "deepseek-flash",
+                    "instruction": "初版纪要",
+                    "sources": sources,
+                    "createdAt": "2026-11-20T09:15:00Z",
+                    "templateId": "minutes",
+                    "templateVersion": 4,
+                    "isDraft": true
+                }]
+            },
+            "audio": { "included": audio_included }
+        })
+        .to_string()
+    };
+
+    let manifest_json = make_manifest(false);
+    let mut artifact = format!("{KOEPACK_MAGIC}\n{}\n", manifest_json.len()).into_bytes();
+    artifact.extend_from_slice(manifest_json.as_bytes());
+
+    let pack_path = dir.0.join("quarterly-review.koepack");
+    write_atomic(&pack_path, &artifact).unwrap();
+
+    let disk_bytes = fs::read(&pack_path).unwrap();
+    let decoded = decode_koepack(&disk_bytes).unwrap();
+    assert_eq!(decoded.version, 2);
+    assert_eq!(decoded.material.title, "季度架构复盘");
+    assert_eq!(decoded.material.content_hash, audio_hash);
+    assert_eq!(decoded.material.device_file_id, Some(19));
+    let decoded_minutes = decoded.minutes.as_ref().unwrap();
+    assert_eq!(decoded_minutes.current.sources, sources);
+    assert_eq!(decoded_minutes.history.len(), 1);
+
+    let imported = import_recording(&dir.0, &pack_path, 1_800_000_000).unwrap();
+    assert_eq!(imported.title, "季度架构复盘");
+    assert_eq!(imported.paragraphs, sources);
+    assert!(imported.minutes.is_some());
+    assert!(!imported.has_audio);
+
+    let mut tampered = disk_bytes;
+    tampered.push(0x00);
+    write_atomic(&pack_path, &tampered).unwrap();
+    assert_eq!(
+        decode_koepack(&fs::read(&pack_path).unwrap()),
+        Err(MaterialPackError::TrailingBytes)
+    );
+    assert!(import_recording(&dir.0, &pack_path, 1_800_000_000).is_err());
+
+    let audio_manifest = make_manifest(true);
+    let mut audio_pack = format!("{KOEPACK_MAGIC}\n{}\n", audio_manifest.len()).into_bytes();
+    audio_pack.extend_from_slice(audio_manifest.as_bytes());
+    let audio_pack_path = dir.0.join("with-audio.koepack");
+    write_atomic(&audio_pack_path, &audio_pack).unwrap();
+    assert_eq!(
+        decode_koepack(&fs::read(&audio_pack_path).unwrap()),
+        Err(MaterialPackError::AudioCarrierUnsupported)
+    );
+}

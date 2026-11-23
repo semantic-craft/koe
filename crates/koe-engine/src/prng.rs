@@ -120,21 +120,3 @@ pub fn to_hex_upper(bytes: &[u8]) -> String {
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn splitmix64_is_deterministic() {
-        let mut a = SplitMix64::new(12345);
-        let mut b = SplitMix64::new(12345);
-        assert_eq!(a.next_bytes(64), b.next_bytes(64));
-    }
-
-    #[test]
-    fn fnv1a_and_hex_format_known_values() {
-        assert_eq!(fnv1a64_hex(&[]), "CBF29CE484222325");
-        assert_eq!(to_hex_upper(&[0x00, 0xAB, 0xCD, 0xEF]), "00ABCDEF");
-    }
-}

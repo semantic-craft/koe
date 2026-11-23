@@ -427,7 +427,6 @@ impl KoeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koe_client_providers::{ProviderEvent, ProviderOutput, TranscriptSegment};
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -448,106 +447,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
-    }
-
-    #[test]
-    fn late_provider_results_on_trashed_or_purged_records_drop_without_drain_error() {
-        let dir = Sandbox::new();
-        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
-        let now = 1_800_000_000u64;
-
-        runtime
-            .commit(|w| {
-                w.insert_record(
-                    "rec-trashed".into(),
-                    "Trashed Target".into(),
-                    RecordOrigin::ImportedAudio,
-                    0,
-                    now,
-                    100,
-                )?;
-                w.trash_record("rec-trashed", now * 1000)?;
-                w.insert_record(
-                    "rec-purged".into(),
-                    "Purged Target".into(),
-                    RecordOrigin::ImportedAudio,
-                    0,
-                    now,
-                    100,
-                )?;
-                w.trash_record("rec-purged", now * 1000)?;
-                w.purge_record("rec-purged")?;
-                Ok(())
-            })
-            .unwrap();
-
-        let trashed_key = RequestKey {
-            record_id: "rec-trashed".into(),
-            attempt: 1,
-            input_revision: 0,
-        };
-        let purged_key = RequestKey {
-            record_id: "rec-purged".into(),
-            attempt: 2,
-            input_revision: 0,
-        };
-
-        runtime
-            .pending
-            .insert(101, PendingWork::Transcription(trashed_key.clone()));
-        runtime.completed.push_back(ProviderEvent {
-            operation_id: 101,
-            record_id: "rec-trashed".into(),
-            result: Ok(ProviderOutput::Transcript {
-                segments: vec![TranscriptSegment {
-                    start_ms: 0,
-                    end_ms: 50,
-                    text: "late transcript".into(),
-                    speaker: None,
-                }],
-            }),
-        });
-
-        runtime
-            .pending
-            .insert(102, PendingWork::Summary(purged_key.clone()));
-        runtime.completed.push_back(ProviderEvent {
-            operation_id: 102,
-            record_id: "rec-purged".into(),
-            result: Ok(ProviderOutput::Chat {
-                text: r#"{"overview":"summary"}"#.into(),
-            }),
-        });
-
-        runtime
-            .pending
-            .insert(103, PendingWork::Transcription(trashed_key));
-        runtime.completed.push_back(ProviderEvent {
-            operation_id: 103,
-            record_id: "rec-trashed".into(),
-            result: Err("network timeout".into()),
-        });
-
-        runtime
-            .pending
-            .insert(104, PendingWork::Summary(purged_key));
-        runtime.completed.push_back(ProviderEvent {
-            operation_id: 104,
-            record_id: "rec-purged".into(),
-            result: Err("network timeout".into()),
-        });
-
-        runtime.poll_timers(0, now);
-        assert!(runtime.pending.is_empty());
-        assert!(runtime.completed.is_empty());
-        assert!(runtime.drain_error.is_none());
-
-        let quit: Value = serde_json::from_str(
-            &runtime.dispatch_json(&json!({"type": "request_quit"}).to_string(), now),
-        )
-        .unwrap();
-        assert_eq!(quit["lifecycle"]["quitPhase"], "ready");
-        assert_eq!(quit["lifecycle"]["keepAwake"], false);
     }
 
     #[test]

@@ -1,8 +1,6 @@
 mod blocking;
 mod definitions;
 mod read_tools;
-#[cfg(test)]
-mod tests;
 mod write_tools;
 
 pub use blocking::drive_mcp_tool_blocking;

@@ -1690,3 +1690,292 @@ fn batch_project_archive_and_directory_markdown_export_work_atomically() {
     assert!(combined.contains("第一份评审原文。"));
     assert!(combined.contains("第二份评审原文。"));
 }
+
+fn gated_chat_status_server(
+    status_line: &'static str,
+    response_body: String,
+) -> (
+    String,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+    thread::JoinHandle<bool>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/chat/completions", listener.local_addr().unwrap());
+    let (arrived_tx, arrived_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break Some(stream),
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("chat server accept failed: {err}"),
+            }
+        };
+        let Some(mut stream) = stream else {
+            return false;
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut req_bytes = Vec::new();
+        let mut buf = [0u8; 4096];
+        let header_end = loop {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF reading chat request headers");
+            req_bytes.extend_from_slice(&buf[..n]);
+            if let Some(pos) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&req_bytes[..header_end]);
+        let content_len = headers
+            .lines()
+            .find_map(|line| {
+                let (k, v) = line.split_once(':')?;
+                k.eq_ignore_ascii_case("content-length")
+                    .then(|| v.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        while req_bytes.len() < header_end + content_len {
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0, "unexpected EOF reading chat request body");
+            req_bytes.extend_from_slice(&buf[..n]);
+        }
+        let _ = arrived_tx.send(());
+        let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        );
+        let _ = stream.flush();
+        true
+    });
+    (url, arrived_rx, release_tx, handle)
+}
+
+#[test]
+fn late_cloud_summary_and_stale_ask_completions_on_trashed_or_purged_records_converge_quit_to_ready()
+{
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+
+    let ok_minutes = json!({
+        "choices": [{
+            "message": {
+                "content": json!({
+                    "schemaVersion": 2,
+                    "title": "迟到纪要",
+                    "overview": "已删除或已修改记录不得复活或污染状态。",
+                    "topics": [{
+                        "text": "边界检查",
+                        "summary": "忽略过期返回。",
+                        "sources": ["S1"]
+                    }],
+                    "decisions": [],
+                    "actions": [],
+                    "questions": [],
+                    "terms": [],
+                    "reviewItems": []
+                })
+                .to_string()
+            }
+        }]
+    })
+    .to_string();
+    let err_body = json!({"error": {"message": "upstream overloaded"}}).to_string();
+
+    let summary_cases = [
+        ("已删成功记录", "200 OK", ok_minutes.clone(), false),
+        ("已删失败记录", "500 Internal Server Error", err_body.clone(), false),
+        ("已清空成功记录", "200 OK", ok_minutes, true),
+        ("已清空失败记录", "500 Internal Server Error", err_body, true),
+    ];
+
+    for (idx, (title, status, body, purge)) in summary_cases.into_iter().enumerate() {
+        let now = NOW + (idx as u64) * 10;
+        let id = dispatch_ok(
+            &mut runtime,
+            json!({"type": "create_note", "title": title, "text": "初始评审记录。"}),
+            now,
+        )["selectedRecordId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let (chat_url, arrived, release, server) = gated_chat_status_server(status, body);
+        dispatch_ok(
+            &mut runtime,
+            json!({
+                "type": "configure_provider",
+                "apiKey": TEST_KEY,
+                "model": "deepseek-chat",
+                "chatEndpoint": chat_url
+            }),
+            now,
+        );
+        dispatch_ok(
+            &mut runtime,
+            json!({"type": "summarize", "recordId": id}),
+            now,
+        );
+        arrived.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let blocked = dispatch_raw(
+            &mut runtime,
+            json!({"type": "trash_record", "recordId": id}),
+            now + 1,
+        );
+        assert!(blocked["error"].is_string(), "{blocked}");
+
+        dispatch_ok(
+            &mut runtime,
+            json!({
+                "type": "edit_segment_text",
+                "recordId": id,
+                "segmentId": "S1",
+                "text": "修改后的原文使旧纪要请求过期。"
+            }),
+            now + 2,
+        );
+        dispatch_ok(
+            &mut runtime,
+            json!({"type": "trash_record", "recordId": id}),
+            now + 3,
+        );
+        if purge {
+            dispatch_ok(
+                &mut runtime,
+                json!({"type": "purge_record", "recordId": id}),
+                now + 4,
+            );
+        }
+
+        let _ = release.send(());
+        assert!(server.join().unwrap());
+        thread::sleep(Duration::from_millis(30));
+        runtime.poll_timers(100, now + 5);
+
+        let snap = runtime.snapshot(now + 5);
+        assert!(snap["error"].is_null(), "{}", snap["error"]);
+        assert!(!snap["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"] == id));
+        if purge {
+            assert!(runtime.workspace().record(&id).is_none());
+            assert!(!snap["trashRecords"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == id));
+        } else {
+            let record = runtime.workspace().record(&id).unwrap();
+            assert!(record.is_trashed());
+            assert!(record.aggregate.minutes.is_none());
+        }
+    }
+
+    let ask_now = NOW + 100;
+    let ask_id = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "过期问答记录", "text": "周五发布稳定版本。"}),
+        ask_now,
+    )["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let ask_body = json!({
+        "choices": [{
+            "message": {
+                "content": "周五发布稳定版本 [S1]。"
+            }
+        }]
+    })
+    .to_string();
+    let (ask_url, ask_arrived, ask_release, ask_server) =
+        gated_chat_status_server("200 OK", ask_body);
+    dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "apiKey": TEST_KEY,
+            "model": "deepseek-chat",
+            "chatEndpoint": ask_url
+        }),
+        ask_now,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "ask",
+            "question": "什么时候发布？",
+            "scope": "record",
+            "recordId": ask_id
+        }),
+        ask_now,
+    );
+    ask_arrived.recv_timeout(Duration::from_secs(5)).unwrap();
+    let ask_blocked = dispatch_raw(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": ask_id}),
+        ask_now + 1,
+    );
+    assert!(ask_blocked["error"].is_string(), "{ask_blocked}");
+
+    dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "edit_segment_text",
+            "recordId": ask_id,
+            "segmentId": "S1",
+            "text": "改为下周一发布稳定版本。"
+        }),
+        ask_now + 2,
+    );
+    let _ = ask_release.send(());
+    assert!(ask_server.join().unwrap());
+
+    let settle_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        runtime.poll_timers(50, ask_now + 3);
+        if runtime.snapshot(ask_now + 3)["ask"]["phase"] != "pending" {
+            break;
+        }
+        assert!(
+            Instant::now() < settle_deadline,
+            "stale ask did not settle cleanly"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let after_stale_ask = runtime.snapshot(ask_now + 3);
+    assert!(after_stale_ask["error"].is_null(), "{}", after_stale_ask["error"]);
+    assert_eq!(after_stale_ask["ask"]["phase"], "failed");
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": ask_id}),
+        ask_now + 4,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "purge_record", "recordId": ask_id}),
+        ask_now + 5,
+    );
+
+    let quit_snap = dispatch_ok(&mut runtime, json!({"type": "request_quit"}), ask_now + 6);
+    assert_eq!(quit_snap["lifecycle"]["quitPhase"], "ready");
+    assert_eq!(quit_snap["lifecycle"]["keepAwake"], false);
+}

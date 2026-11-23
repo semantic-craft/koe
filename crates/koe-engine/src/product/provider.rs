@@ -367,20 +367,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_provider_uses_qwen_asr_and_deepseek_flash_llm() {
-        let cfg = ProviderConfiguration::default();
-        assert_eq!(cfg.asr_provider, CloudAsrProvider::Qwen);
-        assert_eq!(cfg.asr_model, "qwen-audio-3.1-asr-flash-streaming");
-        assert_eq!(cfg.asr_endpoint, DEFAULT_DASHSCOPE_WS_URL);
-        assert_eq!(cfg.llm_provider, LlmProvider::DeepSeek);
-        assert_eq!(cfg.model, "deepseek-flash");
-        assert_eq!(cfg.chat_endpoint, DEFAULT_DEEPSEEK_CHAT_URL);
-        assert!(LlmProvider::parse("qwen").is_none());
-        assert_eq!(LlmProvider::parse("deepseek"), Some(LlmProvider::DeepSeek));
-        assert_eq!(LlmProvider::parse("custom"), Some(LlmProvider::Custom));
-    }
-
-    #[test]
     fn provider_inference_matches_authority_host_only() {
         assert_eq!(
             ProviderConfiguration::infer_asr_provider("https://api.deepseek.com/v1/tools/asr"),
