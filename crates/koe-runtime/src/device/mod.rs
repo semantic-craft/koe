@@ -9,7 +9,6 @@ use koe_engine::{
     },
 };
 use serde_json::{json, Value};
-use std::{fs::File, io::Read};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum DeviceModalState {
@@ -197,6 +196,7 @@ impl DeviceRuntime {
         event: &str,
         connection: &str,
         device_name: Option<&str>,
+        env: &crate::observability::env::RuntimeEnv,
     ) -> Result<(), String> {
         if let Some(name) = device_name.map(str::trim).filter(|s| !s.is_empty()) {
             self.device_name = Some(name.replace('·', " "));
@@ -226,9 +226,7 @@ impl DeviceRuntime {
             {
                 self.explicitly_disconnected = false;
                 let mut private_key = [0u8; 32];
-                File::open("/dev/urandom")
-                    .and_then(|mut f| f.read_exact(&mut private_key))
-                    .map_err(|_| "无法生成设备连接密钥".to_string())?;
+                env.fill_random(&mut private_key)?;
                 let frames = self
                     .session
                     .on_gatt_ready(private_key)

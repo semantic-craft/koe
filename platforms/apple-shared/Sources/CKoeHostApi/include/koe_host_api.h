@@ -22,6 +22,7 @@ uint64_t koe_host_session_create(const char *workspace_dir);
 bool koe_host_session_destroy(uint64_t handle);
 uint64_t koe_host_session_generation(uint64_t handle);
 char *koe_host_session_snapshot_json(uint64_t handle, uint64_t now_epoch_sec);
+char *koe_host_session_export_diagnostics_json(uint64_t handle, uint64_t now_epoch_sec);
 char *koe_host_session_dispatch_json(uint64_t handle, const char *command_json, uint64_t now_epoch_sec);
 typedef struct KoePcmReceipt {
     uint64_t generation;

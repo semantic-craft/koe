@@ -62,6 +62,10 @@ impl CaptureAsset {
         self.file.seek(SeekFrom::Start(offset)).map_err(io_error)?;
         let bytes: Vec<u8> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
         self.file.write_all(&bytes).map_err(io_error)?;
+        koe_client_base::fault_injection::check(
+            koe_client_base::fault_injection::FsFaultPoint::CaptureAssetAppend,
+        )
+        .map_err(io_error)?;
         let header =
             koe_engine::wav::OpusWave::wav_header_with_rate((next * 2) as u32, self.sample_rate);
         self.file.seek(SeekFrom::Start(0)).map_err(io_error)?;
@@ -112,6 +116,10 @@ impl CaptureAsset {
     }
     /// Seals and durably publishes the file. Every retry repeats durability barriers.
     pub fn publish(&mut self) -> Result<(), String> {
+        koe_client_base::fault_injection::check(
+            koe_client_base::fault_injection::FsFaultPoint::CaptureAssetPublish,
+        )
+        .map_err(io_error)?;
         let size = (self.samples * 2) as u32;
         if !self.published {
             let header = koe_engine::wav::OpusWave::wav_header_with_rate(size, self.sample_rate);

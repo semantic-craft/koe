@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.semanticcraft.koe.BuildConfig
@@ -69,25 +71,37 @@ internal fun SettingsExtrasCards(store: HostSessionStore, update: AppUpdateSnaps
     PermissionCard {
         launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
     }
-    DiagnosticsCard {
-        // Only structural metadata and the bounded command/event trace cross the share boundary.
-        val report = buildJsonObject {
-            put("generation", store.currentGeneration)
-            put("recordCount", store.records.value.size)
-            put("trace", Json.parseToJsonElement(store.exportTraceJson()))
-        }
-        val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report.toString())
-        launch(Intent.createChooser(share, "分享诊断日志"))
-    }
+    DiagnosticsCard(
+        onExportBundle = { store.bridgeActions.requestExportDiagnosticsBundle() },
+        onShareTrace = {
+            // Only structural metadata and the bounded command/event trace cross the share boundary.
+            val report = buildJsonObject {
+                put("generation", store.currentGeneration)
+                put("recordCount", store.records.value.size)
+                put("trace", Json.parseToJsonElement(store.exportTraceJson()))
+            }
+            val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report.toString())
+            launch(Intent.createChooser(share, "分享诊断日志"))
+        },
+    )
 }
 
 @Composable
-private fun DiagnosticsCard(onExport: () -> Unit) {
+private fun DiagnosticsCard(
+    onExportBundle: () -> Unit,
+    onShareTrace: () -> Unit,
+) {
     KoeCard {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             WorkspaceTitle("诊断日志")
-            Text("包含操作类型、快照代次与错误标记。")
-            KoePrimaryButton("分享诊断日志", onExport, isPrimary = false)
+            Text("导出脱敏诊断包用于复现问题，不包含私钥、音频样本或私有文稿正文。")
+            KoePrimaryButton(
+                title = "导出诊断包",
+                onClick = onExportBundle,
+                isPrimary = false,
+                modifier = Modifier.testTag("settings-export-diagnostics-bundle"),
+            )
+            KoePrimaryButton("分享诊断日志", onShareTrace, isPrimary = false)
         }
     }
 }

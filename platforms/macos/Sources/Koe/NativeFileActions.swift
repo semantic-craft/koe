@@ -107,4 +107,28 @@ final class NativeFileActions {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         store.send(.exportRecordsMarkdown(recordIds: recordIds, directory: url.path))
     }
+
+    func exportDiagnosticsBundle(nowEpochSec: UInt64 = 0) {
+        guard let store else { return }
+        let filename = HostSessionStore.diagnosticsBundleFilename(nowEpochSec: nowEpochSec)
+        guard let url = panelPresenter.chooseExportFileURL(
+            title: "导出诊断包",
+            suggestedFilename: filename,
+            allowedContentTypes: [.json]
+        ) else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let payload = store.exportDiagnosticsBundleJSON(nowEpochSec: nowEpochSec)
+        do {
+            try Data(payload.utf8).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            HostDiagnosticLog.shared.error(
+                category: "files",
+                event: "export_diagnostics_write_failed",
+                error: error
+            )
+            store.reportNativeError("无法导出诊断包：\(error.localizedDescription)")
+        }
+    }
 }

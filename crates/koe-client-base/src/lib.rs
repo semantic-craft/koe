@@ -8,5 +8,6 @@
 #![deny(missing_docs)]
 
 pub mod atomic_fs;
+pub mod fault_injection;
 
 pub use atomic_fs::{write_atomic, WorkspaceLockGuard};

@@ -2,10 +2,14 @@ import SwiftUI
 
 public struct SettingsDoctorView: View {
     let store: HostSessionStore
+    private let onExportDiagnostics: (() -> Void)?
     @State private var draft = ModelSettingsDraft()
     @State private var didInitialize = false
 
-    public init(store: HostSessionStore) { self.store = store }
+    public init(store: HostSessionStore, onExportDiagnostics: (() -> Void)? = nil) {
+        self.store = store
+        self.onExportDiagnostics = onExportDiagnostics
+    }
 
     public var body: some View {
         let provider = store.settings.provider
@@ -89,6 +93,9 @@ public struct SettingsDoctorView: View {
                 .foregroundStyle(AppColors.textSecondary)
                 .lineLimit(2)
             Spacer(minLength: 8)
+            if let onExportDiagnostics {
+                KoeActionButton("导出诊断包", systemImage: "square.and.arrow.up", action: onExportDiagnostics)
+            }
             KoeActionButton("恢复官方默认") {
                 draft.applyPreset("hybrid", catalog: store.settings.provider.effectiveCatalog)
                 draft.qwenWorkspaceId = ""

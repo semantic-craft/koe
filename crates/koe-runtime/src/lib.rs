@@ -22,6 +22,11 @@ pub use mcp_surface::{drive_mcp_tool_blocking, McpToolCallState, McpToolError};
 pub use observability::bridge_path::resolve_bridge_socket_path;
 #[cfg(test)]
 pub(crate) use observability::bridge_path::resolve_bridge_socket_path_with_env;
+pub use observability::env::{RuntimeClock, RuntimeEnv, RuntimeEnvMetadata, RuntimeRng};
+pub use observability::flight_recorder::{
+    DiagnosticsBundle, FlightRecorderEntry, FlightRecorderSnapshot, ReplayReport,
+    ReplaySnapshotSummary, RuntimeInput, DIAGNOSTICS_BUNDLE_VERSION, MAX_FLIGHT_RECORDER_ENTRIES,
+};
 /// Secure platform I/O; credential values never enter product snapshots.
 pub use processing::credentials;
 pub use speech::local_asr::LocalAsrEffect;
@@ -181,6 +186,8 @@ pub struct KoeRuntime {
     drain_error: Option<String>,
     undo_trash: Option<workspace::trash::UndoTrashBanner>,
     last_now_sec: u64,
+    env: observability::env::RuntimeEnv,
+    flight_recorder: observability::flight_recorder::FlightRecorder,
 }
 
 impl KoeRuntime {
@@ -193,6 +200,15 @@ impl KoeRuntime {
     pub fn open_with_credentials(
         path: impl AsRef<Path>,
         credentials: Box<dyn credentials::CredentialStore>,
+    ) -> Result<Self, String> {
+        Self::open_with_env(path, credentials, RuntimeEnv::system())
+    }
+
+    /// Opens with an explicit secure storage adapter and injectable [`RuntimeEnv`] boundaries.
+    pub fn open_with_env(
+        path: impl AsRef<Path>,
+        credentials: Box<dyn credentials::CredentialStore>,
+        env: RuntimeEnv,
     ) -> Result<Self, String> {
         let root = path.as_ref().to_path_buf();
         let store = ProductStore::open(&root).map_err(|e| e.to_string())?;
@@ -224,6 +240,8 @@ impl KoeRuntime {
             drain_error: None,
             undo_trash: None,
             last_now_sec: 0,
+            env,
+            flight_recorder: observability::flight_recorder::FlightRecorder::default(),
         };
         runtime.recover_local_captures()?;
         runtime.reconcile_orphan_audio();
@@ -275,6 +293,8 @@ impl KoeRuntime {
 
     /// Applies a native command and returns a projection including any operation failure.
     pub fn dispatch_json(&mut self, json: &str, now: u64) -> String {
+        self.env.note_now_sec(now);
+        let recorded_input = RuntimeInput::from_dispatch_json(json, now);
         let result = if json.len() > MAX_COMMAND_JSON_BYTES {
             Err("操作内容过大".into())
         } else {
@@ -294,6 +314,7 @@ impl KoeRuntime {
             self.set_error(error);
         }
         self.generation = self.generation.saturating_add(1);
+        self.flight_recorder.record(recorded_input, self.generation);
         self.snapshot_json(now)
     }
 
@@ -308,6 +329,16 @@ impl KoeRuntime {
             timing,
             now,
         } = chunk;
+        self.env.note_now_sec(now);
+        let recorded_input = RuntimeInput::IngestMicrophonePcm {
+            record_id: record_id.to_owned(),
+            session_id: session_id.to_owned(),
+            lane: lane.to_owned(),
+            sequence,
+            sample_count: samples.len(),
+            timing,
+            now,
+        };
         let _ = self.enter_runtime_step(now);
         let capture_timing = timing.map(|(epoch, captured_start_ns)| command::CaptureTiming {
             epoch,
@@ -328,6 +359,7 @@ impl KoeRuntime {
             }
         }
         self.generation = self.generation.saturating_add(1);
+        self.flight_recorder.record(recorded_input, self.generation);
         let Some((next_sequence, has_lane_error)) = self
             .active_capture
             .microphone()
@@ -368,12 +400,21 @@ impl KoeRuntime {
         last_projected_now_sec: u64,
         now: u64,
     ) -> PlaybackProgressReceipt {
+        self.env.note_now_sec(now);
+        let recorded_input = RuntimeInput::ReportPlaybackProgress {
+            record_id: record_id.to_owned(),
+            request_id,
+            position_ms,
+            is_playing,
+            last_projected_now_sec,
+            now,
+        };
         let prev_generation = self.generation;
         let entry = self.enter_runtime_step(now);
         let eff_now = if now > 0 { now } else { self.last_now_sec };
-        let today = projection::local_date(eff_now);
+        let today = self.local_date(eff_now);
         let prev_day = if last_projected_now_sec > 0 {
-            projection::local_date(last_projected_now_sec)
+            self.local_date(last_projected_now_sec)
         } else {
             None
         };
@@ -409,6 +450,7 @@ impl KoeRuntime {
                 };
             }
             self.generation = self.generation.saturating_add(1);
+            self.flight_recorder.record(recorded_input, self.generation);
             return PlaybackProgressReceipt {
                 generation: self.generation,
                 prev_generation,
@@ -441,6 +483,7 @@ impl KoeRuntime {
         self.selection.playback.position_ms = clamped_pos;
         self.selection.playback.playing = is_playing;
         self.generation = self.generation.saturating_add(1);
+        self.flight_recorder.record(recorded_input, self.generation);
         PlaybackProgressReceipt {
             generation: self.generation,
             prev_generation,
@@ -626,6 +669,11 @@ impl KoeRuntime {
 
     /// Feeds real platform notifications into the existing protocol engine.
     pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
+        self.env.note_now_sec(now);
+        let recorded_input = RuntimeInput::IngestBleChunk {
+            bytes_hex: observability::flight_recorder::bytes_to_hex_lower(bytes),
+            now,
+        };
         let entry = self.enter_runtime_step(now);
         let mut changed = self.device.ingest(bytes, now);
         if let Err(error) = self.save_captures(now) {
@@ -633,9 +681,12 @@ impl KoeRuntime {
         }
         changed |= self.maybe_start_auto_offline_pull();
         self.finish_runtime_step(entry, changed);
+        self.flight_recorder.record(recorded_input, self.generation);
     }
     /// Advances protocol deadlines and consumes completed provider work.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now: u64) {
+        self.env.note_now_sec(now);
+        let gen_before = self.generation;
         let entry = self.enter_runtime_step(now);
         self.drain_error = None;
         let undo_expired = self.tick_undo_trash(elapsed_ms);
@@ -659,6 +710,19 @@ impl KoeRuntime {
         self.drive_live_minutes(elapsed_ms);
         completed |= self.maybe_start_auto_offline_pull();
         self.finish_runtime_step(entry, changed || completed || undo_expired);
+        if self.generation != gen_before {
+            let carried_ms = self.flight_recorder.take_pending_poll_elapsed_ms();
+            let total_elapsed = carried_ms.saturating_add(elapsed_ms.min(60_000)).min(60_000);
+            self.flight_recorder.record(
+                RuntimeInput::PollTimers {
+                    elapsed_ms: total_elapsed,
+                    now,
+                },
+                self.generation,
+            );
+        } else {
+            self.flight_recorder.accumulate_noop_poll(elapsed_ms.min(60_000));
+        }
     }
 
     fn advance_clock(&mut self, now: u64) -> bool {
@@ -666,7 +730,7 @@ impl KoeRuntime {
             return false;
         }
         let before = std::mem::replace(&mut self.last_now_sec, now);
-        before > 0 && projection::local_date(before) != projection::local_date(now)
+        before > 0 && self.local_date(before) != self.local_date(now)
     }
 
     pub(crate) fn is_device_busy(&self) -> bool {
@@ -702,15 +766,6 @@ impl KoeRuntime {
     /// Advances timers and returns the diagnostic projection shared by CLI and local bridge.
     pub fn doctor_snapshot(&mut self, now: u64) -> Value {
         self.poll_timers(0, now);
-        json!({
-            "workspaceReadable": true,
-            "version": self.app_update.current_version.to_string(),
-            "build": self.app_update.current_build,
-            "generation": self.generation,
-            "appUpdate": self.app_update_json(),
-            "device": self.device_json(),
-            "provider": self.provider_json(),
-            "error": self.error_str()
-        })
+        self.doctor_snapshot_readonly()
     }
 }

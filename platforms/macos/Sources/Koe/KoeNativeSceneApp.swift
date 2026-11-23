@@ -20,7 +20,8 @@ private struct KoeWorkspaceSceneHost: View {
                 onImport: { appDelegate.files.importFile() },
                 onExport: { appDelegate.files.exportRecord($0) },
                 onExportRecords: { appDelegate.files.exportRecords($0) },
-                onExportWorkspace: { appDelegate.files.exportWorkspace($0) }
+                onExportWorkspace: { appDelegate.files.exportWorkspace($0) },
+                onExportDiagnostics: { appDelegate.files.exportDiagnosticsBundle() }
             )
             .onAppear {
                 KoeWindowPresenter.presentPrimaryWorkspaceWindow()

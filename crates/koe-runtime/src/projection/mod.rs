@@ -6,7 +6,6 @@ use std::borrow::Cow;
 
 use crate::capture::live_minutes::{SourceView, TranscriptLine};
 use crate::*;
-use chrono::{DateTime, Local};
 use koe_engine::{
     context::{AskRole, AskStatus},
     session::TransferPhaseTag,
@@ -817,13 +816,16 @@ impl KoeRuntime {
         self.source_view(&source.record_id, source.segment_id)
             .map(serialize_value)
     }
+    pub(crate) fn local_date(&self, epoch: u64) -> Option<chrono::NaiveDate> {
+        local_date_with_offset(epoch, self.env.tz_offset_secs())
+    }
 }
 
-pub(crate) fn local_date(epoch: u64) -> Option<chrono::NaiveDate> {
-    i64::try_from(epoch)
-        .ok()
-        .and_then(|n| DateTime::from_timestamp(n, 0))
-        .map(|d| d.with_timezone(&Local).date_naive())
+pub(crate) fn local_date_with_offset(
+    epoch: u64,
+    offset_secs: Option<i32>,
+) -> Option<chrono::NaiveDate> {
+    crate::observability::env::local_date_with_offset(epoch, offset_secs)
 }
 
 pub(crate) fn trash_remaining_days(record: &ProductRecord, now_sec: u64) -> Option<u64> {

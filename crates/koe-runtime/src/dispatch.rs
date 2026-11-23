@@ -104,7 +104,7 @@ impl KoeRuntime {
                 device_name,
             } => {
                 self.device
-                    .event(&event, &connection_id, device_name.as_deref())?;
+                    .event(&event, &connection_id, device_name.as_deref(), &self.env)?;
                 self.save_captures(now)?;
             }
             AdapterEvent::DeviceDisconnect => {
@@ -169,6 +169,9 @@ impl KoeRuntime {
                 }
             }
             HostIntent::ImportFile { path } => {
+                if self.env.is_replay_mode() {
+                    return Ok(());
+                }
                 let imported =
                     recording_assets::import_recording(&self.root, Path::new(&path), now)?;
                 if imported.has_audio {

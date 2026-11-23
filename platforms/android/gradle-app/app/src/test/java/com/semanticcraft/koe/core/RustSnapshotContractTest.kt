@@ -327,6 +327,59 @@ class RustSnapshotContractTest {
         }
     }
 
+    @Test
+    fun realRustDiagnosticsBundleRedactsSecretsAndIncludesHostLayers() {
+        ensureHostJniLoaded()
+        KoeLogger.clearForTests()
+        val workspaceDir = Files.createTempDirectory("koe-rust-kotlin-diagnostics-").toFile()
+        val bridge = RecordingHostJniBridgeClient()
+        val store = HostSessionStore(
+            workspacePath = workspaceDir.absolutePath,
+            bridge = bridge,
+            autoOpen = true,
+        )
+        try {
+            val baseNow = 1_800_200_000L
+            val fakeSecret = "sk-android-contract-secret-98765"
+            val sensitiveNote = "高度机密安卓测试笔记内容"
+
+            store.send(
+                HostCommand.ConfigureProvider(
+                    model = "deepseek-chat",
+                    apiKey = fakeSecret,
+                ),
+                nowEpochSec = baseNow,
+            )
+            store.send(
+                HostCommand.CreateNote(title = "私密标题", text = sensitiveNote, stayOnPage = false),
+                nowEpochSec = baseNow + 1,
+            )
+            KoeLogger.w("KoeContract", "probe_secret", "Authorization: Bearer $fakeSecret")
+
+            val exported = store.exportDiagnosticsBundleJson(nowEpochSec = baseNow + 2)
+            assertFalse("API secret must be redacted", exported.contains(fakeSecret))
+            assertFalse("private note body must be redacted", exported.contains(sensitiveNote))
+
+            val parsed = HostJson.json.parseToJsonElement(exported) as kotlinx.serialization.json.JsonObject
+            val rust = parsed["rust"] as kotlinx.serialization.json.JsonObject
+            assertEquals(1, rust["bundleVersion"]?.toString()?.toInt())
+            val doctor = rust["doctor"] as kotlinx.serialization.json.JsonObject
+            val runtimeState = doctor["runtimeState"] as kotlinx.serialization.json.JsonObject
+            assertTrue(runtimeState["flightRecorderEntries"]?.toString()?.toInt()?.let { it >= 2 } == true)
+            val recorder = rust["flightRecorder"] as kotlinx.serialization.json.JsonObject
+            val entries = recorder["entries"] as kotlinx.serialization.json.JsonArray
+            assertTrue(entries.isNotEmpty())
+            val hostDiagnostics = parsed["hostDiagnostics"] as kotlinx.serialization.json.JsonArray
+            assertTrue(hostDiagnostics.isNotEmpty())
+            val hostTrace = parsed["hostTrace"] as kotlinx.serialization.json.JsonArray
+            assertTrue(hostTrace.isNotEmpty())
+        } finally {
+            store.shutdown()
+            KoeLogger.clearForTests()
+            workspaceDir.deleteRecursively()
+        }
+    }
+
     private class LoopbackReleaseHttpServer(
         private val routes: Map<String, Pair<String, ByteArray>>,
     ) : AutoCloseable {
@@ -467,6 +520,11 @@ class RustSnapshotContractTest {
 
         override fun sessionPollTimers(handle: Long, elapsedMs: Long, nowEpochSec: Long): Long =
             KoeNativeBridge.nativeSessionPollTimers(handle, elapsedMs, nowEpochSec)
+
+        override fun sessionExportDiagnosticsJson(handle: Long, nowEpochSec: Long): String? {
+            val raw = KoeNativeBridge.nativeSessionExportDiagnosticsJson(handle, nowEpochSec) ?: return null
+            return String(raw, StandardCharsets.UTF_8)
+        }
     }
 
     companion object {

@@ -244,4 +244,46 @@ final class IOSFileActionsTests: XCTestCase {
         try assertClean(f.staging)
         XCTAssertEqual(try String(contentsOf: f.source.appendingPathComponent("keep.txt"), encoding: .utf8), "original")
     }
+
+    func testExportDiagnosticsBundleStagesSanitizedJsonAndCleansStaging() throws {
+        let f = try fixture()
+        defer { f.store.shutdown() }
+
+        let now: UInt64 = 1_800_310_000
+        f.store.send(
+            .configureProvider(apiKey: "sk-ios-export-secret-7777", model: "deepseek-flash"),
+            nowEpochSec: now
+        )
+        f.store.send(
+            .createNote(title: "iOS私密标题", text: "iOS私密正文"),
+            nowEpochSec: now + 1
+        )
+
+        f.files.exportDiagnosticsBundle(nowEpochSec: now + 2)
+        let url = try XCTUnwrap(f.files.exportURLs.first)
+        XCTAssertEqual(f.files.exportURLs.count, 1)
+        XCTAssertEqual(url.lastPathComponent, "koe-diagnostics-1800310002.json")
+
+        let raw = try String(contentsOf: url, encoding: .utf8)
+        for forbidden in ["sk-ios-export-secret-7777", "iOS私密标题", "iOS私密正文"] {
+            XCTAssertFalse(raw.contains(forbidden), "leaked \(forbidden)")
+        }
+        let parsed = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+        )
+        let rust = try XCTUnwrap(parsed["rust"] as? [String: Any])
+        XCTAssertEqual(rust["bundleVersion"] as? Int, 1)
+        let doctor = try XCTUnwrap(rust["doctor"] as? [String: Any])
+        XCTAssertTrue(doctor["runtimeState"] is [String: Any])
+        let flightRecorder = try XCTUnwrap(rust["flightRecorder"] as? [String: Any])
+        let entries = try XCTUnwrap(flightRecorder["entries"] as? [Any])
+        XCTAssertGreaterThanOrEqual(entries.count, 2)
+        XCTAssertTrue(parsed["hostDiagnostics"] is [Any])
+        XCTAssertTrue(parsed["hostTrace"] is [Any])
+
+        f.files.finishExport(delivered: true)
+        XCTAssertTrue(f.files.exportURLs.isEmpty)
+        XCTAssertNil(f.store.navigation.effectiveError)
+        try assertClean(f.staging)
+    }
 }

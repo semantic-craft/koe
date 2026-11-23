@@ -103,6 +103,10 @@ impl BridgeClient {
         self.rpc("koe/doctor", json!({})).map_err(|e| e.message)
     }
 
+    pub(crate) fn diagnostics(&mut self) -> Result<Value, String> {
+        self.rpc("koe/diagnostics", json!({})).map_err(|e| e.message)
+    }
+
     pub(crate) fn mcp_tools_list(&mut self) -> Result<Value, McpToolError> {
         self.rpc("koe/mcp_tools_list", json!({}))
     }

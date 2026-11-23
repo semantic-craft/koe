@@ -127,6 +127,10 @@ class HostSessionStore(
 
     fun exportTraceJson(): String = traceBuffer.exportJson()
 
+    fun exportRustDiagnosticsJson(nowEpochSec: Long = 0L): String? = synchronized(stateLock) {
+        if (handle == 0L) null else bridge.sessionExportDiagnosticsJson(handle, resolveNowEpochSec(nowEpochSec))
+    }
+
     fun writeTraceAtomically(outputFile: File): Boolean = traceBuffer.writeAtomically(outputFile)
 
     fun send(command: HostCommand, nowEpochSec: Long = 0L, afterDispatch: (() -> Unit)? = null) {

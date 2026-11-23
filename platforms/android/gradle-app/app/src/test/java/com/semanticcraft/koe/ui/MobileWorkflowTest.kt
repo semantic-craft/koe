@@ -308,6 +308,13 @@ class MobileWorkflowTest {
         assertTrue(report.contains("configure_provider"))
         assertFalse(report.contains("private-provider-data"))
         assertFalse(report.contains("test-only-marker"))
+
+        var bundleRequested = 0
+        store.bridgeActions = store.bridgeActions.copy(
+            requestExportDiagnosticsBundle = { bundleRequested += 1 },
+        )
+        click("导出诊断包")
+        assertEquals(1, bundleRequested)
     }
 
     @Test fun deviceShowsMeasuredProgressAndOpensSyncedRecording() {

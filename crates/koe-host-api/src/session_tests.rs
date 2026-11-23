@@ -1288,3 +1288,43 @@ fn c_abi_non_isolated_credentials_persist_across_destroy_and_reopen() {
     assert!(session2.destroy());
     drop(ctx);
 }
+
+#[test]
+fn export_diagnostics_json_c_abi_returns_redacted_bundle_and_rejects_invalid_handle() {
+    let ws = TempWorkspace::new("diag-cabi");
+    let session = HostSessionGuard::open(&ws.0).unwrap();
+    let now = 1_800_200_000;
+
+    let _ = send_json(
+        &session,
+        json!({
+            "type": "configure_provider",
+            "apiKey": "sk-cabi-secret-999",
+            "model": "deepseek-flash"
+        }),
+        now,
+    );
+    let _ = send_json(
+        &session,
+        json!({
+            "type": "create_note",
+            "title": "私密会议标题",
+            "text": "私密会议正文内容"
+        }),
+        now + 1,
+    );
+
+    let bundle_text = session
+        .export_diagnostics_json(now + 2)
+        .expect("export_diagnostics_json must return JSON");
+    assert!(!bundle_text.contains("sk-cabi-secret-999"));
+    assert!(!bundle_text.contains("私密会议标题"));
+    assert!(!bundle_text.contains("私密会议正文内容"));
+    let bundle: Value = serde_json::from_str(&bundle_text).unwrap();
+    assert_eq!(bundle["bundleVersion"], 1);
+    assert!(bundle["doctor"]["runtimeState"].is_object());
+    assert!(bundle["flightRecorder"]["entries"].as_array().unwrap().len() >= 2);
+
+    let invalid = koe_host_session_export_diagnostics_json(999_999, now);
+    assert!(invalid.is_null(), "invalid handle must return null");
+}

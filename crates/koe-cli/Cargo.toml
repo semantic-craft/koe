@@ -15,6 +15,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+koe-client-base = { path = "../koe-client-base" }
 koe-engine = { path = "../koe-engine" }
 koe-opus = { path = "../koe-opus" }
 koe-runtime = { path = "../koe-runtime" }

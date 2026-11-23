@@ -4,7 +4,6 @@ use crate::{
         microphone::{MicrophoneStatus, Phase},
         studio::CaptureSelection,
     },
-    projection::local_date,
     *,
 };
 use chrono::NaiveDate;
@@ -16,14 +15,14 @@ impl KoeRuntime {
         now: u64,
         records: &[&ProductRecord],
     ) -> (String, Vec<String>, Option<NaiveDate>) {
-        let today = (now > 0).then(|| local_date(now)).flatten();
+        let today = (now > 0).then(|| self.local_date(now)).flatten();
         let mut date_set: BTreeSet<NaiveDate> = BTreeSet::new();
         if let Some(t) = today {
             date_set.insert(t);
         }
         for rec in records {
             if rec.is_live() && rec.mode == RecordMode::AllDay {
-                if let Some(d) = local_date(rec.aggregate.created_at_epoch_sec) {
+                if let Some(d) = self.local_date(rec.aggregate.created_at_epoch_sec) {
                     date_set.insert(d);
                 }
             }
@@ -93,7 +92,7 @@ impl KoeRuntime {
                 r.is_live()
                     && r.mode == RecordMode::AllDay
                     && parsed_selected.is_some()
-                    && local_date(r.aggregate.created_at_epoch_sec) == parsed_selected
+                    && self.local_date(r.aggregate.created_at_epoch_sec) == parsed_selected
             })
             .collect();
         day_records.sort_by_key(|r| {

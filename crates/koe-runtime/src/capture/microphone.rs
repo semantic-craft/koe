@@ -57,6 +57,9 @@ impl MicrophoneSession {
     pub(crate) fn can_pause(&self) -> bool {
         self.phase == Phase::Recording && self.clock_ns.is_some()
     }
+    pub(crate) fn lane_count(&self) -> usize {
+        self.lanes.len()
+    }
     pub(crate) fn current_record_id(&self) -> &str {
         &self.current_record_id
     }
@@ -133,10 +136,7 @@ impl KoeRuntime {
         if input_id.len() > 256 {
             return Err("输入设备标识过长".into());
         }
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_nanos();
+        let nonce = self.env.next_nonce();
         let id = format!("mic-{now}-{nonce}");
         let mut lanes = BTreeMap::new();
         for lane in if include_system {

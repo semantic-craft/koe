@@ -132,6 +132,9 @@ impl KoeRuntime {
             self.start_file_speech(id, pcm)?;
             return Ok(());
         }
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         self.ensure_meeting_audio_upload()?;
         if !self.cloud_asr_configured() {
             return Err("请先配置云端语音凭据；原始录音已保留".into());
@@ -219,6 +222,9 @@ impl KoeRuntime {
         {
             return self.try_start_live_summary(id);
         }
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         self.ensure_configured()?;
         let record = self.workspace().record(id).ok_or("记录不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
@@ -258,6 +264,9 @@ impl KoeRuntime {
     }
 
     pub(crate) fn try_start_live_summary(&mut self, id: &str) -> Result<(), StartError> {
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         self.ensure_configured()?;
         self.reclaim_stale_summaries()?;
         if self.has_pending_in_lane(ProviderLane::Summary) {
@@ -305,7 +314,7 @@ impl KoeRuntime {
         question: &str,
         now: u64,
     ) -> Result<(), String> {
-        if !self.text_provider_configured() {
+        if !self.text_provider_configured() || self.env.is_replay_mode() {
             return self.commit(|w| {
                 if let Some(request) = w.begin_ask(scope, question, now)? {
                     w.complete_retrieval(request.operation)?;
@@ -396,6 +405,9 @@ impl KoeRuntime {
         timeout: Duration,
         pending: PendingWork,
     ) -> Result<(), String> {
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         let operation_id = self.next_job;
         self.next_job += 1;
         let lane = pending.lane();

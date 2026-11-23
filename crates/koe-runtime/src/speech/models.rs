@@ -35,6 +35,9 @@ impl KoeRuntime {
         Ok(())
     }
     pub(crate) fn prepare_speech_model(&mut self, id: &str) -> Result<(), String> {
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         if !offline_speech_models().iter().any(|m| m.id == id) {
             return Err("未找到此语音模型".into());
         }

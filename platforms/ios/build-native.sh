@@ -7,7 +7,7 @@ Usage: platforms/ios/build-native.sh [device|simulator]
 
 Cross-compiles libkoe_host_api.a (--no-default-features) for iOS arm64
 (device: aarch64-apple-ios, simulator: aarch64-apple-ios-sim) and verifies
-arm64 architecture and all 15 exported C ABI v2 symbols.
+arm64 architecture and all 16 exported C ABI v2 symbols.
 USAGE
 }
 
@@ -87,6 +87,7 @@ REQUIRED_SYMBOLS=(
   "_koe_host_session_destroy"
   "_koe_host_session_generation"
   "_koe_host_session_snapshot_json"
+  "_koe_host_session_export_diagnostics_json"
   "_koe_host_session_dispatch_json"
   "_koe_host_session_ingest_ble"
   "_koe_host_session_ingest_pcm"

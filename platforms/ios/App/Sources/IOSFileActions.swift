@@ -78,6 +78,23 @@ final class IOSFileActions {
         prepareExport { .exportRecordsMarkdown(recordIds: ids, directory: $0.path) }
     }
 
+    func exportDiagnosticsBundle(nowEpochSec: UInt64 = 0) {
+        guard exportURLs.isEmpty else { return }
+        Self.logger.info("开始准备诊断包导出")
+        do {
+            let directory = try makeDirectory()
+            defer { if exportURLs.isEmpty { remove(directory) } }
+            let filename = HostSessionStore.diagnosticsBundleFilename(nowEpochSec: nowEpochSec)
+            let fileURL = directory.appendingPathComponent(filename)
+            let payload = store.exportDiagnosticsBundleJSON(nowEpochSec: nowEpochSec)
+            try Data(payload.utf8).write(to: fileURL, options: .atomic)
+            exportURLs = [fileURL]
+            Self.logger.info("已准备脱敏诊断包文件")
+        } catch {
+            report("导出诊断包失败", error)
+        }
+    }
+
     private func prepareExport(command: (URL) throws -> HostCommand) {
         guard exportURLs.isEmpty else { return }
         Self.logger.info("开始准备 Markdown 导出")

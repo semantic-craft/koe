@@ -100,6 +100,55 @@ impl KoeRuntime {
         }
     }
 
+    pub(crate) fn quit_blocker_codes(&self) -> Vec<&'static str> {
+        let session = &self.device.session;
+        let mut blockers = Vec::new();
+        if self.store.requires_reopen() {
+            blockers.push("store_requires_reopen");
+        }
+        if self
+            .active_capture
+            .microphone()
+            .is_some_and(|m| m.save_error.is_some())
+        {
+            blockers.push("microphone_save_error");
+        }
+        if self.drain_error.is_some() {
+            blockers.push("drain_error");
+        }
+        if session.is_offline_pull_suspended() {
+            blockers.push("offline_pull_suspended");
+        }
+        if session.transfer.phase == TransferPhaseTag::Failed {
+            blockers.push("transfer_failed");
+        }
+        if self.device.awaiting_stop && !self.device.is_connected() {
+            blockers.push("awaiting_stop_disconnected");
+        }
+        if self.active_capture.microphone().is_some() {
+            blockers.push("active_microphone");
+        }
+        if self.is_device_busy()
+            || session.active_file_id.is_some()
+            || session.pending_realtime_subscribe
+        {
+            blockers.push("device_busy");
+        }
+        if !self.device.finalized.is_empty()
+            || !self.device.captures.is_empty()
+            || !self.captures.sessions.is_empty()
+        {
+            blockers.push("pending_captures");
+        }
+        if !self.pending.is_empty() {
+            blockers.push("pending_provider_work");
+        }
+        if !self.completed.is_empty() {
+            blockers.push("completed_queue_nonempty");
+        }
+        blockers
+    }
+
     pub(crate) fn lifecycle_json(&self) -> Value {
         let state = self.lifecycle_state();
         json!({

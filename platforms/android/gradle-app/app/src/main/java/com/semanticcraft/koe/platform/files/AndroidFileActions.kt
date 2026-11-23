@@ -19,11 +19,15 @@ class AndroidFileActions(
     private val exportStagingRoot: File,
     private val ioExecutor: Executor = defaultIoExecutor(),
     private val maxImportBytes: Long = MAX_IMPORT_BYTES,
+    private val diagnosticsExportRoot: File = File(exportStagingRoot.parentFile ?: exportStagingRoot, DiagnosticsBundleExporter.DIAGNOSTICS_EXPORT_DIR),
+    private val diagnosticsShareLauncher: DiagnosticsShareLauncher? = null,
 ) : AndroidHostAdapter {
     constructor(context: Context) : this(
         safIo = SystemSafDocumentIo(context.applicationContext),
         importStagingRoot = File(context.cacheDir, IMPORT_STAGING_DIR),
         exportStagingRoot = File(context.cacheDir, EXPORT_STAGING_DIR),
+        diagnosticsExportRoot = File(context.cacheDir, DiagnosticsBundleExporter.DIAGNOSTICS_EXPORT_DIR),
+        diagnosticsShareLauncher = AndroidDiagnosticsShareLauncher(context.applicationContext),
     )
 
     private sealed interface PendingPickerRequest {
@@ -216,6 +220,11 @@ class AndroidFileActions(
         submitIoJob {
             performExportRecords(request.store, request.recordIds, treeUri)
         }
+    }
+
+    fun requestExportDiagnosticsBundle(nowEpochSec: Long = 0L) {
+        val store = synchronized(lock) { boundStore } ?: return
+        submitIoJob { DiagnosticsBundleExporter.exportAndShare(store, diagnosticsExportRoot, diagnosticsShareLauncher, nowEpochSec) { isStoreBound(store) } }
     }
 
     private fun launchPicker(
@@ -463,11 +472,8 @@ class AndroidFileActions(
     }
 
     private fun cleanDirectoryChildren(root: File) {
-        runCatching {
-            root.listFiles()?.forEach { child ->
-                child.deleteRecursively()
-            }
-        }.onFailure { KoeLogger.w("KoeFiles", "clean_staging", "staging cleanup failed", error = it) }
+        runCatching { root.listFiles()?.forEach(File::deleteRecursively) }
+            .onFailure { KoeLogger.w("KoeFiles", "clean_staging", "staging cleanup failed", error = it) }
     }
 
     companion object {

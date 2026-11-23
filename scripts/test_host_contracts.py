@@ -1738,7 +1738,7 @@ class HostContractParityTest(unittest.TestCase):
         rust_sources = collect_rust_host_api_sources(RUST_HOST_API_DIR)
         rust_abi = parse_rust_c_abi_surface(rust_sources)
         header_abi = parse_c_header_abi_surface(C_HOST_API_HEADER.read_text(encoding='utf-8'))
-        self.assertEqual(len(rust_abi.functions), 15)
+        self.assertEqual(len(rust_abi.functions), 16)
         self.assertEqual(set(rust_abi.structs), {'KoePcmReceipt', 'KoePlaybackReceipt', 'KoeOwnedBytes'})
         self.assertEqual(set(rust_abi.callbacks), {'KoeCredentialCallback'})
         assert_c_abi_parity(rust_abi, header_abi)

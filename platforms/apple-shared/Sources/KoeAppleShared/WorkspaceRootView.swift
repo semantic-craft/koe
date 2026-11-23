@@ -6,19 +6,22 @@ public struct KoeWorkspaceRootView: View {
     private let exportAction: (String) -> Void
     private let exportRecordsAction: ([String]) -> Void
     let exportWorkspaceAction: (WorkspaceExportRequest) -> Void
+    private let exportDiagnosticsAction: (() -> Void)?
 
     public init(
         store: HostSessionStore,
         onImport: @escaping () -> Void = {},
         onExport: @escaping (String) -> Void = { _ in },
         onExportRecords: @escaping ([String]) -> Void = { _ in },
-        onExportWorkspace: @escaping (WorkspaceExportRequest) -> Void = { _ in }
+        onExportWorkspace: @escaping (WorkspaceExportRequest) -> Void = { _ in },
+        onExportDiagnostics: (() -> Void)? = nil
     ) {
         self.store = store
         importAction = onImport
         exportAction = onExport
         exportRecordsAction = onExportRecords
         exportWorkspaceAction = onExportWorkspace
+        exportDiagnosticsAction = onExportDiagnostics
     }
 
     public var body: some View {
@@ -118,7 +121,7 @@ public struct KoeWorkspaceRootView: View {
         case "live_minutes": LiveMinutesView(store: store, onExportWorkspace: exportWorkspaceAction)
         case "ask": AskView(store: store)
         case "trash": TrashView(store: store)
-        case "settings": SettingsDoctorView(store: store)
+        case "settings": SettingsDoctorView(store: store, onExportDiagnostics: exportDiagnosticsAction)
         default: TodayView(store: store)
         }
     }

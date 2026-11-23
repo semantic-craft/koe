@@ -6,8 +6,10 @@ struct IOSLiveMinutesWorkspaceView: View {
     let onSelectRecord: (String) -> Void
     let onOpenSource: (SourceSnapshot) -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(IOSFileActions.self) private var fileActions: IOSFileActions?
     @State private var showFinal: Bool?
     @State private var showSettings = false
+    @State private var pendingDiagnosticsExport = false
     private var workspace: LiveMinutesWorkspaceSnapshot { store.liveMinutesWorkspace }
 
     var body: some View {
@@ -24,7 +26,17 @@ struct IOSLiveMinutesWorkspaceView: View {
                     Text("实时原文会继续保存。在模型设置中配置文字服务后，即可整理会议纪要。")
                     Button("打开模型设置") { showSettings = true }
                 }
-            }.sheet(isPresented: $showSettings) { IOSSettingsView(store: store) }
+            }.sheet(isPresented: $showSettings, onDismiss: {
+                if pendingDiagnosticsExport {
+                    pendingDiagnosticsExport = false
+                    fileActions?.exportDiagnosticsBundle()
+                }
+            }) {
+                IOSSettingsView(
+                    store: store,
+                    onExportDiagnostics: fileActions == nil ? nil : { pendingDiagnosticsExport = true }
+                )
+            }
         }
         IOSLiveMinutesCoverageSlotView(store: store)
         if sizeClass == .regular {

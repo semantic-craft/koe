@@ -4,7 +4,8 @@ use crate::{
     KoeOwnedBytes, KoePcmReceipt, KoePlaybackReceipt, koe_host_bytes_free,
     koe_host_session_create, koe_host_session_destroy, koe_host_session_dispatch_json,
     koe_host_session_drain_ble_tx, koe_host_session_drain_local_asr,
-    koe_host_session_ingest_ble, koe_host_session_ingest_pcm, koe_host_session_poll_timers,
+    koe_host_session_export_diagnostics_json, koe_host_session_ingest_ble,
+    koe_host_session_ingest_pcm, koe_host_session_poll_timers,
     koe_host_session_report_playback_progress, koe_host_session_snapshot_json,
 };
 use koe_runtime::KoeRuntime;
@@ -203,6 +204,14 @@ impl HostSessionGuard {
         // SAFETY: `koe_host_session_snapshot_json` returns null or an owned `CString::into_raw` pointer.
         #[allow(unsafe_code)]
         unsafe { take_owned_string(koe_host_session_snapshot_json(self.0, now)) }
+    }
+
+    /// Exports a redacted diagnostics bundle JSON document at `now`.
+    #[must_use]
+    pub fn export_diagnostics_json(&self, now: u64) -> Option<String> {
+        // SAFETY: `koe_host_session_export_diagnostics_json` returns null or an owned `CString::into_raw` pointer.
+        #[allow(unsafe_code)]
+        unsafe { take_owned_string(koe_host_session_export_diagnostics_json(self.0, now)) }
     }
 
     /// Dispatches a JSON command into the session and returns the updated snapshot JSON.

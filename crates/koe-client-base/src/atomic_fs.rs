@@ -66,6 +66,7 @@ impl Drop for TempFileCleanupGuard {
 
 fn write_atomic_with(
     target: &Path,
+    private_mode: bool,
     write_and_sync: impl FnOnce(&mut fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
     reject_symlink_path(target)?;
@@ -85,7 +86,12 @@ fn write_atomic_with(
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW);
+        if private_mode {
+            options.mode(0o600);
+        }
     }
+    #[cfg(not(unix))]
+    let _ = private_mode;
     let (f, tmp_path) = {
         let mut opened = None;
         for _ in 0..64 {
@@ -105,8 +111,14 @@ fn write_atomic_with(
     let mut guard = TempFileCleanupGuard::new(tmp_path);
     {
         let mut f = f;
+        #[cfg(unix)]
+        if private_mode {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
         write_and_sync(&mut f)?;
     }
+    crate::fault_injection::check(crate::fault_injection::FsFaultPoint::AtomicRename)?;
     fs::rename(&guard.path, target)?;
     guard.disarm();
     Ok(())
@@ -116,8 +128,20 @@ fn write_atomic_with(
 /// flushes via `sync_all` (`fsync`), and atomically renames it into place.
 /// Rejects symbolic links on `target` or its parent directory.
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
-    write_atomic_with(target, |f| {
+    write_atomic_with(target, false, |f| {
+        crate::fault_injection::check(crate::fault_injection::FsFaultPoint::AtomicWrite)?;
         f.write_all(bytes)?;
+        crate::fault_injection::check(crate::fault_injection::FsFaultPoint::AtomicSync)?;
+        f.sync_all()
+    })
+}
+
+/// Atomically writes `bytes` with owner-only (`0600` on Unix) permissions set before rename.
+pub fn write_atomic_private(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_with(target, true, |f| {
+        crate::fault_injection::check(crate::fault_injection::FsFaultPoint::AtomicWrite)?;
+        f.write_all(bytes)?;
+        crate::fault_injection::check(crate::fault_injection::FsFaultPoint::AtomicSync)?;
         f.sync_all()
     })
 }
@@ -275,7 +299,7 @@ mod tests {
         fs::create_dir_all(&dir).expect("create temp dir");
         let target = dir.join("state.json");
 
-        let err = write_atomic_with(&target, |f| {
+        let err = write_atomic_with(&target, false, |f| {
             f.write_all(b"partial payload")?;
             Err(io::Error::other("simulated sync_all failure"))
         })
