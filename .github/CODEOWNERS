@@ -1,0 +1,17 @@
+# Rust engine, services, runtime, host API and CLI/MCP
+/crates/ @semantic-craft
+
+# Apple core and native hosts
+/platforms/apple-shared/ @semantic-craft
+/platforms/macos/ @semantic-craft
+/platforms/ios/ @semantic-craft
+
+# Android Compose and JNI
+/platforms/android/ @semantic-craft
+
+# Documentation, verification scripts and CI
+/*.md @semantic-craft
+/docs/ @semantic-craft
+/progress/ @semantic-craft
+/scripts/ @semantic-craft
+/.github/ @semantic-craft

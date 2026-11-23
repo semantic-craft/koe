@@ -28,6 +28,8 @@ python3 scripts/test_install_macos.py
 python3 scripts/test_release_macos.py
 python3 scripts/test_ci.py
 python3 scripts/test_host_contracts.py
+python3 scripts/test_check_docs.py
+python3 scripts/check_docs.py
 python3 scripts/test_android_harness.py
 python3 scripts/test_android_app_harness.py
 python3 scripts/test_android_native_scripts.py

@@ -14,11 +14,12 @@ Closes #
 
 ## 需要真机
 
-<!-- 需要 iPhone/Mac 真机、安装包、录音豆或录音的步骤；没有就写「无」。这些步骤另开「需要真机」工单，不闸住合并。 -->
+<!-- 需要 Mac、iPhone/iPad、Android 真机、签名安装包或实体录音豆的步骤，另开 ready-for-human 工单并附编号；没有就写「无」。 -->
 
 ## 检查
 
-- [ ] `./scripts/check`（Python 契约测试 + `verify-ui-principles.py` + `cargo test/clippy --workspace` + `swift test`）通过
+- [ ] `test` 和受影响的 `swiftlint`、`ios`、`android`、`lint-scripts` 通过，或上文给出本地验证及未运行原因
+- [ ] 已按[代码审查标准](../docs/agents/code-review-standards.md)核对结构、契约及相关独立复审证据
 - [ ] 改动 BLE、播放、音频转换、JSON 存储或问答检索时已跑 `cargo run -p koe-cli -- benchmark`，数字写在上面
 - [ ] 没有提交任何密钥、token 或个人数据
 - [ ] 改动了 ROADMAP 里的行或用户可见行为时，已同步更新 ROADMAP / CHANGELOG

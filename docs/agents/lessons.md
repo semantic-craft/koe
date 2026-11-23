@@ -1,9 +1,14 @@
 # 教训台账（内部）
 
+只给 agent 用：记每条教训的出处、修复、验证点和复发次数（Seen N×）；验证点写明之后怎么核对这条已改到位（看哪个文件、跑什么命令、查什么结果）。对外的十条规则在 [CONTRIBUTING](../../CONTRIBUTING.md)；同一条教训在 3 个不同日子出现，就升为 [AGENTS.md](../../AGENTS.md) 交付规则，能写成测试或检查的写成测试或检查。
+#286 开源准备时根目录 `lessons.md` 并入了 CONTRIBUTING，Seen 计数随归档一起删了；本文件从 2026-10-19 起接着记，旧条目原文在 git 历史 `ae0cfa5^:lessons.md`（#286 删除前的最后一版）。
+
+纯 Flutter/Dart 的构建、旧性能驱动与已退役的远程配对实现保留在 git 历史 `03b58d0:docs/agents/lessons.md`。
+
 ### Rust crate 同时产出 `cdylib` 与 `staticlib` 时，SwiftPM 必须显式链接 `.a` 路径并用 `otool -L` 拦截动态依赖
 
 - 出处：2026-11-21 在 `main`（`00322b9`）执行 `./scripts/release-macos.sh` 时，Developer ID + Hardened Runtime 签名后的 `Koe` 启动立即被 `dyld` 中止（`mapping process and mapped file (non-platform) have different Team IDs`）。根因是 PR #774 为 Android 在 `crates/koe-host-api/Cargo.toml` 增加了 `"cdylib"`，导致 macOS `cargo build` 同时在 `target/{debug,release}/` 生成 `libkoe_host_api.dylib` 与 `libkoe_host_api.a`；SwiftPM 仍用 `-L<root>/target/{debug,release}` 加 `.linkedLibrary("koe_host_api")`，Apple `ld` 同目录优先选 `.dylib`，把未签名构建目录路径写进了 `LC_LOAD_DYLIB`。
-- 修复：`platforms/macos/Package.swift`（`Koe`、`KoeMacHostTests`）与 `platforms/apple-shared/Package.swift`（`KoeAppleCoreTests`、`KoeAppleSharedTests`）去掉 `-L.../target/{debug,release}` 与 `.linkedLibrary("koe_host_api")`，改为按配置显式传入 `\(repoRoot)/target/{debug,release}/libkoe_host_api.a`；`scripts/install-macos.sh` 在 `swift build` 后及签名前运行 `otool -L`，只要 `LC_LOAD_DYLIB` 命中 `libkoe_host_api` 或仓库 `target/` 目录即刻失败。
+- 修复：`platforms/macos/Package.swift`（`Koe`、`KoeMacHostTests`）与 `platforms/apple-shared/Package.swift`（`KoeAppleCoreTests`、`KoeMacUITests`）去掉 `-L.../target/{debug,release}` 与 `.linkedLibrary("koe_host_api")`，改为按配置显式传入 `\(repoRoot)/target/{debug,release}/libkoe_host_api.a`；`scripts/install-macos.sh` 在 `swift build` 后及签名前运行 `otool -L`，只要 `LC_LOAD_DYLIB` 命中 `libkoe_host_api` 或仓库 `target/` 目录即刻失败。
 - 验证点：`python3 scripts/test_install_macos.py` 的 `test_static_host_api_link_guard_rejects_dylib_and_accepts_static_macho` 与 `test_apple_swiftpm_manifests_link_static_host_api_archive` 改前失败、改后全绿；`otool -L platforms/macos/.build/release/Koe` 仅含 `/System/Library/...` 与 `/usr/lib/...` 系统库；`./scripts/release-macos.sh --dry-run` 通过 Hardened Runtime 签名、`--verify-self` 与 `--smoke-test`。
 - Seen 1x（2026-11-21）。
 
@@ -13,10 +18,6 @@
 - 修复：保留原图，将打包轮廓改为 1024 画布中的 824 像素，并按原比例缩放圆角；启动时经 `NSWorkspace.icon(forFile:)` 获取系统图标。
 - 验证点：`swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset` 比较 128/256/512/1024 四档轮廓与系统 Mail 图标，改前四档失败、改后通过；安装包 ICNS 再读回确认边界为 (100,100)–(924,924)。GUI 能启动不代表已截图核对 Dock。
 - Seen 1x（2026-11-10）。
-
-
-只给 agent 用：记每条教训的出处、修复、验证点和复发次数（Seen N×）；验证点写明之后怎么核对这条已改到位（看哪个文件、跑什么命令、查什么结果）。对外的十条规则在 [CONTRIBUTING](../../CONTRIBUTING.md)；同一条教训在 3 个不同日子出现，就升为 [AGENTS.md](../../AGENTS.md) 交付规则，能写成测试或检查的写成测试或检查。
-#286 开源准备时根目录 `lessons.md` 并入了 CONTRIBUTING，Seen 计数随归档一起删了；本文件从 2026-10-19 起接着记，旧条目原文在 git 历史 `ae0cfa5^:lessons.md`（#286 删除前的最后一版）。
 
 ### 流回调的 await 必须绑定请求代际
 
@@ -39,15 +40,15 @@
 - Done right: #305 在测试控制器里注入 300ms 真实 I/O 延迟，改前稳定复现 CI 失败、改后在 18 核满载下连跑 40 次全过；#205 注入 40ms 读写延迟复现两处缺口。
 - 再出现（2026-10-22，真机场景）：#366（2a416f5）新加的 `microphone_refused_test` 看到「录音已停」就去读停下原因；Koe 被拒后先停录音、清录音状态，再把这段录音收进录音库（要读写文件），最后才写原因，场景读到 null。#366 合并时 Pixel 锁着、场景没在真机跑过（按硬规则 7 先合），第一次真跑（main da19d28）就失败，#380（e6c0595）返工。
 - 修复（2026-10-22）：#380 只改场景，等 Koe 写出原因后再比对文字；同一台 Pixel 上改前（da19d28）`microphone_refused_test.dart:130` 读到 null 失败，改后（33e2d62）通过。
-- 验证点：`rg -n '异步测试要覆盖真实时序' CONTRIBUTING.md` 有第 7 条；`rg -n '_sequence' lib/state/atomic_file.dart` 显示每次写入用独立临时文件名；`rg -n '^9\. \*\*异步' AGENTS.md` 有硬规则 9。
-- Seen 3x (2026-10-16, 2026-10-19, 2026-10-22)；10-19 同日三起只算一次。已在 CONTRIBUTING 第 7 条；2026-10-22 第 3 个不同日子出现，已升为 AGENTS.md 硬规则 9（真机场景同样适用）。
+- 验证点：用 [移动端 E2E 验证器](../../scripts/verify_mobile_e2e.py) 核对编辑器关闭、目标页面和持久化结果。硬规则 9 保留等待最终 I/O 的要求；旧 Dart 实例见归档。
+- Seen 3x (2026-10-16, 2026-10-19, 2026-10-22)；10-19 同日三起只算一次。2026-10-22 第 3 个不同日子出现，已升为 AGENTS.md 硬规则 9（真机场景同样适用）。
 
 ### 全局主题改动要在真实界面逐类组件看一遍
 
 - 出事：`lib/theme/app_theme.dart` 一直用 `base.copyWith(textTheme: TextTheme(...))` 拿一个全新的 TextTheme 覆盖基础主题（首个提交 43befb5 就这样写，10-19 UI 规范系列 #259 f467144 外面又包了一层 `_tabular`）。`headlineSmall` 等没定制的样式因此没有颜色，所有 AlertDialog 标题在 iPhone 和 Mac 上都是空白。这个写法在 1.2.2 之前的发布版（1.1.0、1.2.0、1.2.1）里都有，到 10-19 1.2.1 真机复测才发现（#306）。哪个版本、哪个提交开始真正显示空白，待核实。
 - 修复：3046034（#309，在基础 textTheme 上 `copyWith`，随 1.2.2 发布）；#308 在 1.2.2 上用 iPhone 和 Mac 安装版复测，对话框标题可见。
 - Done right: #309 加了 iOS/macOS × 浅色/深色 4 条回退测试（改前标题颜色为 null），#308 再用 `scripts/mac-ax` 和 iPhone 截图在真实界面确认标题。以后改主题时，把对话框、菜单、输入框等每类组件都在真实界面截一遍图再合。
-- 验证点：`flutter test test/dialog_title_visible_test.dart` 通过（iOS/macOS × 浅色/深色对话框标题颜色非空）。
+- 验证点：原生改动按受影响的宿主在真实对话框、菜单和输入框取证，核对标题、颜色与可访问性。Flutter 的四组合测试见归档。
 - Seen 1x (2026-10-19)
 
 ### 验收记录只写有证据的操作，不替用户补全没看到的步骤
@@ -60,11 +61,9 @@
 
 ### 本机跑测试前清掉 shell 里的云端密钥环境变量
 
-- 出事：2026-10-21 #337 在本机跑 `check`，干净 main 也红 5 条（`engine_lineup_test`、`recording_processing_test`、`context_export_test`）：agent 的 shell 带着 `DASHSCOPE_API_KEY` 等变量，`lib/ai/cloud_stt_service.dart` 会读它们，「未配置」的用例因此看到已配置。CI 运行机没有这些变量，所以只在本机红。
-- 修复：只改跑法：`env -u DASHSCOPE_API_KEY -u ARK_API_KEY -u DOUBAO_TTS_API_KEY check`，main 与分支都全绿。没有读取或打印变量值。
-- 反过来也会漏：2026-10-22 #344 新加的冷启动用例在本机单跑 `flutter test` 时全过，靠的是 shell 里的密钥；去掉变量跑 `check` 才红：读回已保存设置时 Qwen 的 key 被换成保存的空值。修复在测试保存的设置里带上替身 key。
-- Done right: 本机 `check` 出现与改动无关的「已配置」类失败，先在干净 worktree 用同样去掉密钥变量的命令复跑一遍对照，再判断是不是回归。单跑 `flutter test <文件>` 也加同样的 `env -u …` 前缀。
-- 验证点：`rg -n "EngineConfig\(apiKey: 'test-key'\)" test/text_capture_test.dart` 应有结果；`env -u DASHSCOPE_API_KEY -u ARK_API_KEY -u DOUBAO_API_KEY -u DOUBAO_TTS_API_KEY flutter test test/engine_lineup_test.dart test/text_capture_test.dart --reporter expanded` 应全绿。2026-10-23 本机实跑：rg 命中第 327 行，两文件 37 条测试通过。`scripts/check` 在启动 Flutter 前 unset 这四个变量（`DASHSCOPE_API_KEY`、`ARK_API_KEY`、`DOUBAO_API_KEY`、`DOUBAO_TTS_API_KEY`）；入口隔离可用 `env DASHSCOPE_API_KEY=test-key ARK_API_KEY=test-key DOUBAO_API_KEY=test-key DOUBAO_TTS_API_KEY=test-key scripts/check` 验证，值仅为测试替身；2026-10-23 本机实跑静态分析无问题、920 条测试全绿。
+- 出事：2026-10-21 #337 本机五条「未配置」回归受 shell 中的云端凭据影响而失败，CI 正常。2026-10-22 #344 反向暴露问题，凭据掩盖了冷启动读回空值。
+- 修复：在隔离环境复跑，给配置读取测试显式提供替身。未读取或打印凭据值。
+- 验证点：`scripts/verify-local.sh` 在启动契约与编译验证前清理云端凭据变量。涉及凭据的 Rust 回归使用隔离适配器，签装读回单独验收。
 - Seen 2x (2026-10-21, 2026-10-22)
 
 ### 真机场景不能假设 Pixel 停在解锁的桌面：充电时会进屏保，锁屏要 PIN
@@ -73,7 +72,7 @@
 - 修复：`KOE_ADB: home` 先 `wake-screen` 再按 Home，场景等 Koe 真进了后台。原生状态加 `deviceLocked`（`KeyguardManager.isDeviceLocked`）；手机锁着时场景打印 `KOE_ADB: skip <原因>` 并跳过，`scripts/android-check` 以 77 退出：记为跳过，不算通过也不算失败。试过离屏 8 秒后再点快捷方式，锁着时照样被拒。手机解锁后同一场景通过，logcat 里是 `uidState: TOP`、`code:PROC_STATE_TOP`、`allowWiu:12`。
 - 跨运行也一样（同日）：#360 让一次运行里的锁屏场景排最后，但锁屏场景一关屏手机就要 PIN，一次解锁只够一个锁屏场景跑通。10:31–10:39 在 main cd25be1 上整套跑，最后的手机录音锁屏场景 10:36:53 关屏；10:38:37 `dumpsys trust` 已是 `deviceLocked=1`，当时 `settings get secure lock_screen_lock_after_timeout` 为 null（默认）。紧接着拿到设备的另一次运行（#366 的两个新场景）开头就打印「手机锁着」，构建完被停下；不停的话两个场景都会跳过。
 - Done right: 写需要 Koe 在屏幕上的场景前，先用 `adb shell dumpsys power`（`mWakefulness`、`mDreamsActivateOnSleepSetting`）和 `dumpsys trust`（`deviceLocked`）看设备实际状态；失败时看 `adb logcat -b events` 里 `wm_pause_activity` 的原因，和 `ActivityManager` 对前台服务的判定（`uidState`、`allowWiu`）。没人值守解不开 PIN 锁屏：要 Koe 在屏幕上的场景，手机锁着时跳过。排队等设备的运行先读 `dumpsys trust`，`deviceLocked=0` 才开跑；要在一次解锁里跑完，就把不锁屏的场景和至多一个锁屏场景放进同一次运行。
-- 验证点：`rg -n 'deviceLocked' android/app/src/main/kotlin integration_test/android/background_support.dart` 有结果（原生状态带 `isDeviceLocked`，`skipIfLocked` 锁着时打印 `KOE_ADB: skip`）；`rg -n 'skipped=77' scripts/android-check` 有结果。
+- 验证点：开始 Android 物理测试前观察设备确实处于场景要求的解锁状态，并分别记录可执行项目和等待解锁的项目。旧测试入口见归档。
 - Seen 1x (2026-10-22)；同日跨运行又遇到一次，只算一次。
 
 ### 几个会话共用 Pixel：停掉的运行要放回设备锁，取证不清 logcat
@@ -89,7 +88,7 @@
 - 出事：2026-10-23 为 #422 跑 `scripts/perf-check`，4 次里 3 次空等满 480 秒才以退出码 3 结束，共白等约 24 分钟。原因是 Mac 正被使用，Koe profile 窗口不在屏幕上，macOS 不出帧，场景里的 pump 一直等。#240 起就知道这种情况会卡住，当时只加了总超时。超时后脚本只杀了 `flutter drive` 本身，它起的子进程继续往日志里写，盖掉了调用方追加在末尾的退出码行。
 - 修复（#448）：`integration_test/perf/perf_scenarios_test.dart` 的 `_stopWhenNoFrames` 发现一帧该出却 30 秒没画出时，经驱动结束运行；驱动写 `build/perf/no_frames.txt`，`perf-check` 以退出码 3 和「窗口不在屏幕上，不是性能超标」退出。总超时改成退出码 4。`flutter drive` 自成进程组（Koe 和驱动都在组里），超时、中断时停整组。
 - Done right: 已知会让运行卡住的外部条件（窗口、设备、锁屏）要在出现时直接检测，几十秒内带着原因失败，退出码和真实的失败分开；总超时只兜底未知的卡住。后台起的命令放进它自己的进程组，停的时候停整组，组里没进程了再退出。
-- 验证点：`scripts/perf-check` 运行中隐藏 Koe 测试 app：`osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSRunningApplication.runningApplicationWithProcessIdentifier($(pgrep -nf Profile/Koe.app/Contents/MacOS/Koe)).hide"`。Koe 刚启动时这条返回 false，要重试到隐藏为止；正在用的 app 不受影响。Koe 启动后约 35 秒，perf-check 以退出码 3 退出，消息含 `no frame drawn for 30 s (app lifecycle: hidden)`。`KOE_PERF_TIMEOUT=25 scripts/perf-check` 以退出码 4 退出后，`ps -axo command | grep -E 'flutter_tools|Profile/Koe.app'` 没有匹配。
+- 验证点：运行 [移动端 E2E 脚本契约测试](../../scripts/test_run_mobile_e2e.py) 核对当前入口；真机和 GUI 场景以无帧、锁屏或运行失败的实际证据区分原因。旧 Flutter 性能驱动见归档。
 - Seen 1x (2026-10-23)
 
 ### 修一个页面的布局缺陷，要把同写法的页面一起查
@@ -97,42 +96,28 @@
 - 出事：2026-10-19 #260 发现资料页上滑后分段控件进了状态栏，#265 只给资料页加了只让顶部的 `SafeArea`。今日页、项目页同样是 `GradientScaffold(child: ListView(...))`，页头自带的状态栏留白随列表滚走；设置页的返回键是叠在列表上的 `Positioned`。同类缺陷一直留到 2026-10-22 在 Pixel 上跑 Artemis 冒烟测试、逐张看截图才发现（#384），Artemis 自己给的结论是 PASS。
 - 修复（#384）：今日页、项目页加只让顶部的 `SafeArea`，设置页的返回键移到列表上方单独一行；没滚动时各元素位置不变。
 - Done right: 修布局缺陷前先 `rg -n 'GradientScaffold\(' lib/ui` 列出同写法的页面逐个确认（有 AppBar 的、页头固定不随列表滚动的不受影响），回退测试一次覆盖所有同写法的页面。冒烟或探索式测试的 PASS 不看画面，截图要自己逐张看。
-- 验证点：`flutter test test/status_bar_scroll_test.dart test/library_screen_scroll_test.dart` 通过（顶部安全区 62pt，上滑后列表顶边 ≥ 62；设置页列表顶边 ≥ 返回键底边）。
+- 验证点：在受影响的原生页面分别检查安全区、滚动位置与弹窗。窄屏和横屏取证见本台账最后的移动端操作条目；旧 Flutter 断言见归档。
 - Seen 2x (2026-10-19, 2026-10-22)
 
 ### Mac 验收用 System Events 点菜单可能没送达，退出改发给进程的退出事件
 
 - 出事：2026-10-23 #427 评审修复的验收里，用 System Events 点菜单栏「退出 Koe」和主菜单「Quit Koe」，AppKit 日志里都没有 `terminate:`，退出没有发生。
 - 修复：给这个进程发退出事件：`NSRunningApplication(processIdentifier:)` 的 `terminate`，和 ⌘Q、菜单「退出 Koe」走同一个 `terminate:`，进到 `macos/Runner/AppDelegate.swift` 的 `applicationShouldTerminate`。不按 bundle id 发，因为用户装的 Koe 和开发版是同一个 bundle id。
-- 验证点：验收记录里退出那一步，引用 `/usr/bin/log show --predicate "processID == <pid>"` 里的 `applicationShouldTerminate` 行；`rg -n "func applicationShouldTerminate\(" macos/Runner/AppDelegate.swift` 有结果。
+- 验证点：核对目标进程的退出事件与 `platforms/macos/Sources/Koe/KoeMacApp.swift` 的 `applicationShouldTerminate`，并等到进程退出或报告保存阻塞。
 - Seen 1x (2026-10-23)
 
 ### `pmset -g assertions` 不显示中文的防睡眠原因
 
 - 出事：#403 验收时，Koe 的防睡眠声明在 `pmset -g assertions` 里原因是空的，原因当时写的是中文。
 - 修复：#427 改用英文原因（`lib/ui/mac_menu_bar.dart` 里的 `keepAwake = 'Koe is recording'` 等）。
-- 验证点：`rg -n "keepAwake = 'Koe is" lib/ui/mac_menu_bar.dart` 有结果（2026-10-23 核对在第 86 行）；录音时 `pmset -g assertions | grep Koe` 能看到原因。
-- Seen 1x (2026-10-23)
-
-### 临时 profile 入口用编译期常量提前结束 main，AOT 构建会崩
-
-- 出事：2026-10-23 #427、#409 的临时验收入口用 `String.fromEnvironment` 选模式。某个模式在 `main` 里 `exit(0)` 或 `return` 后，后面的应用代码在 AOT 看来都是死代码，`flutter run --profile -d macos` 构建时报 `AOT snapshotter exited with code -6`。
-- 修复：提前结束的条件里加一个运行时判断（如 `DateTime.now().year > 2000`），AOT 就会保留后面的代码。
-- 验证点：临时入口的每个模式都用 `--profile` 构建一次再用。
-- Seen 1x (2026-10-23)，同一天出现两次
-
-### `scripts/perf-check` 要在 Mac 空闲、不和 CI 重叠时跑
-
-- 出事：同一份代码，Mac 有人在用时跑出卡顿：#403 第一次 `recording` 291 帧里 41 帧卡顿，重跑 0 帧；#409 第一次改前那轮 `recording` 87 帧里 84 帧卡顿，`playback` 53 帧卡顿。帧数少说明窗口没在前台，帧被节流了。CI 也在这台 Mac 上跑。窗口完全不出帧时，#448 起 perf-check 会以退出码 3 停下（见「已知会卡住的外部条件要直接检测、尽快失败」），但窗口出帧却被节流时，数字照样会出来。
-- 修复：先等 Mac 空闲（`ioreg -c IOHIDSystem` 的 `HIDIdleTime` 超过 2 分钟）再跑；跑的时候每 5 秒记一次空闲时间，有人碰过就作废重跑；用 `gh run list` 核对没和 CI 重叠。
-- 验证点：PR 里写明 perf-check 那几轮没人碰 Mac、也没和 CI 重叠。
+- 验证点：当前原因在 `platforms/macos/Sources/Koe/NativeActivity.swift`。签名版录音时用 `pmset -g assertions` 核对该进程的防睡眠条目。
 - Seen 1x (2026-10-23)
 
 ### 格式化改过的文件前，先看它在 HEAD 上是不是已经格式化好的
 
 - 出事：2026-10-23 #407 给 `test/phone_recording_test.dart` 加测试后跑 `dart format`，整个文件被重排，新测试淹在几百行无关的格式改动里。这个文件在 main 上本来就没格式化好（main bb19383 上单独格式化它，增 282 行、删 309 行）：本机和 CI 同为 Flutter 3.47.7，main bb19383 上 `lib`、`test`、`integration_test` 的 354 个 Dart 文件里有 31 个 `dart format` 后会变；CI 和 `scripts/check` 不查格式。
 - 修复：文件恢复成 HEAD，只把新加的块按格式手写进去。
-- 验证点：格式化前跑 `dart format -o none --set-exit-if-changed <文件>`，HEAD 上退出码为 0 才整文件格式化，否则只格式化自己加的部分；提交前用 `git diff --stat` 看改动行数和实际改动相符。
+- 验证点：先核对 HEAD 对应文件，再用 `git diff --stat` 检查是否混入无关格式变更。Dart 命令与当时的基线数据见归档。
 - Seen 1x (2026-10-23)
 
 ### 认录音豆用经典地址，不用会轮换的 BLE 地址
@@ -143,7 +128,7 @@
 - 修复的 commit：#451（28b1070）按经典地址认设备，用 PendingIntent 厂商数据扫描替换系统在场监听，连接记最新 BLE 地址；回退测试在 main（b6b0ae5）上 `expect(controller.resident, isTrue)` 失败、改后通过。#452 进度页记 #345 第二部分真机：换地址后直接连新地址、常驻与关联仍在。
 - Done right: 涉及「是不是同一台录音豆」的逻辑只比经典地址；写回退测试时让录音豆换 BLE 地址再回来，断言常驻仍开、连的是新地址。合并前至少在真机上做一次 Wi‑Fi 导出后再看常驻是否还在（#345 已暴露）。
 - Seen 1x (2026-10-23)
-- 验证点：`rg -n '经典地址|classicAddress|RecorderScan' android/app/src/main/kotlin lib/ test/android_bound_reconnect_test.dart` 有结果；`rg -n 'a recorder back at another Bluetooth address is the same recorder' test/android_bound_reconnect_test.dart` 有结果；`flutter test test/android_bound_reconnect_test.dart test/ble_scan_test.dart` 通过。
+- 验证点：旧 Android 常驻实现和地址轮换回归保留在归档。当前改动涉及设备识别时，真机分别核对设备身份与重连地址，参考 Android 物理验收 #777。
 
 ## 删除开发产物前先检查运行引用与应用注册
 
@@ -183,18 +168,11 @@
 - 验证点：按 #475 复盘与规划 使用授权测试记录核对；每个客户端有独立结果，过期/撤销和越权明确失败，不将工具数量视为数据操作通过。
 - Seen 1x (2026-11-03)。
 
-### msmtp 要求含密码配置文件的属主必须为当前运行用户且发信需显式指定发件人
-
-- 出处：2026-11-06 阿里云 VPS 部署 `koe-mcp.service` 发送 OTP 邮件；直接读取宿主共享 `/etc/vpsops-monitoring/msmtprc` 时，msmtp 因属主非当前进程用户退出码 78 并拒绝发信，且 `koe@localhost` 默认发件人被 QQ SMTP 拒绝。
-- 修复：将发信配置部署为专属属主文件 `/etc/koe-mcp/msmtprc`（0600 `koe-mcp:koe-mcp`），发信时自动提取真实发件人并通过 `--read-envelope-from --read-recipients` 投递；本地测试与无公共 URL 场景下保留 `dev_code` 供自动化验收。
-- 验证点：公网 `POST https://<vps-domain>/pair/request` 实际投递至授权邮箱返回 `delivered: true`，且 `flutter test test/koe_mcp_export_test.dart test/mcp_sync_test.dart` 全绿。
-- Seen 1x (2026-11-06)。
-
 ### 外部 AI 接入界面严禁写死或回显个人 VPS 域名与邮箱，且不设人工输入框
 
 - 出处：2026-11-07 用户在准备桌面端与 iPhone 端实机验收时发现，「设置 → 外部 AI 连接」弹窗中不仅要求手动填写 VPS 地址、邮箱与验证码，还直接在 `hintText` 和已连接卡片上显示了用户的真实个人 VPS 域名与私人邮箱，造成隐私泄露风险与多余填写负担。
 - 修复：移除 `_ExternalAiDialog` 中全部 `TextField` 手动输入框及所有写死域名/邮箱，`McpSyncConfig.redactedLabel` 仅显示脱敏连接模式（`VPS 云端已连接` / `Mac 局域网已连接`），绝不在界面回显 URL 或邮箱；新增 `mcp_pairing.txt` 自动投递绑定机制与面向仓库 `tools/koe-mcp/README.md` 的通用 Agent 提示词，支持插电脑 AI 直读/直写或一键剪贴板粘贴。
-- 验证点：全仓检索无个人真实域名与私人邮箱字面量；`flutter test test/mcp_sync_test.dart --reporter expanded` 断言弹窗内 `find.byType(TextField)` 为 0 且不显示 `baseUrl`/`email`。
+- 验证点：旧远程配对、界面入口和 Flutter 验证已归档。现有本地 MCP 及诊断导出应继续核对私有信息的输出边界。
 - Seen 1x (2026-11-07)。
 
 
@@ -202,21 +180,21 @@
 
 - 出处：2026-11-05 Slice B，iOS 业务断言通过但验收脚本因缺少截图返回失败；测试写入 reportData 时覆盖了 takeScreenshot 的元数据，直接挂载纪要页也未覆盖生产导航。
 - 修复：合并已有 reportData，从 RecordingDetailScreen 经摘要与分析进入结构化纪要；独立驱动器同时保存截图与行为证明，入口缺任一证据均非零退出。
-- 验证点：运行 `scripts/verify-minutes-flow ios`，核对回执、两张截图及持久读回/章节/重开证明；`test/support/minutes_flow_scenario.dart` 同时用于离线回归。截图存在不能替代断言。
+- 验证点：使用 [iOS 模拟器验证脚本](../../platforms/ios/verify-simulator.sh) 的活体与失败取证，核对导航入口、截图和行为断言。Flutter 验收脚本已归档。
 - Seen 1x (2026-11-05)。
 
 ### 自动整理等待录音和 ASR 收尾
 
 - 出处：2026-11-05 Slice C，录音过程中已登记的路径提前进入自动整理，部分文字未落盘时待办提取失败；重复停止或下一场开始还会提前清除旧场收尾状态。
 - 修复：完整整理等待录制、暂停、ASR 与音频转换结束；同场共享一次收尾，旧场末句仅保存到旧记录。Apple 收尾失败且已有部分文字时，明确重试会重新转写完整音频。
-- 验证点：`test/device_live_minutes_test.dart` 用受控异步时序验证阶段摘要、末句、重复停止、跨场隔离、只留本机撤销、失败恢复与磁盘重读。真实进程重启和实体按键另验，不能用对象重建代替。
+- 验证点：当前 Rust 路径参考 [实时纪要集成测试](../../crates/koe-runtime/tests/continuous_live_minutes.rs)。Flutter 异步场景已归档；真实重启与实体按键分别验收。
 - Seen 1x (2026-11-05)。
 
 ### 自动发布验收必须由生产写入触发，不能由测试代发通知
 
 - 出处：2026-11-05 Slice D，持续 MCP 客户端测试若手动调用 notifyListeners，会遮住 rememberTranscript 不通知导致的旧文字；授权等待中关闭还会恢复计时器。
 - 修复：生产转写写入显式调度发布，授权每个 await 后复核关闭状态，撤销清空发布及旧内容错误。
-- 验证：test/mcp_live_publication_test.dart 直接调用生产续写/校订/纪要动作，以持续 stdio 客户端读回；改前失败证据在 .scratch/pstack-relay/slice-d-auto-update-before.log、slice-d-dispose-before.log 和 slice-d-revoke-error-before.log。
+- 验证点：当前 MCP 回归经 [CLI 集成测试](../../crates/koe-cli/tests/commands.rs) 核对 stdio 与本地 RPC 的实际读回。旧发布场景与失败记录已归档。
 - Seen 1x (2026-11-05)。
 
 
@@ -231,7 +209,7 @@
 
 - 出处：2026-11-09 对抗式排查（`/interrogate` + `/correct`）发现多处「编译与语义 `AXPress` 全绿但真人上手残缺」隐患：(1) `.contentShape(Rectangle())` 若写在 `.buttonStyle(.plain)` 外层或尺寸过小（如 16pt `?` 气泡、无右侧留白的短时间轴标签），空白像素点击仍会漏点；(2) `HostSessionStore` 所有视图直读单一 `store.snapshot` 且 Rust `poll_timers`/`ingest_ble_chunk` 空转也递增 `generation`，导致时间轴拖拽或定时器空转触发整树重绘；(3) `KoeWindowPresenter` 未过滤 `NSStatusBarWindow`/`NSPanel`、弱引用 `cachedWorkspaceWindow` 未设置 `isReleasedWhenClosed = false`，且 `applicationShouldTerminateAfterLastWindowClosed` 在默认 `keepAliveEnabled == false` 时返回 `true`，导致按 `⌘W` 直接杀死进程或点 Dock 无法恢复原窗口；(4) `CopilotDrawerView` 未渲染 `copilotAnswer`、输入框缺 `.onSubmit`、`PlayerBarView` 打重点标记误传 `durationMs + 1000`、`心力格式` 与 `顺带会议` 页面内容重复、跨重启未持久化 `workspace_session.json`。
 - 修复：(1) `verify-ui-principles.py` 强制校验每个 `.buttonStyle(.plain)` 的 `label` 闭包内部含 `.contentShape(Rectangle())`、每个 `TextField` 含 `.onSubmit`、`KoeMacApp.swift` 含 `isWorkspaceWindow`；(2) `HostSessionStore` 拆分为按域细粒度 `@Observable` 属性，Rust 空转不递增 `generation`；(3) `KoeWindowPresenter` 强持有 `cachedWorkspaceWindow`、监听 `didBecomeKeyNotification`/`willCloseNotification` 设置 `isReleasedWhenClosed = false`，`applicationShouldTerminateAfterLastWindowClosed` 恒返回 `false`；(4) 补齐 `CopilotDrawerView` 回答展示、拆分 `FormatsView` 双页、修复 `SliceMark` 游标与 `AudioOnly` 时间轴槽位、实现 `workspace_session.json` 自动落盘与恢复。
-- 验证点：`./scripts/check`（含 `scripts/test_verify_ui_principles.py` 32 项静态门禁单测、`KoeAppleSharedTests`、`KoeMacHostTests`）全绿，且在 `/Applications/Koe.app` 上通过真实像素坐标点击各行/标签/时间轴右侧空白区域与 `⌘W` 后 `open -a` 恢复同一 `window_id` 验证。
+- 验证点：`./scripts/check`（含 `scripts/test_verify_ui_principles.py` 32 项静态门禁单测、`KoeMacUITests`、`KoeMacHostTests`）全绿，且在 `/Applications/Koe.app` 上通过真实像素坐标点击各行/标签/时间轴右侧空白区域与 `⌘W` 后 `open -a` 恢复同一 `window_id` 验证。
 - Seen 1x (2026-11-09)。
 
 ### 领域快照通过不等于产品管线已接通
@@ -252,7 +230,7 @@
 
 - 出处：2026-11-10 F1 独立审查发现，初版按 u32 解析所有数字文件名前缀，漏掉旧本地导入的 16 位微秒身份；又把设备裸 Opus 当成 Ogg 容器。简单 WAV 夹具通过不足以证明旧库可迁。
 - 修复：保留 u64 历史身份，设备编号单独转换；识别 Ogg 与裸帧，裸帧直接用真实 libopus 完整解码，不能借 Ogg 包装器的 pre-skip 裁掉开头。人工原文按旧版行首规则应用说话人别名。
-- 验证点：`cargo test -p koe-runtime --test legacy_restore` 的微秒身份、裸 Opus、人工别名回归分别在修复前失败、修复后通过。夹具来源见 `crates/koe-runtime/tests/fixtures/flutter/README.md`。签名安装版仍需 #598 验收。
+- 验证点：微秒身份、裸 Opus、人工别名的原始先红后绿证据已归档。已归档的迁移用例位于 `272a5a1^:crates/koe-runtime/tests/legacy_restore.rs`，夹具说明已归档于 `272a5a1^:crates/koe-runtime/tests/fixtures/flutter/README.md`。
 - Seen 1x (2026-11-10)。
 
 ### 安全存储重试不能解除工作区的未知提交状态
@@ -328,8 +306,8 @@
 ### 实时流正面双击书签须钳位至已收音频时长并在解码层自愈
 
 - 出处：2026-11-12 用户升级 `04.92` 固件后实测 D3200 录音豆重启应用打不开（`live-1794444326-1794444325-32` 报 `highlight exceeds duration`，`duration_ms: 27660`，`bookmarks: [12000, 27680]`）。根因为实时流 `1A/08` 切片正面双击生成书签时 `SliceMark::position_ms(seq)`（`seq * 20`）使用切片线序序号，中途丢片或迟入流时线序大于已接收帧数；`ProductWorkspace::finish_capture` 未作钳位直接落盘，`RecordDto::into_record` 启动时硬校验抛错导致整个工作区拒绝打开。
-- 修复：(1) `crates/koe-engine/src/session.rs` 的 `finalize_active_transfer` 将 `marks_ms` 映射至 `m.min(pcm_duration_ms)`（实际解码 PCM 时长，保证短录音书签落在真实音频区间与 880 Hz 提示音对齐）并排序去重；(2) `crates/koe-engine/src/product/record.rs` 的 `ProductWorkspace::finish_capture` 在 `duration_ms > 0` 时做双向钳位、`duration_ms == 0` 时保留书签防被压成 0；(3) `crates/koe-client-services/src/product_store_codec.rs` 的 `RecordDto::into_record` 移除硬校验改由 `a.add_bookmark(if a.duration_ms > 0 { timestamp.min(a.duration_ms) } else { timestamp })` 在解码层自愈既有持久化记录；(4) `crates/koe-runtime/src/legacy.rs` 移除旧工作区迁移的书签硬校验交由 `finish_capture` 自愈；(5) `crates/koe-host-api/src/lib.rs` 补充打开失败诊断输出。
-- 验证点：`cargo test -p koe-engine realtime_transfer_clamps_out_of_range_marks_to_duration`、`cargo test -p koe-engine --test product_workflow`、`cargo test -p koe-client-services --test product_store` 与 `cargo test -p koe-runtime --test legacy_restore legacy_session_clamps_out_of_range_bookmarks_on_restore` 覆盖线序超长、零时长保留、旧工作区迁移与带超长历史书签工作区自愈重开，均先红后绿。
+- 修复：(1) `koe-engine` 会话层的 `finalize_active_transfer` 将 `marks_ms` 映射至 `m.min(pcm_duration_ms)`（实际解码 PCM 时长，保证短录音书签落在真实音频区间与 880 Hz 提示音对齐）并排序去重；(2) `crates/koe-engine/src/product/record.rs` 的 `ProductWorkspace::finish_capture` 在 `duration_ms > 0` 时做双向钳位、`duration_ms == 0` 时保留书签防被压成 0；(3) `crates/koe-client-services/src/product_store_codec.rs` 的 `RecordDto::into_record` 移除硬校验改由 `a.add_bookmark(if a.duration_ms > 0 { timestamp.min(a.duration_ms) } else { timestamp })` 在解码层自愈既有持久化记录；(4) `crates/koe-host-api/src/lib.rs` 补充打开失败诊断输出。
+- 验证点：`cargo test -p koe-engine realtime_transfer_clamps_out_of_range_marks_to_duration`、`cargo test -p koe-engine --test product_workflow` 与 `cargo test -p koe-client-services --test product_store` 覆盖线序超长、零时长保留及历史工作区自愈重开。旧迁移回归已归档。
 - Seen 1x（2026-11-12）。
 
 ### D3200 目录分页与录音暂停恢复必须保护已有历史文件并按相对分片对齐
