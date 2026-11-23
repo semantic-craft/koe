@@ -483,10 +483,16 @@ fn p256_point_to_affine(p: &P256Point) -> Option<([u64; 4], [u64; 4])> {
 }
 
 /// Pre-expanded AES-128/192/256 block cipher using compile-time `TE0` tables.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AesCipher {
     rk: [u32; 60],
     rounds: usize,
+}
+
+impl core::fmt::Debug for AesCipher {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AesCipher([REDACTED])")
+    }
 }
 
 impl AesCipher {
@@ -779,5 +785,36 @@ mod tests {
         bad_pub[64] ^= 0x01;
         assert!(DeviceCrypto::p256_ecdh_shared_secret(&i_priv, &bad_pub).is_none());
         assert!(DeviceCrypto::p256_public_key(&[0u8; 32]).is_none());
+    }
+
+    #[test]
+    fn aes_cipher_debug_redacts_round_key_material() {
+        let key: [u8; 32] = [
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+            0xFF, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78, 0x89, 0x9A, 0xAB, 0xBC, 0xCD, 0xDE,
+            0xEF, 0xF0, 0x01, 0x02,
+        ];
+        let cipher = AesCipher::new(&key).unwrap();
+        let stream = AesCtrStreamDecrypt::new(&key, &[0x42u8; 16]).unwrap();
+
+        let first_word_dec = u32::from_be_bytes([0x11, 0x22, 0x33, 0x44]).to_string();
+        let first_word_hex = format!("{:x}", u32::from_be_bytes([0x11, 0x22, 0x33, 0x44]));
+        let second_word_dec = u32::from_be_bytes([0x55, 0x66, 0x77, 0x88]).to_string();
+
+        let cipher_dbg = format!("{cipher:?}");
+        let stream_dbg = format!("{stream:?}");
+
+        assert_eq!(cipher_dbg, "AesCipher([REDACTED])");
+        assert!(stream_dbg.contains("AesCipher([REDACTED])"));
+        for leaked in [&first_word_dec, &first_word_hex, &second_word_dec] {
+            assert!(
+                !cipher_dbg.contains(leaked.as_str()),
+                "AesCipher Debug leaked key word {leaked}: {cipher_dbg}"
+            );
+            assert!(
+                !stream_dbg.contains(leaked.as_str()),
+                "AesCtrStreamDecrypt Debug leaked key word {leaked}: {stream_dbg}"
+            );
+        }
     }
 }

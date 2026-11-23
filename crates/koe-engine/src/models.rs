@@ -221,79 +221,7 @@ impl DeviceInfoModel {
                 ..Self::default()
             };
         }
-
-        let mut o = 9usize;
-        let connect_status = raw[o];
-        o += 1;
-        let battery_raw = i32::from(raw[o]);
-        o += 1;
-        let battery = Self::battery_remaining(Some(battery_raw)).unwrap_or(0);
-        let charging_status = raw[o];
-        o += 1;
-
-        let fw = Self::take_ascii(raw, &mut o, 5);
-        let sn = Self::take_ascii(raw, &mut o, 16).to_ascii_lowercase();
-        let total_mem = Self::read_u32_or_zero(raw, o);
-        o = o.saturating_add(4);
-        let free_mem = Self::read_u32_or_zero(raw, o);
-        o = o.saturating_add(4);
-
-        if o >= raw.len() {
-            let payload = if raw.len() > 10 {
-                &raw[9..raw.len() - 1]
-            } else {
-                &[]
-            };
-            return Self::parse_payload_with_hex(payload, hex);
-        }
-        let box_charging_flag = raw[o];
-        o += 1;
-        let box_fw = Self::take_ascii(raw, &mut o, 5);
-        if o >= raw.len() {
-            let payload = if raw.len() > 10 {
-                &raw[9..raw.len() - 1]
-            } else {
-                &[]
-            };
-            return Self::parse_payload_with_hex(payload, hex);
-        }
-        let box_battery_raw = i32::from(raw[o]);
-        o += 1;
-        let mac_end = (o + 6).min(raw.len());
-        let mac_bytes = &raw[o..mac_end];
-        o = mac_end;
-        let box_mac = Self::format_mac(mac_bytes);
-
-        let mut wifi_fw = String::new();
-        let mut recording_status = 0u8;
-        let frame_body_end = raw.len().saturating_sub(1);
-        if o + 6 <= frame_body_end {
-            o += 5;
-            if o < frame_body_end {
-                recording_status = raw[o];
-                o += 1;
-            }
-            if o + 5 <= frame_body_end {
-                wifi_fw = Self::take_ascii(raw, &mut o, 5);
-            }
-        }
-
-        Self {
-            connect_status: Some(connect_status),
-            battery: Some(battery),
-            charging: charging_status == 1,
-            firmware_version: fw,
-            serial_number: sn,
-            total_memory_kb: Some(total_mem),
-            free_memory_kb: Some(free_mem),
-            box_battery: Self::battery_remaining(Some(box_battery_raw)),
-            box_charging: box_charging_flag == 1,
-            box_mac,
-            box_firmware: box_fw,
-            wifi_firmware: wifi_fw,
-            recording_status,
-            raw_hex: hex,
-        }
+        Self::parse_payload_with_hex(&raw[9..raw.len() - 1], hex)
     }
 
     /// Parses a payload slice (starting at frame offset 9) without frame headers.
@@ -305,74 +233,73 @@ impl DeviceInfoModel {
     /// Parses a payload slice and attaches the caller's `raw_hex` string.
     #[must_use]
     pub fn parse_payload_with_hex(payload: &[u8], raw_hex: String) -> Self {
+        let mut model = Self {
+            raw_hex,
+            ..Self::default()
+        };
         if payload.len() < 3 {
-            return Self {
-                raw_hex,
-                ..Self::default()
-            };
+            return model;
         }
         let mut o = 0usize;
-        let connect_status = payload[o];
+        model.connect_status = Some(payload[o]);
         o += 1;
-        let battery = Self::battery_remaining(Some(i32::from(payload[o]))).unwrap_or(0);
+        model.battery = Some(Self::battery_remaining(Some(i32::from(payload[o]))).unwrap_or(0));
         o += 1;
-        let charging_status = payload[o];
+        model.charging = payload[o] == 1;
         o += 1;
-        let fw = if payload.len() >= 8 {
-            Self::take_ascii(payload, &mut o, 5)
-        } else {
-            String::new()
-        };
-        let sn = if payload.len() >= 24 {
-            Self::take_ascii(payload, &mut o, 16).to_ascii_lowercase()
-        } else {
-            String::new()
-        };
 
-        let mut total_mem = None;
-        let mut free_mem = None;
-        let mut box_charging = false;
-        let mut box_fw = String::new();
-        let mut box_battery = None;
-        let mut box_mac = String::new();
+        if o + 5 > payload.len() {
+            return model;
+        }
+        model.firmware_version = Self::take_ascii(payload, &mut o, 5);
 
-        if o + 8 <= payload.len() {
-            total_mem = Some(read_u32_le(payload, o));
-            o += 4;
-            free_mem = Some(read_u32_le(payload, o));
-            o += 4;
+        if o + 16 > payload.len() {
+            return model;
         }
-        if o < payload.len() {
-            box_charging = payload[o] == 1;
-            o += 1;
+        model.serial_number = Self::take_ascii(payload, &mut o, 16).to_ascii_lowercase();
+
+        if o + 8 > payload.len() {
+            return model;
         }
+        model.total_memory_kb = Some(read_u32_le(payload, o));
+        o += 4;
+        model.free_memory_kb = Some(read_u32_le(payload, o));
+        o += 4;
+
+        if o >= payload.len() {
+            return model;
+        }
+        model.box_charging = payload[o] == 1;
+        o += 1;
+
+        if o + 5 > payload.len() {
+            return model;
+        }
+        model.box_firmware = Self::take_ascii(payload, &mut o, 5);
+
+        if o >= payload.len() {
+            return model;
+        }
+        model.box_battery = Self::battery_remaining(Some(i32::from(payload[o])));
+        o += 1;
+
+        if o + 6 > payload.len() {
+            return model;
+        }
+        model.box_mac = Self::format_mac(&payload[o..o + 6]);
+        o += 6;
+
+        if o + 6 > payload.len() {
+            return model;
+        }
+        o += 5;
+        model.recording_status = payload[o];
+        o += 1;
+
         if o + 5 <= payload.len() {
-            box_fw = Self::take_ascii(payload, &mut o, 5);
+            model.wifi_firmware = Self::take_ascii(payload, &mut o, 5);
         }
-        if o < payload.len() {
-            box_battery = Self::battery_remaining(Some(i32::from(payload[o])));
-            o += 1;
-        }
-        if o + 6 <= payload.len() {
-            box_mac = Self::format_mac(&payload[o..o + 6]);
-        }
-
-        Self {
-            connect_status: Some(connect_status),
-            battery: Some(battery),
-            charging: charging_status == 1,
-            firmware_version: fw,
-            serial_number: sn,
-            total_memory_kb: total_mem,
-            free_memory_kb: free_mem,
-            box_battery,
-            box_charging,
-            box_mac,
-            box_firmware: box_fw,
-            wifi_firmware: String::new(),
-            recording_status: 0,
-            raw_hex,
-        }
+        model
     }
 
     /// Converts a raw D3200 battery byte (`0..=9` bucket or literal percentage) to `0..=100`.
@@ -446,14 +373,6 @@ impl DeviceInfoModel {
             return Some(100);
         }
         Some(v as u8)
-    }
-
-    fn read_u32_or_zero(raw: &[u8], offset: usize) -> u32 {
-        if offset + 4 > raw.len() {
-            0
-        } else {
-            read_u32_le(raw, offset)
-        }
     }
 
     fn take_ascii(buf: &[u8], offset: &mut usize, count: usize) -> String {
@@ -687,5 +606,59 @@ mod tests {
         assert!(BleAdvertisementMatch::is_notify_characteristic_uuid(
             "00008888-0000-1000-8000-00805F9B34FB"
         ));
+    }
+
+    #[test]
+    fn device_info_parse_packet_and_parse_payload_share_canonical_layout() {
+        let mut payload = Vec::with_capacity(56);
+        payload.push(1);
+        payload.push(8);
+        payload.push(1);
+        payload.extend_from_slice(b"1.4.8");
+        payload.extend_from_slice(b"D3200NATIVE639D0");
+        payload.extend_from_slice(&(64u32 * 1024 * 1024).to_le_bytes());
+        payload.extend_from_slice(&(58u32 * 1024 * 1024).to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(b"2.1.0");
+        payload.push(9);
+        payload.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0x63, 0x9D]);
+        payload.extend_from_slice(&[0u8; 5]);
+        payload.push(1);
+        payload.extend_from_slice(b"1.2.3");
+
+        let mut frame = vec![0x09, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 66, 0];
+        frame.extend_from_slice(&payload);
+        frame.push(0x42);
+
+        let from_packet = DeviceInfoModel::parse_packet(&frame);
+        let from_payload = DeviceInfoModel::parse_payload_with_hex(&payload, to_hex(&frame));
+        assert_eq!(from_packet, from_payload);
+        assert_eq!(from_packet.connect_status, Some(1));
+        assert_eq!(from_packet.battery, Some(90));
+        assert!(from_packet.charging);
+        assert_eq!(from_packet.firmware_version, "1.4.8");
+        assert_eq!(from_packet.serial_number, "d3200native639d0");
+        assert_eq!(from_packet.total_memory_kb, Some(64 * 1024 * 1024));
+        assert_eq!(from_packet.free_memory_kb, Some(58 * 1024 * 1024));
+        assert!(from_packet.box_charging);
+        assert_eq!(from_packet.box_firmware, "2.1.0");
+        assert_eq!(from_packet.box_battery, Some(100));
+        assert_eq!(from_packet.box_mac, "AA:BB:CC:DD:63:9D");
+        assert_eq!(from_packet.recording_status, 1);
+        assert_eq!(from_packet.wifi_firmware, "1.2.3");
+
+        let without_wifi = DeviceInfoModel::parse_payload(&payload[..51]);
+        assert_eq!(without_wifi.recording_status, 1);
+        assert_eq!(without_wifi.wifi_firmware, "");
+
+        let truncated_mid_sn = DeviceInfoModel::parse_payload(&payload[..16]);
+        assert_eq!(truncated_mid_sn.firmware_version, "1.4.8");
+        assert_eq!(truncated_mid_sn.serial_number, "");
+        assert_eq!(truncated_mid_sn.total_memory_kb, None);
+        assert_eq!(truncated_mid_sn.free_memory_kb, None);
+
+        let too_short_frame = DeviceInfoModel::parse_packet(&frame[..19]);
+        assert_eq!(too_short_frame.connect_status, None);
+        assert_eq!(too_short_frame.raw_hex, to_hex(&frame[..19]));
     }
 }

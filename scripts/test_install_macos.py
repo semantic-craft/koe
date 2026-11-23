@@ -245,6 +245,7 @@ class InstallMacosScriptTest(unittest.TestCase):
             self.assertNotIn(key, plist, f"unused privacy key must not be present: {key}")
 
         import re
+        import tomllib
         cargo_toml = (REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8")
         engine_toml = (REPO_ROOT / "crates" / "koe-engine" / "Cargo.toml").read_text(encoding="utf-8")
         engine_ver_rs = (REPO_ROOT / "crates" / "koe-engine" / "src" / "version.rs").read_text(encoding="utf-8")
@@ -252,19 +253,18 @@ class InstallMacosScriptTest(unittest.TestCase):
             REPO_ROOT / "platforms" / "apple-shared" / "Sources" / "KoeAppleCore" / "AppUpdateSnapshot.swift"
         ).read_text(encoding="utf-8")
 
-        ws_ver = re.search(r'^version\s*=\s*"([^"]+)"', cargo_toml, re.M)
-        eng_ver = re.search(r'^version\s*=\s*"([^"]+)"', engine_toml, re.M)
+        ws_ver = tomllib.loads(cargo_toml)["workspace"]["package"]["version"]
+        engine_pkg_ver = tomllib.loads(engine_toml)["package"]["version"]
+        eng_ver = ws_ver if engine_pkg_ver == {"workspace": True} else engine_pkg_ver
         eng_build = re.search(r'KOE_APP_BUILD:\s*&str\s*=\s*"([^"]+)"', engine_ver_rs)
         swift_ver = re.search(r'defaultVersion\s*=\s*"([^"]+)"', swift_snap)
         swift_build = re.search(r'defaultBuild\s*=\s*"([^"]+)"', swift_snap)
-        self.assertIsNotNone(ws_ver)
-        self.assertIsNotNone(eng_ver)
         self.assertIsNotNone(eng_build)
         self.assertIsNotNone(swift_ver)
         self.assertIsNotNone(swift_build)
-        assert ws_ver and eng_ver and eng_build and swift_ver and swift_build
-        self.assertEqual(plist.get("CFBundleShortVersionString"), ws_ver.group(1))
-        self.assertEqual(plist.get("CFBundleShortVersionString"), eng_ver.group(1))
+        assert eng_build and swift_ver and swift_build
+        self.assertEqual(plist.get("CFBundleShortVersionString"), ws_ver)
+        self.assertEqual(plist.get("CFBundleShortVersionString"), eng_ver)
         self.assertEqual(plist.get("CFBundleShortVersionString"), swift_ver.group(1))
         self.assertEqual(plist.get("CFBundleVersion"), eng_build.group(1))
         self.assertEqual(plist.get("CFBundleVersion"), swift_build.group(1))

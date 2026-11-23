@@ -30,7 +30,7 @@ pub const WAV_BITS_PER_SAMPLE: u16 = 16;
 pub const MAX_OPUS_FRAME_SAMPLES_48K: usize = 5760;
 
 /// Object-safe stateful Opus packet decoder implemented by the FFI layer (`libopus`).
-pub trait OpusStreamDecoder: Send + Sync {
+pub trait OpusStreamDecoder: Send {
     /// Target output sample rate in Hz (`8000`, `12000`, `16000`, `24000`, or `48000`).
     fn sample_rate(&self) -> u32;
 
@@ -62,30 +62,55 @@ impl PcmWave<'_> {
     }
 
     /// Downmixes and linearly resamples actual PCM samples for the ASR protocol.
+    #[must_use]
     pub fn mono_16khz(&self) -> Vec<u8> {
-        let frames: Vec<f64> = self
-            .samples
-            .chunks_exact(usize::from(self.channels) * 2)
-            .map(|frame| {
-                let left = f64::from(i16::from_le_bytes([frame[0], frame[1]]));
-                if self.channels == 1 {
-                    left
-                } else {
-                    (left + f64::from(i16::from_le_bytes([frame[2], frame[3]]))) / 2.0
-                }
-            })
-            .collect();
-        let count = frames.len() as u64 * 16_000 / u64::from(self.sample_rate);
+        let frame_bytes = usize::from(self.channels) * 2;
+        if frame_bytes == 0 || self.sample_rate == 0 {
+            return Vec::new();
+        }
+        let frame_count = self.samples.len() / frame_bytes;
+        if frame_count == 0 {
+            return Vec::new();
+        }
+        if self.channels == 1 && self.sample_rate == ASR_SAMPLE_RATE {
+            return self.samples[..frame_count * 2].to_vec();
+        }
+        let count = frame_count as u64 * u64::from(ASR_SAMPLE_RATE) / u64::from(self.sample_rate);
         let mut output = Vec::with_capacity(count as usize * 2);
+        let max_frame_idx = frame_count - 1;
         for index in 0..count {
-            let position = index as f64 * f64::from(self.sample_rate) / 16_000.0;
-            let left = position as usize;
-            let right = (left + 1).min(frames.len() - 1);
-            let weight = position - left as f64;
-            let sample = (frames[left] * (1.0 - weight) + frames[right] * weight).round() as i16;
+            let position = index as f64 * f64::from(self.sample_rate) / f64::from(ASR_SAMPLE_RATE);
+            let left_idx = (position as usize).min(max_frame_idx);
+            let right_idx = (left_idx + 1).min(max_frame_idx);
+            let weight = position - left_idx as f64;
+            let left = self.mono_sample_at(left_idx, frame_bytes);
+            let sample = if right_idx == left_idx || weight == 0.0 {
+                left.round() as i16
+            } else {
+                let right = self.mono_sample_at(right_idx, frame_bytes);
+                (left * (1.0 - weight) + right * weight).round() as i16
+            };
             output.extend_from_slice(&sample.to_le_bytes());
         }
         output
+    }
+
+    #[inline]
+    fn mono_sample_at(&self, frame_index: usize, frame_bytes: usize) -> f64 {
+        let offset = frame_index * frame_bytes;
+        let left = f64::from(i16::from_le_bytes([
+            self.samples[offset],
+            self.samples[offset + 1],
+        ]));
+        if self.channels == 1 {
+            left
+        } else {
+            let right = f64::from(i16::from_le_bytes([
+                self.samples[offset + 2],
+                self.samples[offset + 3],
+            ]));
+            (left + right) * 0.5
+        }
     }
 }
 
@@ -475,5 +500,116 @@ mod tests {
         assert!(parse_pcm_wave(&full[..20]).is_err());
         assert!(parse_pcm_wave(&full[..35]).is_err());
         assert!(parse_pcm_wave(&full[..44]).is_err());
+    }
+
+    #[test]
+    fn mono_16khz_streams_stereo_48khz_44100hz_and_edge_cases_accurately() {
+        let mut stereo_48k = Vec::new();
+        let frames_48k: [(i16, i16); 6] = [
+            (1000, 3000),
+            (9999, -9999),
+            (500, 500),
+            (-4000, -2000),
+            (i16::MAX, i16::MAX),
+            (i16::MIN, i16::MIN),
+        ];
+        for (l, r) in frames_48k {
+            stereo_48k.extend_from_slice(&l.to_le_bytes());
+            stereo_48k.extend_from_slice(&r.to_le_bytes());
+        }
+        let wave_48k = PcmWave {
+            samples: &stereo_48k,
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let out_48k = wave_48k.mono_16khz();
+        assert_eq!(out_48k.len(), 4);
+        assert_eq!(i16::from_le_bytes([out_48k[0], out_48k[1]]), 2000);
+        assert_eq!(i16::from_le_bytes([out_48k[2], out_48k[3]]), -3000);
+
+        let mut stereo_441 = Vec::new();
+        let mut ref_mono_441 = Vec::new();
+        for i in 0..441usize {
+            let l = ((i as f64 * 0.17).sin() * 20_000.0) as i16;
+            let r = ((i as f64 * 0.17).cos() * 12_000.0) as i16;
+            stereo_441.extend_from_slice(&l.to_le_bytes());
+            stereo_441.extend_from_slice(&r.to_le_bytes());
+            ref_mono_441.push((f64::from(l) + f64::from(r)) / 2.0);
+        }
+        let wave_441 = PcmWave {
+            samples: &stereo_441,
+            sample_rate: 44_100,
+            channels: 2,
+        };
+        let out_441 = wave_441.mono_16khz();
+        let expected_count = (441u64 * 16_000 / 44_100) as usize;
+        assert_eq!(out_441.len(), expected_count * 2);
+        for index in 0..expected_count {
+            let pos = index as f64 * 44_100.0 / 16_000.0;
+            let left = pos as usize;
+            let right = (left + 1).min(ref_mono_441.len() - 1);
+            let weight = pos - left as f64;
+            let expected =
+                (ref_mono_441[left] * (1.0 - weight) + ref_mono_441[right] * weight).round() as i16;
+            let actual = i16::from_le_bytes([out_441[index * 2], out_441[index * 2 + 1]]);
+            assert_eq!(actual, expected, "mismatch at 44.1 kHz output sample {index}");
+        }
+
+        let mono_16k_raw: Vec<u8> = [i16::MIN, -1234, 0, 5678, i16::MAX]
+            .into_iter()
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let wave_16k = PcmWave {
+            samples: &mono_16k_raw,
+            sample_rate: 16_000,
+            channels: 1,
+        };
+        assert_eq!(wave_16k.mono_16khz(), mono_16k_raw);
+
+        let mono_8k_raw: Vec<u8> = [0i16, 1000, 2000]
+            .into_iter()
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let out_8k = PcmWave {
+            samples: &mono_8k_raw,
+            sample_rate: 8_000,
+            channels: 1,
+        }
+        .mono_16khz();
+        let samples_8k: Vec<i16> = out_8k
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes(*b))
+            .collect();
+        assert_eq!(samples_8k, vec![0, 500, 1000, 1500, 2000, 2000]);
+
+        assert!(PcmWave {
+            samples: &[],
+            sample_rate: 48_000,
+            channels: 2,
+        }
+        .mono_16khz()
+        .is_empty());
+    }
+
+    #[test]
+    fn opus_stream_decoder_trait_requires_only_send_not_sync() {
+        struct NonSyncDecoder(core::cell::Cell<u32>);
+
+        impl OpusStreamDecoder for NonSyncDecoder {
+            fn sample_rate(&self) -> u32 {
+                self.0.get()
+            }
+
+            fn decode_trimmed_packet(&mut self, _packet: &[u8], _out_pcm16_le: &mut Vec<u8>) -> bool {
+                false
+            }
+
+            fn reset(&mut self) {}
+        }
+
+        let dec: Box<dyn OpusStreamDecoder> = Box::new(NonSyncDecoder(core::cell::Cell::new(16_000)));
+        assert_eq!(dec.sample_rate(), 16_000);
     }
 }
