@@ -33,8 +33,8 @@ impl RecordRetention {
             (true, None) => Ok(Self::Archived),
             (false, Some(ms)) => NonZeroU64::new(ms)
                 .map(|trashed_at_ms| Self::Trashed { trashed_at_ms })
-                .ok_or(ProductError::InvalidEvidence),
-            (true, Some(_)) => Err(ProductError::InvalidEvidence),
+                .ok_or(ProductError::InvalidPersistedState),
+            (true, Some(_)) => Err(ProductError::InvalidPersistedState),
         }
     }
 

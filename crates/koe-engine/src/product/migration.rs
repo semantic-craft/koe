@@ -40,7 +40,7 @@ impl ProductWorkspace {
             || !receipt.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
             || receipt.archive != format!("legacy-imports/{}", receipt.fingerprint)
         {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         for id in &receipt.record_ids {
             if !self.records.contains_key(id) {
@@ -52,7 +52,7 @@ impl ProductWorkspace {
                 || summary.slot.is_empty()
                 || summary.text.trim().is_empty()
             {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
         }
         Ok(())

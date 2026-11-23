@@ -260,15 +260,13 @@ impl KoeRuntime {
     }
 
     pub(super) fn prepare_mcp_write(&mut self, now: u64) -> Result<(), String> {
-        if now > 0 {
-            self.last_now_sec = now;
-        }
         if self.is_quitting() {
+            let _ = self.enter_runtime_step(now);
             return Err("正在退出，请先取消退出再开始新操作".into());
         }
-        self.error = None;
+        self.clear_error();
         self.notice = None;
-        self.reconcile_expired_trash(now);
+        let _ = self.enter_runtime_step(now);
         Ok(())
     }
 
@@ -277,11 +275,11 @@ impl KoeRuntime {
     }
 
     fn run_mcp_message(&mut self, message: DispatchMessage, now: u64) -> Result<(), String> {
-        self.error = None;
+        self.clear_error();
         self.notice = None;
         let result = self.dispatch_message(message, now);
         if let Err(error) = &result {
-            self.error = Some(error.clone());
+            self.set_error(error.clone());
         }
         self.generation = self.generation.saturating_add(1);
         result
@@ -294,7 +292,7 @@ impl KoeRuntime {
         match created {
             Ok(id) => self.record_detail_json(&id),
             Err(error) => {
-                self.error = Some(error.clone());
+                self.set_error(error.clone());
                 Err(error)
             }
         }
@@ -336,7 +334,7 @@ impl KoeRuntime {
                 "generation": self.generation
             })),
             Err(error) => {
-                self.error = Some(error.clone());
+                self.set_error(error.clone());
                 Err(error)
             }
         }
@@ -361,7 +359,7 @@ impl KoeRuntime {
                 "generation": self.generation
             })),
             Err(error) => {
-                self.error = Some(error.clone());
+                self.set_error(error.clone());
                 Err(error)
             }
         }

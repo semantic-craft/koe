@@ -41,7 +41,9 @@ impl TransportSession {
         outcome.catalog_updated = true;
 
         if self.pending_realtime_subscribe
-            || (self.device_recording_active && self.active_file_id.is_none())
+            || (self.device_recording_active
+                && self.active_file_id.is_none()
+                && !matches!(self.transfer.phase, TransferPhaseTag::Failed))
         {
             let candidate_fid = if self.staged_with_end_time {
                 let open_new = self

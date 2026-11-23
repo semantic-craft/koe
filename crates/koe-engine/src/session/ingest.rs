@@ -329,6 +329,17 @@ impl TransportSession {
                     });
                 }
                 self.active_file_id = Some(head.secret.file_id);
+                if !self.file_decryption.contains_key(&head.secret.file_id)
+                    && self.file_decryption.len() >= MAX_FILE_DECRYPTION_ENTRIES
+                {
+                    if let Some(&evict_id) = self
+                        .file_decryption
+                        .keys()
+                        .find(|&&id| Some(id) != self.active_file_id)
+                    {
+                        self.file_decryption.remove(&evict_id);
+                    }
+                }
                 if let Some(key) = head.file_key {
                     self.file_decryption.insert(
                         head.secret.file_id,
@@ -442,6 +453,37 @@ impl TransportSession {
                 min_seq,
             );
             if batch.slice_count > 0 {
+                if self
+                    .opus_buffer
+                    .len()
+                    .saturating_add(batch.opus_bytes.len())
+                    > MAX_OPUS_BUFFER_BYTES
+                {
+                    let was_realtime = self.active_is_realtime;
+                    self.runtime_state = TransferRuntimeState::Failed {
+                        file_id: fid,
+                        error_code: TRANSFER_ERR_BUFFER_LIMIT,
+                    };
+                    self.active_file_id = None;
+                    self.active_is_realtime = false;
+                    self.active_file_key = None;
+                    self.active_nonce = None;
+                    self.clear_active_file_decryptor();
+                    self.opus_buffer.clear();
+                    self.marks_ms.clear();
+                    self.stream_base_slices = 0;
+                    self.transfer.phase = TransferPhaseTag::Failed;
+                    self.transfer.error_code = TRANSFER_ERR_BUFFER_LIMIT;
+                    self.transfer.quiet_draining = false;
+                    if was_realtime {
+                        self.capture_events.push_back(CaptureEvent::Finished {
+                            file_id: fid,
+                            saved: false,
+                        });
+                    }
+                    outcome.transfer_updated = true;
+                    return;
+                }
                 self.opus_buffer.extend_from_slice(&batch.opus_bytes);
                 for seq in batch.marked_sequences {
                     let rel_seq = seq.saturating_sub(if self.active_is_realtime {
@@ -450,7 +492,7 @@ impl TransportSession {
                         0
                     });
                     let ms = SliceMark::position_ms(rel_seq);
-                    if !self.marks_ms.contains(&ms) {
+                    if self.marks_ms.len() < MAX_MARKS_PER_FILE && !self.marks_ms.contains(&ms) {
                         self.marks_ms.push(ms);
                         outcome.new_marks_ms.push(ms);
                     }
@@ -757,5 +799,96 @@ mod tests {
         cached.zeroize();
         assert_eq!(cached.key, [0u8; 32]);
         assert_eq!(cached.nonce, [0u8; 16]);
+    }
+
+    #[test]
+    fn custody_receipts_enforces_upper_bound_under_flood() {
+        let mut session = TransportSession::new();
+        let digest = "a".repeat(64);
+        for fid in 1..=5_000u32 {
+            assert!(session.confirm_disk_custody(CustodyReceipt {
+                file_id: fid,
+                byte_count: 160,
+                sha256_hex: digest.clone(),
+                fsynced_at_epoch_sec: u64::from(fid),
+            }));
+        }
+        assert!(
+            session.custody_receipts.len() <= 4_096,
+            "custody_receipts grew unboundedly to {}",
+            session.custody_receipts.len()
+        );
+        assert!(session.has_disk_custody(5_000));
+    }
+
+    #[test]
+    fn opus_buffer_enforces_upper_bound_and_fails_transfer_on_overflow() {
+        let session_key = [0x11u8; 32];
+        let file_key = [0x22u8; 32];
+        let file_nonce = [0x33u8; 16];
+        let mut session = TransportSession::new();
+        session.set_session_key(session_key);
+        let head = build_head_frame(
+            &session_key,
+            300,
+            u32::MAX,
+            &file_key,
+            &file_nonce,
+        );
+        session.ingest_ble_chunk(&head, 3_000);
+        let cap_slices = (64 * 1024 * 1024) / OPUS_FRAME_BYTES;
+        session.opus_buffer = vec![0u8; cap_slices * OPUS_FRAME_BYTES];
+        let pkt = build_encrypted_slice_frame(
+            &file_key,
+            &file_nonce,
+            cap_slices as u32,
+            &make_plain_frame(5),
+        );
+        let out = session.ingest_ble_chunk(&pkt, 3_001);
+        assert_eq!(out.slices_unpacked_count, 0);
+        assert!(session.opus_buffer.len() <= 64 * 1024 * 1024);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Failed);
+    }
+
+    #[test]
+    fn catalog_refresh_after_buffer_limit_overflow_does_not_resubscribe_live_file() {
+        let session_key = [0x11u8; 32];
+        let file_key = [0x22u8; 32];
+        let file_nonce = [0x33u8; 16];
+        let mut session = TransportSession::new();
+        session.set_session_key(session_key);
+        session.device_recording_active = true;
+        let head = build_head_frame(&session_key, 880, u32::MAX, &file_key, &file_nonce);
+        session.ingest_ble_chunk(&head, 3_000);
+        let cap_slices = MAX_OPUS_BUFFER_BYTES / OPUS_FRAME_BYTES;
+        session.opus_buffer = vec![0u8; cap_slices * OPUS_FRAME_BYTES];
+        let overflow_pkt = build_encrypted_slice_frame(
+            &file_key,
+            &file_nonce,
+            cap_slices as u32,
+            &make_plain_frame(5),
+        );
+        session.ingest_ble_chunk(&overflow_pkt, 3_001);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Failed);
+        assert_eq!(session.transfer.error_code, TRANSFER_ERR_BUFFER_LIMIT);
+        assert_eq!(session.active_file_id, None);
+        assert!(session.device_recording_active);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&880u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        let catalog_rx = TransportSession::build_rx_frame(0x1B, 0x0E, &payload);
+        let refresh_out = session.ingest_ble_chunk(&catalog_rx, 3_002);
+
+        assert!(
+            refresh_out.outbound_tx_frames.is_empty(),
+            "catalog refresh after buffer-limit failure must not re-subscribe: {:?}",
+            refresh_out.outbound_tx_frames
+        );
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Failed);
+        assert_eq!(session.transfer.error_code, TRANSFER_ERR_BUFFER_LIMIT);
+        assert_eq!(session.active_file_id, None);
     }
 }

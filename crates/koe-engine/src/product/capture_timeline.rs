@@ -36,8 +36,9 @@ pub fn place_capture_span(
     start_ns: u64,
     count: usize,
 ) -> Result<(CaptureSpan, bool), ProductError> {
+    let invalid = || ProductError::InvalidInput("采样时间重叠、间隔过大或时间轴已满".into());
     if !(8000..=96000).contains(&rate) || count == 0 || count > 8192 {
-        return Err(ProductError::InvalidEvidence);
+        return Err(invalid());
     }
     let previous = spans.last();
     let end = previous.and_then(|s| s.end_ns(rate)).unwrap_or(0);
@@ -47,20 +48,17 @@ pub fn place_capture_span(
         || start_ns.saturating_sub(end) > MAX_GAP_NS
         || previous.is_some_and(|s| epoch < s.epoch)
     {
-        return Err(ProductError::InvalidEvidence);
+        return Err(invalid());
     }
     let (span, merge) = match previous {
         Some(prev) if prev.epoch == epoch && start_ns.abs_diff(end) <= tolerance => {
             let mut s = prev.clone();
-            s.sample_count = s
-                .sample_count
-                .checked_add(count as u64)
-                .ok_or(ProductError::InvalidEvidence)?;
+            s.sample_count = s.sample_count.checked_add(count as u64).ok_or_else(invalid)?;
             (s, true)
         }
         _ => {
             if spans.len() >= MAX_CAPTURE_SPANS {
-                return Err(ProductError::InvalidEvidence);
+                return Err(invalid());
             }
             (
                 CaptureSpan {
@@ -74,7 +72,7 @@ pub fn place_capture_span(
         }
     };
     if span.end_ns(rate).is_none_or(|e| e > MAX_TIME_NS) {
-        return Err(ProductError::InvalidEvidence);
+        return Err(invalid());
     }
     Ok((span, merge))
 }
@@ -87,16 +85,16 @@ pub(super) fn validate_timeline(
 ) -> Result<(), ProductError> {
     if spans.is_empty() {
         return Ok(());
-    } // Legacy custody has no clock evidence.
+    }
     let rate = rate
         .filter(|r| (8000..=96000).contains(r))
-        .ok_or(ProductError::InvalidEvidence)?;
+        .ok_or(ProductError::InvalidPersistedState)?;
     if !has_asset || spans.len() > MAX_CAPTURE_SPANS {
-        return Err(ProductError::InvalidEvidence);
+        return Err(ProductError::InvalidPersistedState);
     }
     let (mut offset, mut end, mut epoch) = (0u64, 0u64, 0u64);
     for s in spans {
-        let next = s.end_ns(rate).ok_or(ProductError::InvalidEvidence)?;
+        let next = s.end_ns(rate).ok_or(ProductError::InvalidPersistedState)?;
         if s.sample_offset != offset
             || s.sample_count == 0
             || s.start_ns < end
@@ -104,16 +102,16 @@ pub(super) fn validate_timeline(
             || s.epoch < epoch
             || next > MAX_TIME_NS
         {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         offset = offset
             .checked_add(s.sample_count)
-            .ok_or(ProductError::InvalidEvidence)?;
+            .ok_or(ProductError::InvalidPersistedState)?;
         end = next;
         epoch = s.epoch;
     }
     if offset.checked_mul(1000).map(|n| n / u64::from(rate)) != Some(duration_ms) {
-        return Err(ProductError::InvalidEvidence);
+        return Err(ProductError::InvalidPersistedState);
     }
     Ok(())
 }

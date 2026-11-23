@@ -185,7 +185,7 @@ impl ProductWorkspace {
     pub fn group_all_day(&mut self, id: &str, segment: AllDaySegment) -> Result<(), ProductError> {
         nonempty(&segment.run_id)?;
         if segment.ordinal == 0 {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidInput("全天听记分段序号无效".into()));
         }
         let record = self
             .records
@@ -193,7 +193,7 @@ impl ProductWorkspace {
             .ok_or(ProductError::UnknownRecord)?;
         record.ensure_live()?;
         if record.all_day.as_ref().is_some_and(|s| s != &segment) {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidTransition);
         }
         record.all_day = Some(segment);
         record.mode = RecordMode::AllDay;
@@ -736,11 +736,11 @@ impl ProductRecord {
             }
             | AnalysisState::Failed { key, .. }
             | AnalysisState::Interrupted { key } => Some(key),
-            AnalysisState::Pending { .. } => return Err(ProductError::InvalidEvidence),
+            AnalysisState::Pending { .. } => return Err(ProductError::InvalidPersistedState),
             AnalysisState::Ready { input_revision }
                 if self.minutes_revision != Some(*input_revision) =>
             {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
             _ => None,
         };
@@ -750,7 +750,7 @@ impl ProductRecord {
                 || key.input_revision == 0
                 || key.input_revision > self.content_revision
         }) {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         self.live_summary = state;
         Ok(())
@@ -814,7 +814,7 @@ impl ProductRecord {
             RestoreMinutes::PreParsed => aggregate.minutes.is_some(),
             RestoreMinutes::PersistedJson(raw) => {
                 if aggregate.minutes.is_some() {
-                    return Err(ProductError::InvalidEvidence);
+                    return Err(ProductError::InvalidPersistedState);
                 }
                 raw.is_some()
             }
@@ -823,7 +823,7 @@ impl ProductRecord {
             || content_revision < aggregate.spine.len() as u64
             || has_minutes != minutes_revision.is_some()
         {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         if final_keys
             .values()
@@ -841,20 +841,20 @@ impl ProductRecord {
             RestoreMinutes::PreParsed => {
                 if let (Some(minutes), Some(min_rev)) = (&aggregate.minutes, minutes_revision) {
                     if min_rev == 0 || min_rev > content_revision || aggregate.spine.is_empty() {
-                        return Err(ProductError::InvalidEvidence);
+                        return Err(ProductError::InvalidPersistedState);
                     }
                     let valid = if min_rev == content_revision {
                         validate_minutes_grounding(minutes, &aggregate.spine)
                     } else {
                         validate_minutes_citations(minutes, &aggregate.spine)
                     };
-                    valid.map_err(|_| ProductError::InvalidEvidence)?;
+                    valid.map_err(|_| ProductError::InvalidPersistedState)?;
                 }
             }
             RestoreMinutes::PersistedJson(Some(raw)) => {
-                let min_rev = minutes_revision.ok_or(ProductError::InvalidEvidence)?;
+                let min_rev = minutes_revision.ok_or(ProductError::InvalidPersistedState)?;
                 if min_rev == 0 || min_rev > content_revision || aggregate.spine.is_empty() {
-                    return Err(ProductError::InvalidEvidence);
+                    return Err(ProductError::InvalidPersistedState);
                 }
                 let parsed = parse_persisted_meeting_minutes_json(
                     &raw,
@@ -881,11 +881,11 @@ impl ProductRecord {
                     || key.input_revision > content_revision
             })
         {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         if let AnalysisState::Ready { input_revision } = analysis {
             if minutes_revision != Some(input_revision) || input_revision > content_revision {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
         }
         Ok(Self {
@@ -921,7 +921,7 @@ pub(super) fn validate_persisted_project(
                 || raw.chars().any(char::is_control)
                 || trimmed.chars().count() > MAX_PROJECT_NAME_CHARS
             {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
             Ok(Some(raw))
         }

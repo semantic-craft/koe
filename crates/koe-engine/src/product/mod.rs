@@ -5,9 +5,10 @@ mod provider;
 pub use provider::{
     CloudAsrProvider, CredentialBinding, DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_FILETRANS_ASR_URL,
     DEFAULT_DASHSCOPE_FLASH_ASR_URL, DEFAULT_DASHSCOPE_WS_URL, DEFAULT_DEEPSEEK_ASR_URL,
-    DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_DEEPSEEK_TEXT_MODEL, DEFAULT_TEXT_MODEL, LlmProvider,
-    MeetingAudioPolicy, ProviderConfiguration, QWEN_FILETRANS_ASR_MODEL, QWEN_FLASH_ASR_MODEL,
-    QWEN_MESSAGE_ASR_MODEL, SpeechEngine, valid_reference,
+    DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_DEEPSEEK_TEXT_MODEL, DEFAULT_TEXT_MODEL,
+    EndpointValidationError, LlmProvider, MeetingAudioPolicy, ProviderConfiguration,
+    QWEN_FILETRANS_ASR_MODEL, QWEN_FLASH_ASR_MODEL, QWEN_MESSAGE_ASR_MODEL, SpeechEngine,
+    is_loopback_host_str, is_loopback_http_endpoint, valid_reference, validate_provider_endpoint,
 };
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};
@@ -345,6 +346,10 @@ pub enum ProductError {
     InvalidTransition,
     /// Generated response is not supported by the allowed sources.
     InvalidEvidence,
+    /// Provider or credential configuration failed boundary validation.
+    InvalidConfiguration,
+    /// Persisted workspace or record state violated domain invariants.
+    InvalidPersistedState,
     /// Recording is locked by archive protection and cannot have its transcript/speakers edited or be trashed/purged.
     RecordArchived,
     /// Recording is in the trash and must be restored before live operations.
@@ -363,6 +368,8 @@ impl fmt::Display for ProductError {
             Self::InvalidInput(message) => message,
             Self::InvalidTransition => "当前状态不支持此操作",
             Self::InvalidEvidence => "回答包含缺失、无效或已变化的来源",
+            Self::InvalidConfiguration => "服务或凭据配置无效",
+            Self::InvalidPersistedState => "工作区持久化状态无效或已损坏",
             Self::RecordArchived => "记录已开启归档保护，请先取消归档后再修改或移入回收站",
             Self::RecordTrashed => "记录已在回收站中，恢复后才能继续操作",
         };

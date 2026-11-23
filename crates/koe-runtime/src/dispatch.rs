@@ -1,5 +1,7 @@
 use crate::command::{AdapterEvent, DispatchMessage, HostIntent, Location, Page};
-use crate::{lifecycle, mode_workspaces, KoeRuntime};
+use crate::observability::lifecycle;
+use crate::projection::mode_workspaces;
+use crate::KoeRuntime;
 use koe_client_services::recording_assets;
 use koe_engine::domain::SegmentId;
 use koe_engine::product::*;
@@ -7,9 +9,7 @@ use std::path::Path;
 
 impl KoeRuntime {
     pub(crate) fn dispatch_message(&mut self, message: DispatchMessage, now: u64) -> Result<(), String> {
-        if now > 0 {
-            self.last_now_sec = now;
-        }
+        let _ = self.enter_runtime_step(now);
         let allowed_while_quitting = match &message {
             DispatchMessage::Intent(intent) => intent.allowed_while_quitting(),
             DispatchMessage::Adapter(event) => event.allowed_while_quitting(),
@@ -17,15 +17,11 @@ impl KoeRuntime {
         if self.is_quitting() && !allowed_while_quitting {
             return Err("正在退出，请先取消退出再开始新操作".into());
         }
-        if !self.is_quitting() {
-            self.reconcile_expired_trash(now);
-        }
         match message {
             DispatchMessage::Intent(intent) => self.dispatch_intent(intent, now)?,
             DispatchMessage::Adapter(event) => self.dispatch_adapter_event(event, now)?,
         }
-        self.reconcile_all_day();
-        self.reconcile_bean_capture_mode();
+        self.reconcile_capture_session();
         Ok(())
     }
 
@@ -45,7 +41,7 @@ impl KoeRuntime {
                 &version,
                 &build,
                 update_endpoint.as_deref(),
-                crate::platform::PlatformMetadataPatch {
+                crate::workspace::platform::PlatformMetadataPatch {
                     platform: platform.as_deref(),
                     host_display_name: host_display_name.as_deref(),
                     supports_system_audio,
@@ -175,6 +171,9 @@ impl KoeRuntime {
             HostIntent::ImportFile { path } => {
                 let imported =
                     recording_assets::import_recording(&self.root, Path::new(&path), now)?;
+                if imported.has_audio {
+                    self.refresh_audio_storage_summary();
+                }
                 let id = imported.id.clone();
                 if let Some(existing) = self.workspace().record(&id) {
                     if existing.is_trashed() {
@@ -355,7 +354,8 @@ impl KoeRuntime {
                 qwen_workspace_id,
                 asr_endpoint,
                 chat_endpoint,
-            } => self.configure_provider(crate::provider_settings::ConfigureProviderParams {
+            } => self.configure_provider(
+                crate::processing::provider_settings::ConfigureProviderParams {
                 api_key,
                 deepseek_api_key,
                 asr_provider,

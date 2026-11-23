@@ -2,61 +2,35 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-mod all_day;
-mod app_update;
-#[cfg(test)]
-mod ask_tests;
-mod audio_policy;
-mod bridge_path;
-#[cfg(test)]
-mod audio_policy_tests;
 mod capture;
-mod capture_studio;
-#[cfg(test)]
-mod capture_tests;
 mod command;
-mod dispatch;
-#[cfg(test)]
-mod mcp_device_tests;
-pub mod credentials;
 mod device;
-mod device_custody;
-mod capture_flow;
-mod lifecycle;
-#[cfg(test)]
-mod lifecycle_tests;
-mod live_minutes;
-mod local_asr;
+mod dispatch;
 /// Centralized 16-tool MCP registry and step/poll dispatcher shared by native host and CLI.
 pub mod mcp_surface;
-mod microphone;
-mod mode_workspaces;
-mod mode_workspaces_all_day;
-mod mode_workspaces_live_minutes;
-#[cfg(test)]
-mod navigation_tests;
-mod platform;
-mod playback;
+mod observability;
 mod processing;
 mod projection;
-mod provider_settings;
-mod selection;
 mod speech;
-use provider_settings::ProviderSettings;
-mod transcript_edit;
-mod trash;
+#[cfg(test)]
+mod tests;
+mod workspace;
 
 use command::{DispatchMessage, Location, Page};
-pub use bridge_path::resolve_bridge_socket_path;
+pub(crate) use dispatch::source_ref;
+pub use mcp_surface::{drive_mcp_tool_blocking, McpToolCallState, McpToolError};
+pub use observability::bridge_path::resolve_bridge_socket_path;
 #[cfg(test)]
-pub(crate) use bridge_path::resolve_bridge_socket_path_with_env;
+pub(crate) use observability::bridge_path::resolve_bridge_socket_path_with_env;
+/// Secure platform I/O; credential values never enter product snapshots.
+pub use processing::credentials;
+pub use speech::local_asr::LocalAsrEffect;
+
 use device::DeviceRuntime;
 use koe_client_providers::{ProviderLane, ProviderPool};
 use koe_client_services::{product_store::ProductStore, recording_assets};
 use koe_engine::{domain::SegmentId, product::*};
-pub(crate) use dispatch::source_ref;
-pub use local_asr::LocalAsrEffect;
-pub use mcp_surface::{drive_mcp_tool_blocking, McpToolCallState, McpToolError};
+use processing::provider_settings::ProviderSettings;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -149,36 +123,61 @@ impl PendingWork {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RuntimeError {
+    External(String),
+    Ingest(String),
+}
+
+impl RuntimeError {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::External(message) | Self::Ingest(message) => message.as_str(),
+        }
+    }
+
+    pub(crate) const fn is_ingest(&self) -> bool {
+        matches!(self, Self::Ingest(_))
+    }
+}
+
+pub(crate) struct RuntimeStepEntry {
+    day_changed: bool,
+    trash_reconciled: bool,
+    revision: u64,
+    error: Option<RuntimeError>,
+    lifecycle: observability::lifecycle::LifecycleState,
+    capture_state: (u8, bool, Option<capture::SingleShotMode>),
+}
+
 /// Serialized application session. Network I/O runs on an owned background worker.
 pub struct KoeRuntime {
     store: ProductStore,
     root: PathBuf,
     generation: u64,
-    selection: selection::WorkspaceSelection,
+    selection: workspace::selection::WorkspaceSelection,
     device: DeviceRuntime,
     provider: ProviderPool,
-    platform: platform::HostPlatformProfile,
-    app_update: app_update::AppUpdateState,
+    platform: workspace::platform::HostPlatformProfile,
+    app_update: processing::app_update::AppUpdateState,
     settings: ProviderSettings,
     credentials: Box<dyn credentials::CredentialStore>,
     pending: BTreeMap<u64, PendingWork>,
     completed: std::collections::VecDeque<koe_client_providers::ProviderEvent>,
     captures: capture::Captures,
-    local_asr: local_asr::LocalAsr,
+    local_asr: speech::local_asr::LocalAsr,
     speech: speech::SpeechState,
-    all_day: all_day::AllDayState,
-    capture_studio: capture_studio::CaptureStudioState,
-    microphone: Option<microphone::Microphone>,
-    bean_capture_mode: Option<command::CaptureMode>,
+    capture_studio: capture::studio::CaptureStudioState,
+    active_capture: capture::ActiveCaptureSession,
     auto_transcribe: std::collections::BTreeSet<String>,
     auto_summarize: std::collections::BTreeSet<String>,
     next_job: u64,
-    error: Option<String>,
+    error: Option<RuntimeError>,
     notice: Option<String>,
     audio_policy_error: Option<String>,
-    quit: lifecycle::QuitState,
+    quit: observability::lifecycle::QuitState,
     drain_error: Option<String>,
-    undo_trash: Option<trash::UndoTrashBanner>,
+    undo_trash: Option<workspace::trash::UndoTrashBanner>,
     last_now_sec: u64,
 }
 
@@ -198,13 +197,12 @@ impl KoeRuntime {
         let mut runtime = Self {
             store,
             speech: speech::SpeechState::new(&root),
-            all_day: Default::default(),
             root,
             generation: 1,
             selection: Default::default(),
             device: DeviceRuntime::default(),
             provider: ProviderPool::new()?,
-            platform: platform::HostPlatformProfile::default(),
+            platform: workspace::platform::HostPlatformProfile::default(),
             app_update: Default::default(),
             settings: ProviderSettings::default(),
             credentials,
@@ -213,8 +211,7 @@ impl KoeRuntime {
             captures: Default::default(),
             local_asr: Default::default(),
             capture_studio: Default::default(),
-            microphone: None,
-            bean_capture_mode: None,
+            active_capture: capture::ActiveCaptureSession::Idle,
             auto_transcribe: Default::default(),
             auto_summarize: Default::default(),
             next_job: 1,
@@ -228,8 +225,9 @@ impl KoeRuntime {
         };
         runtime.recover_local_captures()?;
         runtime.reconcile_orphan_audio();
+        runtime.refresh_audio_storage_summary();
         if let Err(error) = runtime.load_credentials() {
-            runtime.error = Some(error);
+            runtime.set_error(error);
         }
         if let SpeechEngine::Downloaded(id) = runtime
             .workspace()
@@ -240,6 +238,28 @@ impl KoeRuntime {
             let _ = runtime.prepare_speech_model(&id);
         }
         Ok(runtime)
+    }
+
+    pub(crate) fn error_str(&self) -> Option<&str> {
+        self.error.as_ref().map(RuntimeError::as_str)
+    }
+
+    pub(crate) fn set_error(&mut self, error: impl Into<String>) {
+        self.error = Some(RuntimeError::External(error.into()));
+    }
+
+    pub(crate) fn set_ingest_error(&mut self, error: impl Into<String>) {
+        self.error = Some(RuntimeError::Ingest(error.into()));
+    }
+
+    pub(crate) fn clear_error(&mut self) {
+        self.error = None;
+    }
+
+    pub(crate) fn clear_ingest_error(&mut self) {
+        if self.error.as_ref().is_some_and(RuntimeError::is_ingest) {
+            self.error = None;
+        }
     }
 
     /// Immutable facts for trusted query callers.
@@ -262,14 +282,14 @@ impl KoeRuntime {
                     DispatchMessage::Adapter(event) => event.clears_transient_feedback(),
                 };
                 if clears_feedback {
-                    self.error = None;
+                    self.clear_error();
                     self.notice = None;
                 }
                 self.dispatch_message(message, now)
             })
         };
         if let Err(error) = result {
-            self.error = Some(error);
+            self.set_error(error);
         }
         self.generation = self.generation.saturating_add(1);
         self.snapshot_json(now)
@@ -286,14 +306,7 @@ impl KoeRuntime {
             timing,
             now,
         } = chunk;
-        self.error = None;
-        self.notice = None;
-        if now > 0 {
-            self.last_now_sec = now;
-        }
-        if !self.is_quitting() {
-            self.reconcile_expired_trash(now);
-        }
+        let _ = self.enter_runtime_step(now);
         let capture_timing = timing.map(|(epoch, captured_start_ns)| command::CaptureTiming {
             epoch,
             captured_start_ns,
@@ -306,19 +319,21 @@ impl KoeRuntime {
         );
         match result {
             Ok(()) => {
-                self.reconcile_all_day();
-                self.reconcile_bean_capture_mode();
+                self.reconcile_capture_session();
             }
             Err(ref error) => {
-                self.error = Some(error.clone());
+                self.set_ingest_error(error.clone());
             }
         }
         self.generation = self.generation.saturating_add(1);
         let Some((next_sequence, has_lane_error)) = self
-            .microphone
-            .as_ref()
+            .active_capture
+            .microphone()
             .and_then(|m| m.lane_receipt_state(record_id, session_id, lane))
         else {
+            if result.is_ok() {
+                self.clear_ingest_error();
+            }
             return PcmIngestReceipt {
                 generation: self.generation,
                 next_sequence: 0,
@@ -329,6 +344,7 @@ impl KoeRuntime {
             && sequence.checked_add(1) == Some(next_sequence)
             && !has_lane_error
         {
+            self.clear_ingest_error();
             PcmIngestStatus::Accepted
         } else {
             PcmIngestStatus::Rejected
@@ -351,15 +367,7 @@ impl KoeRuntime {
         now: u64,
     ) -> PlaybackProgressReceipt {
         let prev_generation = self.generation;
-        if now > 0 {
-            self.last_now_sec = now;
-        }
-        let rev_before = self.workspace().revision();
-        let trash_reconciled = if !self.is_quitting() {
-            self.reconcile_expired_trash(now)
-        } else {
-            false
-        };
+        let entry = self.enter_runtime_step(now);
         let eff_now = if now > 0 { now } else { self.last_now_sec };
         let today = projection::local_date(eff_now);
         let prev_day = if last_projected_now_sec > 0 {
@@ -373,20 +381,16 @@ impl KoeRuntime {
                     || projection::trash_remaining_days(r, eff_now)
                         != projection::trash_remaining_days(r, last_projected_now_sec))
         });
-        let all_day_stopping_before = self.all_day.run.as_ref().map(|r| r.stopping);
-        let bean_mode_before = self.bean_capture_mode;
-        let all_day_done = self.reconcile_all_day();
-        self.reconcile_bean_capture_mode();
-        let post_hook_changed = all_day_done
-            || self.all_day.run.as_ref().map(|r| r.stopping) != all_day_stopping_before
-            || self.bean_capture_mode != bean_mode_before;
+        let session_reconciled = self.reconcile_capture_session();
+        let post_hook_changed =
+            session_reconciled || self.active_capture.state_fingerprint() != entry.capture_state;
         let clock_dirty = last_projected_now_sec == 0
             || eff_now == 0
             || today.is_none()
             || today != prev_day
-            || trash_reconciled
+            || entry.trash_reconciled
             || trash_countdown_dirty
-            || self.workspace().revision() != rev_before
+            || self.workspace().revision() != entry.revision
             || post_hook_changed;
 
         let Some(clamped_pos) = self.clamped_playback_position(record_id, request_id, position_ms)
@@ -456,10 +460,7 @@ impl KoeRuntime {
                 koe_client_services::product_store::StoreError::CommitUncertain(_)
                     | koe_client_services::product_store::StoreError::Unavailable
             ) {
-                self.settings.key.clear();
-                self.settings.unavailable = true;
-                self.settings.deepseek_key.clear();
-                self.settings.deepseek_unavailable = true;
+                self.settings.mark_all_reopen_required();
             }
             e.to_string()
         })
@@ -468,7 +469,7 @@ impl KoeRuntime {
 
     pub(crate) fn release_to_phone_block_reason(&self) -> Option<&'static str> {
         use koe_engine::session::TransferPhaseTag;
-        let is_macos = self.platform.kind == platform::HostPlatformKind::Macos;
+        let is_macos = self.platform.kind == workspace::platform::HostPlatformKind::Macos;
         if self.is_quitting() || self.store.requires_reopen() {
             return Some("当前状态暂不可释放录音豆蓝牙控制权");
         }
@@ -485,12 +486,8 @@ impl KoeRuntime {
         }
         if self.is_bean_meeting_recording()
             || self.device.session.device_recording_active
-            || self.bean_capture_mode.is_some()
-            || self
-                .all_day
-                .run
-                .as_ref()
-                .is_some_and(|run| run.source == "bean")
+            || self.active_capture.bean_single_shot_mode().is_some()
+            || self.active_capture.all_day_is_bean()
             || self.device.session.pending_realtime_subscribe
         {
             return Some(if is_macos {
@@ -507,8 +504,8 @@ impl KoeRuntime {
     }
 
     fn reset_bean_preference_if_needed(&mut self) {
-        if self.capture_studio.preference == capture_studio::CaptureSourcePreference::Bean {
-            self.capture_studio.preference = capture_studio::CaptureSourcePreference::Auto;
+        if self.capture_studio.preference == capture::studio::CaptureSourcePreference::Bean {
+            self.capture_studio.preference = capture::studio::CaptureSourcePreference::Auto;
         }
     }
 
@@ -584,47 +581,71 @@ impl KoeRuntime {
         self.commit(|w| w.add_highlight(source))
     }
 
-    /// Feeds real platform notifications into the existing protocol engine.
-    pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
+    pub(crate) fn enter_runtime_step(&mut self, now: u64) -> RuntimeStepEntry {
         let day_changed = self.advance_clock(now);
         let lifecycle = self.lifecycle_state();
         let revision = self.workspace().revision();
         let error = self.error.clone();
-        let mut changed = self.device.ingest(bytes, now);
-        if let Err(error) = self.save_captures(now) {
-            self.error = Some(error);
+        let capture_state = self.active_capture.state_fingerprint();
+        let trash_reconciled = if !self.is_quitting() {
+            self.reconcile_expired_trash(now)
+        } else {
+            false
+        };
+        RuntimeStepEntry {
+            day_changed,
+            trash_reconciled,
+            revision,
+            error,
+            lifecycle,
+            capture_state,
         }
-        changed |= self.maybe_start_auto_offline_pull();
-        self.reconcile_bean_capture_mode();
-        let all_day_finished = self.reconcile_all_day();
-        if changed
-            || day_changed
-            || all_day_finished
-            || revision != self.workspace().revision()
-            || error != self.error
-            || lifecycle != self.lifecycle_state()
-        {
+    }
+
+    pub(crate) fn finish_runtime_step(
+        &mut self,
+        entry: RuntimeStepEntry,
+        extra_changed: bool,
+    ) -> bool {
+        let session_reconciled = self.reconcile_capture_session();
+        let changed = extra_changed
+            || entry.day_changed
+            || entry.trash_reconciled
+            || session_reconciled
+            || entry.capture_state != self.active_capture.state_fingerprint()
+            || entry.revision != self.workspace().revision()
+            || entry.error != self.error
+            || entry.lifecycle != self.lifecycle_state();
+        if changed {
             self.generation = self.generation.saturating_add(1);
         }
+        changed
+    }
+
+    /// Feeds real platform notifications into the existing protocol engine.
+    pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
+        let entry = self.enter_runtime_step(now);
+        let mut changed = self.device.ingest(bytes, now);
+        if let Err(error) = self.save_captures(now) {
+            self.set_error(error);
+        }
+        changed |= self.maybe_start_auto_offline_pull();
+        self.finish_runtime_step(entry, changed);
     }
     /// Advances protocol deadlines and consumes completed provider work.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now: u64) {
-        let day_changed = self.advance_clock(now);
-        let lifecycle = self.lifecycle_state();
-        let revision = self.workspace().revision();
-        let error = self.error.clone();
+        let entry = self.enter_runtime_step(now);
         self.drain_error = None;
         let undo_expired = self.tick_undo_trash(elapsed_ms);
-        let trash_expired = self.reconcile_expired_trash(now);
         let changed = match self.device.tick(elapsed_ms.min(60_000), now) {
             Ok(changed) => changed,
             Err(error) => {
-                self.error = Some(error);
+                self.set_error(error);
                 true
             }
         };
         if let Err(error) = self.save_captures(now) {
-            self.error = Some(error);
+            self.set_error(error);
         }
         self.tick_local_asr(elapsed_ms);
         let mut completed = self.poll_offline_speech()
@@ -634,21 +655,8 @@ impl KoeRuntime {
             | self.poll_captures();
         self.drive_analysis_queue();
         self.drive_live_minutes(elapsed_ms);
-        let all_day_finished = self.reconcile_all_day();
         completed |= self.maybe_start_auto_offline_pull();
-        self.reconcile_bean_capture_mode();
-        if changed
-            || completed
-            || day_changed
-            || all_day_finished
-            || undo_expired
-            || trash_expired
-            || revision != self.workspace().revision()
-            || error != self.error
-            || lifecycle != self.lifecycle_state()
-        {
-            self.generation = self.generation.saturating_add(1);
-        }
+        self.finish_runtime_step(entry, changed || completed || undo_expired);
     }
 
     fn advance_clock(&mut self, now: u64) -> bool {
@@ -659,16 +667,19 @@ impl KoeRuntime {
         before > 0 && projection::local_date(before) != projection::local_date(now)
     }
 
-    pub(crate) fn ensure_device_idle(&self) -> Result<(), String> {
+    pub(crate) fn is_device_busy(&self) -> bool {
         use koe_engine::session::TransferPhaseTag;
-        if self.device.awaiting_stop
+        self.device.awaiting_stop
+            || self.device.session.device_recording_active
             || matches!(
                 self.device.session.transfer.phase,
                 TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
             )
             || self.device.session.is_offline_pull_suspended()
-            || self.device.session.device_recording_active
-        {
+    }
+
+    pub(crate) fn ensure_device_idle(&self) -> Result<(), String> {
+        if self.is_device_busy() {
             Err("请等待当前录音取回或录制结束".into())
         } else {
             Ok(())
@@ -697,7 +708,7 @@ impl KoeRuntime {
             "appUpdate": self.app_update_json(),
             "device": self.device_json(),
             "provider": self.provider_json(),
-            "error": self.error
+            "error": self.error_str()
         })
     }
 }

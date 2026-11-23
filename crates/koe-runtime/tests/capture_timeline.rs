@@ -124,12 +124,14 @@ fn pause_waits_for_both_fences_and_rejects_old_epoch_without_consuming_sequence(
     let t = begin(&mut r);
     ok(chunk(&mut r, &t, "microphone", 0, 0, 1_000_000_000, 160));
     ok(send(&mut r, json!({"type":"pause_microphone"})));
-    assert!(send(
+    let resume_rejected = send(
         &mut r,
-        json!({"type":"resume_microphone","clockNs":2_000_000_000u64})
-    )["error"]
-        .is_string());
-    ok(chunk(&mut r, &t, "system", 0, 0, 1_020_000_000, 480));
+        json!({"type":"resume_microphone","clockNs":2_000_000_000u64}),
+    );
+    assert!(resume_rejected["error"].is_string());
+    let after_system_chunk = chunk(&mut r, &t, "system", 0, 0, 1_020_000_000, 480);
+    assert_eq!(after_system_chunk["error"], resume_rejected["error"]);
+    assert_eq!(after_system_chunk["microphone"]["lanes"]["system"]["nextSequence"], 1);
     for lane in ["microphone", "system"] {
         ok(event(
             &mut r,

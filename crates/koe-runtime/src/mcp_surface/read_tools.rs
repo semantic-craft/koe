@@ -209,7 +209,7 @@ impl KoeRuntime {
                 let start_res = self.start_ask(scope, question, now);
                 self.generation = self.generation.saturating_add(1);
                 if let Err(err) = start_res {
-                    self.error = Some(err.clone());
+                    self.set_error(err.clone());
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
                 match self.resolve_settled_ask() {
@@ -292,7 +292,7 @@ impl KoeRuntime {
                     "pendingJobs": pending_jobs,
                     "askInFlight": self.workspace().ask_session().in_flight,
                     "notice": self.notice,
-                    "error": self.error,
+                    "error": self.error_str(),
                     "device": {
                         "connected": device["connected"],
                         "phase": device["phase"],

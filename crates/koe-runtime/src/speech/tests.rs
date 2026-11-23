@@ -49,3 +49,62 @@ use koe_client_providers::OfflineSpeechEvent;
         drop(runtime);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn cancelled_deferred_cloud_session_stays_cancelled_after_finish_speech() {
+        let root = std::env::temp_dir().join(format!("koe-speech-phase-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut runtime = KoeRuntime::open(&root).unwrap();
+        runtime
+            .commit(|w| {
+                w.insert_record(
+                    "rec-deferred".into(),
+                    "Deferred".into(),
+                    RecordOrigin::Microphone,
+                    0,
+                    1_800_000_000,
+                    1_000,
+                )
+            })
+            .unwrap();
+        let wav = koe_engine::wav::OpusWave::wav_header_with_rate(320, 16_000)
+            .into_iter()
+            .chain(vec![0u8; 320])
+            .collect::<Vec<_>>();
+        recording_assets::save_audio(&root, "rec-deferred", &wav).unwrap();
+
+        runtime.captures.sessions.insert(
+            "rec-deferred".into(),
+            SpeechSession {
+                key: RequestKey {
+                    record_id: "rec-deferred".into(),
+                    attempt: 0,
+                    input_revision: 0,
+                },
+                backend: SpeechBackend::CloudDeferredBatch,
+                phase: SpeechPhase::Accepting,
+                source: Some(CaptureOrigin::Microphone),
+                file_audio: None,
+                results: VecDeque::new(),
+                minutes_schedule: Default::default(),
+                saved: false,
+                captured_pcm_bytes: 0,
+            },
+        );
+
+        runtime.cancel_cloud_captures();
+        assert_eq!(
+            runtime.captures.sessions["rec-deferred"].phase,
+            SpeechPhase::Cancelled
+        );
+
+        runtime.finish_speech("rec-deferred");
+        runtime.capture_saved("rec-deferred");
+        runtime.poll_captures();
+
+        assert!(runtime.captures.sessions.is_empty());
+        assert!(!runtime.auto_transcribe.contains("rec-deferred"));
+        drop(runtime);
+        let _ = std::fs::remove_dir_all(root);
+    }

@@ -91,7 +91,7 @@ impl ProductWorkspace {
     pub fn restore(state: WorkspaceState) -> Result<Self, ProductError> {
         state.provider_configuration.validate()?;
         if state.purged_bean_file_ids.contains(&0) {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         let mut records = BTreeMap::new();
         for record in state.records {
@@ -126,7 +126,7 @@ impl ProductWorkspace {
             record.restore_capture_lanes(lanes)?;
             record.restore_retention(retention);
             if records.insert(id, record).is_some() {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
         }
         Self::restore_from_validated_records(
@@ -151,14 +151,14 @@ impl ProductWorkspace {
     pub fn restore_persisted(state: PersistedWorkspaceState) -> Result<Self, ProductError> {
         state.provider_configuration.validate()?;
         if state.purged_bean_file_ids.contains(&0) {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         let mut records = BTreeMap::new();
         for input in state.records {
             let id = input.aggregate.recording_id.clone();
             let record = ProductRecord::restore_persisted_record(input)?;
             if records.insert(id, record).is_some() {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
         }
         Self::restore_from_validated_records(
@@ -223,7 +223,7 @@ impl ProductWorkspace {
                     && (item.kind != ItemKind::Task || item.review != ReviewState::Accepted))
                 || (item.kind == ItemKind::Memory && item.due.is_some())
             {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
             for source in &item.sources {
                 workspace.resolve_source(source)?;
@@ -236,7 +236,7 @@ impl ProductWorkspace {
                 max_operation = max_operation.max(n);
             }
             if workspace.items.insert(item.id.clone(), item).is_some() {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
         }
         for message in &workspace.ask_session.messages {
@@ -253,13 +253,13 @@ impl ProductWorkspace {
         if let Some(request) = &workspace.pending_ask {
             workspace.validate_scope(&request.scope)?;
             if request.operation == 0 || request.evidence.is_empty() {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
             for evidence in &request.evidence {
                 workspace.resolve_live_source(&evidence.source)?;
                 if matches!(&request.scope, SearchScope::Record(id) if id != &evidence.source.record_id)
                 {
-                    return Err(ProductError::InvalidEvidence);
+                    return Err(ProductError::InvalidPersistedState);
                 }
             }
             max_operation = max_operation.max(request.operation);
@@ -271,15 +271,15 @@ impl ProductWorkspace {
                     .last()
                     .is_some_and(|m| m.role == AskRole::Koe && m.status == AskStatus::Pending)
             {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
             let pending = workspace
                 .ask_session
                 .messages
                 .last()
-                .ok_or(ProductError::InvalidEvidence)?;
+                .ok_or(ProductError::InvalidPersistedState)?;
             if pending.sources.len() != request.evidence.len() {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
             for (index, (line, evidence)) in
                 pending.sources.iter().zip(&request.evidence).enumerate()
@@ -288,14 +288,14 @@ impl ProductWorkspace {
                     || line.text != evidence.quote
                     || super::ask::source_ref(line) != evidence.source
                 {
-                    return Err(ProductError::InvalidEvidence);
+                    return Err(ProductError::InvalidPersistedState);
                 }
             }
         } else if workspace.ask_session.in_flight || pending_count > 0 {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         if workspace.next_operation <= max_operation {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidPersistedState);
         }
         Ok(workspace)
     }
