@@ -340,7 +340,7 @@ impl HostIntent {
 )]
 pub(crate) enum AdapterEvent {
     SyncAudioInputs {
-        inputs: Vec<crate::capture_studio::AudioInputDescriptor>,
+        inputs: Vec<crate::capture::studio::AudioInputDescriptor>,
     },
     SyncAppMetadata {
         version: String,
@@ -397,7 +397,7 @@ pub(crate) enum AdapterEvent {
         epoch: Option<u64>,
     },
     LocalAsrReadiness {
-        state: crate::local_asr::Readiness,
+        state: crate::speech::local_asr::Readiness,
         message: String,
     },
     LocalAsrResult {

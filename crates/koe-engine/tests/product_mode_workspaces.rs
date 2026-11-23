@@ -149,7 +149,7 @@ fn record_mode_and_quick_note_project_lifecycle_and_dual_stage_restore() {
         .project = Some("  untrimmed ".into());
     assert_eq!(
         ProductWorkspace::restore(untrimmed_state),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
     );
 }
 

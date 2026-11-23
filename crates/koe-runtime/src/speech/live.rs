@@ -6,7 +6,12 @@ use std::collections::BTreeSet;
 
 impl KoeRuntime {
     pub(crate) fn live_caption_json(&self) -> Value {
-        let Some((id, s)) = self.captures.sessions.iter().find(|(_, s)| !s.terminal) else {
+        let Some((id, s)) = self
+            .captures
+            .sessions
+            .iter()
+            .find(|(_, s)| !s.is_terminal())
+        else {
             return Value::Null;
         };
         let text = s
@@ -22,9 +27,9 @@ impl KoeRuntime {
                     .map(|s| s.text.as_str())
             })
             .unwrap_or("");
-        let status = if s.deferred_batch {
+        let status = if s.is_deferred_batch() {
             "录音结束后自动转写（非实时模型）"
-        } else if s.input_closed {
+        } else if s.phase == SpeechPhase::Draining {
             "正在保存最后的字幕"
         } else {
             "正在转写"
@@ -43,7 +48,7 @@ impl KoeRuntime {
         self.captures
             .sessions
             .iter()
-            .filter(|(_, s)| s.engine != SpeechEngine::Cloud)
+            .filter(|(_, s)| !s.is_cloud())
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -52,14 +57,12 @@ impl KoeRuntime {
             .captures
             .sessions
             .values_mut()
-            .filter(|s| s.engine == SpeechEngine::Cloud)
+            .filter(|s| s.is_cloud())
         {
-            session.stream = None;
-            session.deferred_batch = false;
-            session.live_draft.clear();
+            session.drop_cloud_stream();
+            session.clear_live_draft();
             session.results.clear();
-            session.terminal = true;
-            session.success = false;
+            session.phase = SpeechPhase::Cancelled;
         }
     }
     pub(crate) fn accept_speech_final(
@@ -87,15 +90,21 @@ impl KoeRuntime {
         let mut sessions = std::mem::take(&mut self.captures.sessions);
         let mut changed = false;
         for (id, s) in &mut sessions {
-            if let Some(stream) = &mut s.stream {
+            if let SpeechBackend::CloudLive {
+                stream: Some(stream),
+                ..
+            } = &mut s.backend
+            {
                 s.results.extend(stream.poll());
             }
             while let Some(event) = s.results.front() {
                 let result = match event {
                     LiveEvent::Interim { segment, .. } => {
-                        if s.live_draft != segment.text {
-                            s.live_draft.clone_from(&segment.text);
-                            changed = true;
+                        if let SpeechBackend::CloudLive { live_draft, .. } = &mut s.backend {
+                            if *live_draft != segment.text {
+                                live_draft.clone_from(&segment.text);
+                                changed = true;
+                            }
                         }
                         s.results.pop_front();
                         continue;
@@ -105,11 +114,7 @@ impl KoeRuntime {
                             &s.key,
                             &sequence.to_string(),
                             segment,
-                            match s.engine {
-                                SpeechEngine::AppleSpeech => "apple-speech",
-                                SpeechEngine::Downloaded(_) => "downloaded-speech",
-                                SpeechEngine::Cloud => "dashscope",
-                            },
+                            s.provider_label(),
                         )
                         .map(|_| ()),
                     LiveEvent::Finished => self
@@ -130,29 +135,29 @@ impl KoeRuntime {
                 match result {
                     Ok(()) => {
                         changed = true;
-                        self.error = None;
+                        self.clear_error();
                         match event {
                             LiveEvent::Interim { .. } => {}
                             LiveEvent::Final { .. } => {
-                                s.live_draft.clear();
+                                s.clear_live_draft();
                                 s.minutes_schedule.observe_final();
                             }
                             LiveEvent::Finished => {
-                                s.live_draft.clear();
-                                s.success = self
+                                s.clear_live_draft();
+                                let succeeded = self
                                     .workspace()
                                     .record(id)
                                     .is_some_and(|r| !r.aggregate.spine.is_empty());
-                                s.terminal = true;
-                                s.stream = None;
+                                s.phase = SpeechPhase::Completed { succeeded };
+                                s.drop_cloud_stream();
                             }
                             LiveEvent::Failed(error) => {
-                                s.live_draft.clear();
-                                self.error = Some(error.clone());
-                                s.terminal = true;
-                                s.stream = None;
+                                self.set_error(error.clone());
+                                s.clear_live_draft();
+                                s.phase = SpeechPhase::Completed { succeeded: false };
+                                s.drop_cloud_stream();
                                 self.cancel_speech_operations(s);
-                                s.pcm.clear();
+                                s.clear_local_pcm();
                             }
                         }
                         s.results.pop_front();
@@ -162,9 +167,9 @@ impl KoeRuntime {
                         | ProductError::UnknownRecord
                         | ProductError::RecordTrashed,
                     )) => {
-                        s.live_draft.clear();
-                        s.terminal = true;
-                        s.stream = None;
+                        s.clear_live_draft();
+                        s.phase = SpeechPhase::Cancelled;
+                        s.drop_cloud_stream();
                         s.results.clear();
                         self.cancel_speech_operations(s);
                         break;
@@ -172,21 +177,21 @@ impl KoeRuntime {
                     Err(error) => {
                         let message = format!("实时文字等待保存：{error}");
                         self.drain_error = Some(message.clone());
-                        self.error = Some(message);
+                        self.set_error(message);
                         break;
                     }
                 }
             }
-            if s.saved && s.terminal && s.deferred_batch {
+            if s.saved && s.phase == SpeechPhase::DeferredReady {
                 if recording_assets::audio_path(&self.root, id).is_ok_and(|p| p.exists()) {
                     self.auto_transcribe.insert(id.clone());
                     changed = true;
                 }
-            } else if s.saved && s.terminal && s.success {
+            } else if s.saved && s.phase == (SpeechPhase::Completed { succeeded: true }) {
                 self.auto_summarize.insert(id.clone());
             }
         }
-        sessions.retain(|_, s| !(s.saved && s.terminal && s.results.is_empty()));
+        sessions.retain(|_, s| !(s.saved && s.phase.is_terminal() && s.results.is_empty()));
         self.captures.sessions = sessions;
         changed
     }

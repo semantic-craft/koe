@@ -1,11 +1,11 @@
 use std::fmt;
-use std::net::IpAddr;
 use std::time::Duration;
 
 use koe_engine::product::{
-    DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_WS_URL, DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_TEXT_MODEL,
+    is_loopback_host_str, validate_provider_endpoint, EndpointValidationError, DEFAULT_ASR_MODEL,
+    DEFAULT_DASHSCOPE_WS_URL, DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_TEXT_MODEL,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 mod asr;
 mod chat;
@@ -23,6 +23,11 @@ pub use update::{
 };
 
 const LANE_COUNT: usize = 4;
+
+/// Maximum queued control commands accepted by [`ProviderPool`] before applying backpressure.
+pub const PROVIDER_CONTROL_CHANNEL_CAPACITY: usize = 32;
+/// Maximum buffered completion events retained by [`ProviderPool`] awaiting [`ProviderPool::poll`].
+pub const PROVIDER_EVENT_CHANNEL_CAPACITY: usize = 32;
 
 const MAX_PCM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
@@ -219,7 +224,6 @@ enum PoolControl {
         operation_id: u64,
     },
     CancelAudioAndWait(oneshot::Sender<()>),
-    Shutdown,
 }
 
 /// Multi-lane bounded background provider pool running on one Tokio runtime thread.
@@ -227,8 +231,9 @@ enum PoolControl {
 /// Audio transcription, summary generation, Q&A, and update checks run in separate single-slot
 /// lanes so a slow operation never blocks another lane, and stale tasks cancel without joining threads.
 pub struct ProviderPool {
-    controls: mpsc::UnboundedSender<PoolControl>,
-    events: mpsc::UnboundedReceiver<(ProviderLane, ProviderEvent)>,
+    controls: Option<mpsc::Sender<PoolControl>>,
+    events: mpsc::Receiver<(ProviderLane, ProviderEvent)>,
+    shutdown: watch::Sender<bool>,
     active_ops: [Option<u64>; LANE_COUNT],
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -236,19 +241,35 @@ pub struct ProviderPool {
 impl ProviderPool {
     /// Starts an isolated multi-lane async runtime on one background thread.
     pub fn new() -> Result<Self, String> {
+        Self::with_capacities(
+            PROVIDER_CONTROL_CHANNEL_CAPACITY,
+            PROVIDER_EVENT_CHANNEL_CAPACITY,
+        )
+    }
+
+    fn with_capacities(control_cap: usize, event_cap: usize) -> Result<Self, String> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|_| "无法创建云端工作线程".to_string())?;
-        let (controls, mut rx) = mpsc::unbounded_channel::<PoolControl>();
-        let (events_tx, events) = mpsc::unbounded_channel::<(ProviderLane, ProviderEvent)>();
+        let (controls, mut rx) = mpsc::channel::<PoolControl>(control_cap.max(1));
+        let (events_tx, events) = mpsc::channel::<(ProviderLane, ProviderEvent)>(event_cap.max(1));
+        let (shutdown, mut shutdown_rx) = watch::channel(false);
         let thread = std::thread::Builder::new()
             .name("koe-provider-pool".into())
             .spawn(move || {
                 runtime.block_on(async {
                     let mut slots: [Option<(u64, tokio::task::JoinHandle<()>)>; LANE_COUNT] =
                         [None, None, None, None];
-                    while let Some(control) = rx.recv().await {
+                    loop {
+                        let control = tokio::select! {
+                            biased;
+                            _ = shutdown_rx.changed() => break,
+                            control = rx.recv() => match control {
+                                Some(control) => control,
+                                None => break,
+                            },
+                        };
                         match control {
                             PoolControl::Submit { lane, request } => {
                                 let idx = lane as usize;
@@ -273,14 +294,16 @@ impl ProviderPool {
                                                     Err("云端请求超时，结果未知；未自动重试".into())
                                                 }
                                             });
-                                    let _ = tx.send((
-                                        lane,
-                                        ProviderEvent {
-                                            operation_id: op_id,
-                                            record_id,
-                                            result,
-                                        },
-                                    ));
+                                    let _ = tx
+                                        .send((
+                                            lane,
+                                            ProviderEvent {
+                                                operation_id: op_id,
+                                                record_id,
+                                                result,
+                                            },
+                                        ))
+                                        .await;
                                 });
                                 slots[idx] = Some((op_id, handle));
                             }
@@ -303,7 +326,6 @@ impl ProviderPool {
                                 }
                                 let _ = ack.send(());
                             }
-                            PoolControl::Shutdown => break,
                         }
                     }
                     for slot in &mut slots {
@@ -317,8 +339,9 @@ impl ProviderPool {
             })
             .map_err(|_| "无法启动云端工作线程".to_string())?;
         Ok(Self {
-            controls,
+            controls: Some(controls),
             events,
+            shutdown,
             active_ops: [None; LANE_COUNT],
             thread: Some(thread),
         })
@@ -338,9 +361,15 @@ impl ProviderPool {
             return Err("已有云端任务正在处理，请稍后重试".into());
         }
         let op_id = request.operation_id;
-        self.controls
-            .send(PoolControl::Submit { lane, request })
-            .map_err(|_| "云端工作线程不可用".to_string())?;
+        let controls = self.controls.as_ref().ok_or("云端工作线程不可用")?;
+        controls
+            .try_send(PoolControl::Submit { lane, request })
+            .map_err(|err| match err {
+                mpsc::error::TrySendError::Full(_) => {
+                    "云端任务控制队列已满，请稍后重试".to_string()
+                }
+                mpsc::error::TrySendError::Closed(_) => "云端工作线程不可用".to_string(),
+            })?;
         self.active_ops[idx] = Some(op_id);
         Ok(())
     }
@@ -350,10 +379,12 @@ impl ProviderPool {
         let idx = lane as usize;
         if self.active_ops[idx] == Some(operation_id) {
             self.active_ops[idx] = None;
-            let _ = self.controls.send(PoolControl::Cancel {
-                lane,
-                operation_id,
-            });
+            if let Some(controls) = &self.controls {
+                let _ = controls.try_send(PoolControl::Cancel {
+                    lane,
+                    operation_id,
+                });
+            }
         }
     }
 
@@ -367,8 +398,9 @@ impl ProviderPool {
         }
         self.active_ops[idx] = None;
         let (tx, rx) = oneshot::channel();
-        self.controls
-            .send(PoolControl::CancelAudioAndWait(tx))
+        let controls = self.controls.as_ref().ok_or("云端工作线程不可用")?;
+        controls
+            .blocking_send(PoolControl::CancelAudioAndWait(tx))
             .map_err(|_| "云端工作线程不可用".to_string())?;
         rx.blocking_recv()
             .map_err(|_| "云端工作线程不可用".to_string())
@@ -390,7 +422,8 @@ impl ProviderPool {
 
 impl Drop for ProviderPool {
     fn drop(&mut self) {
-        let _ = self.controls.send(PoolControl::Shutdown);
+        let _ = self.shutdown.send(true);
+        self.controls.take();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -440,22 +473,7 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
 }
 
 pub(crate) fn is_loopback_host(url: &reqwest::Url) -> bool {
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let trimmed = host.trim_end_matches('.');
-    if trimmed.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    trimmed
-        .trim_matches(['[', ']'])
-        .parse::<IpAddr>()
-        .is_ok_and(|ip| match ip {
-            IpAddr::V4(v4) => v4.is_loopback(),
-            IpAddr::V6(v6) => {
-                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
-            }
-        })
+    url.host_str().is_some_and(is_loopback_host_str)
 }
 
 fn validate_endpoint_inner(
@@ -467,11 +485,26 @@ fn validate_endpoint_inner(
     if require_model && config.model.trim().is_empty() {
         return Err("缺少模型名称".into());
     }
+    let validated_loopback =
+        validate_provider_endpoint(&config.endpoint, &[secure, local]).map_err(|err| match err {
+            EndpointValidationError::DisallowedComponents => {
+                "云端地址不能包含账户、密码、查询参数或片段".to_string()
+            }
+            EndpointValidationError::UnsupportedScheme
+            | EndpointValidationError::InsecureNonLoopback => {
+                "云端地址必须加密；仅本机服务允许明文连接".to_string()
+            }
+            EndpointValidationError::InvalidSyntax => "云端地址无效".to_string(),
+        })?;
     let url = reqwest::Url::parse(&config.endpoint).map_err(|_| "云端地址无效")?;
-    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
-        return Err("云端地址不能包含账户、密码或片段".into());
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("云端地址不能包含账户、密码、查询参数或片段".into());
     }
-    let loopback = is_loopback_host(&url);
+    let loopback = validated_loopback && is_loopback_host(&url);
     let keyless_local_http = secure == "https" && url.scheme() == "http" && loopback;
     if config.api_key.trim().is_empty() && !keyless_local_http {
         return Err("尚未配置云端 API Key".into());
@@ -501,5 +534,106 @@ async fn execute(config: ProviderConfig, task: ProviderTask) -> Result<ProviderO
             endpoint,
             user_agent,
         } => update::check_latest(&endpoint, &user_agent).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_endpoint_rejects_query_parameters_identically_to_provider_configuration() {
+        let cfg = ProviderConfig::new(
+            "https://api.deepseek.com/chat/completions?token=secret".into(),
+            "deepseek-flash".into(),
+            "sk-test".into(),
+        );
+        assert!(validate_endpoint(&cfg, "https", "http").is_err());
+
+        let lan = ProviderConfig::new(
+            "http://192.168.1.5/v1/chat/completions".into(),
+            "local".into(),
+            "sk-test".into(),
+        );
+        assert!(validate_endpoint(&lan, "https", "http").is_err());
+
+        let loopback = ProviderConfig::new(
+            "http://127.0.0.1:8080/v1/chat/completions".into(),
+            "local".into(),
+            String::new(),
+        );
+        assert!(validate_endpoint(&loopback, "https", "http").is_ok());
+    }
+
+    #[test]
+    fn provider_pool_enforces_bounded_control_and_event_channels_and_drops_cleanly() {
+        let (tx, _rx) = mpsc::channel::<PoolControl>(2);
+        let req = || ProviderRequest {
+            operation_id: 1,
+            record_id: "r1".into(),
+            config: ProviderConfig::new(
+                "http://127.0.0.1:9/chat/completions".into(),
+                "local".into(),
+                String::new(),
+            ),
+            task: ProviderTask::Chat {
+                system: "sys".into(),
+                user: "hi".into(),
+            },
+            timeout: Duration::from_secs(1),
+        };
+        let (events_tx, events_rx) = mpsc::channel::<(ProviderLane, ProviderEvent)>(2);
+        let (shutdown, _) = watch::channel(false);
+        let mut pool = ProviderPool {
+            controls: Some(tx),
+            events: events_rx,
+            shutdown,
+            active_ops: [None; LANE_COUNT],
+            thread: None,
+        };
+        assert!(pool.submit(ProviderLane::Ask, req()).is_ok());
+        assert!(pool.submit(ProviderLane::Summary, req()).is_ok());
+        let overflow = pool.submit(ProviderLane::Audio, ProviderRequest {
+            operation_id: 3,
+            record_id: "r1".into(),
+            config: ProviderConfig::new(
+                "http://127.0.0.1:9/v1/tools/asr".into(),
+                String::new(),
+                String::new(),
+            )
+            .with_asr_mode(AsrTransportMode::DeepSeekHttp),
+            task: ProviderTask::TranscribePcm16 {
+                pcm16: vec![0, 0, 1, 0],
+            },
+            timeout: Duration::from_secs(1),
+        });
+        assert!(overflow.is_err());
+        assert!(!pool.is_lane_busy(ProviderLane::Audio));
+
+        for op in 1..=2u64 {
+            assert!(events_tx
+                .try_send((
+                    ProviderLane::Ask,
+                    ProviderEvent {
+                        operation_id: op,
+                        record_id: "r1".into(),
+                        result: Err("boom".into()),
+                    },
+                ))
+                .is_ok());
+        }
+        assert!(events_tx
+            .try_send((
+                ProviderLane::Ask,
+                ProviderEvent {
+                    operation_id: 3,
+                    record_id: "r1".into(),
+                    result: Err("overflow".into()),
+                },
+            ))
+            .is_err());
+
+        let live_pool = ProviderPool::with_capacities(2, 2).unwrap();
+        drop(live_pool);
     }
 }

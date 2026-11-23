@@ -80,11 +80,11 @@ fn record_retention_from_persisted_rejects_contradictory_and_zero_states() {
 
     assert_eq!(
         RecordRetention::from_persisted(true, Some(1)),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
     );
     assert_eq!(
         RecordRetention::from_persisted(false, Some(0)),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
     );
 }
 
@@ -504,7 +504,7 @@ fn permanent_purge_expiry_and_empty_trash_maintain_restore_totality_and_bean_tom
     bad_state.purged_bean_file_ids.insert(0);
     assert_eq!(
         ProductWorkspace::restore(bad_state),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
     );
 }
 

@@ -45,7 +45,7 @@ impl KoeRuntime {
             .captures
             .sessions
             .values()
-            .any(|s| matches!(s.engine, SpeechEngine::Downloaded(_)) && !s.terminal)
+            .any(|s| s.is_downloaded() && !s.is_terminal())
         {
             return Err("请等待当前本机转写结束后切换模型".into());
         }
@@ -84,7 +84,7 @@ impl KoeRuntime {
             .captures
             .sessions
             .values()
-            .any(|s| matches!(s.engine, SpeechEngine::Downloaded(_)) && !s.terminal)
+            .any(|s| s.is_downloaded() && !s.is_terminal())
         {
             self.notice = Some("请先结束当前本机转写".into());
             return;
@@ -213,7 +213,11 @@ impl KoeRuntime {
                         self.captures
                             .sessions
                             .values()
-                            .find_map(|s| s.operations.get(&operation_id).map(|o| o.duration_ms))
+                            .find_map(|s| {
+                                s.local_operations()
+                                    .and_then(|ops| ops.get(&operation_id))
+                                    .map(|o| o.duration_ms)
+                            })
                             .unwrap_or(0),
                         true,
                     );

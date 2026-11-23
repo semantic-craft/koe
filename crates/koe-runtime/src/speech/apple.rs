@@ -1,19 +1,21 @@
+use super::local_asr::{LocalPhase, Readiness};
 use super::*;
-use crate::local_asr::{LocalPhase, Readiness};
 use koe_client_providers::{LiveEvent, TranscriptSegment};
 
 impl KoeRuntime {
     fn reset_active_local_asr_timers(&mut self) {
         for s in self.captures.sessions.values_mut() {
-            for op in s.operations.values_mut() {
-                if matches!(op.phase, LocalPhase::Active) {
-                    op.elapsed_ms = 0;
+            if let Some(ops) = s.local_operations_mut() {
+                for op in ops.values_mut() {
+                    if matches!(op.phase, LocalPhase::Active) {
+                        op.elapsed_ms = 0;
+                    }
                 }
             }
         }
     }
     /// Transfers a bounded FIFO batch of typed Apple recognition effects to its native adapter.
-    pub fn drain_local_asr_effects(&mut self) -> Vec<crate::local_asr::LocalAsrEffect> {
+    pub fn drain_local_asr_effects(&mut self) -> Vec<super::local_asr::LocalAsrEffect> {
         self.reset_active_local_asr_timers();
         self.local_asr.drain_effects()
     }
@@ -28,16 +30,26 @@ impl KoeRuntime {
         }
     }
     pub(super) fn cancel_speech_operations(&mut self, session: &mut SpeechSession) {
-        if session.engine == SpeechEngine::AppleSpeech {
-            for &op in session.operations.keys() {
-                if self.speech.apple_owner == Some(op) {
-                    self.speech.apple_owner = None;
+        match &mut session.backend {
+            SpeechBackend::AppleLocal {
+                operations,
+                active_operation,
+                ..
+            } => {
+                for &op in operations.keys() {
+                    if self.speech.apple_owner == Some(op) {
+                        self.speech.apple_owner = None;
+                    }
+                    self.local_asr.cancel(op);
                 }
-                self.local_asr.cancel(op);
+                operations.clear();
+                *active_operation = None;
             }
+            SpeechBackend::DownloadedLocal { operations, .. } => {
+                operations.clear();
+            }
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
         }
-        session.operations.clear();
-        session.active_operation = None;
     }
     pub(crate) fn local_asr_readiness(
         &mut self,
@@ -54,8 +66,11 @@ impl KoeRuntime {
                 .captures
                 .sessions
                 .values()
-                .filter(|s| s.engine == SpeechEngine::AppleSpeech)
-                .flat_map(|s| s.operations.keys().copied())
+                .filter_map(|s| match &s.backend {
+                    SpeechBackend::AppleLocal { operations, .. } => Some(operations.keys().copied()),
+                    _ => None,
+                })
+                .flatten()
                 .collect();
             for op in ops {
                 self.local_asr_failed(
@@ -74,12 +89,10 @@ impl KoeRuntime {
         end_ms: u64,
         is_final: bool,
     ) -> Result<(), String> {
-        let Some(s) = self
-            .captures
-            .sessions
-            .values_mut()
-            .find(|s| s.operations.contains_key(&operation_id))
-        else {
+        let Some(s) = self.captures.sessions.values_mut().find(|s| {
+            s.local_operations()
+                .is_some_and(|ops| ops.contains_key(&operation_id))
+        }) else {
             return Ok(());
         };
         let queued_bytes: usize = s
@@ -103,26 +116,35 @@ impl KoeRuntime {
         if text.trim().is_empty() {
             return Ok(());
         }
-        let Some(op) = s.operations.get_mut(&operation_id) else {
-            return Ok(());
+        let offset_ms = {
+            let Some(op) = s
+                .local_operations_mut()
+                .and_then(|ops| ops.get_mut(&operation_id))
+            else {
+                return Ok(());
+            };
+            op.elapsed_ms = 0;
+            if is_final {
+                op.draft.clear();
+                Some(op.offset_ms)
+            } else {
+                op.draft = text.clone();
+                None
+            }
         };
-        op.elapsed_ms = 0;
-        if is_final {
-            op.draft.clear();
+        if let Some(offset_ms) = offset_ms {
             s.results.push_back(LiveEvent::Final {
                 sequence: operation_id
                     .saturating_mul(1_000_000_000)
                     .saturating_add(start_ms),
                 segment: TranscriptSegment {
-                    start_ms: op.offset_ms + start_ms,
-                    end_ms: op.offset_ms + end_ms,
+                    start_ms: offset_ms + start_ms,
+                    end_ms: offset_ms + end_ms,
                     text,
                     speaker: None,
                 },
             });
             self.poll_captures();
-        } else {
-            op.draft = text;
         }
         Ok(())
     }
@@ -130,18 +152,28 @@ impl KoeRuntime {
         if self.speech.apple_owner == Some(operation_id) {
             self.speech.apple_owner = None;
         }
-        if let Some(s) = self
-            .captures
-            .sessions
-            .values_mut()
-            .find(|s| s.operations.contains_key(&operation_id))
-        {
-            s.operations.remove(&operation_id);
-            if s.active_operation == Some(operation_id) {
-                s.active_operation = None;
+        if let Some(s) = self.captures.sessions.values_mut().find(|s| {
+            s.local_operations()
+                .is_some_and(|ops| ops.contains_key(&operation_id))
+        }) {
+            match &mut s.backend {
+                SpeechBackend::AppleLocal {
+                    operations,
+                    active_operation,
+                    ..
+                } => {
+                    operations.remove(&operation_id);
+                    if *active_operation == Some(operation_id) {
+                        *active_operation = None;
+                    }
+                }
+                SpeechBackend::DownloadedLocal { operations, .. } => {
+                    operations.remove(&operation_id);
+                }
+                SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
             }
             self.local_asr.complete(operation_id);
-            if s.input_closed && s.operations.is_empty() && s.pcm.is_empty() {
+            if s.phase == SpeechPhase::Draining && !s.has_inflight_work() {
                 s.results.push_back(LiveEvent::Finished);
             }
         }
@@ -152,15 +184,25 @@ impl KoeRuntime {
         if self.speech.apple_owner == Some(operation_id) {
             self.speech.apple_owner = None;
         }
-        if let Some(s) = self
-            .captures
-            .sessions
-            .values_mut()
-            .find(|s| s.operations.contains_key(&operation_id))
-        {
-            s.operations.remove(&operation_id);
-            if s.active_operation == Some(operation_id) {
-                s.active_operation = None;
+        if let Some(s) = self.captures.sessions.values_mut().find(|s| {
+            s.local_operations()
+                .is_some_and(|ops| ops.contains_key(&operation_id))
+        }) {
+            match &mut s.backend {
+                SpeechBackend::AppleLocal {
+                    operations,
+                    active_operation,
+                    ..
+                } => {
+                    operations.remove(&operation_id);
+                    if *active_operation == Some(operation_id) {
+                        *active_operation = None;
+                    }
+                }
+                SpeechBackend::DownloadedLocal { operations, .. } => {
+                    operations.remove(&operation_id);
+                }
+                SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
             }
             self.local_asr.cancel(operation_id);
             s.results.push_back(LiveEvent::Failed(
@@ -178,7 +220,8 @@ impl KoeRuntime {
             .sessions
             .iter()
             .filter(|(_, s)| {
-                s.engine == SpeechEngine::AppleSpeech && !s.terminal && !s.pcm.is_empty()
+                !s.is_terminal()
+                    && matches!(&s.backend, SpeechBackend::AppleLocal { pcm, .. } if !pcm.is_empty())
             })
             .min_by_key(|(_, s)| s.key.attempt)
             .map(|(id, _)| id.clone());
@@ -188,7 +231,7 @@ impl KoeRuntime {
         let Some(mut s) = self.captures.sessions.remove(&id) else {
             return false;
         };
-        let finish = s.input_closed;
+        let finish = s.phase == SpeechPhase::Draining;
         if let Err(error) = self.flush_speech_window(&mut s, finish) {
             s.results.push_back(LiveEvent::Failed(error));
         }
@@ -198,8 +241,8 @@ impl KoeRuntime {
     pub(crate) fn tick_local_asr(&mut self, elapsed_ms: u64) {
         let mut timeout = Vec::new();
         for s in self.captures.sessions.values_mut() {
-            if s.engine == SpeechEngine::AppleSpeech {
-                for op in s.operations.values_mut() {
+            if let SpeechBackend::AppleLocal { operations, .. } = &mut s.backend {
+                for op in operations.values_mut() {
                     op.elapsed_ms = op.elapsed_ms.saturating_add(elapsed_ms);
                     if op.elapsed_ms >= 15_000 {
                         timeout.push(op.operation_id);

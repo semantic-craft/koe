@@ -239,7 +239,16 @@ fn ble_auto_connect_purged_tombstone_and_transcript_editing_preserve_invariants(
     bad_state.purged_bean_file_ids.insert(0);
     assert_eq!(
         ProductWorkspace::restore(bad_state),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
+    );
+
+    let bad_cfg = ProviderConfiguration {
+        chat_endpoint: "http://192.168.1.5/v1/chat/completions".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        w.configure_provider(bad_cfg),
+        Err(ProductError::InvalidConfiguration)
     );
 
     w.append_transcript("a", "alpha draft", 0, 1_000, "manual")

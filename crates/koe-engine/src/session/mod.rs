@@ -299,6 +299,18 @@ impl TransportSession {
         let Some(verified) = receipt.verify() else {
             return false;
         };
+        if !self.custody_receipts.contains_key(&verified.file_id())
+            && self.custody_receipts.len() >= MAX_CUSTODY_RECEIPTS
+        {
+            if let Some(&evict_id) = self
+                .custody_receipts
+                .iter()
+                .min_by_key(|(&fid, r)| (r.receipt().fsynced_at_epoch_sec, fid))
+                .map(|(fid, _)| fid)
+            {
+                self.custody_receipts.remove(&evict_id);
+            }
+        }
         self.custody_receipts.insert(verified.file_id(), verified);
         true
     }

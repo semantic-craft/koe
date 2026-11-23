@@ -1,11 +1,12 @@
 mod apple;
 mod live;
+pub(crate) mod local_asr;
 mod models;
 #[cfg(test)]
 mod tests;
 
-use super::*;
-use crate::local_asr::{LocalPhase, LocalSession, Readiness, MAX_MESSAGE_BYTES};
+use crate::*;
+use local_asr::{LocalPhase, LocalSession, Readiness, MAX_MESSAGE_BYTES};
 use koe_client_providers::{
     LiveEvent, LiveTranscription, OfflineSpeechWorker, ProviderConfig,
 };
@@ -15,41 +16,173 @@ const WINDOW_SAMPLES: usize = 16_000 * 15;
 const MAX_PENDING_WINDOWS: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum CaptureOrigin {
+pub(crate) enum CaptureOrigin {
     Microphone,
     Bean,
 }
 
-pub(super) struct SpeechSession {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::speech) enum SpeechPhase {
+    Accepting,
+    Draining,
+    Completed { succeeded: bool },
+    DeferredReady,
+    Cancelled,
+}
+
+impl SpeechPhase {
+    pub(crate) const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed { .. } | Self::DeferredReady | Self::Cancelled
+        )
+    }
+}
+
+pub(in crate::speech) enum SpeechBackend {
+    CloudLive {
+        stream: Option<LiveTranscription>,
+        live_draft: String,
+    },
+    CloudDeferredBatch,
+    AppleLocal {
+        operations: BTreeMap<u64, LocalSession>,
+        active_operation: Option<u64>,
+        pcm: Vec<i16>,
+        consumed_samples: u64,
+    },
+    DownloadedLocal {
+        operations: BTreeMap<u64, LocalSession>,
+        pcm: Vec<i16>,
+        consumed_samples: u64,
+    },
+}
+
+pub(crate) struct SpeechSession {
     pub(in crate::speech) key: RequestKey,
-    pub(in crate::speech) engine: SpeechEngine,
-    pub(in crate::speech) stream: Option<LiveTranscription>,
-    pub(in crate::speech) deferred_batch: bool,
-    pub(in crate::speech) operations: BTreeMap<u64, LocalSession>,
-    pub(in crate::speech) active_operation: Option<u64>,
-    pub(in crate::speech) pcm: Vec<i16>,
-    pub(in crate::speech) consumed_samples: u64,
-    pub(in crate::speech) input_closed: bool,
+    pub(in crate::speech) backend: SpeechBackend,
+    pub(in crate::speech) phase: SpeechPhase,
     pub(in crate::speech) source: Option<CaptureOrigin>,
     pub(in crate::speech) file_audio: Option<VecDeque<u8>>,
-    pub(in crate::speech) live_draft: String,
     pub(in crate::speech) results: VecDeque<LiveEvent>,
-    pub(super) minutes_schedule: crate::live_minutes::LiveMinutesSchedule,
+    pub(crate) minutes_schedule: crate::capture::live_minutes::LiveMinutesSchedule,
     pub saved: bool,
-    pub terminal: bool,
-    pub(in crate::speech) success: bool,
     pub captured_pcm_bytes: u64,
 }
+
 impl SpeechSession {
-    pub(super) fn capture_source(&self) -> Option<CaptureOrigin> {
+    pub(crate) const fn is_terminal(&self) -> bool {
+        self.phase.is_terminal()
+    }
+
+    pub(crate) fn capture_source(&self) -> Option<CaptureOrigin> {
         self.source
     }
 
-    pub(super) fn drafts(&self) -> impl Iterator<Item = &str> {
-        let live = (!self.live_draft.is_empty()).then_some(self.live_draft.as_str());
+    pub(in crate::speech) const fn is_cloud(&self) -> bool {
+        matches!(
+            self.backend,
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch
+        )
+    }
+
+    pub(in crate::speech) const fn is_apple(&self) -> bool {
+        matches!(self.backend, SpeechBackend::AppleLocal { .. })
+    }
+
+    pub(in crate::speech) const fn is_downloaded(&self) -> bool {
+        matches!(self.backend, SpeechBackend::DownloadedLocal { .. })
+    }
+
+    pub(in crate::speech) const fn is_deferred_batch(&self) -> bool {
+        matches!(self.backend, SpeechBackend::CloudDeferredBatch)
+    }
+
+    pub(in crate::speech) const fn provider_label(&self) -> &'static str {
+        match self.backend {
+            SpeechBackend::AppleLocal { .. } => "apple-speech",
+            SpeechBackend::DownloadedLocal { .. } => "downloaded-speech",
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => "dashscope",
+        }
+    }
+
+    pub(in crate::speech) fn local_operations(&self) -> Option<&BTreeMap<u64, LocalSession>> {
+        match &self.backend {
+            SpeechBackend::AppleLocal { operations, .. }
+            | SpeechBackend::DownloadedLocal { operations, .. } => Some(operations),
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => None,
+        }
+    }
+
+    pub(in crate::speech) fn local_operations_mut(
+        &mut self,
+    ) -> Option<&mut BTreeMap<u64, LocalSession>> {
+        match &mut self.backend {
+            SpeechBackend::AppleLocal { operations, .. }
+            | SpeechBackend::DownloadedLocal { operations, .. } => Some(operations),
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => None,
+        }
+    }
+
+    pub(in crate::speech) fn clear_live_draft(&mut self) {
+        if let SpeechBackend::CloudLive { live_draft, .. } = &mut self.backend {
+            live_draft.clear();
+        }
+    }
+
+    pub(in crate::speech) fn drop_cloud_stream(&mut self) {
+        if let SpeechBackend::CloudLive { stream, .. } = &mut self.backend {
+            *stream = None;
+        }
+    }
+
+    pub(in crate::speech) fn clear_local_pcm(&mut self) {
+        match &mut self.backend {
+            SpeechBackend::AppleLocal { pcm, .. }
+            | SpeechBackend::DownloadedLocal { pcm, .. } => pcm.clear(),
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
+        }
+    }
+
+    pub(in crate::speech) fn set_consumed_samples(&mut self, samples: u64) {
+        match &mut self.backend {
+            SpeechBackend::AppleLocal {
+                consumed_samples, ..
+            }
+            | SpeechBackend::DownloadedLocal {
+                consumed_samples, ..
+            } => *consumed_samples = samples,
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
+        }
+    }
+
+    pub(in crate::speech) fn has_inflight_work(&self) -> bool {
+        match &self.backend {
+            SpeechBackend::CloudLive { stream, .. } => stream.is_some(),
+            SpeechBackend::CloudDeferredBatch => false,
+            SpeechBackend::AppleLocal {
+                operations, pcm, ..
+            }
+            | SpeechBackend::DownloadedLocal {
+                operations, pcm, ..
+            } => !operations.is_empty() || !pcm.is_empty(),
+        }
+    }
+
+    pub(crate) fn drafts(&self) -> impl Iterator<Item = &str> {
+        let (live, ops): (Option<&str>, Option<&BTreeMap<u64, LocalSession>>) = match &self.backend
+        {
+            SpeechBackend::CloudLive { live_draft, .. } => (
+                (!live_draft.is_empty()).then_some(live_draft.as_str()),
+                None,
+            ),
+            SpeechBackend::CloudDeferredBatch => (None, None),
+            SpeechBackend::AppleLocal { operations, .. }
+            | SpeechBackend::DownloadedLocal { operations, .. } => (None, Some(operations)),
+        };
         live.into_iter().chain(
-            self.operations
-                .values()
+            ops.into_iter()
+                .flat_map(|ops| ops.values())
                 .map(|op| op.draft.as_str())
                 .filter(|text| !text.is_empty()),
         )
@@ -67,7 +200,7 @@ pub(in crate::speech) struct ModelPreparation {
     pub(in crate::speech) cancelled: bool,
 }
 
-pub(super) struct SpeechState {
+pub(crate) struct SpeechState {
     pub(in crate::speech) worker: Option<OfflineSpeechWorker>,
     pub(in crate::speech) worker_error: Option<String>,
     pub(in crate::speech) loaded_model_id: Option<String>,
@@ -92,7 +225,7 @@ impl SpeechState {
     }
 }
 impl KoeRuntime {
-    pub(super) fn record_speech_engine(&self, id: &str) -> SpeechEngine {
+    pub(crate) fn record_speech_engine(&self, id: &str) -> SpeechEngine {
         self.workspace()
             .record(id)
             .filter(|r| matches!(r.analysis, AnalysisState::Interrupted { .. }))
@@ -104,7 +237,7 @@ impl KoeRuntime {
                     .clone()
             })
     }
-    pub(super) fn speech_ready(&self, engine: &SpeechEngine) -> bool {
+    pub(crate) fn speech_ready(&self, engine: &SpeechEngine) -> bool {
         match engine {
             SpeechEngine::AppleSpeech => self.local_asr.state == Readiness::Ready,
             SpeechEngine::Downloaded(id) => {
@@ -144,29 +277,20 @@ impl KoeRuntime {
                 .provider_configuration()
                 .is_realtime_cloud_asr();
         if is_non_realtime_cloud {
-            self.commit(|w| w.bind_speech_engine(id, engine.clone()))?;
+            self.commit(|w| w.bind_speech_engine(id, engine))?;
             let session = SpeechSession {
                 key: RequestKey {
                     record_id: id.into(),
                     attempt: 0,
                     input_revision: 0,
                 },
-                engine,
-                stream: None,
-                deferred_batch: true,
-                operations: BTreeMap::new(),
-                active_operation: None,
-                pcm: Vec::new(),
-                consumed_samples: 0,
-                input_closed: false,
+                backend: SpeechBackend::CloudDeferredBatch,
+                phase: SpeechPhase::Accepting,
                 source,
                 file_audio: None,
-                live_draft: String::new(),
                 results: VecDeque::new(),
                 minutes_schedule: Default::default(),
                 saved: false,
-                terminal: false,
-                success: false,
                 captured_pcm_bytes: 0,
             };
             self.captures.sessions.insert(id.into(), session);
@@ -176,54 +300,64 @@ impl KoeRuntime {
             w.bind_speech_engine(id, engine.clone())?;
             w.begin_analysis(id, AnalysisStage::Transcribing)
         })?;
-        let mut session = SpeechSession {
-            key,
-            engine: engine.clone(),
-            stream: None,
-            deferred_batch: false,
-            operations: BTreeMap::new(),
-            active_operation: None,
-            pcm: Vec::new(),
-            consumed_samples: 0,
-            input_closed: false,
-            source,
-            file_audio: None,
-            live_draft: String::new(),
-            results: VecDeque::new(),
-            minutes_schedule: Default::default(),
-            saved: false,
-            terminal: false,
-            success: false,
-            captured_pcm_bytes: 0,
-        };
-        if engine == SpeechEngine::Cloud {
-            if let Some(error) = blocked {
-                session.results.push_back(LiveEvent::Failed(error));
-            } else if !self.cloud_asr_configured() {
-                session.results.push_back(LiveEvent::Failed(
-                    "请先配置云端语音凭据；原始录音已保留".into(),
-                ));
-            } else {
-                let cfg = self.workspace().provider_configuration();
-                let asr_model = if cfg.asr_model.trim().is_empty() {
-                    DEFAULT_ASR_MODEL.to_string()
+        let mut results = VecDeque::new();
+        let backend = match engine {
+            SpeechEngine::Cloud => {
+                let mut stream = None;
+                if let Some(error) = blocked {
+                    results.push_back(LiveEvent::Failed(error));
+                } else if !self.cloud_asr_configured() {
+                    results.push_back(LiveEvent::Failed(
+                        "请先配置云端语音凭据；原始录音已保留".into(),
+                    ));
                 } else {
-                    cfg.asr_model.clone()
-                };
-                match LiveTranscription::start(ProviderConfig::new(
-                    cfg.asr_endpoint.clone(),
-                    asr_model,
-                    self.active_asr_key().to_owned(),
-                )) {
-                    Ok(stream) => session.stream = Some(stream),
-                    Err(e) => session.results.push_back(LiveEvent::Failed(e)),
+                    let cfg = self.workspace().provider_configuration();
+                    let asr_model = if cfg.asr_model.trim().is_empty() {
+                        DEFAULT_ASR_MODEL.to_string()
+                    } else {
+                        cfg.asr_model.clone()
+                    };
+                    match LiveTranscription::start(ProviderConfig::new(
+                        cfg.asr_endpoint.clone(),
+                        asr_model,
+                        self.active_asr_key().to_owned(),
+                    )) {
+                        Ok(live) => stream = Some(live),
+                        Err(e) => results.push_back(LiveEvent::Failed(e)),
+                    }
+                }
+                SpeechBackend::CloudLive {
+                    stream,
+                    live_draft: String::new(),
                 }
             }
-        }
+            SpeechEngine::AppleSpeech => SpeechBackend::AppleLocal {
+                operations: BTreeMap::new(),
+                active_operation: None,
+                pcm: Vec::new(),
+                consumed_samples: 0,
+            },
+            SpeechEngine::Downloaded(_) => SpeechBackend::DownloadedLocal {
+                operations: BTreeMap::new(),
+                pcm: Vec::new(),
+                consumed_samples: 0,
+            },
+        };
+        let session = SpeechSession {
+            key,
+            backend,
+            phase: SpeechPhase::Accepting,
+            source,
+            file_audio: None,
+            results,
+            minutes_schedule: Default::default(),
+            saved: false,
+            captured_pcm_bytes: 0,
+        };
         self.captures.sessions.insert(id.into(), session);
         Ok(())
     }
-    pub(super) fn start_file_speech(&mut self, id: &str, pcm: Vec<u8>) -> Result<(), String> {
+    pub(crate) fn start_file_speech(&mut self, id: &str, pcm: Vec<u8>) -> Result<(), String> {
         let offset = self.workspace().record(id).map_or(0, |r| {
             r.aggregate
                 .spine
@@ -238,19 +372,21 @@ impl KoeRuntime {
             s.saved = true;
             let skip = (offset as usize).saturating_mul(32).min(pcm.len());
             s.file_audio = Some(pcm[skip..].to_vec().into());
-            s.consumed_samples = offset.saturating_mul(16);
+            s.set_consumed_samples(offset.saturating_mul(16));
             s.captured_pcm_bytes = offset.saturating_mul(32);
         }
         self.drive_speech_files();
         Ok(())
     }
-    pub(super) fn drive_speech_files(&mut self) -> bool {
+    pub(crate) fn drive_speech_files(&mut self) -> bool {
         let ids: Vec<_> = self
             .captures
             .sessions
             .iter()
             .filter(|(_, s)| {
-                !s.terminal && s.file_audio.is_some() && s.operations.len() < MAX_PENDING_WINDOWS
+                !s.is_terminal()
+                    && s.file_audio.is_some()
+                    && s.local_operations().map_or(0, BTreeMap::len) < MAX_PENDING_WINDOWS
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -259,7 +395,7 @@ impl KoeRuntime {
             let Some(s) = self.captures.sessions.get_mut(&id) else {
                 continue;
             };
-            if s.engine == SpeechEngine::AppleSpeech && self.speech.apple_owner.is_some() {
+            if s.is_apple() && self.speech.apple_owner.is_some() {
                 continue;
             }
             let Some(audio) = s.file_audio.as_mut() else {
@@ -273,7 +409,7 @@ impl KoeRuntime {
                 s.file_audio = None;
             }
             if let Err(error) = self.feed_speech(&id, &chunk, None) {
-                self.error = Some(error);
+                self.set_error(error);
             }
             if finished {
                 self.finish_speech(&id);
@@ -281,7 +417,7 @@ impl KoeRuntime {
         }
         changed
     }
-    pub(super) fn feed_speech(&mut self, id: &str, pcm16: &[u8], source: Option<CaptureOrigin>) -> Result<(), String> {
+    pub(crate) fn feed_speech(&mut self, id: &str, pcm16: &[u8], source: Option<CaptureOrigin>) -> Result<(), String> {
         if let Err(error) = self.ensure_speech_session(id, source) {
             self.notice = Some(error);
             return Ok(());
@@ -292,29 +428,37 @@ impl KoeRuntime {
         session.captured_pcm_bytes = session
             .captured_pcm_bytes
             .saturating_add(pcm16.len() as u64);
-        if !session.terminal && !session.input_closed {
-            if let Some(stream) = &mut session.stream {
-                for chunk in pcm16.chunks(64 * 1024) {
-                    if let Err(error) = stream.push_audio(chunk.to_vec()) {
-                        session.results.extend(stream.poll());
-                        session.results.push_back(LiveEvent::Failed(error));
-                        session.stream = None;
-                        break;
+        if session.phase == SpeechPhase::Accepting {
+            match &mut session.backend {
+                SpeechBackend::CloudLive { stream, .. } => {
+                    if let Some(active) = stream.as_mut() {
+                        for chunk in pcm16.chunks(64 * 1024) {
+                            if let Err(error) = active.push_audio(chunk.to_vec()) {
+                                session.results.extend(active.poll());
+                                session.results.push_back(LiveEvent::Failed(error));
+                                *stream = None;
+                                break;
+                            }
+                        }
                     }
                 }
-            } else if session.engine != SpeechEngine::Cloud
-                && !session
-                    .results
-                    .iter()
-                    .any(|e| matches!(e, LiveEvent::Failed(_)))
-            {
-                for bytes in pcm16.chunks(2) {
-                    if bytes.len() == 2 {
-                        session.pcm.push(i16::from_le_bytes([bytes[0], bytes[1]]));
+                SpeechBackend::CloudDeferredBatch => {}
+                SpeechBackend::AppleLocal { pcm, .. }
+                | SpeechBackend::DownloadedLocal { pcm, .. } => {
+                    if !session
+                        .results
+                        .iter()
+                        .any(|e| matches!(e, LiveEvent::Failed(_)))
+                    {
+                        for bytes in pcm16.chunks(2) {
+                            if bytes.len() == 2 {
+                                pcm.push(i16::from_le_bytes([bytes[0], bytes[1]]));
+                            }
+                        }
+                        if let Err(error) = self.flush_speech_window(&mut session, false) {
+                            session.results.push_back(LiveEvent::Failed(error));
+                        }
                     }
-                }
-                if let Err(error) = self.flush_speech_window(&mut session, false) {
-                    session.results.push_back(LiveEvent::Failed(error));
                 }
             }
         }
@@ -323,107 +467,115 @@ impl KoeRuntime {
         Ok(())
     }
     fn flush_speech_window(&mut self, s: &mut SpeechSession, finish: bool) -> Result<(), String> {
-        match s.engine {
-            SpeechEngine::AppleSpeech => {
-                if s.pcm.len() > WINDOW_SAMPLES * MAX_PENDING_WINDOWS {
+        match &mut s.backend {
+            SpeechBackend::AppleLocal {
+                operations,
+                active_operation,
+                pcm,
+                consumed_samples,
+            } => {
+                if pcm.len() > WINDOW_SAMPLES * MAX_PENDING_WINDOWS {
                     return Err("本机识别队列已满，音频已保留，可稍后补转写".into());
                 }
-                if s.active_operation.is_none() && self.speech.apple_owner.is_some() {
+                if active_operation.is_none() && self.speech.apple_owner.is_some() {
                     return Ok(());
                 }
-                if s.active_operation.is_none() && !s.pcm.is_empty() {
+                if active_operation.is_none() && !pcm.is_empty() {
                     let op = self.next_job;
                     self.next_job += 1;
                     self.local_asr.start(op);
                     self.speech.apple_owner = Some(op);
-                    s.operations.insert(
+                    operations.insert(
                         op,
                         LocalSession {
                             operation_id: op,
                             phase: LocalPhase::Active,
                             draft: String::new(),
                             elapsed_ms: 0,
-                            offset_ms: s.consumed_samples / 16,
+                            offset_ms: *consumed_samples / 16,
                             duration_ms: 0,
                         },
                     );
-                    s.active_operation = Some(op);
+                    *active_operation = Some(op);
                 }
-                if let Some(op) = s.active_operation {
-                    let Some(offset) = s.operations.get(&op).map(|o| o.offset_ms) else {
-                        s.active_operation = None;
+                if let Some(op) = *active_operation {
+                    let Some(offset) = operations.get(&op).map(|o| o.offset_ms) else {
+                        *active_operation = None;
                         return Ok(());
                     };
-                    let current = (s.consumed_samples / 16 - offset) as usize * 16;
-                    let n = s.pcm.len().min(WINDOW_SAMPLES.saturating_sub(current));
-                    let bytes: Vec<u8> = s.pcm.drain(..n).flat_map(i16::to_le_bytes).collect();
+                    let current = (*consumed_samples / 16 - offset) as usize * 16;
+                    let n = pcm.len().min(WINDOW_SAMPLES.saturating_sub(current));
+                    let bytes: Vec<u8> = pcm.drain(..n).flat_map(i16::to_le_bytes).collect();
                     self.local_asr.audio(op, &bytes)?;
-                    s.consumed_samples += bytes.len() as u64 / 2;
-                    if let Some(entry) = s.operations.get_mut(&op) {
-                        entry.duration_ms = s.consumed_samples / 16 - offset;
+                    *consumed_samples += bytes.len() as u64 / 2;
+                    if let Some(entry) = operations.get_mut(&op) {
+                        entry.duration_ms = *consumed_samples / 16 - offset;
                     }
                     if finish || current + n == WINDOW_SAMPLES {
                         self.local_asr.finish(op);
-                        s.active_operation = None;
-                        if let Some(entry) = s.operations.get_mut(&op) {
+                        *active_operation = None;
+                        if let Some(entry) = operations.get_mut(&op) {
                             entry.phase = LocalPhase::Finishing;
                         }
                     }
                 }
             }
-            SpeechEngine::Downloaded(_) => {
-                while s.pcm.len() >= WINDOW_SAMPLES || (finish && !s.pcm.is_empty()) {
-                    if s.operations.len() >= MAX_PENDING_WINDOWS {
+            SpeechBackend::DownloadedLocal {
+                operations,
+                pcm,
+                consumed_samples,
+            } => {
+                while pcm.len() >= WINDOW_SAMPLES || (finish && !pcm.is_empty()) {
+                    if operations.len() >= MAX_PENDING_WINDOWS {
                         return Err("本机识别队列已满，音频已保留，可稍后补转写".into());
                     }
-                    let n = s.pcm.len().min(WINDOW_SAMPLES);
-                    let pcm: Vec<_> = s.pcm.drain(..n).collect();
+                    let n = pcm.len().min(WINDOW_SAMPLES);
+                    let window: Vec<_> = pcm.drain(..n).collect();
                     let op = self.next_job;
                     self.next_job += 1;
                     self.speech
                         .worker
                         .as_ref()
                         .ok_or("本机识别不可用")?
-                        .transcribe(op, pcm)?;
-                    s.operations.insert(
+                        .transcribe(op, window)?;
+                    operations.insert(
                         op,
                         LocalSession {
                             operation_id: op,
                             phase: LocalPhase::Finishing,
                             draft: String::new(),
                             elapsed_ms: 0,
-                            offset_ms: s.consumed_samples / 16,
+                            offset_ms: *consumed_samples / 16,
                             duration_ms: n as u64 / 16,
                         },
                     );
-                    s.consumed_samples += n as u64;
+                    *consumed_samples += n as u64;
                 }
             }
-            SpeechEngine::Cloud => {}
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
         }
         Ok(())
     }
-    pub(super) fn finish_speech(&mut self, id: &str) {
+    pub(crate) fn finish_speech(&mut self, id: &str) {
         if let Some(mut s) = self.captures.sessions.remove(id) {
-            s.input_closed = true;
-            if s.deferred_batch {
-                s.terminal = true;
-            } else {
-                let result = if let Some(stream) = &s.stream {
-                    stream.finish()
+            if !s.phase.is_terminal() {
+                if s.is_deferred_batch() {
+                    s.phase = SpeechPhase::DeferredReady;
                 } else {
-                    self.flush_speech_window(&mut s, true)
-                };
-                if let Err(error) = result {
-                    s.results.push_back(LiveEvent::Failed(error));
-                }
-                if s.stream.is_none()
-                    && s.operations.is_empty()
-                    && s.pcm.is_empty()
-                    && s.results.is_empty()
-                    && !s.terminal
-                {
-                    s.results.push_back(LiveEvent::Finished);
+                    s.phase = SpeechPhase::Draining;
+                    let result = match &s.backend {
+                        SpeechBackend::CloudLive {
+                            stream: Some(stream),
+                            ..
+                        } => stream.finish(),
+                        _ => self.flush_speech_window(&mut s, true),
+                    };
+                    if let Err(error) = result {
+                        s.results.push_back(LiveEvent::Failed(error));
+                    }
+                    if !s.has_inflight_work() && s.results.is_empty() && !s.phase.is_terminal() {
+                        s.results.push_back(LiveEvent::Finished);
+                    }
                 }
             }
             self.captures.sessions.insert(id.into(), s);

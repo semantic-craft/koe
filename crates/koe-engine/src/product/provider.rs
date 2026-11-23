@@ -269,7 +269,11 @@ impl ProviderConfiguration {
             return false;
         }
         let endpoint = self.asr_endpoint.trim();
-        let is_ws = endpoint.starts_with("wss://") || endpoint.starts_with("ws://");
+        let is_ws = endpoint
+            .split_once("://")
+            .is_some_and(|(scheme, _)| {
+                scheme.eq_ignore_ascii_case("wss") || scheme.eq_ignore_ascii_case("ws")
+            });
         is_ws
             && !matches!(
                 self.asr_model.trim(),
@@ -297,8 +301,9 @@ impl ProviderConfiguration {
             || !valid_ws_id
             || self.model.trim().is_empty()
             || self.model.len() > 200
-            || !safe_endpoint(&self.asr_endpoint, &["wss://", "ws://", "https://", "http://"])
-            || !safe_endpoint(&self.chat_endpoint, &["https://", "http://"])
+            || validate_provider_endpoint(&self.asr_endpoint, &["wss", "ws", "https", "http"])
+                .is_err()
+            || validate_provider_endpoint(&self.chat_endpoint, &["https", "http"]).is_err()
             || self.retired_credentials.len() > 64
             || self.retired_credentials.iter().any(|s| !valid_reference(s))
             || matches!(&self.credential, CredentialBinding::Saved(s) if !valid_reference(s) || self.retired_credentials.contains(s) || pending.contains(s))
@@ -310,11 +315,126 @@ impl ProviderConfiguration {
                 .enumerate()
                 .any(|(i, s)| !valid_reference(s) || pending[..i].contains(s))
         {
-            return Err(ProductError::InvalidEvidence);
+            return Err(ProductError::InvalidConfiguration);
         }
         Ok(())
     }
 }
+
+/// Failure classification returned by [`validate_provider_endpoint`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointValidationError {
+    /// Endpoint is empty, oversized, contains whitespace/control chars, or has an invalid host/port.
+    InvalidSyntax,
+    /// Endpoint embeds userinfo (`@`), query parameters (`?`), or a fragment (`#`).
+    DisallowedComponents,
+    /// Endpoint scheme is not allowed for the requested transport.
+    UnsupportedScheme,
+    /// Endpoint uses plaintext `http://` or `ws://` against a non-loopback host.
+    InsecureNonLoopback,
+}
+
+/// Returns `true` when `host` resolves syntactically to `localhost` or a loopback IP literal.
+#[must_use]
+pub fn is_loopback_host_str(host: &str) -> bool {
+    let trimmed = host.trim().trim_end_matches('.');
+    if trimmed.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    trimmed
+        .trim_matches(['[', ']'])
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+            }
+        })
+}
+
+/// Returns `true` when `endpoint` is a valid plaintext `http://` URL targeting a loopback host.
+#[must_use]
+pub fn is_loopback_http_endpoint(endpoint: &str) -> bool {
+    endpoint
+        .split_once("://")
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("http"))
+        && validate_provider_endpoint(endpoint, &["https", "http"])
+            .is_ok_and(|loopback| loopback)
+}
+
+/// Validates a provider endpoint against unified syntax, component, scheme, and TLS-or-loopback rules.
+///
+/// Returns `Ok(is_loopback)` when valid.
+pub fn validate_provider_endpoint(
+    value: &str,
+    allowed_schemes: &[&str],
+) -> Result<bool, EndpointValidationError> {
+    if value.is_empty()
+        || value.len() > 2048
+        || value.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(EndpointValidationError::InvalidSyntax);
+    }
+    if value.contains(['@', '?', '#']) {
+        return Err(EndpointValidationError::DisallowedComponents);
+    }
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return Err(EndpointValidationError::InvalidSyntax);
+    };
+    if !allowed_schemes
+        .iter()
+        .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
+    {
+        return Err(EndpointValidationError::UnsupportedScheme);
+    }
+    if rest.is_empty() || rest.starts_with('/') {
+        return Err(EndpointValidationError::InvalidSyntax);
+    }
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return Err(EndpointValidationError::InvalidSyntax);
+    }
+    let host = if let Some(after_open) = authority.strip_prefix('[') {
+        let Some((ip, suffix)) = after_open.split_once(']') else {
+            return Err(EndpointValidationError::InvalidSyntax);
+        };
+        if ip.is_empty() || ip.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(EndpointValidationError::InvalidSyntax);
+        }
+        if !suffix.is_empty() {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return Err(EndpointValidationError::InvalidSyntax);
+            };
+            if port.is_empty() || port.parse::<u16>().is_err() {
+                return Err(EndpointValidationError::InvalidSyntax);
+            }
+        }
+        ip
+    } else {
+        if authority.contains(['[', ']']) {
+            return Err(EndpointValidationError::InvalidSyntax);
+        }
+        let (host, port) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        if host.is_empty() {
+            return Err(EndpointValidationError::InvalidSyntax);
+        }
+        if let Some(port) = port {
+            if port.is_empty() || port.parse::<u16>().is_err() {
+                return Err(EndpointValidationError::InvalidSyntax);
+            }
+        }
+        host
+    };
+    let loopback = is_loopback_host_str(host);
+    if (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("ws")) && !loopback {
+        return Err(EndpointValidationError::InsecureNonLoopback);
+    }
+    Ok(loopback)
+}
+
 /// Whether a platform reference is safe for an exact secure-item lookup.
 pub fn valid_reference(value: &str) -> bool {
     !value.is_empty()
@@ -334,17 +454,6 @@ fn endpoint_host(endpoint: &str) -> Option<&str> {
         host_port.split(':').next()
     }
     .filter(|h| !h.is_empty())
-}
-
-fn safe_endpoint(value: &str, schemes: &[&str]) -> bool {
-    value.len() <= 2048
-        && !value.chars().any(|c| c.is_whitespace() || c.is_control())
-        && !value.contains(['@', '?', '#'])
-        && schemes.iter().any(|scheme| {
-            value
-                .strip_prefix(scheme)
-                .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
-        })
 }
 impl ProductWorkspace {
     /// Persisted provider settings, excluding all secret values.
@@ -406,6 +515,49 @@ mod tests {
                 "https://evil.example/dashscope.aliyuncs.com/chat/completions"
             ),
             LlmProvider::Custom
+        );
+    }
+
+    #[test]
+    fn provider_configuration_rejects_plaintext_non_loopback_endpoints() {
+        let bad_http = ProviderConfiguration {
+            chat_endpoint: "http://192.168.1.5/v1/chat/completions".into(),
+            ..Default::default()
+        };
+        assert_eq!(bad_http.validate(), Err(ProductError::InvalidConfiguration));
+
+        let bad_ws = ProviderConfiguration {
+            asr_endpoint: "ws://example.com/api-ws/v1/inference".into(),
+            ..Default::default()
+        };
+        assert_eq!(bad_ws.validate(), Err(ProductError::InvalidConfiguration));
+
+        let ok_loopback = ProviderConfiguration {
+            chat_endpoint: "http://127.0.0.1:8080/v1/chat/completions".into(),
+            asr_endpoint: "ws://localhost:9001/asr".into(),
+            ..Default::default()
+        };
+        assert!(ok_loopback.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_provider_endpoint_matches_schemes_case_insensitively_and_rejects_uppercase_insecure_remote() {
+        assert_eq!(
+            validate_provider_endpoint("HTTPS://api.deepseek.com/chat/completions", &["https", "http"]),
+            Ok(false)
+        );
+        assert_eq!(
+            validate_provider_endpoint("HTTP://127.0.0.1:8080/chat/completions", &["https", "http"]),
+            Ok(true)
+        );
+        assert!(is_loopback_http_endpoint("HTTP://127.0.0.1:8080/chat/completions"));
+        assert_eq!(
+            validate_provider_endpoint("HTTP://evil.example.com/chat/completions", &["https", "http"]),
+            Err(EndpointValidationError::InsecureNonLoopback)
+        );
+        assert_eq!(
+            validate_provider_endpoint("FTP://api.deepseek.com/chat/completions", &["https", "http"]),
+            Err(EndpointValidationError::UnsupportedScheme)
         );
     }
 }

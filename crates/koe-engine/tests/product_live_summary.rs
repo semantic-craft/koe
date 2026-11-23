@@ -98,7 +98,7 @@ fn restored_live_request_is_validated_and_interrupted_independently() {
     bad.next_operation = live.attempt;
     assert_eq!(
         ProductWorkspace::restore(bad),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
     );
     for key in [
         RequestKey {
@@ -121,7 +121,7 @@ fn restored_live_request_is_validated_and_interrupted_independently() {
         };
         assert_eq!(
             ProductWorkspace::restore(bad),
-            Err(ProductError::InvalidEvidence)
+            Err(ProductError::InvalidPersistedState)
         );
     }
     let mut bad = state.clone();
@@ -131,7 +131,7 @@ fn restored_live_request_is_validated_and_interrupted_independently() {
     };
     assert_eq!(
         ProductWorkspace::restore(bad),
-        Err(ProductError::InvalidEvidence)
+        Err(ProductError::InvalidPersistedState)
     );
     let mut restored = ProductWorkspace::restore(state).unwrap();
     assert!(restored.interrupt_pending());

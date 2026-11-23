@@ -33,7 +33,7 @@ impl ProductRecord {
             let expected = match l.lane.as_str() {
                 "microphone" => self.aggregate.recording_id.clone(),
                 "system" => format!("{}-system", self.aggregate.recording_id),
-                _ => return Err(ProductError::InvalidEvidence),
+                _ => return Err(ProductError::InvalidPersistedState),
             };
             if !names.insert(&l.lane)
                 || l.asset_id.as_ref().is_some_and(|id| *id != expected)
@@ -44,7 +44,7 @@ impl ProductRecord {
                     .as_ref()
                     .is_some_and(|s| s.trim().is_empty() || s.chars().count() > 500)
             {
-                return Err(ProductError::InvalidEvidence);
+                return Err(ProductError::InvalidPersistedState);
             }
         }
         self.capture_lanes = lanes;

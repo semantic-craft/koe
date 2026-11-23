@@ -54,6 +54,55 @@ pub struct PcmWave<'a> {
     pub channels: u16,
 }
 
+fn resample_to_16khz_with<F>(
+    frame_count: usize,
+    sample_rate: u32,
+    sample_at: F,
+    mut emit: impl FnMut(i16),
+) where
+    F: Fn(usize) -> f64,
+{
+    if frame_count == 0 || sample_rate == 0 {
+        return;
+    }
+    let count = frame_count as u64 * u64::from(ASR_SAMPLE_RATE) / u64::from(sample_rate);
+    let max_frame_idx = frame_count - 1;
+    for index in 0..count {
+        let position = index as f64 * f64::from(sample_rate) / f64::from(ASR_SAMPLE_RATE);
+        let left_idx = (position as usize).min(max_frame_idx);
+        let right_idx = (left_idx + 1).min(max_frame_idx);
+        let weight = position - left_idx as f64;
+        let left = sample_at(left_idx);
+        let sample = if right_idx == left_idx || weight == 0.0 {
+            left.round() as i16
+        } else {
+            let right = sample_at(right_idx);
+            (left * (1.0 - weight) + right * weight).round() as i16
+        };
+        emit(sample);
+    }
+}
+
+/// Linearly resamples mono PCM16 samples from `sample_rate` Hz directly to 16 kHz without WAV framing.
+#[must_use]
+pub fn resample_mono_to_16khz(samples: &[i16], sample_rate: u32) -> Vec<i16> {
+    if samples.is_empty() || sample_rate == 0 {
+        return Vec::new();
+    }
+    if sample_rate == ASR_SAMPLE_RATE {
+        return samples.to_vec();
+    }
+    let count = samples.len() as u64 * u64::from(ASR_SAMPLE_RATE) / u64::from(sample_rate);
+    let mut output = Vec::with_capacity(count as usize);
+    resample_to_16khz_with(
+        samples.len(),
+        sample_rate,
+        |idx| f64::from(samples[idx]),
+        |sample| output.push(sample),
+    );
+    output
+}
+
 impl PcmWave<'_> {
     /// Duration derived from complete frames, not file size estimates.
     pub fn duration_ms(&self) -> u64 {
@@ -77,21 +126,12 @@ impl PcmWave<'_> {
         }
         let count = frame_count as u64 * u64::from(ASR_SAMPLE_RATE) / u64::from(self.sample_rate);
         let mut output = Vec::with_capacity(count as usize * 2);
-        let max_frame_idx = frame_count - 1;
-        for index in 0..count {
-            let position = index as f64 * f64::from(self.sample_rate) / f64::from(ASR_SAMPLE_RATE);
-            let left_idx = (position as usize).min(max_frame_idx);
-            let right_idx = (left_idx + 1).min(max_frame_idx);
-            let weight = position - left_idx as f64;
-            let left = self.mono_sample_at(left_idx, frame_bytes);
-            let sample = if right_idx == left_idx || weight == 0.0 {
-                left.round() as i16
-            } else {
-                let right = self.mono_sample_at(right_idx, frame_bytes);
-                (left * (1.0 - weight) + right * weight).round() as i16
-            };
-            output.extend_from_slice(&sample.to_le_bytes());
-        }
+        resample_to_16khz_with(
+            frame_count,
+            self.sample_rate,
+            |idx| self.mono_sample_at(idx, frame_bytes),
+            |sample| output.extend_from_slice(&sample.to_le_bytes()),
+        );
         output
     }
 
@@ -611,5 +651,33 @@ mod tests {
 
         let dec: Box<dyn OpusStreamDecoder> = Box::new(NonSyncDecoder(core::cell::Cell::new(16_000)));
         assert_eq!(dec.sample_rate(), 16_000);
+    }
+
+    #[test]
+    fn resample_mono_to_16khz_matches_wav_parse_pipeline_bit_for_bit() {
+        for rate in [8_000u32, 16_000, 24_000, 44_100, 48_000, 96_000] {
+            let samples: Vec<i16> = (0..960usize)
+                .map(|i| {
+                    if i == 0 {
+                        i16::MIN
+                    } else if i == 1 {
+                        i16::MAX
+                    } else {
+                        ((i as f64 * 0.23).sin() * 25_000.0) as i16
+                    }
+                })
+                .collect();
+            let direct_bytes: Vec<u8> = resample_mono_to_16khz(&samples, rate)
+                .into_iter()
+                .flat_map(i16::to_le_bytes)
+                .collect();
+
+            let mut wav = OpusWave::wav_header_with_rate((samples.len() * 2) as u32, rate).to_vec();
+            wav.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+            let via_wav = parse_pcm_wave(&wav).unwrap().mono_16khz();
+            assert_eq!(direct_bytes, via_wav, "mismatch at sample_rate={rate}");
+        }
+        assert!(resample_mono_to_16khz(&[], 48_000).is_empty());
+        assert!(resample_mono_to_16khz(&[100, 200], 0).is_empty());
     }
 }

@@ -26,6 +26,21 @@ pub const TRANSFER_ERR_WATCHDOG_TIMEOUT: u8 = 0xFE;
 /// Synthetic error code when an encrypted file has no validated decryption context.
 pub const TRANSFER_ERR_FILE_DECRYPTION: u8 = 0xFD;
 
+/// Synthetic error code when an active transfer exceeds [`MAX_OPUS_BUFFER_BYTES`].
+pub const TRANSFER_ERR_BUFFER_LIMIT: u8 = 0xFC;
+
+/// Maximum raw 160-byte Opus frame bytes buffered in memory for a single transfer (`64 MiB`).
+pub const MAX_OPUS_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
+/// Maximum verified disk custody receipts retained in memory per transport session.
+pub const MAX_CUSTODY_RECEIPTS: usize = 4_096;
+
+/// Maximum hardware double-tap marks retained per active file transfer.
+pub const MAX_MARKS_PER_FILE: usize = 4_096;
+
+/// Maximum per-file decryption contexts retained in memory per transport session.
+pub const MAX_FILE_DECRYPTION_ENTRIES: usize = 1_024;
+
 /// Connection phase of the D3200 transport session.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
