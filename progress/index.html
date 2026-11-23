@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Koe · Rust/macOS 产品管线</title>
+<title>Koe · Rust 与三端原生产品进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
-<h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-22T04:42:28.207197Z</p>
-<p>Main: <code>main: 3e2d60cce4de981f03eebb1e066cc384ce75a49a</code></p>
+<h1>Koe · Rust 与三端原生产品进度</h1>
+<p>Observed: 2026-11-23T12:13:47.580785Z</p>
+<p>Main: <code>main: 03b58d022a7d962606fb6d592161cebe3a72fc02</code></p>
 <section id="mode-workspaces-definition"><h2>三模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>三种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -174,7 +174,7 @@
 </ul><p>Next: 安装新版签名包后，按 #725 在实机核对关窗后台录音豆实体按键唤醒弹窗与外接耳机热插拔。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 48 项 Python 契约测试、89 文件 verify-ui-principles 零违规、check_swiftui_perf 零告警、391 项离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared（29 项）及 macos（38 项 Swift Testing + 57 项 XCTest）测试；PR #712、#714、#715、#721、#724、#726 均经独立审查与远端 CI 通过后 squash 合并。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>该阶段的全量 scripts/check 通过 48 项 Python 契约测试、89 文件 verify-ui-principles 零违规、check_swiftui_perf 零告警、391 项离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared（29 项）及 macos（38 项 Swift Testing + 57 项 XCTest）测试；PR #712、#714、#715、#721、#724、#726 均经独立审查与远端 CI 通过后 squash 合并。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 独立评审与 CI 通过，未运行真实安装升级。</a></li>
@@ -360,13 +360,13 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/android/verify-native.sh">file platforms/android/verify-native.sh: 校验 16 KB LOAD 对齐、ANDROID_RELR、NEEDED 白名单与 C ABI/JNI 导出符号。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/android/native/client_jni.cpp">file platforms/android/native/client_jni.cpp: C++17 JNI 桥接与 JniCallbacks 跨线程回调实现。</a></li>
 </ul><p>Next: Phase 0 已合并，现由 Phase 1 iOS、Phase 2 Android 骨架及后续硬件适配器直接复用。</p></article>
-<article id="ios-native-skeleton"><h3>iOS 原生 SwiftUI 4-Tab 骨架与模拟器取证闭环（Phase 1）</h3><span class="badge">done</span><p>PR #776（de429b9）已合并主线，完成 iOS 原生 4-Tab 骨架与模拟器取证闭环。本次拆出零 UI 依赖的 KoeAppleCore（KoeAppleShared 通过 @_exported import 保持 macOS 兼容），新增 XcodeGen 单源配置 platforms/ios/project.yml、18 份原生 SwiftUI 与宿主源码及 NativeCredentialsiOS，并扩展 verify-ui-principles.py 守门 KoeAppleCore 零 UI 导入与 iOS 4 Hz 叶子隔离。本地自动化与模拟器验证已通过。Release iphoneos xcodebuild 成功，真实 iPhone 17（iOS 27.2 Simulator）跑通 verify-simulator.sh，包含 KoeiOSHostTests 4/4、活体 Rust 新建闪记跨 Tab 核验、fixture 85% 录音豆与 [S1] 来源弹层，以及 fail-probe 四件取证。本阶段仅含 SwiftUI 骨架与模拟器取证，后续轮询设置、麦克风采集、分段回放、D3200 CoreBluetooth 与文件导入导出已转入 ios-native-adapters 追踪，物理 iPhone 签装与 Keychain 验收继续由 #775 追踪。</p><ul>
+<article id="ios-native-skeleton"><h3>iOS 原生 SwiftUI 4-Tab 骨架与模拟器取证闭环（Phase 1）</h3><span class="badge">done</span><p>PR #776（de429b9）已合并主线，完成 iOS 原生 4-Tab 骨架与模拟器取证闭环。本次拆出零 UI 依赖的 KoeAppleCore（macOS UI 继续作为独立模块维护，后续在 #831 更名为 KoeMacUI），新增 XcodeGen 单源配置 platforms/ios/project.yml、18 份原生 SwiftUI 与宿主源码及 NativeCredentialsiOS，并扩展 verify-ui-principles.py 守门 KoeAppleCore 零 UI 导入与 iOS 4 Hz 叶子隔离。本地自动化与模拟器验证已通过。Release iphoneos xcodebuild 成功，iPhone 17 模拟器（iOS 27.2）跑通 verify-simulator.sh，包含 KoeiOSHostTests 4/4、活体 Rust 新建闪记跨 Tab 核验、fixture 85% 录音豆与 [S1] 来源弹层，以及 fail-probe 四件取证。本阶段仅含 SwiftUI 骨架与模拟器取证，后续轮询设置、麦克风采集、分段回放、D3200 CoreBluetooth 与文件导入导出已转入 ios-native-adapters 追踪，物理 iPhone 签装与 Keychain 验收继续由 #775 追踪。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/776">pull 776: squash de429b9 已合并，KoeAppleCore 拆包、iOS 4-Tab 骨架、Release iphoneos 编译、iPhone 17 模拟器取证与托管 macos-26 CI 全部通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/775">issue 775: 开放真机验收单，追踪物理 iPhone 签装、Keychain 持久化与后续硬件适配验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/ios/project.yml">file platforms/ios/project.yml: XcodeGen 单源工程配置，确定性生成 KoeiOS 与 KoeiOSTests 目标。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/ios/verify-simulator.sh">file platforms/ios/verify-simulator.sh: iOS Simulator 自动化测试、Maestro 活体/回放冒烟与失败四件取证脚本。</a></li>
 </ul><p>Next: Phase 1 骨架已合并，后续原生宿主适配层已由 ios-native-adapters 承接，物理 iPhone 签装与 Keychain 验收继续由 #775 追踪。</p></article>
-<article id="ios-native-adapters"><h3>iOS 原生宿主适配层（Phase 3A–3E：采集、回放、BLE GATT、文件导入导出与设置）</h3><span class="badge">in_progress</span><p>PR #786 至 #790 已全部合并主线，完成 iOS Phase 3A–3E 核心原生宿主适配层并通过模拟器端到端验收，物理真机硬件验收与签装发行尚未完成。PR #786（eb94470）落地 4 Hz IOSHostCoordinator、前后台常亮同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。PR #787（898716f）将 NativeCapture、CapturedPCM、AudioCallbackFence 与 HostAudioClock 提炼进 KoeAppleCore 共享，并落地 AVAudioSession（.playAndRecord + [.defaultToSpeaker, .allowBluetoothHFP]）与 AVAudioEngine 麦克风采集及 IOSAudioInputMonitor。PR #788（ebb7449）将 NativePlayback 与 NativePlaybackItem 提炼进 KoeAppleCore 共享，新增 IOSAudioSession 按持有者协调会话，并实现后台播放 EOF、失败与中断即时回传。PR #789（8b119e8）将 D3200 BluetoothBridge 与 BleTransportModels 提炼进 KoeAppleCore 共享，补齐 5 秒有界停录帧 ACK、背压及 Rust crates/koe-runtime/src/device.rs 扫描态连接 ID 复位修复，同时修复 IOSDeviceSheetView 的 connect_guide 主按钮与断连扫描入口。PR #790（5e14581）落地 IOSFileActions 与 IOSFilePicker，支持 .wav/.txt/.md/.koepack 安全作用域流式导入（256 MiB 上限与源 mtime 保留）、单条/全天/多选批量 Markdown 导出以及 HostSessionStore.sendReturningError 错误隔离。已实测验证包含 36/36 项 iOS XCTest、真实 iPhone 17/17e 模拟器实录 WAV、后台播放 EOF、BLE 面板与文件导入导出界面实测、verify-ui-principles.py 全仓零违规、macOS Swift Testing 46/46、全量 ./scripts/check 与托管 macos-26 CI 全绿。后续 Apple 本机语音识别、iPad 分栏与后台/锁屏能力已转入 ios-full-parity-and-background 交付并通过模拟器九旅程验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与真实 D3200 硬件验收及 Developer 签装发行继续归口 #775。</p><ul>
+<article id="ios-native-adapters"><h3>iOS 原生宿主适配层（Phase 3A–3E：采集、回放、BLE GATT、文件导入导出与设置）</h3><span class="badge">in_progress</span><p>PR #786 至 #790 已全部合并主线，完成 iOS Phase 3A–3E 核心原生宿主适配层并通过模拟器端到端验收，物理真机硬件验收与签装发行尚未完成。PR #786（eb94470）落地 4 Hz IOSHostCoordinator、前后台常亮同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。PR #787（898716f）将 NativeCapture、CapturedPCM、AudioCallbackFence 与 HostAudioClock 提炼进 KoeAppleCore 共享，并落地 AVAudioSession（.playAndRecord + [.defaultToSpeaker, .allowBluetoothHFP]）与 AVAudioEngine 麦克风采集及 IOSAudioInputMonitor。PR #788（ebb7449）将 NativePlayback 与 NativePlaybackItem 提炼进 KoeAppleCore 共享，新增 IOSAudioSession 按持有者协调会话，并实现后台播放 EOF、失败与中断即时回传。PR #789（8b119e8）将 D3200 BluetoothBridge 与 BleTransportModels 提炼进 KoeAppleCore 共享，补齐 5 秒有界停录帧 ACK、背压及 Rust crates/koe-runtime/src/device.rs 扫描态连接 ID 复位修复，同时修复 IOSDeviceSheetView 的 connect_guide 主按钮与断连扫描入口。PR #790（5e14581）落地 IOSFileActions 与 IOSFilePicker，支持 .wav/.txt/.md/.koepack 安全作用域流式导入（256 MiB 上限与源 mtime 保留）、单条/全天/多选批量 Markdown 导出以及 HostSessionStore.sendReturningError 错误隔离。已实测验证包含 36/36 项 iOS XCTest、iPhone 17/17e 模拟器实录 WAV、后台播放 EOF、BLE 面板与文件导入导出界面实测、verify-ui-principles.py 全仓零违规、macOS Swift Testing 46/46、全量 ./scripts/check 与托管 macos-26 CI 全绿。后续 Apple 本机语音识别、iPad 分栏与后台/锁屏能力已转入 ios-full-parity-and-background 交付并通过模拟器九旅程验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与真实 D3200 硬件验收及 Developer 签装发行继续归口 #775。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/786">pull 786: squash eb94470 已合并，落地 4 Hz IOSHostCoordinator、UIApplication.isIdleTimerDisabled 同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/787">pull 787: squash 898716f 已合并，提炼 KoeAppleCore 共享采集原语并落地 AVAudioSession / AVAudioEngine 麦克风采集与 IOSAudioInputMonitor。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/788">pull 788: squash ebb7449 已合并，提炼 KoeAppleCore 共享 NativePlayback / NativePlaybackItem 分段回放、IOSAudioSession 多持有者协调与后台 EOF/失败即时回传。</a></li>
@@ -455,6 +455,23 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/775">issue 775: 开放真机验收单：iOS 物理 iPhone/iPad TestFlight Build 17 安装、Keychain 升级保留、实体 D3200 BLE、CoreBluetooth 杀进程后台唤醒、锁屏与 AirPods 媒控、Apple 本机语音与 iCloud Drive 文件验证。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/777">issue 777: 开放真机验收单：物理 Android 15/16（16 KB 页大小）与 API 29-30 签名 Release APK（含 v2.7.1 官方自适应图标）安装与 GitHub 自更新、Keystore 持久化、实体 D3200 BLE 与前台通知栏控豆、真实 DocumentsUI 与外网云服务验证。</a></li>
 </ul><p>Next: 按 #775 通过 TestFlight（App ID 6837671016，Internal Team Build 17）完成物理 iPhone/iPad 硬件验收；按 #777 在物理 Android 15/16 与 API 29–30 设备（含 Pixel 11 Pro）升级安装 Koe-2.7.1-android-arm64.apk 并完成硬件验收。</p></article>
+</section>
+<section id="contracts-and-diagnostics"><h2>三端契约、诊断与工程门禁</h2>
+<article id="host-contracts-v2"><h3>统一运行时目录与三端宿主契约</h3><span class="badge">done</span><p>Rust Runtime 按 8 个领域目录组织状态、处理与投影。macOS 渲染层为 KoeMacUI，iOS 复用无 UI 的 KoeAppleCore，Android 通过 JNI 接入同一 Host API。契约测试核对 Rust、C 头文件、Swift 和 Kotlin 的命令、事件、类型与字节上限。C ABI v2 共导出 16 个符号。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/825">pull 825: 移除旧资料迁移路径，整理 Runtime 与音频处理。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/826">pull 826: 收口 Runtime 模块、状态机和有界队列。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/828">pull 828: Rust、Apple、Android 与 C ABI 契约合并。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/831">pull 831: macOS UI 改名为 KoeMacUI，修复 iOS trace 队列竞争。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/test_host_contracts.py">file scripts/test_host_contracts.py: CI 和本地共用的宿主契约测试。</a></li>
+</ul><p>Next: 物理设备上的蓝牙、音频与生命周期继续跟踪 iOS #775、Android #777。</p></article>
+<article id="diagnostic-flight-replay"><h3>脱敏飞行记录与确定性回放</h3><span class="badge">done</span><p>RuntimeEnv 可注入时钟、时区与随机源，FlightRecorder 保存有界事件。macOS、iOS、Android 可导出脱敏包，CLI 可用 koe doctor --bundle 导出，并以 --replay 在隔离工作区重放。诊断包保留协议回放需要的 BLE 通知，用采样元数据重建合成 PCM。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/830">pull 830: 诊断、回放、故障注入与三端导出合入主线。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/SECURITY.md">file SECURITY.md: 诊断包隐私、导出权限与资料包读取边界。</a></li>
+</ul><p>Next: 物理设备诊断与共享流程按各平台真机工单验收。</p></article>
+<article id="docs-and-review-standards"><h3>三端文档同步与代码审查门禁（PR-12）</h3><span class="badge">in_progress</span><p>工作树已更新核心文档、CODEOWNERS 与审查标准，文档链接及退役符号检查接入本地门禁和 CI 的纯文档分流。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/agents/code-review-standards.md">file docs/agents/code-review-standards.md: 四阶段审查流程和六维验收标准。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check_docs.py">file scripts/check_docs.py: Markdown 相对路径与活跃文档的退役符号门禁。</a></li>
+</ul><p>Next: 由调度宿主审计工作树、提交并审查合入。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS 与 Android 的 Phase 0 至 Phase 2 跨端底座与原生骨架、双端 Phase 3A–3E 核心适配层、M1–M8 全功能齐平与后台/自适应能力（含 iOS Apple 本机语音识别、iPad 分栏、CoreBluetooth 后台状态恢复、锁屏媒控与 Android 宽屏双栏）、M9–M10 双端轻量九旅程模拟/仿真器 E2E 闭环以及 v2.7.0/v2.7.1（构建 16/17）三端发布交付（Android 签名 APK 已发布并统一官方自适应图标、iOS TestFlight App ID 6837671016 Internal Team 已上传 Build 16 与 Build 17）均已转入对应分组追踪。移动端尚未完成项为物理真机硬件验收（#775/#777）以及明确延后的 iOS ActivityKit 灵动岛。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。</p><ul>

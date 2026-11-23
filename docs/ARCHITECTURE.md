@@ -1,13 +1,14 @@
 # Koe 架构与状态所有权
 
-Koe 以 Rust 保存领域事实、执行规则和协调处理管线，macOS 宿主负责原生展示与系统 I/O。产品围绕三种阅读方式组织：今天回顾全天记忆，记录详情回到一条记录，全局问答跨记录检索。三者读取同一份工作区事实。三模式工作区业务定义见[业务定义](mode-workspaces.md)；这些页面继续读取同一份Rust工作区，不改变下述状态所有权。
+Koe 以 Rust 保存领域事实、执行规则和协调处理管线，macOS、iOS 与 Android 宿主负责原生展示与系统 I/O。今天、记录详情和跨记录问答读取各自设备上同一份工作区事实。三端沿用统一的 [三模式工作区定义](mode-workspaces.md)。
 
 ## 分层
 
 ```mermaid
 flowchart TD
-    UI[SwiftUI 页面] --> API[C ABI v2]
-    OS[AppKit / CoreBluetooth / AVPlayer] --> API
+    Apple[macOS / iOS SwiftUI] --> API[C ABI v2]
+    Android[Android Compose] --> JNI[JNI]
+    JNI --> API
     CLI[CLI / MCP stdio] --> Runtime[KoeRuntime]
     API --> Runtime
     Runtime --> Store[ProductStore]
@@ -24,14 +25,14 @@ flowchart TD
 
 | 层 | 模块 | 拥有的责任 |
 | --- | --- | --- |
-| 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context/`、`minutes/`、`session/`、`hash.rs`、`prng.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、纪要验证、协议、加密与纯哈希/伪随机工具；零外部依赖，不做文件或网络 I/O |
-| 音频编解码边界 | `crates/koe-opus` | 对静态 libopus 的窄安全封装；保持 `OpusStreamDecoder` 接口 |
-| 客户端基础与格式 | `koe-client-base` | 原子文件工具与排他文件锁 |
-| 存储与传输服务 | `koe-client-services`、`koe-client-providers` | 持久化编解码、文件导入、音频资产、真实 HTTPS/WebSocket、后台网络与本机模型工作线程 |
-| 应用编排 | `crates/koe-runtime` | 将 `HostIntent` 与 `AdapterEvent` 分离接入，连接领域事务、设备事件、异步结果和页面投影；选择要处理的记录 |
-| 宿主接口与入口 | `koe-host-api`、`koe-cli`、`platforms/` | 仅依赖 `koe-runtime` 的版本化 C ABI、命令行与 MCP、SwiftUI、`HostBridgeActions`、系统窗口和硬件 I/O |
+| 第一层 Engine | `koe-engine`、`koe-opus` | 无 I/O 的录音、来源、审核、搜索、纪要校验和 D3200 协议状态机。Opus 解码经窄安全接口调用静态 libopus |
+| 第二层 Client | `koe-client-base`、`koe-client-services`、`koe-client-providers` | 排他文件锁、原子写、持久化编解码、文件导入、音频托管、HTTPS/WebSocket、后台网络与本机模型线程 |
+| 第三层 Runtime & Host API | `koe-runtime`、`koe-host-api` | 分别接入 `HostIntent` 与 `AdapterEvent`，绑定记录和请求，持久化后发布投影，经版本化 C ABI 交给宿主 |
+| 第四层 Native Hosts & CLI | `platforms/apple-shared`、`platforms/macos`、`platforms/ios`、`platforms/android`、`koe-cli` | SwiftUI、Compose/JNI、系统窗口、蓝牙、音频、凭据与文件选择，及 CLI/MCP 入口 |
 
 `koe-client-providers` 与 `koe-client-services` 不互相调用，二者由 `koe-runtime` 协调并共用 `koe-engine` 的领域类型与纯底层工具（含 SHA-256、FNV1a、PRNG）。`koe-host-api` 不直接依赖 `koe-engine`、`koe-client-base`、`koe-client-services` 或 `koe-client-providers`。
+
+[Runtime 源码](../crates/koe-runtime/src/)按 `capture`、`device`、`mcp_surface`、`observability`、`processing`、`projection`、`speech`、`workspace` 分域，另有测试目录。
 
 ## 唯一的产品状态
 
@@ -63,9 +64,9 @@ flowchart TD
 
 ### 设备和文件输入
 
-CoreBluetooth 将连接、订阅完成、断开和通知字节交给 Rust，执行 Rust 输出的发送队列；UUID、系统回调与发送背压属于宿主。帧解码、ECDH/AES、离线文件传输和落盘托管规则属于 `TransportSession`。
+Apple CoreBluetooth 与 Android BLE GATT 将连接、订阅完成、断开和通知字节交给 Rust，并排空 Rust 输出的发送队列。系统回调与发送背压属于宿主。帧解码、ECDH/AES、离线传输和落盘托管由 Rust 管理。
 
-`DeviceRuntime` 把设备结果交给 runtime。实时录音先建立自己的记录，逐句保存确定文字；最终音频写入并完成持久化后，才确认磁盘托管。文件导入由 `recording_assets` 检查真实格式：WAV 按实际 PCM 计算时长，文字没有虚构的时间偏移，同内容重复导入使用稳定身份。
+`DeviceRuntime` 把设备结果交给 Runtime。实时录音先建立自己的记录，逐句保存定稿；最终音频写入并完成持久化后，才确认磁盘托管。`recording_assets` 校验导入文件，WAV 按实际 PCM 计算时长，文字使用无时码来源，同内容使用稳定身份。无音频资料包的边界见 [资料包格式](material-pack.md)。
 
 ### Mac 单路麦克风
 
@@ -95,11 +96,11 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 ### 转写、整理与重试
 
-保存的 WAV 经 Rust 转为 16 kHz 单声道 PCM，发送到 DashScope WebSocket；云端模式下，设备实时 PCM 由 `LiveTranscription` 的有界队列发送。最终句子和对应时间进入目标记录。转写完成后，Qwen 根据该记录的原文生成结构化纪要；审核候选项来自已通过校验的纪要。
+云端 ASR 默认使用 DashScope 的 `qwen-audio-3.1-asr-flash-streaming`。流式任务通过 `LiveTranscription` 的有界队列传输音频，非实时任务走选定的千问文件接口或 DeepSeek ASR。最终句子与对应时间进入目标记录。文字整理与问答默认使用 DeepSeek `deepseek-flash`，审核候选项来自通过 Rust 校验的纪要。模型目录与默认值以 [Rust provider 目录](../crates/koe-engine/src/product/provider.rs) 为准。
 
 `ProviderConfiguration.meeting_audio_policy` 在同一工作区中保存会议音频策略，默认 `LocalOnly`。Rust 在实时与文件转写入口守门，文字任务不受影响。切换为本机策略时先取消音频并等待传输线程停止，再原子保存策略与失效请求状态；保存失败继续暂停音频，未知提交只能重开。已开始或明确撤销的实时转写不会在取回时自动重新上传；未收到实时音频的云端会话仍可通过取回完整文件补转写。Swift 只展示快照并发送策略意图。
 
-`SpeechSession` 统一绑定录音豆、Mac 麦克风及文件的记录和请求身份。Apple PCM 经有界 effect 队列与专用 C ABI 交给 macOS `SpeechAnalyzer`；下载模型由 `OfflineSpeechWorker` 在 Rust 进程内运行。最终文字沿同一事务队列持久化，临时字幕只保留在 Runtime。停止等待末句，取消撤销操作身份，迟到结果不能改写其他请求。全局 `liveCaption` 快照驱动字幕条。
+`SpeechSession` 统一绑定录音豆、原生麦克风及文件的记录和请求身份。Apple PCM 经有界 effect 队列与专用 C ABI 交给 macOS 26+ 或 iOS 26+ 的 `SpeechAnalyzer`，macOS 下载模型由 `OfflineSpeechWorker` 在 Rust 进程内运行。Android 提供云端语音引擎。最终文字沿同一事务队列持久化，临时字幕只保留在 Runtime。停止等待末句，取消撤销操作身份，迟到结果不能改写其他请求。全局 `liveCaption` 快照驱动字幕条。
 
 下载模型配置与音频上传策略独立。固定版本文件下载至临时路径，大小及 SHA-256 验证通过后原子发布；后台实际加载成功后才可识别。一个 worker 只持有一个模型，运行中的会话绑定实际加载身份。原生链接 CPU 后端、C++ 与 Accelerate，没有外部进程推理或 Swift 转发本机模型请求。
 
@@ -117,7 +118,7 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 ### 服务配置与安全凭据
 
-`ProviderConfiguration` 保存非敏感参数、`CredentialBinding` 和待删除引用。`Uninitialized` 允许一次旧版兼容读取，`Saved(reference)` 只读取指定新项，`Cleared` 阻止旧值复活。Swift 的 `NativeCredentials` 只执行创建、读取、删除和显式授权，Rust 决定绑定、错误状态与事务顺序。
+`ProviderConfiguration` 保存非敏感参数、`CredentialBinding` 和待删除引用。`Uninitialized` 允许一次旧版兼容读取，`Saved(reference)` 只读取指定新项，`Cleared` 阻止旧值复活。macOS 与 iOS 适配 Keychain，Android 适配 Keystore 保护的加密存储。Rust 决定绑定、错误状态与事务顺序。
 
 保存新密钥时先登记、后写入：平台 `prepare` 只生成新引用、不触达存储，Rust 把它写入 `pending_credentials` 并提交工作区后，才创建不可变安全项并校验读回，最后一次提交把引用设为 `Saved`、退休旧引用并移出待回收清单。因此任意时刻终止只会留下已提交的绑定或本工作区登记过的待回收引用；启动与重试清理时按精确引用删除待回收项和退休项，不枚举安全存储，其他工作区仍引用的项和 `engines-v1` 旧包不受影响。创建或读回失败时尽力删除新项并移出清单；最后提交确定失败时同样回收，落盘结果不确定时本会话保留新项并停用云端凭据，必须关闭重开，由磁盘事实决定保留或回收，重试读取不能解除该状态。替换与清除将旧引用写入待删除清单，删除失败会明确报告，并在重启或显式重试时继续；显式授权重试也覆盖待回收引用。
 
@@ -133,24 +134,30 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 ## 原生接口
 
-`koe-host-api` 的接口版本和快照版本均为 **2**（导出 15 个 `extern "C"` 函数与 `KoePcmReceipt`、`KoePlaybackReceipt`、`KoeOwnedBytes` 三个 `#[repr(C)]` 结构）：
+`koe-host-api` 的接口版本和快照版本均为 **2**。它导出 16 个 `extern "C"` 函数，头文件还声明 `KoePcmReceipt`、`KoePlaybackReceipt`、`KoeOwnedBytes` 三个 `#[repr(C)]` 结构。以 [C 头文件](../platforms/apple-shared/Sources/CKoeHostApi/include/koe_host_api.h) 与 [宿主契约测试](../scripts/test_host_contracts.py) 核对：
 
 - **会话与生命周期**：`koe_host_api_version`、`koe_host_session_create`、`koe_host_session_create_with_credentials`（注入同步不可重入凭据回调；上下文须存活到会话销毁，临时字符串仅在调用期间借用）、`koe_host_session_destroy`、`koe_host_session_poll_timers`。
-- **强类型意图与快照**：SwiftUI 经强类型 `HostCommand`，原生适配器经强类型 `HostAdapterEvent` 调用 `koe_host_session_dispatch_json`（对应 Rust `DispatchMessage` 下的 `HostIntent` 与 `AdapterEvent`）；通过 `koe_host_session_generation` 与 `koe_host_session_snapshot_json` 获取带 `generation` 的不可变快照；经 `koe_host_string_free` 释放返回字符串。旧的 JSON `Command::{MicrophoneChunk, PlaybackProgress}` 通道已移除。
+- **强类型意图与快照**：Swift 和 Kotlin 的 `HostCommand` 与 `HostAdapterEvent` 经 `koe_host_session_dispatch_json` 对应 Rust 的 `HostIntent` 和 `AdapterEvent`。通过 `koe_host_session_generation` 与 `koe_host_session_snapshot_json` 获取不可变快照，经 `koe_host_string_free` 释放返回字符串。
+- **诊断导出**：`koe_host_session_export_diagnostics_json` 返回脱敏 JSON，由调用方经 `koe_host_string_free` 释放。
 - **高频二进制热路径与出站排空**：
   - 音频与回放：`koe_host_session_ingest_pcm`（返回 `KoePcmReceipt`）、`koe_host_session_report_playback_progress`（返回 `KoePlaybackReceipt`）。
   - BLE：`koe_host_session_ingest_ble` 接收原生通知字节；`koe_host_session_drain_ble_tx` 返回 `KoeOwnedBytes` 帧包，由 Swift 经 `koe_host_bytes_free` 释放。
   - 本机识别：`koe_host_session_drain_local_asr` 返回 `KoeOwnedBytes` 二进制效果批（替代原 hex/JSON 出站编码），同样经 `koe_host_bytes_free` 释放。
 
-`HostSessionStore` 只持有一份快照并通过显式注入的 `HostBridgeActions`（替代全局字符串通知总线）触发 BLE 扫描/断开/出站刷新与麦克风恢复，同时经 `KoeWindowPresenter` 独立管理窗口观察与离屏切片门控。Swift 可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，不能自行提取待办、拼接转写时间、修补引用或改变处理阶段。AppKit 管理窗口和菜单，`NativeFileActions` 管理系统文件选择，`NativePlayback` 执行音频播放并回报实际进度。
+`KoeAppleCore` 提供无 UI 的 Apple 契约、快照存储及平台适配组件。macOS 的 `KoeMacUI` 渲染 SwiftUI，AppKit 管窗口、菜单和离屏门控。iOS 的 `KoeiOSApp` 复用 `KoeAppleCore` 并处理 AVAudioSession、CoreBluetooth 恢复、文件分享及锁屏媒控。Android 以 Kotlin 状态切片配 Compose，经 JNI 转发到同一 C ABI，适配 AudioRecord/AudioTrack、前台服务、BLE GATT 与系统文件选择。宿主可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，业务规则和状态变更归 Rust。
 
-CLI 与 MCP 在宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）提供本地 JSON-RPC（`koe/status`、`koe/doctor`、`koe/mcp_tools_list`、`koe/mcp_tool_call`）转发至同一 `KoeRuntime` 实例，宿主未运行时回退直开 `KoeRuntime`。MCP stdio 暴露 16 项检索、审核、修订与设备工具且不开放不可逆彻底清除。离线 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
+CLI 与 MCP 在 macOS 宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）使用本地 JSON-RPC，其中 `koe/diagnostics` 提供诊断导出。宿主未运行时回退直开 `KoeRuntime` 并使用隔离凭据。MCP stdio 暴露 16 项检索、审核、修订与设备工具，永久清除由原生界面保留。
+
+## 飞行记录与确定性回放
+
+`RuntimeEnv` 提供时钟、时区、随机源和 nonce。Rust 的 `FlightRecorder` 记录有界输入序列与处理后代次，三端经 C ABI 导出，macOS CLI 也可经本地 RPC 读取活体飞行记录。`koe doctor --replay` 在临时工作区用包内环境元数据与隔离凭据回放，按样本数生成合成 PCM，输出持久版本、记录计数与关键状态的摘要。有界历史及脱敏后的输入决定可重放范围。数据边界见 [安全策略](../SECURITY.md#诊断包与资料包)。
 
 ## 构建约束与当前边界
 
 - `audiopus_sys = 0.2.2` 从其打包源码静态编译。仓库配置禁用系统 pkg-config 探测，拒绝外部 Opus 库目录覆盖。Rust、CMake 和 Swift 统一使用 macOS 14 部署目标。
-- 原生界面使用 `DesignKit.swift` 的浅色中性表面与深色强调色，四级字号为 12、14、16、22pt。Swift 文件保持不超过 500 行，按钮热区和输入提交有明确行为。
-- 当前产品入口是 macOS。`apple-shared` 的包定义不代表已经提供 iOS 应用；移动宿主另行开发。
+- `verify-ui-principles.py` 检查 SwiftUI 与 Compose 界面，扫描范围内的 Swift、Kotlin 与 Host API 入口文件最多 500 行。
+- iOS 17+ 和 Android API 29+ 使用独立原生构建，并以关闭 Rust 默认特性的方式链接 Host API。Apple 本机识别由 iOS 系统适配；桌面本地 RPC 与 Rust 下载模型留在 macOS 构建。
+- CI 覆盖 Rust、macOS、iOS 模拟器、Android 单测和 Release Lint，以及跨端契约和脚本检查。见 [CI 运行环境](agents/ci-runner.md)。
 - 未接入产品的旧 Google、ACP 和屏幕时间轴模型已移除。当前界面不承诺屏幕采集、翻译、Google 同步或自动备份。
 - 空库不注入演示记录。测试输入只能出现在测试或隔离的自检工作区；生产转写和问答不能用固定句子冒充远端结果。
 

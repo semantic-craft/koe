@@ -47,7 +47,7 @@ with open(os.environ['CI_TEST_LOG'], 'a') as log:
     log.write(json.dumps(entry) + '\\n')
 sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
 '''
-        for relative in ('bin/cargo', 'scripts/check', 'progress/progress.py'):
+        for relative in ('bin/cargo', 'scripts/check', 'scripts/check_docs.py', 'progress/progress.py'):
             self.write(relative, stub)
             (self.root / relative).chmod(0o755)
         self.write('scripts/ci.py', SOURCE.read_text())
@@ -89,7 +89,13 @@ sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
         self.write('docs/guide with spaces.md', '# Guide\n')
         result, calls = self.push(self.commit('docs/guide with spaces.md'))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, [['check_docs.py']])
+
+    def test_document_only_propagates_docs_gate_failure(self):
+        self.write('README.md', '[gone](missing.md)\n')
+        result, calls = self.push(self.commit('README.md'), CI_TEST_EXIT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [['check_docs.py']])
 
     def test_progress_runs_generator_check_and_propagates_failure(self):
         self.write('progress/progress.json', '{}\n')
@@ -101,7 +107,7 @@ sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
         self.write('progress/index.html', '<html></html>\n')
         result, calls = self.push(self.commit('progress/index.html'))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [['progress.py', 'check']])
+        self.assertEqual(calls, [['progress.py', 'check'], ['check_docs.py']])
 
     def test_unknown_markdown_path_and_empty_range_run_full(self):
         self.assert_full(*self.push(self.base))
@@ -141,7 +147,7 @@ sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
         result, calls = self.run_ci('pull_request', {'pull_request': {
             'base': {'sha': base}, 'head': {'sha': head}}})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, [['check_docs.py']])
 
     def test_manual_and_unknown_base_run_full(self):
         self.assert_full(*self.run_ci('workflow_dispatch', {}))

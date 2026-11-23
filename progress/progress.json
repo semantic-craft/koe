@@ -327,7 +327,7 @@
         "updated_at": "2026-11-21T07:09:20Z"
       }
     ],
-    "main": "3e2d60cce4de981f03eebb1e066cc384ce75a49a",
+    "main": "03b58d022a7d962606fb6d592161cebe3a72fc02",
     "open_pulls": [],
     "pulls": [
       {
@@ -1257,6 +1257,46 @@
         "merged": true,
         "number": 807,
         "state": "closed"
+      },
+      {
+        "base": "5aae25fa2b012b789fe0c78d81979cac05e5b4ee",
+        "head": "609566428185dd140b7287fa16dc0600f8531693",
+        "merge_commit": "272a5a127b572fe82c35f1fdf7e6b7ade1302d23",
+        "merged": true,
+        "number": 825,
+        "state": "closed"
+      },
+      {
+        "base": "272a5a127b572fe82c35f1fdf7e6b7ade1302d23",
+        "head": "28376c21a8829c32686ff66e541979e2f32473e8",
+        "merge_commit": "a225414b625af28686c1cf136822925ea0b5ac91",
+        "merged": true,
+        "number": 826,
+        "state": "closed"
+      },
+      {
+        "base": "a225414b625af28686c1cf136822925ea0b5ac91",
+        "head": "94654b462b1ccf8d5083ebb03d7111a601f3308c",
+        "merge_commit": "a32b71c8886d7a8e55baa5fd4c1823bce73f6954",
+        "merged": true,
+        "number": 828,
+        "state": "closed"
+      },
+      {
+        "base": "a32b71c8886d7a8e55baa5fd4c1823bce73f6954",
+        "head": "71ea29d9b5e302f7a212fb91757c3e3b3e7f806d",
+        "merge_commit": "796d9248613ee4e92adcbb405ccd93ae4a0b4eb1",
+        "merged": true,
+        "number": 830,
+        "state": "closed"
+      },
+      {
+        "base": "796d9248613ee4e92adcbb405ccd93ae4a0b4eb1",
+        "head": "652c1bc0578e9d0a69e8cbac7fcaf87fc29abf04",
+        "merge_commit": "03b58d022a7d962606fb6d592161cebe3a72fc02",
+        "merged": true,
+        "number": 831,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -1326,7 +1366,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-22T04:42:28.207197Z",
+  "observed_at": "2026-11-23T12:13:47.580785Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2219,7 +2259,7 @@
           "id": "automated-check",
           "next": "后续改动继续运行统一门禁与 SwiftUI 静态性能检查。",
           "status": "done",
-          "summary": "最新全量 scripts/check 通过 48 项 Python 契约测试、89 文件 verify-ui-principles 零违规、check_swiftui_perf 零告警、391 项离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared（29 项）及 macos（38 项 Swift Testing + 57 项 XCTest）测试；PR #712、#714、#715、#721、#724、#726 均经独立审查与远端 CI 通过后 squash 合并。",
+          "summary": "该阶段的全量 scripts/check 通过 48 项 Python 契约测试、89 文件 verify-ui-principles 零违规、check_swiftui_perf 零告警、391 项离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared（29 项）及 macos（38 项 Swift Testing + 57 项 XCTest）测试；PR #712、#714、#715、#721、#724、#726 均经独立审查与远端 CI 通过后 squash 合并。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -3074,7 +3114,7 @@
           "id": "ios-native-skeleton",
           "next": "Phase 1 骨架已合并，后续原生宿主适配层已由 ios-native-adapters 承接，物理 iPhone 签装与 Keychain 验收继续由 #775 追踪。",
           "status": "done",
-          "summary": "PR #776（de429b9）已合并主线，完成 iOS 原生 4-Tab 骨架与模拟器取证闭环。本次拆出零 UI 依赖的 KoeAppleCore（KoeAppleShared 通过 @_exported import 保持 macOS 兼容），新增 XcodeGen 单源配置 platforms/ios/project.yml、18 份原生 SwiftUI 与宿主源码及 NativeCredentialsiOS，并扩展 verify-ui-principles.py 守门 KoeAppleCore 零 UI 导入与 iOS 4 Hz 叶子隔离。本地自动化与模拟器验证已通过。Release iphoneos xcodebuild 成功，真实 iPhone 17（iOS 27.2 Simulator）跑通 verify-simulator.sh，包含 KoeiOSHostTests 4/4、活体 Rust 新建闪记跨 Tab 核验、fixture 85% 录音豆与 [S1] 来源弹层，以及 fail-probe 四件取证。本阶段仅含 SwiftUI 骨架与模拟器取证，后续轮询设置、麦克风采集、分段回放、D3200 CoreBluetooth 与文件导入导出已转入 ios-native-adapters 追踪，物理 iPhone 签装与 Keychain 验收继续由 #775 追踪。",
+          "summary": "PR #776（de429b9）已合并主线，完成 iOS 原生 4-Tab 骨架与模拟器取证闭环。本次拆出零 UI 依赖的 KoeAppleCore（macOS UI 继续作为独立模块维护，后续在 #831 更名为 KoeMacUI），新增 XcodeGen 单源配置 platforms/ios/project.yml、18 份原生 SwiftUI 与宿主源码及 NativeCredentialsiOS，并扩展 verify-ui-principles.py 守门 KoeAppleCore 零 UI 导入与 iOS 4 Hz 叶子隔离。本地自动化与模拟器验证已通过。Release iphoneos xcodebuild 成功，iPhone 17 模拟器（iOS 27.2）跑通 verify-simulator.sh，包含 KoeiOSHostTests 4/4、活体 Rust 新建闪记跨 Tab 核验、fixture 85% 录音豆与 [S1] 来源弹层，以及 fail-probe 四件取证。本阶段仅含 SwiftUI 骨架与模拟器取证，后续轮询设置、麦克风采集、分段回放、D3200 CoreBluetooth 与文件导入导出已转入 ios-native-adapters 追踪，物理 iPhone 签装与 Keychain 验收继续由 #775 追踪。",
           "title": "iOS 原生 SwiftUI 4-Tab 骨架与模拟器取证闭环（Phase 1）"
         },
         {
@@ -3143,7 +3183,7 @@
           "id": "ios-native-adapters",
           "next": "Apple 本机语音识别、iPad 分栏、三模式齐平与后台/锁屏能力已在 ios-full-parity-and-background 合入主线并通过模拟器验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与实体 D3200 真机验收及签名发行继续由 #775 追踪。",
           "status": "in_progress",
-          "summary": "PR #786 至 #790 已全部合并主线，完成 iOS Phase 3A–3E 核心原生宿主适配层并通过模拟器端到端验收，物理真机硬件验收与签装发行尚未完成。PR #786（eb94470）落地 4 Hz IOSHostCoordinator、前后台常亮同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。PR #787（898716f）将 NativeCapture、CapturedPCM、AudioCallbackFence 与 HostAudioClock 提炼进 KoeAppleCore 共享，并落地 AVAudioSession（.playAndRecord + [.defaultToSpeaker, .allowBluetoothHFP]）与 AVAudioEngine 麦克风采集及 IOSAudioInputMonitor。PR #788（ebb7449）将 NativePlayback 与 NativePlaybackItem 提炼进 KoeAppleCore 共享，新增 IOSAudioSession 按持有者协调会话，并实现后台播放 EOF、失败与中断即时回传。PR #789（8b119e8）将 D3200 BluetoothBridge 与 BleTransportModels 提炼进 KoeAppleCore 共享，补齐 5 秒有界停录帧 ACK、背压及 Rust crates/koe-runtime/src/device.rs 扫描态连接 ID 复位修复，同时修复 IOSDeviceSheetView 的 connect_guide 主按钮与断连扫描入口。PR #790（5e14581）落地 IOSFileActions 与 IOSFilePicker，支持 .wav/.txt/.md/.koepack 安全作用域流式导入（256 MiB 上限与源 mtime 保留）、单条/全天/多选批量 Markdown 导出以及 HostSessionStore.sendReturningError 错误隔离。已实测验证包含 36/36 项 iOS XCTest、真实 iPhone 17/17e 模拟器实录 WAV、后台播放 EOF、BLE 面板与文件导入导出界面实测、verify-ui-principles.py 全仓零违规、macOS Swift Testing 46/46、全量 ./scripts/check 与托管 macos-26 CI 全绿。后续 Apple 本机语音识别、iPad 分栏与后台/锁屏能力已转入 ios-full-parity-and-background 交付并通过模拟器九旅程验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与真实 D3200 硬件验收及 Developer 签装发行继续归口 #775。",
+          "summary": "PR #786 至 #790 已全部合并主线，完成 iOS Phase 3A–3E 核心原生宿主适配层并通过模拟器端到端验收，物理真机硬件验收与签装发行尚未完成。PR #786（eb94470）落地 4 Hz IOSHostCoordinator、前后台常亮同步与复用 KoeAppleCore 的可编辑 IOSSettingsView。PR #787（898716f）将 NativeCapture、CapturedPCM、AudioCallbackFence 与 HostAudioClock 提炼进 KoeAppleCore 共享，并落地 AVAudioSession（.playAndRecord + [.defaultToSpeaker, .allowBluetoothHFP]）与 AVAudioEngine 麦克风采集及 IOSAudioInputMonitor。PR #788（ebb7449）将 NativePlayback 与 NativePlaybackItem 提炼进 KoeAppleCore 共享，新增 IOSAudioSession 按持有者协调会话，并实现后台播放 EOF、失败与中断即时回传。PR #789（8b119e8）将 D3200 BluetoothBridge 与 BleTransportModels 提炼进 KoeAppleCore 共享，补齐 5 秒有界停录帧 ACK、背压及 Rust crates/koe-runtime/src/device.rs 扫描态连接 ID 复位修复，同时修复 IOSDeviceSheetView 的 connect_guide 主按钮与断连扫描入口。PR #790（5e14581）落地 IOSFileActions 与 IOSFilePicker，支持 .wav/.txt/.md/.koepack 安全作用域流式导入（256 MiB 上限与源 mtime 保留）、单条/全天/多选批量 Markdown 导出以及 HostSessionStore.sendReturningError 错误隔离。已实测验证包含 36/36 项 iOS XCTest、iPhone 17/17e 模拟器实录 WAV、后台播放 EOF、BLE 面板与文件导入导出界面实测、verify-ui-principles.py 全仓零违规、macOS Swift Testing 46/46、全量 ./scripts/check 与托管 macos-26 CI 全绿。后续 Apple 本机语音识别、iPad 分栏与后台/锁屏能力已转入 ios-full-parity-and-background 交付并通过模拟器九旅程验证；ActivityKit 灵动岛明确延后，物理 iPhone/iPad 与真实 D3200 硬件验收及 Developer 签装发行继续归口 #775。",
           "title": "iOS 原生宿主适配层（Phase 3A–3E：采集、回放、BLE GATT、文件导入导出与设置）"
         },
         {
@@ -3518,6 +3558,84 @@
       "title": "移动端原生宿主（iOS 与 Android）"
     },
     {
+      "id": "contracts-and-diagnostics",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "移除旧资料迁移路径，整理 Runtime 与音频处理。",
+              "ref": 825
+            },
+            {
+              "kind": "pull",
+              "note": "收口 Runtime 模块、状态机和有界队列。",
+              "ref": 826
+            },
+            {
+              "kind": "pull",
+              "note": "Rust、Apple、Android 与 C ABI 契约合并。",
+              "ref": 828
+            },
+            {
+              "kind": "pull",
+              "note": "macOS UI 改名为 KoeMacUI，修复 iOS trace 队列竞争。",
+              "ref": 831
+            },
+            {
+              "kind": "file",
+              "note": "CI 和本地共用的宿主契约测试。",
+              "ref": "scripts/test_host_contracts.py"
+            }
+          ],
+          "id": "host-contracts-v2",
+          "next": "物理设备上的蓝牙、音频与生命周期继续跟踪 iOS #775、Android #777。",
+          "status": "done",
+          "summary": "Rust Runtime 按 8 个领域目录组织状态、处理与投影。macOS 渲染层为 KoeMacUI，iOS 复用无 UI 的 KoeAppleCore，Android 通过 JNI 接入同一 Host API。契约测试核对 Rust、C 头文件、Swift 和 Kotlin 的命令、事件、类型与字节上限。C ABI v2 共导出 16 个符号。",
+          "title": "统一运行时目录与三端宿主契约"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "诊断、回放、故障注入与三端导出合入主线。",
+              "ref": 830
+            },
+            {
+              "kind": "file",
+              "note": "诊断包隐私、导出权限与资料包读取边界。",
+              "ref": "SECURITY.md"
+            }
+          ],
+          "id": "diagnostic-flight-replay",
+          "next": "物理设备诊断与共享流程按各平台真机工单验收。",
+          "status": "done",
+          "summary": "RuntimeEnv 可注入时钟、时区与随机源，FlightRecorder 保存有界事件。macOS、iOS、Android 可导出脱敏包，CLI 可用 koe doctor --bundle 导出，并以 --replay 在隔离工作区重放。诊断包保留协议回放需要的 BLE 通知，用采样元数据重建合成 PCM。",
+          "title": "脱敏飞行记录与确定性回放"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "四阶段审查流程和六维验收标准。",
+              "ref": "docs/agents/code-review-standards.md"
+            },
+            {
+              "kind": "file",
+              "note": "Markdown 相对路径与活跃文档的退役符号门禁。",
+              "ref": "scripts/check_docs.py"
+            }
+          ],
+          "id": "docs-and-review-standards",
+          "next": "由调度宿主审计工作树、提交并审查合入。",
+          "status": "in_progress",
+          "summary": "工作树已更新核心文档、CODEOWNERS 与审查标准，文档链接及退役符号检查接入本地门禁和 CI 的纯文档分流。",
+          "title": "三端文档同步与代码审查门禁（PR-12）"
+        }
+      ],
+      "title": "三端契约、诊断与工程门禁"
+    },
+    {
       "id": "scope",
       "items": [
         {
@@ -3538,7 +3656,7 @@
       "title": "后续范围"
     }
   ],
-  "title": "Koe · Rust/macOS 产品管线",
+  "title": "Koe · Rust 与三端原生产品进度",
   "tracked": {
     "issues": [
       587,
@@ -3712,7 +3830,12 @@
       803,
       804,
       806,
-      807
+      807,
+      825,
+      826,
+      828,
+      830,
+      831
     ]
   },
   "visibility": "PUBLIC"

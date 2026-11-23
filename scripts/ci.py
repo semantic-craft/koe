@@ -63,6 +63,7 @@ def main():
     if not light or PROGRESS_FILES.intersection(paths):
         subprocess.run([sys.executable, 'progress/progress.py', 'check'], check=True)
     if light:
+        subprocess.run([sys.executable, 'scripts/check_docs.py'], check=True)
         return
     subprocess.run(['cargo', '--version'], check=True)
     check_env = dict(os.environ, KOE_SKIP_PROGRESS_CHECK='1')
