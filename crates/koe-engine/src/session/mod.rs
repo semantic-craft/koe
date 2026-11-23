@@ -16,10 +16,49 @@ pub use types::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::commands::{DeviceCommands, RxCmd};
+use crate::crypto::AesCtrStreamDecrypt;
 use crate::frame::FrameReassembler;
 use crate::models::{DeviceInfoModel, OfflineFileEntry};
 use crate::transport::OPUS_FRAME_BYTES;
 use crate::wav::{ASR_SAMPLE_RATE, OpusDecoderFactory, OpusStreamDecoder};
+
+pub(in crate::session) struct CachedStreamDecryptor {
+    key: [u8; 32],
+    nonce: [u8; 16],
+    decryptor: AesCtrStreamDecrypt,
+}
+
+impl CachedStreamDecryptor {
+    pub(in crate::session) fn new(key: [u8; 32], nonce: [u8; 16]) -> Option<Self> {
+        let decryptor = AesCtrStreamDecrypt::new(&key, &nonce)?;
+        Some(Self {
+            key,
+            nonce,
+            decryptor,
+        })
+    }
+
+    pub(in crate::session) fn matches(&self, key: &[u8; 32], nonce: &[u8; 16]) -> bool {
+        self.key == *key && self.nonce == *nonce
+    }
+
+    pub(in crate::session) fn decryptor(&self) -> &AesCtrStreamDecrypt {
+        &self.decryptor
+    }
+
+    fn zeroize(&mut self) {
+        self.key.fill(0);
+        self.nonce.fill(0);
+        core::hint::black_box(&self.key);
+        core::hint::black_box(&self.nonce);
+    }
+}
+
+impl Drop for CachedStreamDecryptor {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum RealtimePause {
@@ -101,6 +140,9 @@ pub struct TransportSession {
     custody_receipts: BTreeMap<u32, VerifiedCustodyReceipt>,
     pub(super) decoder_factory: Option<OpusDecoderFactory>,
     pub(super) live_decoder_16k: Option<Box<dyn OpusStreamDecoder>>,
+    active_file_decryptor: Option<CachedStreamDecryptor>,
+    #[cfg(test)]
+    pub(super) decryptor_builds: usize,
 }
 
 impl Default for TransportSession {
@@ -150,6 +192,9 @@ impl Clone for TransportSession {
             custody_receipts: self.custody_receipts.clone(),
             decoder_factory: self.decoder_factory,
             live_decoder_16k: None,
+            active_file_decryptor: None,
+            #[cfg(test)]
+            decryptor_builds: 0,
         }
     }
 }
@@ -185,6 +230,10 @@ impl core::fmt::Debug for TransportSession {
             .field("finalized_queue_len", &self.finalized_queue.len())
             .field("has_decoder_factory", &self.decoder_factory.is_some())
             .field("has_live_decoder_16k", &self.live_decoder_16k.is_some())
+            .field(
+                "has_active_file_decryptor",
+                &self.active_file_decryptor.is_some(),
+            )
             .finish()
     }
 }
@@ -238,6 +287,9 @@ impl TransportSession {
             custody_receipts: BTreeMap::new(),
             decoder_factory: factory,
             live_decoder_16k: None,
+            active_file_decryptor: None,
+            #[cfg(test)]
+            decryptor_builds: 0,
         }
     }
 
@@ -360,6 +412,7 @@ impl TransportSession {
         self.file_decryption.clear();
         self.active_file_key = None;
         self.active_nonce = None;
+        self.active_file_decryptor = None;
     }
 
     fn bind_file_decryption(&mut self, file_id: u32) {
@@ -370,6 +423,34 @@ impl TransportSession {
         };
         self.active_file_key = key;
         self.active_nonce = nonce;
+        self.active_file_decryptor = None;
+    }
+
+    pub(in crate::session) fn clear_active_file_decryptor(&mut self) {
+        self.active_file_decryptor = None;
+    }
+
+    pub(in crate::session) fn resolve_active_file_decryptor(
+        &mut self,
+    ) -> Option<&AesCtrStreamDecrypt> {
+        let (Some(key), Some(nonce)) = (self.active_file_key, self.active_nonce) else {
+            self.active_file_decryptor = None;
+            return None;
+        };
+        let needs_rebuild = !self
+            .active_file_decryptor
+            .as_ref()
+            .is_some_and(|cached| cached.matches(&key, &nonce));
+        if needs_rebuild {
+            self.active_file_decryptor = CachedStreamDecryptor::new(key, nonce);
+            #[cfg(test)]
+            {
+                self.decryptor_builds += 1;
+            }
+        }
+        self.active_file_decryptor
+            .as_ref()
+            .map(CachedStreamDecryptor::decryptor)
     }
 
 

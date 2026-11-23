@@ -1,7 +1,73 @@
+use super::record::validate_persisted_project;
 use super::*;
 use crate::context::{AskRole, AskStatus};
 
+/// Persisted workspace fields decoded at the storage boundary for single-pass validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedWorkspaceState {
+    /// Non-sensitive provider configuration.
+    pub provider_configuration: ProviderConfiguration,
+    /// Whether BLE auto-connect to paired D3200 devices is enabled.
+    pub ble_auto_connect: bool,
+    /// Completed imports, including preserved material that has not been mapped.
+    pub migrations: Vec<MigrationReceipt>,
+    /// Hardware Bean `file_id` tombstones preventing automatic re-pull after purge.
+    pub purged_bean_file_ids: BTreeSet<u32>,
+    /// Committed revision.
+    pub revision: u64,
+    /// Next operation identity.
+    pub next_operation: u64,
+    /// Decoded recordings awaiting single-pass domain validation.
+    pub records: Vec<PersistedProductRecord>,
+    /// Durable review items.
+    pub items: Vec<SourcedItem>,
+    /// Existing conversation state machine.
+    pub ask_session: AskSession,
+    /// Selected question scope.
+    pub ask_scope: SearchScope,
+    /// Pending immutable evidence request.
+    pub pending_ask: Option<AskRequest>,
+    /// Last accepted reply identity for idempotent delivery.
+    pub last_ask_operation: Option<u64>,
+}
+
+struct WorkspaceTail {
+    provider_configuration: ProviderConfiguration,
+    ble_auto_connect: bool,
+    migrations: Vec<MigrationReceipt>,
+    purged_bean_file_ids: BTreeSet<u32>,
+    revision: u64,
+    next_operation: u64,
+    items: Vec<SourcedItem>,
+    ask_session: AskSession,
+    ask_scope: SearchScope,
+    pending_ask: Option<AskRequest>,
+    last_ask_operation: Option<u64>,
+}
+
 impl ProductWorkspace {
+    /// Monotonic next operation identifier used by storage codecs without cloning workspace state.
+    #[must_use]
+    pub const fn next_operation(&self) -> u64 {
+        self.next_operation
+    }
+
+    /// Last accepted ask operation identifier for idempotent persistence without cloning workspace state.
+    #[must_use]
+    pub const fn last_ask_operation(&self) -> Option<u64> {
+        self.last_ask_operation
+    }
+
+    /// Returns `true` if any recording or ask session has an in-flight request needing restart interruption.
+    #[must_use]
+    pub fn has_pending_work(&self) -> bool {
+        self.pending_ask.is_some()
+            || self
+                .records
+                .values()
+                .any(ProductRecord::has_pending_analysis)
+    }
+
     /// Exports owned value state for a storage codec without exposing mutable live state.
     #[must_use]
     pub fn export_state(&self) -> WorkspaceState {
@@ -31,20 +97,7 @@ impl ProductWorkspace {
         for record in state.records {
             let id = record.aggregate.recording_id.clone();
             let mode = record.mode;
-            let project = match record.project {
-                None => None,
-                Some(raw) => {
-                    let trimmed = raw.trim();
-                    if trimmed.is_empty()
-                        || trimmed != raw
-                        || raw.chars().any(char::is_control)
-                        || trimmed.chars().count() > MAX_PROJECT_NAME_CHARS
-                    {
-                        return Err(ProductError::InvalidEvidence);
-                    }
-                    Some(raw)
-                }
-            };
+            let project = validate_persisted_project(record.project)?;
             let lanes = record.capture_lanes;
             let all_day = record.all_day;
             let speech_engine = record.speech_engine;
@@ -76,19 +129,73 @@ impl ProductWorkspace {
                 return Err(ProductError::InvalidEvidence);
             }
         }
+        Self::restore_from_validated_records(
+            records,
+            WorkspaceTail {
+                provider_configuration: state.provider_configuration,
+                ble_auto_connect: state.ble_auto_connect,
+                migrations: state.migrations,
+                purged_bean_file_ids: state.purged_bean_file_ids,
+                revision: state.revision,
+                next_operation: state.next_operation,
+                items: state.items,
+                ask_session: state.ask_session,
+                ask_scope: state.ask_scope,
+                pending_ask: state.pending_ask,
+                last_ask_operation: state.last_ask_operation,
+            },
+        )
+    }
+
+    /// Restores persisted boundary records in a single validation pass without redundant minutes checks.
+    pub fn restore_persisted(state: PersistedWorkspaceState) -> Result<Self, ProductError> {
+        state.provider_configuration.validate()?;
+        if state.purged_bean_file_ids.contains(&0) {
+            return Err(ProductError::InvalidEvidence);
+        }
+        let mut records = BTreeMap::new();
+        for input in state.records {
+            let id = input.aggregate.recording_id.clone();
+            let record = ProductRecord::restore_persisted_record(input)?;
+            if records.insert(id, record).is_some() {
+                return Err(ProductError::InvalidEvidence);
+            }
+        }
+        Self::restore_from_validated_records(
+            records,
+            WorkspaceTail {
+                provider_configuration: state.provider_configuration,
+                ble_auto_connect: state.ble_auto_connect,
+                migrations: state.migrations,
+                purged_bean_file_ids: state.purged_bean_file_ids,
+                revision: state.revision,
+                next_operation: state.next_operation,
+                items: state.items,
+                ask_session: state.ask_session,
+                ask_scope: state.ask_scope,
+                pending_ask: state.pending_ask,
+                last_ask_operation: state.last_ask_operation,
+            },
+        )
+    }
+
+    fn restore_from_validated_records(
+        records: BTreeMap<RecordId, ProductRecord>,
+        tail: WorkspaceTail,
+    ) -> Result<Self, ProductError> {
         let mut workspace = Self {
-            provider_configuration: state.provider_configuration,
-            ble_auto_connect: state.ble_auto_connect,
-            migrations: state.migrations,
-            purged_bean_file_ids: state.purged_bean_file_ids,
-            revision: state.revision,
-            next_operation: state.next_operation,
+            provider_configuration: tail.provider_configuration,
+            ble_auto_connect: tail.ble_auto_connect,
+            migrations: tail.migrations,
+            purged_bean_file_ids: tail.purged_bean_file_ids,
+            revision: tail.revision,
+            next_operation: tail.next_operation,
             records,
             items: BTreeMap::new(),
-            ask_session: state.ask_session,
-            ask_scope: state.ask_scope,
-            pending_ask: state.pending_ask,
-            last_ask_operation: state.last_ask_operation,
+            ask_session: tail.ask_session,
+            ask_scope: tail.ask_scope,
+            pending_ask: tail.pending_ask,
+            last_ask_operation: tail.last_ask_operation,
         };
         for receipt in &workspace.migrations {
             workspace.validate_migration(receipt)?;
@@ -108,7 +215,7 @@ impl ProductWorkspace {
                 max_operation = max_operation.max(key.attempt);
             }
         }
-        for item in state.items {
+        for item in tail.items {
             nonempty(&item.id)?;
             nonempty(&item.text)?;
             if item.sources.is_empty()
@@ -214,5 +321,122 @@ impl ProductWorkspace {
             self.changed();
         }
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::minutes::{
+        encode_meeting_minutes_json, parse_meeting_minutes_json, reset_validation_pass_count,
+        validation_pass_count,
+    };
+
+    #[test]
+    fn restore_persisted_validates_minutes_once_per_record_and_preserves_invariants() {
+        let mut ws = ProductWorkspace::new();
+        ws.insert_record("fresh".into(), "Fresh".into(), RecordOrigin::Note, 0, 100, 1_000)
+            .unwrap();
+        ws.append_transcript("fresh", "alpha launch plan confirmed", 0, 1_000, "manual")
+            .unwrap();
+        let key = ws
+            .begin_analysis("fresh", AnalysisStage::Summarizing)
+            .unwrap();
+        let fresh_minutes = parse_meeting_minutes_json(
+            r#"{"schemaVersion":2,"title":"Fresh","overview":"alpha launch plan confirmed","topics":[{"text":"alpha launch","summary":"alpha launch plan confirmed","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#,
+            &ws.record("fresh").unwrap().aggregate.spine,
+        )
+        .unwrap();
+        ws.complete_summary(&key, fresh_minutes).unwrap();
+
+        ws.insert_record("stale".into(), "Stale".into(), RecordOrigin::Note, 0, 200, 2_000)
+            .unwrap();
+        ws.append_transcript("stale", "beta roadmap review", 0, 1_000, "manual")
+            .unwrap();
+        let stale_key = ws
+            .begin_analysis("stale", AnalysisStage::Summarizing)
+            .unwrap();
+        let stale_minutes = parse_meeting_minutes_json(
+            r#"{"schemaVersion":2,"title":"Stale","overview":"beta roadmap review","topics":[{"text":"beta roadmap","summary":"beta roadmap review","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#,
+            &ws.record("stale").unwrap().aggregate.spine,
+        )
+        .unwrap();
+        ws.complete_summary(&stale_key, stale_minutes).unwrap();
+        ws.append_transcript("stale", "extra follow up sentence", 1_000, 2_000, "manual")
+            .unwrap();
+
+        let state = ws.export_state();
+        let persisted_records: Vec<PersistedProductRecord> = state
+            .records
+            .into_iter()
+            .map(|mut rec| {
+                let minutes_json = rec.aggregate.minutes.take().map(|m| encode_meeting_minutes_json(&m));
+                let retention = rec.retention();
+                let minutes_revision = rec.minutes_revision();
+                let final_keys = rec.final_keys().clone();
+                let completed_request = rec.completed_request().cloned();
+                PersistedProductRecord {
+                    aggregate: rec.aggregate,
+                    minutes_json,
+                    title: rec.title,
+                    origin: rec.origin,
+                    mode: rec.mode,
+                    project: rec.project,
+                    analysis: rec.analysis,
+                    live_summary: rec.live_summary,
+                    content_revision: rec.content_revision,
+                    minutes_revision,
+                    highlighted_segments: rec.highlighted_segments,
+                    capture_lanes: rec.capture_lanes,
+                    all_day: rec.all_day,
+                    speech_engine: rec.speech_engine,
+                    retention,
+                    final_keys,
+                    completed_request,
+                }
+            })
+            .collect();
+        let persisted = PersistedWorkspaceState {
+            provider_configuration: state.provider_configuration,
+            ble_auto_connect: state.ble_auto_connect,
+            migrations: state.migrations,
+            purged_bean_file_ids: state.purged_bean_file_ids,
+            revision: state.revision,
+            next_operation: state.next_operation,
+            records: persisted_records,
+            items: state.items,
+            ask_session: state.ask_session,
+            ask_scope: state.ask_scope,
+            pending_ask: state.pending_ask,
+            last_ask_operation: state.last_ask_operation,
+        };
+
+        reset_validation_pass_count();
+        let restored = ProductWorkspace::restore_persisted(persisted.clone()).unwrap();
+        assert_eq!(restored.record("fresh"), ws.record("fresh"));
+        assert!(restored.record("stale").unwrap().is_minutes_stale());
+        assert_eq!(
+            restored.record("stale").unwrap().minutes_revision(),
+            Some(1)
+        );
+        assert_eq!(
+            validation_pass_count(),
+            2,
+            "2 records with minutes must run minutes validation once per record (not 3x)"
+        );
+
+        let mut bad_ungrounded = persisted.clone();
+        bad_ungrounded.records[0].minutes_json = Some(
+            r#"{"schemaVersion":2,"title":"Fresh","overview":"alpha launch plan confirmed","topics":[{"text":"alpha launch","summary":"completion reached 85%","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#
+                .to_string(),
+        );
+        assert!(ProductWorkspace::restore_persisted(bad_ungrounded).is_err());
+
+        let mut bad_citation = persisted;
+        bad_citation.records[1].minutes_json = Some(
+            r#"{"schemaVersion":2,"title":"Stale","overview":"beta roadmap review","topics":[{"text":"beta roadmap","summary":"beta roadmap review","sources":["S99"]}],"decisions":[],"actions":[],"questions":[]}"#
+                .to_string(),
+        );
+        assert!(ProductWorkspace::restore_persisted(bad_citation).is_err());
     }
 }

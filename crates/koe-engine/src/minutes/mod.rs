@@ -17,5 +17,7 @@ pub use codec::{
 pub use grounding::{
     validate_minutes_citations, validate_minutes_grounding, MinutesValidationError,
 };
+#[cfg(test)]
+pub(crate) use grounding::{reset_validation_pass_count, validation_pass_count};
 pub use json::{extract_json_object, JsonValue};
 pub use prompt::build_meeting_minutes_prompt;

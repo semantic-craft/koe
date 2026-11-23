@@ -1300,27 +1300,37 @@ fn stale_summary_reclaim_unblocks_trash_and_busy_summary_lane_preserves_record_s
 }
 
 #[test]
-fn legacy_session_messy_speakers_normalize_on_import_without_bumping_edit_revision() {
+fn persisted_workspace_messy_speakers_normalize_on_reopen_without_bumping_edit_revision() {
     let dir = Sandbox::new();
     let messy_speaker = format!("  发言人\u{0007}_{}：: ", "甲".repeat(45));
-    fs::write(
-        dir.0.join("workspace_session.json"),
-        json!({
-            "activeFileId": 0,
-            "durationMs": 4000,
-            "segments": [{
-                "text": "历史遗留分段文本。",
-                "startMs": 0,
-                "endMs": 4000,
-                "speaker": messy_speaker
-            }]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let record_id = {
+        let mut runtime = dir.open();
+        let snap = dispatch_ok(
+            &mut runtime,
+            json!({
+                "type": "create_note",
+                "title": "历史记录",
+                "text": "历史遗留分段文本。"
+            }),
+            NOW,
+        );
+        snap["selectedRecordId"].as_str().unwrap().to_owned()
+    };
+
+    let ws_path = dir.0.join("product-workspace.json");
+    let mut persisted: Value =
+        serde_json::from_str(&fs::read_to_string(&ws_path).unwrap()).unwrap();
+    let rec_json = persisted["records"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["id"].as_str() == Some(record_id.as_str()))
+        .unwrap();
+    rec_json["segments"][0]["speaker"] = json!(messy_speaker);
+    fs::write(&ws_path, persisted.to_string()).unwrap();
 
     let runtime = dir.open();
-    let record = runtime.workspace().record("legacy-workspace").unwrap();
+    let record = runtime.workspace().record(&record_id).unwrap();
     assert_eq!(record.content_revision, 1);
     let seg = &record.aggregate.spine.segments()[0];
     let spk = seg.speaker.as_deref().unwrap();

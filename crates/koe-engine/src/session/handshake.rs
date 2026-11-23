@@ -192,6 +192,7 @@ impl TransportSession {
                         self.active_is_realtime = false;
                         self.active_file_key = None;
                         self.active_nonce = None;
+                        self.clear_active_file_decryptor();
                         self.opus_buffer.clear();
                         self.marks_ms.clear();
                         self.stream_base_slices = 0;

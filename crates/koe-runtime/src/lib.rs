@@ -22,7 +22,6 @@ pub mod credentials;
 mod device;
 mod device_custody;
 mod capture_flow;
-mod legacy;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
@@ -195,7 +194,6 @@ impl KoeRuntime {
         credentials: Box<dyn credentials::CredentialStore>,
     ) -> Result<Self, String> {
         let root = path.as_ref().to_path_buf();
-        let existed = root.join("product-workspace.json").exists();
         let store = ProductStore::open(&root).map_err(|e| e.to_string())?;
         let mut runtime = Self {
             store,
@@ -228,9 +226,6 @@ impl KoeRuntime {
             undo_trash: None,
             last_now_sec: 0,
         };
-        if !existed {
-            runtime.restore_legacy()?;
-        }
         runtime.recover_local_captures()?;
         runtime.reconcile_orphan_audio();
         if let Err(error) = runtime.load_credentials() {

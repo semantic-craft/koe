@@ -41,34 +41,85 @@ pub fn read_checked_string(target: &Path) -> io::Result<String> {
     fs::read_to_string(target)
 }
 
-/// Writes `bytes` to a sibling temporary file in the same directory as `target`,
-/// flushes via `sync_all` (`fsync`), and atomically renames it into place.
-/// Rejects symbolic links on `target` or its parent directory.
-pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
+struct TempFileCleanupGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TempFileCleanupGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempFileCleanupGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn write_atomic_with(
+    target: &Path,
+    write_and_sync: impl FnOnce(&mut fs::File) -> io::Result<()>,
+) -> io::Result<()> {
     reject_symlink_path(target)?;
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)?;
         }
     }
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = process::id();
     let file_name = target
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("koe.blob");
-    let tmp_name = format!(".{file_name}.{pid}.{seq}.tmp");
-    let tmp_path = target.with_file_name(tmp_name);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
     {
-        let mut f = fs::File::create(&tmp_path)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
     }
-    if let Err(err) = fs::rename(&tmp_path, target) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(err);
+    let (f, tmp_path) = {
+        let mut opened = None;
+        for _ in 0..64 {
+            let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+            let tmp_path = target.with_file_name(format!(".{file_name}.{pid}.{seq}.tmp"));
+            match options.open(&tmp_path) {
+                Ok(file) => {
+                    opened = Some((file, tmp_path));
+                    break;
+                }
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(err),
+            }
+        }
+        opened.ok_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, "exhausted temp file sequence"))?
+    };
+    let mut guard = TempFileCleanupGuard::new(tmp_path);
+    {
+        let mut f = f;
+        write_and_sync(&mut f)?;
     }
+    fs::rename(&guard.path, target)?;
+    guard.disarm();
     Ok(())
+}
+
+/// Writes `bytes` to a sibling temporary file in the same directory as `target`,
+/// flushes via `sync_all` (`fsync`), and atomically renames it into place.
+/// Rejects symbolic links on `target` or its parent directory.
+pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_with(target, |f| {
+        f.write_all(bytes)?;
+        f.sync_all()
+    })
 }
 
 /// Process-scoped advisory lockfile guard for a Koe workspace directory.
@@ -214,6 +265,75 @@ mod tests {
         let read_err =
             read_checked_string(&link_file).expect_err("must reject reading through a symlink");
         assert_eq!(read_err.kind(), io::ErrorKind::InvalidInput);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_atomic_cleans_up_tmp_file_when_write_or_sync_fails() {
+        let dir = std::env::temp_dir().join(format!("koe-base-tmp-write-fail-{}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let target = dir.join("state.json");
+
+        let err = write_atomic_with(&target, |f| {
+            f.write_all(b"partial payload")?;
+            Err(io::Error::other("simulated sync_all failure"))
+        })
+        .expect_err("write/sync failure must return error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(!target.exists());
+        let leftover: Vec<_> = fs::read_dir(&dir)
+            .expect("list dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "failed write/sync must leave zero .tmp files, found {leftover:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_atomic_cleans_up_tmp_file_when_rename_fails_onto_nonempty_dir() {
+        let dir = std::env::temp_dir().join(format!("koe-base-tmp-rename-fail-{}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let blocking_dir = dir.join("state.json");
+        fs::create_dir_all(&blocking_dir).expect("create blocking target directory");
+        let sentinel = blocking_dir.join("keep.txt");
+        fs::write(&sentinel, b"do not lose").expect("populate non-empty target dir");
+
+        let err = write_atomic(&blocking_dir, b"{\"ok\":true}")
+            .expect_err("renaming temp file onto a non-empty directory must fail");
+        assert!(err.raw_os_error().is_some());
+        assert_eq!(fs::read(&sentinel).expect("sentinel preserved"), b"do not lose");
+        let leftover_tmp: Vec<_> = fs::read_dir(&dir)
+            .expect("list dir")
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            leftover_tmp.is_empty(),
+            "failed rename must leave zero .tmp files, found {leftover_tmp:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_atomic_retries_past_stale_tmp_collision() {
+        let dir = std::env::temp_dir().join(format!("koe-base-tmp-collision-{}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create dir");
+        let target = dir.join("state.json");
+        let pid = process::id();
+        let next = TMP_SEQ.load(Ordering::Relaxed);
+        for offset in 0..8 {
+            let stale = dir.join(format!(".state.json.{pid}.{}.tmp", next + offset));
+            fs::write(&stale, b"stale").expect("seed stale tmp");
+        }
+        write_atomic(&target, b"{\"ok\":true}").expect("must skip stale .tmp collisions");
+        assert_eq!(fs::read(&target).expect("read target"), b"{\"ok\":true}");
         let _ = fs::remove_dir_all(&dir);
     }
 }

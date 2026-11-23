@@ -496,6 +496,13 @@ impl core::fmt::Debug for AesCipher {
 }
 
 impl AesCipher {
+    fn zeroize(&mut self) {
+        self.rk.fill(0);
+        self.rounds = 0;
+        core::hint::black_box(&self.rk);
+        core::hint::black_box(self.rounds);
+    }
+
     /// Expands an AES-128 (16 B), AES-192 (24 B), or AES-256 (32 B) key schedule.
     #[must_use]
     pub fn new(key: &[u8]) -> Option<Self> {
@@ -619,6 +626,12 @@ impl AesCipher {
     }
 }
 
+impl Drop for AesCipher {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Per-file AES-CTR decryptor caching the expanded `AesCipher` schedule across chunks.
 #[derive(Debug, Clone)]
 pub struct AesCtrStreamDecrypt {
@@ -627,6 +640,11 @@ pub struct AesCtrStreamDecrypt {
 }
 
 impl AesCtrStreamDecrypt {
+    fn zeroize(&mut self) {
+        self.nonce_prefix.fill(0);
+        core::hint::black_box(&self.nonce_prefix);
+    }
+
     /// Creates a new stream decryptor for `file_key` and `nonce`.
     #[must_use]
     pub fn new(file_key: &[u8], nonce: &[u8]) -> Option<Self> {
@@ -664,6 +682,12 @@ impl AesCtrStreamDecrypt {
     pub fn decrypt_contiguous_in_place(&self, data: &mut [u8], start_sequence: u32) {
         let iv = self.build_counter(start_sequence);
         self.cipher.apply_ctr_in_place(data, &iv);
+    }
+}
+
+impl Drop for AesCtrStreamDecrypt {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -816,5 +840,22 @@ mod tests {
                 "AesCtrStreamDecrypt Debug leaked key word {leaked}: {stream_dbg}"
             );
         }
+    }
+
+    #[test]
+    fn aes_cipher_and_stream_decrypt_zeroize_key_and_nonce_material() {
+        let key = [0xA5u8; 32];
+        let nonce = [0x5Au8; 16];
+        let mut cipher = AesCipher::new(&key).unwrap();
+        assert!(cipher.rk.iter().any(|&w| w != 0));
+        assert_eq!(cipher.rounds, 14);
+        cipher.zeroize();
+        assert_eq!(cipher.rk, [0u32; 60]);
+        assert_eq!(cipher.rounds, 0);
+
+        let mut stream = AesCtrStreamDecrypt::new(&key, &nonce).unwrap();
+        assert_eq!(stream.nonce_prefix, [0x5Au8; 12]);
+        stream.zeroize();
+        assert_eq!(stream.nonce_prefix, [0u8; 12]);
     }
 }

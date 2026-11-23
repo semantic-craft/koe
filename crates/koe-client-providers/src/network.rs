@@ -256,10 +256,14 @@ impl ProviderPool {
                                     existing.abort();
                                 }
                                 let op_id = request.operation_id;
+                                let record_id = request.record_id;
+                                let timeout = request.timeout;
+                                let config = request.config;
+                                let task = request.task;
                                 let tx = events_tx.clone();
                                 let handle = tokio::spawn(async move {
                                     let result =
-                                        tokio::time::timeout(request.timeout, execute(&request))
+                                        tokio::time::timeout(timeout, execute(config, task))
                                             .await
                                             .unwrap_or_else(|_| {
                                                 if lane == ProviderLane::Update {
@@ -273,7 +277,7 @@ impl ProviderPool {
                                         lane,
                                         ProviderEvent {
                                             operation_id: op_id,
-                                            record_id: request.record_id,
+                                            record_id,
                                             result,
                                         },
                                     ));
@@ -478,24 +482,24 @@ fn validate_endpoint_inner(
     Ok(())
 }
 
-async fn execute(request: &ProviderRequest) -> Result<ProviderOutput, String> {
-    match &request.task {
-        ProviderTask::TranscribePcm16 { pcm16 } => match request.config.asr_mode {
-            AsrTransportMode::DashScopeWebSocket => asr::transcribe(&request.config, pcm16).await,
+async fn execute(config: ProviderConfig, task: ProviderTask) -> Result<ProviderOutput, String> {
+    match task {
+        ProviderTask::TranscribePcm16 { pcm16 } => match config.asr_mode {
+            AsrTransportMode::DashScopeWebSocket => asr::transcribe(&config, &pcm16).await,
             AsrTransportMode::DashScopeFlashHttp => {
-                http_asr::transcribe_qwen_flash(&request.config, pcm16).await
+                http_asr::transcribe_qwen_flash(&config, pcm16).await
             }
             AsrTransportMode::DashScopeFiletransHttp => {
-                http_asr::transcribe_qwen_filetrans(&request.config, pcm16).await
+                http_asr::transcribe_qwen_filetrans(&config, pcm16).await
             }
             AsrTransportMode::DeepSeekHttp => {
-                http_asr::transcribe_deepseek(&request.config, pcm16).await
+                http_asr::transcribe_deepseek(&config, pcm16).await
             }
         },
-        ProviderTask::Chat { system, user } => chat::complete(&request.config, system, user).await,
+        ProviderTask::Chat { system, user } => chat::complete(&config, &system, &user).await,
         ProviderTask::CheckUpdate {
             endpoint,
             user_agent,
-        } => update::check_latest(endpoint, user_agent).await,
+        } => update::check_latest(&endpoint, &user_agent).await,
     }
 }

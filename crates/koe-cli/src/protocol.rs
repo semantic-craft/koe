@@ -187,7 +187,7 @@ pub(crate) fn run_benchmark(soa_fast_path: bool) -> Result<(), String> {
             let slice = &raw_encrypted[seq * 160..(seq + 1) * 160];
             decrypted.extend_from_slice(&stream_dec.decrypt_chunk(slice, seq as u32));
         }
-        let ogg = OggOpus::mux_raw_frames_naive(&decrypted);
+        let ogg = OggOpus::mux_raw_frames(&decrypted);
         (decrypted.len(), ogg)
     };
     let wav_hdr = OpusWave::wav_header((NUM_CHUNKS * 960 * 2) as u32);
