@@ -83,6 +83,7 @@ extension HostSnapshot {
             lifecycle: lifecycle,
             activeCapture: activeCapture,
             workspaces: workspaces,
+            reviewCounts: reviewCounts,
             version: version,
             generation: generation,
             section: section,

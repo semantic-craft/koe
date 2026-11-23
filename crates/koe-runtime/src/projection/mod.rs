@@ -30,6 +30,89 @@ struct LiveRecordRowDto<'a> {
     segment_count: usize,
     preview: String,
     archived: bool,
+    can_trash: bool,
+    is_transcribing: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewCountsDto {
+    proposed_task_count: usize,
+    proposed_memory_count: usize,
+    proposed_action_count: usize,
+    active_memory_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QwenAsrModelOptionDto {
+    id: &'static str,
+    note: &'static str,
+    badge: Option<&'static str>,
+    is_realtime: bool,
+    endpoint_label: &'static str,
+    path: &'static str,
+    non_realtime_warning: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmModelOptionDto {
+    id: &'static str,
+    primary_badge: &'static str,
+    primary_badge_recommended: bool,
+    meta_badges: &'static [&'static str],
+    description: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCatalogDto {
+    qwen_asr_models: Vec<QwenAsrModelOptionDto>,
+    deepseek_llm_models: Vec<LlmModelOptionDto>,
+    default_qwen_host: &'static str,
+    qwen_workspace_host_suffix: &'static str,
+    default_deepseek_asr_endpoint: &'static str,
+    default_deepseek_chat_endpoint: &'static str,
+    default_qwen_asr_model: &'static str,
+    default_deepseek_llm_model: &'static str,
+}
+
+impl ProviderCatalogDto {
+    fn from_domain(catalog: ProviderCatalog) -> Self {
+        Self {
+            qwen_asr_models: catalog
+                .qwen_asr_models
+                .iter()
+                .map(|m| QwenAsrModelOptionDto {
+                    id: m.id,
+                    note: m.note,
+                    badge: m.badge,
+                    is_realtime: m.is_realtime,
+                    endpoint_label: m.endpoint_label,
+                    path: m.path,
+                    non_realtime_warning: m.non_realtime_warning,
+                })
+                .collect(),
+            deepseek_llm_models: catalog
+                .deepseek_llm_models
+                .iter()
+                .map(|m| LlmModelOptionDto {
+                    id: m.id,
+                    primary_badge: m.primary_badge,
+                    primary_badge_recommended: m.primary_badge_recommended,
+                    meta_badges: m.meta_badges,
+                    description: m.description,
+                })
+                .collect(),
+            default_qwen_host: catalog.default_qwen_host,
+            qwen_workspace_host_suffix: catalog.qwen_workspace_host_suffix,
+            default_deepseek_asr_endpoint: catalog.default_deepseek_asr_endpoint,
+            default_deepseek_chat_endpoint: catalog.default_deepseek_chat_endpoint,
+            default_qwen_asr_model: catalog.default_qwen_asr_model,
+            default_deepseek_llm_model: catalog.default_deepseek_llm_model,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -81,6 +164,9 @@ struct ProviderSnapshotDto<'a> {
     qwen_workspace_id: &'a str,
     asr_endpoint: &'a str,
     chat_endpoint: &'a str,
+    default_asr_endpoint: String,
+    default_chat_endpoint: String,
+    catalog: ProviderCatalogDto,
     credential_state: &'static str,
     deepseek_credential_state: &'static str,
     isolated: bool,
@@ -169,6 +255,7 @@ struct RecordDetailDto<'a> {
     audio_path: Option<String>,
     can_retranscribe: bool,
     is_processing: bool,
+    can_trash: bool,
 }
 
 #[derive(Serialize)]
@@ -192,6 +279,7 @@ struct SnapshotDto<'a> {
     detail: Option<RecordDetailDto<'a>>,
     tasks: Vec<SourcedItemRowDto<'a>>,
     memories: Vec<SourcedItemRowDto<'a>>,
+    review_counts: ReviewCountsDto,
     workspaces: Value,
     ask: AskSnapshotDto<'a>,
     device: Value,
@@ -268,7 +356,18 @@ impl KoeRuntime {
             segment_count: record.aggregate.spine.len(),
             preview,
             archived: record.is_archived(),
+            can_trash: self.record_can_trash(record),
+            is_transcribing: record_is_transcribing(record),
         }
+    }
+
+    fn record_can_trash(&self, record: &ProductRecord) -> bool {
+        !record.is_archived()
+            && !self.is_quitting()
+            && !self.store.requires_reopen()
+            && self
+                .ensure_record_deletable(&record.aggregate.recording_id)
+                .is_ok()
     }
 
     pub(crate) fn live_record_row_json(
@@ -404,6 +503,15 @@ impl KoeRuntime {
             qwen_workspace_id: &config.qwen_workspace_id,
             asr_endpoint: &config.asr_endpoint,
             chat_endpoint: &config.chat_endpoint,
+            default_asr_endpoint: ProviderConfiguration::default_asr_endpoint(
+                config.asr_provider,
+                &config.asr_model,
+                &config.qwen_workspace_id,
+            ),
+            default_chat_endpoint: ProviderConfiguration::default_chat_endpoint(
+                config.llm_provider,
+            ),
+            catalog: ProviderCatalogDto::from_domain(provider_catalog()),
             credential_state: self.credential_state(),
             deepseek_credential_state: self.deepseek_credential_state(),
             isolated: self.credentials.isolated(),
@@ -482,6 +590,15 @@ impl KoeRuntime {
             .filter(|r| r.is_live())
             .map(|r| self.detail_dto(r, live_record_id, live_duration_ms));
         let (tasks, memories) = self.tasks_and_memories_dtos();
+        let proposed_task_count = tasks.iter().filter(|t| t.state == "proposed").count();
+        let proposed_memory_count = memories.iter().filter(|m| m.state == "proposed").count();
+        let active_memory_count = memories.iter().filter(|m| m.state != "dismissed").count();
+        let review_counts = ReviewCountsDto {
+            proposed_task_count,
+            proposed_memory_count,
+            proposed_action_count: proposed_task_count + proposed_memory_count,
+            active_memory_count,
+        };
         let ask = self.ask_dto();
         let device = self.device_json_with_live(live_record_id, live_duration_ms);
         let microphone = self.microphone_status();
@@ -513,6 +630,7 @@ impl KoeRuntime {
             detail,
             tasks,
             memories,
+            review_counts,
             workspaces,
             ask,
             device,
@@ -646,6 +764,7 @@ impl KoeRuntime {
             audio_path: audio.map(|p| p.to_string_lossy().to_string()),
             can_retranscribe,
             is_processing: matches!(record.analysis, AnalysisState::Pending { .. }),
+            can_trash: self.record_can_trash(record),
         }
     }
 
@@ -733,6 +852,26 @@ pub(crate) fn origin_slug(source: RecordOrigin) -> &'static str {
         RecordOrigin::ImportedText => "imported_text",
         RecordOrigin::Note => "note",
     }
+}
+
+pub(crate) fn record_is_transcribing(record: &ProductRecord) -> bool {
+    matches!(
+        record.analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ) || (record.aggregate.spine.is_empty()
+        && !matches!(
+            record.analysis,
+            AnalysisState::Pending { .. }
+                | AnalysisState::Failed { .. }
+                | AnalysisState::Interrupted { .. }
+        )
+        && !record
+            .capture_lanes
+            .iter()
+            .any(|l| l.interruption.is_some()))
 }
 
 pub(crate) fn status(record: &ProductRecord) -> &'static str {

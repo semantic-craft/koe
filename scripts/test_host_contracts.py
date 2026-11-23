@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
+import ast
 from pathlib import Path
 import re
+import tempfile
 from typing import NamedTuple
 import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUST_COMMAND_RS = REPO_ROOT / 'crates/koe-runtime/src/command.rs'
+RUST_HOST_API_DIR = REPO_ROOT / 'crates/koe-host-api/src'
+C_HOST_API_HEADER = REPO_ROOT / 'platforms/apple-shared/Sources/CKoeHostApi/include/koe_host_api.h'
+RUST_RUNTIME_LIB_RS = REPO_ROOT / 'crates/koe-runtime/src/lib.rs'
+RUST_LOCAL_BRIDGE_RS = REPO_ROOT / 'crates/koe-host-api/src/local_bridge.rs'
+ANDROID_CLIENT_JNI_CPP = REPO_ROOT / 'platforms/android/native/client_jni.cpp'
 SWIFT_HOST_COMMAND = REPO_ROOT / 'platforms/apple-shared/Sources/KoeAppleCore/HostCommand.swift'
 SWIFT_ADAPTER_EVENT = REPO_ROOT / 'platforms/apple-shared/Sources/KoeAppleCore/HostAdapterEvent.swift'
 KOTLIN_HOST_COMMAND = (
@@ -17,6 +24,15 @@ KOTLIN_ADAPTER_EVENT = (
     REPO_ROOT
     / 'platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/core/HostAdapterEventModels.kt'
 )
+CLIENT_STATUS_CHECK_DIRS = (
+    REPO_ROOT / 'platforms/apple-shared/Sources/KoeAppleCore',
+    REPO_ROOT / 'platforms/apple-shared/Sources/KoeAppleShared',
+    REPO_ROOT / 'platforms/macos/Sources/Koe',
+    REPO_ROOT / 'platforms/ios/App/Sources',
+    REPO_ROOT / 'platforms/android/gradle-app/app/src/main/java',
+)
+FORBIDDEN_RECORD_STATUS_LITERALS = ('转写中', '整理中', '等待转写')
+EXPECTED_MAX_COMMAND_JSON_BYTES = 2 * 1024 * 1024
 
 KOTLIN_MODIFIERS = frozenset(
     {
@@ -927,6 +943,414 @@ def assert_host_commands_match(
         raise ValueError('\n'.join(errors))
 
 
+class CFunctionSignature(NamedTuple):
+    return_type: str
+    param_types: tuple[str, ...]
+
+
+class CAbiSurface(NamedTuple):
+    functions: dict[str, CFunctionSignature]
+    structs: dict[str, tuple[tuple[str, str], ...]]
+    callbacks: dict[str, CFunctionSignature]
+
+
+RUST_PRIMITIVE_TO_C = {
+    '()': 'void',
+    'bool': 'bool',
+    'u8': 'uint8_t',
+    'u16': 'uint16_t',
+    'u32': 'uint32_t',
+    'u64': 'uint64_t',
+    'i8': 'int8_t',
+    'i16': 'int16_t',
+    'i32': 'int32_t',
+    'i64': 'int64_t',
+    'usize': 'size_t',
+    'isize': 'ptrdiff_t',
+    'c_char': 'char',
+    'c_void': 'void',
+}
+
+
+def rust_type_to_c(type_expr: str, callback_names: frozenset[str]) -> str:
+    expr = re.sub(r'\s+', ' ', type_expr.strip())
+    if not expr or expr == '()':
+        return 'void'
+    if expr.startswith('[') and expr.endswith(']'):
+        inner = expr[1:-1].strip()
+        elem_expr, count_expr = inner.rsplit(';', 1)
+        count = str(eval_const_int_expr(count_expr.strip()))
+        return f'{rust_type_to_c(elem_expr, callback_names)}[{count}]'
+    if expr.startswith('*const '):
+        inner = rust_type_to_c(expr[len('*const ') :], callback_names)
+        return f'const {inner}*'
+    if expr.startswith('*mut '):
+        inner = rust_type_to_c(expr[len('*mut ') :], callback_names)
+        return f'{inner}*'
+    opt_match = re.fullmatch(
+        r'(?:::(?:std|core)::option::|(?:std|core)::option::)?Option<\s*(.+?)\s*>', expr
+    )
+    if opt_match:
+        inner = opt_match.group(1).strip().rsplit('::', 1)[-1]
+        if inner in callback_names:
+            return inner
+        raise ValueError(f'unsupported Option<T> in C ABI signature: {expr}')
+    leaf = expr.rsplit('::', 1)[-1]
+    return RUST_PRIMITIVE_TO_C.get(leaf, leaf)
+
+
+def normalize_c_type(raw_type: str) -> str:
+    text = re.sub(r'\s+', ' ', raw_type.strip())
+    text = re.sub(r'\s*\*\s*', '*', text)
+    text = re.sub(r'\s*\[\s*', '[', text)
+    text = re.sub(r'\s*\]', ']', text)
+    return text
+
+
+def parse_c_decl_type_and_name(decl: str) -> tuple[str, str]:
+    clean = re.sub(r'\s+', ' ', decl.strip())
+    arr_suffix = ''
+    while True:
+        arr_match = re.search(r'\[\s*([^\]]+)\s*\]\s*$', clean)
+        if not arr_match:
+            break
+        arr_suffix = f'[{eval_const_int_expr(arr_match.group(1))}]' + arr_suffix
+        clean = clean[: arr_match.start()].rstrip()
+    name_match = re.search(r'([A-Za-z_][A-Za-z0-9_]*)\s*$', clean)
+    if not name_match:
+        raise ValueError(f'failed to extract C declarator name from: {decl!r}')
+    name = name_match.group(1)
+    type_part = clean[: name_match.start()].strip()
+    return name, normalize_c_type(type_part + arr_suffix)
+
+
+def parse_c_param_types(params_text: str) -> tuple[str, ...]:
+    stripped = params_text.strip()
+    if not stripped or stripped == 'void':
+        return ()
+    types: list[str] = []
+    for param in split_top_level(stripped, ','):
+        _, c_type = parse_c_decl_type_and_name(param)
+        types.append(c_type)
+    return tuple(types)
+
+
+def collect_rust_host_api_sources(root_dir: Path) -> list[str]:
+    sources: list[str] = []
+    for path in sorted(root_dir.rglob('*.rs')):
+        rel = path.relative_to(root_dir)
+        if path.name.endswith('_tests.rs') or path.name == 'tests.rs' or 'tests' in rel.parts[:-1]:
+            continue
+        sources.append(path.read_text(encoding='utf-8'))
+    return sources
+
+
+def has_repr_c(attrs: str) -> bool:
+    for repr_match in re.finditer(r'#\[repr\s*\(', attrs):
+        inner, _ = extract_balanced_block(attrs, repr_match.end() - 1, '(', ')')
+        tokens = [part.strip() for part in split_top_level(inner, ',')]
+        if 'C' in tokens:
+            return True
+    return False
+
+
+def extract_exported_c_symbol(attrs: str, rust_fn_name: str) -> str | None:
+    export_match = re.search(
+        r'#\[(?:unsafe\s*\(\s*export_name\s*=\s*"([^"]+)"\s*\)|export_name\s*=\s*"([^"]+)")\]',
+        attrs,
+    )
+    if export_match:
+        return export_match.group(1) or export_match.group(2)
+    if re.search(r'#\[(?:unsafe\s*\(\s*no_mangle\s*\)|no_mangle)\]', attrs):
+        return rust_fn_name
+    return None
+
+
+def strip_extern_c_wrappers(body: str) -> str:
+    while True:
+        extern_match = re.search(r'\bextern\s+"C"\s*\{', body)
+        if not extern_match:
+            break
+        inner, after_brace = extract_balanced_block(body, extern_match.end() - 1, '{', '}')
+        body = body[: extern_match.start()] + '\n' + inner + '\n' + body[after_brace:]
+    return re.sub(r'\bextern\s+"C"\s+', '', body)
+
+
+def parse_rust_c_abi_surface(sources: list[str]) -> CAbiSurface:
+    cleaned = [strip_c_style_comments(src) for src in sources]
+    callbacks: dict[str, CFunctionSignature] = {}
+    structs: dict[str, tuple[tuple[str, str], ...]] = {}
+    functions: dict[str, CFunctionSignature] = {}
+
+    cb_pattern = re.compile(
+        r'\bpub\s+type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:unsafe\s+)?extern\s+"C"\s+fn\s*\('
+    )
+    for src in cleaned:
+        for m in cb_pattern.finditer(src):
+            cb_name = m.group(1)
+            params_text, after_params = extract_balanced_block(src, m.end() - 1, '(', ')')
+            semi_idx = src.find(';', after_params)
+            if semi_idx == -1:
+                raise ValueError(f'unterminated Rust callback typedef: {cb_name}')
+            tail = src[after_params:semi_idx].strip()
+            ret_expr = tail[2:].strip() if tail.startswith('->') else '()'
+            param_types = tuple(
+                rust_type_to_c(p.split(':', 1)[-1], frozenset())
+                for p in split_top_level(params_text, ',')
+            )
+            callbacks[cb_name] = CFunctionSignature(
+                return_type=rust_type_to_c(ret_expr, frozenset()),
+                param_types=param_types,
+            )
+
+    cb_names = frozenset(callbacks)
+
+    attr_stack = r'((?:\s*#\[(?:[^\[\]]|\[[^\]]*\])*\])+)'
+    struct_pattern = re.compile(attr_stack + r'\s*pub\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{')
+    for src in cleaned:
+        for m in struct_pattern.finditer(src):
+            if not has_repr_c(m.group(1)):
+                continue
+            struct_name = m.group(2)
+            body, _ = extract_balanced_block(src, m.end() - 1, '{', '}')
+            fields: list[tuple[str, str]] = []
+            for entry in split_top_level(body, ','):
+                _, pos = consume_rust_attributes(entry, 0)
+                rest = entry[pos:].strip()
+                f_match = re.match(
+                    r'^(?:pub(?:\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$',
+                    rest,
+                    re.DOTALL,
+                )
+                if not f_match:
+                    raise ValueError(
+                        f'failed to parse #[repr(C)] field in struct {struct_name}: {entry!r}'
+                    )
+                fields.append((f_match.group(1), rust_type_to_c(f_match.group(2), cb_names)))
+            structs[struct_name] = tuple(fields)
+
+    fn_pattern = re.compile(
+        attr_stack
+        + r'\s*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?extern\s+"C"\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\('
+    )
+    for src in cleaned:
+        for m in fn_pattern.finditer(src):
+            fn_name = extract_exported_c_symbol(m.group(1), m.group(2))
+            if fn_name is None:
+                continue
+            params_text, after_params = extract_balanced_block(src, m.end() - 1, '(', ')')
+            brace_idx = src.find('{', after_params)
+            if brace_idx == -1:
+                raise ValueError(f'unterminated Rust extern C fn: {fn_name}')
+            tail = src[after_params:brace_idx].strip()
+            ret_expr = tail[2:].strip() if tail.startswith('->') else '()'
+            param_types: list[str] = []
+            for param in split_top_level(params_text, ','):
+                if ':' not in param:
+                    raise ValueError(f'malformed parameter {param!r} in Rust fn {fn_name}')
+                _, p_type = param.split(':', 1)
+                param_types.append(rust_type_to_c(p_type, cb_names))
+            functions[fn_name] = CFunctionSignature(
+                return_type=rust_type_to_c(ret_expr, cb_names),
+                param_types=tuple(param_types),
+            )
+
+    return CAbiSurface(functions=functions, structs=structs, callbacks=callbacks)
+
+
+def parse_c_header_abi_surface(header_source: str) -> CAbiSurface:
+    clean = strip_c_style_comments(header_source)
+    lines = [line for line in clean.splitlines() if not line.lstrip().startswith('#')]
+    body = strip_extern_c_wrappers('\n'.join(lines))
+
+    callbacks: dict[str, CFunctionSignature] = {}
+    structs: dict[str, tuple[tuple[str, str], ...]] = {}
+    functions: dict[str, CFunctionSignature] = {}
+
+    i = 0
+    n = len(body)
+    while i < n:
+        while i < n and body[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if body[i] == ';':
+            i += 1
+            continue
+        if re.match(r'typedef\s+struct\b', body[i:]):
+            brace_pos = body.find('{', i)
+            if brace_pos == -1:
+                raise ValueError('unterminated typedef struct in C header')
+            struct_body, after_brace = extract_balanced_block(body, brace_pos, '{', '}')
+            semi_pos = body.find(';', after_brace)
+            if semi_pos == -1:
+                raise ValueError('missing semicolon after typedef struct in C header')
+            alias_name = body[after_brace:semi_pos].strip()
+            fields: list[tuple[str, str]] = []
+            for stmt in split_top_level(struct_body, ';'):
+                fields.append(parse_c_decl_type_and_name(stmt))
+            structs[alias_name] = tuple(fields)
+            i = semi_pos + 1
+            continue
+        semi_pos = body.find(';', i)
+        if semi_pos == -1:
+            raise ValueError(f'unterminated declaration in C header near: {body[i : i + 60]!r}')
+        stmt = re.sub(r'\s+', ' ', body[i:semi_pos].strip())
+        i = semi_pos + 1
+        cb_match = re.fullmatch(
+            r'typedef\s+(.+?)\s*\(\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\((.*)\)', stmt
+        )
+        if cb_match:
+            ret_type = normalize_c_type(cb_match.group(1))
+            cb_name = cb_match.group(2)
+            callbacks[cb_name] = CFunctionSignature(
+                return_type=ret_type,
+                param_types=parse_c_param_types(cb_match.group(3)),
+            )
+            continue
+        fn_match = re.fullmatch(r'(.+?)\s*\((.*)\)', stmt)
+        if not fn_match:
+            raise ValueError(f'unrecognized C header declaration: {stmt!r}')
+        fn_name, ret_type = parse_c_decl_type_and_name(fn_match.group(1))
+        functions[fn_name] = CFunctionSignature(
+            return_type=ret_type,
+            param_types=parse_c_param_types(fn_match.group(2)),
+        )
+
+    return CAbiSurface(functions=functions, structs=structs, callbacks=callbacks)
+
+
+def validate_c_abi_parity(rust_abi: CAbiSurface, header_abi: CAbiSurface) -> list[str]:
+    errors: list[str] = []
+
+    for label, rust_map, header_map in (
+        ('callback typedef', rust_abi.callbacks, header_abi.callbacks),
+        ('extern "C" function', rust_abi.functions, header_abi.functions),
+    ):
+        for name in sorted(set(rust_map) - set(header_map)):
+            errors.append(f'Rust exports {label} {name!r}, missing from koe_host_api.h')
+        for name in sorted(set(header_map) - set(rust_map)):
+            errors.append(f'koe_host_api.h declares {label} {name!r}, missing from Rust exports')
+        for name in sorted(set(rust_map) & set(header_map)):
+            r_sig = rust_map[name]
+            h_sig = header_map[name]
+            if r_sig.return_type != h_sig.return_type:
+                errors.append(
+                    f'{label} {name!r} return type mismatch: Rust={r_sig.return_type!r}, '
+                    f'header={h_sig.return_type!r}'
+                )
+            if len(r_sig.param_types) != len(h_sig.param_types):
+                errors.append(
+                    f'{label} {name!r} parameter count mismatch: Rust={len(r_sig.param_types)}, '
+                    f'header={len(h_sig.param_types)}'
+                )
+            elif r_sig.param_types != h_sig.param_types:
+                errors.append(
+                    f'{label} {name!r} parameter types mismatch: Rust={r_sig.param_types!r}, '
+                    f'header={h_sig.param_types!r}'
+                )
+
+    for name in sorted(set(rust_abi.structs) - set(header_abi.structs)):
+        errors.append(f'Rust defines #[repr(C)] struct {name!r}, missing from koe_host_api.h')
+    for name in sorted(set(header_abi.structs) - set(rust_abi.structs)):
+        errors.append(f'koe_host_api.h defines struct {name!r}, missing from Rust #[repr(C)]')
+    for name in sorted(set(rust_abi.structs) & set(header_abi.structs)):
+        if rust_abi.structs[name] != header_abi.structs[name]:
+            errors.append(
+                f'struct {name!r} layout mismatch: Rust={rust_abi.structs[name]!r}, '
+                f'header={header_abi.structs[name]!r}'
+            )
+
+    return errors
+
+
+def assert_c_abi_parity(rust_abi: CAbiSurface, header_abi: CAbiSurface) -> None:
+    errors = validate_c_abi_parity(rust_abi, header_abi)
+    if errors:
+        raise ValueError('\n'.join(errors))
+
+
+def eval_const_int_expr(expr: str) -> int:
+    node = ast.parse(expr.strip().replace('_', ''), mode='eval').body
+
+    def _eval(n: ast.AST) -> int:
+        if isinstance(n, ast.Constant) and isinstance(n.value, int) and not isinstance(n.value, bool):
+            return n.value
+        if isinstance(n, ast.BinOp):
+            left = _eval(n.left)
+            right = _eval(n.right)
+            if isinstance(n.op, ast.Mult):
+                return left * right
+            if isinstance(n.op, ast.Add):
+                return left + right
+            if isinstance(n.op, ast.Sub):
+                return left - right
+            if isinstance(n.op, ast.LShift):
+                return left << right
+        raise ValueError(f'unsupported integer constant expression: {expr!r}')
+
+    return _eval(node)
+
+
+def extract_const_int_value(source: str, pattern: str, label: str) -> int:
+    clean = strip_c_style_comments(source)
+    match = re.search(pattern, clean)
+    if not match:
+        raise ValueError(f'failed to locate constant {label}')
+    return eval_const_int_expr(match.group(1))
+
+
+def validate_command_size_limits(
+    runtime_lib_src: str, local_bridge_src: str, client_jni_src: str
+) -> list[str]:
+    errors: list[str] = []
+    specs = (
+        (
+            runtime_lib_src,
+            r'\bpub\s+const\s+MAX_COMMAND_JSON_BYTES\s*:\s*usize\s*=\s*([^;]+);',
+            'crates/koe-runtime/src/lib.rs::MAX_COMMAND_JSON_BYTES',
+        ),
+        (
+            local_bridge_src,
+            r'\b(?:pub\s+)?const\s+MAX_LINE_BYTES\s*:\s*u64\s*=\s*([^;]+);',
+            'crates/koe-host-api/src/local_bridge.rs::MAX_LINE_BYTES',
+        ),
+        (
+            client_jni_src,
+            r'\bconstexpr\s+size_t\s+kMaxCommandJsonBytes\s*=\s*([^;]+);',
+            'platforms/android/native/client_jni.cpp::kMaxCommandJsonBytes',
+        ),
+    )
+    for src, pattern, label in specs:
+        try:
+            value = extract_const_int_value(src, pattern, label)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if value != EXPECTED_MAX_COMMAND_JSON_BYTES:
+            errors.append(
+                f'{label} is {value} bytes, expected {EXPECTED_MAX_COMMAND_JSON_BYTES} (2 * 1024 * 1024)'
+            )
+    return errors
+
+
+def find_client_chinese_status_checks(
+    files: list[tuple[str, str]],
+) -> list[str]:
+    pattern = re.compile(
+        '"(?:' + '|'.join(re.escape(token) for token in FORBIDDEN_RECORD_STATUS_LITERALS) + ')"'
+    )
+    violations: list[str] = []
+    for rel_path, source in files:
+        clean = strip_c_style_comments(source)
+        for lineno, line in enumerate(clean.splitlines(), start=1):
+            for match in pattern.finditer(line):
+                violations.append(
+                    f'{rel_path}:{lineno}: forbidden client record status literal {match.group(0)}'
+                )
+    return violations
+
+
 class HostContractParityTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1309,6 +1733,222 @@ class HostContractParityTest(unittest.TestCase):
             parse_kotlin_emitted_commands(drifted_kotlin, 'HostCommand')
         self.assertIn('empty_trash', str(ctx.exception))
         self.assertIn('empty_bin', str(ctx.exception))
+
+    def test_rust_host_api_matches_c_header(self) -> None:
+        rust_sources = collect_rust_host_api_sources(RUST_HOST_API_DIR)
+        rust_abi = parse_rust_c_abi_surface(rust_sources)
+        header_abi = parse_c_header_abi_surface(C_HOST_API_HEADER.read_text(encoding='utf-8'))
+        self.assertEqual(len(rust_abi.functions), 15)
+        self.assertEqual(set(rust_abi.structs), {'KoePcmReceipt', 'KoePlaybackReceipt', 'KoeOwnedBytes'})
+        self.assertEqual(set(rust_abi.callbacks), {'KoeCredentialCallback'})
+        assert_c_abi_parity(rust_abi, header_abi)
+
+    def test_c_abi_scanner_covers_nested_rust_modules_and_stray_header_declarations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'lib.rs').write_text(
+                '#[unsafe(no_mangle)]\npub extern "C" fn koe_root() -> u32 { 0 }\n',
+                encoding='utf-8',
+            )
+            nested = root / 'ffi'
+            nested.mkdir()
+            (nested / 'extra.rs').write_text(
+                '#[unsafe(no_mangle)]\npub extern "C" fn koe_nested() -> bool { true }\n',
+                encoding='utf-8',
+            )
+            (nested / 'extra_tests.rs').write_text(
+                '#[unsafe(no_mangle)]\npub extern "C" fn koe_ignored_suffix() {}\n',
+                encoding='utf-8',
+            )
+            tests_dir = root / 'tests'
+            tests_dir.mkdir()
+            (tests_dir / 'fixture.rs').write_text(
+                '#[unsafe(no_mangle)]\npub extern "C" fn koe_ignored_dir() {}\n',
+                encoding='utf-8',
+            )
+            rust_abi = parse_rust_c_abi_surface(collect_rust_host_api_sources(root))
+            self.assertEqual(set(rust_abi.functions), {'koe_root', 'koe_nested'})
+
+        header_with_strays = parse_c_header_abi_surface(
+            '''
+            #ifndef TEST_H
+            #define TEST_H
+            void koe_before_extern(void);
+            #ifdef __cplusplus
+            extern "C" {
+            #endif
+            uint32_t koe_root(void);
+            #ifdef __cplusplus
+            }
+            #endif
+            bool koe_between_blocks(void);
+            #ifdef __cplusplus
+            extern "C" {
+            #endif
+            bool koe_nested(void);
+            #ifdef __cplusplus
+            }
+            #endif
+            void koe_after_extern(void);
+            #endif
+            '''
+        )
+        self.assertEqual(
+            set(header_with_strays.functions),
+            {
+                'koe_before_extern',
+                'koe_root',
+                'koe_between_blocks',
+                'koe_nested',
+                'koe_after_extern',
+            },
+        )
+        errors = validate_c_abi_parity(rust_abi, header_with_strays)
+        joined = '\n'.join(errors)
+        self.assertIn("'koe_before_extern'", joined)
+        self.assertIn("'koe_between_blocks'", joined)
+        self.assertIn("'koe_after_extern'", joined)
+
+    def test_rust_c_abi_parser_handles_repr_c_modifiers_export_name_and_malformed_fields(
+        self,
+    ) -> None:
+        rust_abi = parse_rust_c_abi_surface(
+            [
+                '''
+                #[repr(C, align(8))]
+                pub struct KoeAligned {
+                    pub value: u64,
+                }
+
+                #[unsafe(export_name = "koe_aliased_v1")]
+                pub extern "C" fn internal_impl(handle: u64) -> KoeAligned {
+                    KoeAligned { value: handle }
+                }
+
+                #[export_name = "koe_legacy_alias"]
+                extern "C" fn legacy_impl() -> u32 { 1 }
+                '''
+            ]
+        )
+        self.assertEqual(rust_abi.structs, {'KoeAligned': (('value', 'uint64_t'),)})
+        self.assertEqual(set(rust_abi.functions), {'koe_aliased_v1', 'koe_legacy_alias'})
+        self.assertEqual(
+            rust_abi.functions['koe_aliased_v1'],
+            CFunctionSignature(return_type='KoeAligned', param_types=('uint64_t',)),
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            parse_rust_c_abi_surface(
+                [
+                    '''
+                    #[repr(C)]
+                    pub struct KoeBroken {
+                        not_a_valid_field_decl
+                    }
+                    '''
+                ]
+            )
+        self.assertIn('KoeBroken', str(ctx.exception))
+
+    def test_c_abi_parity_rejects_drifted_functions_structs_and_callbacks(self) -> None:
+        rust_abi = parse_rust_c_abi_surface(
+            [
+                '''
+                pub type KoeCredentialCallback =
+                    unsafe extern "C" fn(*mut c_void, u32, *const c_char) -> i32;
+
+                #[repr(C)]
+                pub struct KoeSample {
+                    pub count: u64,
+                    pub reserved: [u8; 4],
+                }
+
+                #[unsafe(no_mangle)]
+                pub extern "C" fn koe_ping(handle: u64) -> bool { true }
+
+                #[unsafe(no_mangle)]
+                pub extern "C" fn koe_pong(handle: u64) -> u32 { 0 }
+
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn koe_only_in_rust(cb: Option<KoeCredentialCallback>) {}
+                '''
+            ]
+        )
+        drifted_header = parse_c_header_abi_surface(
+            '''
+            #ifndef TEST_H
+            #define TEST_H
+            #ifdef __cplusplus
+            extern "C" {
+            #endif
+            typedef int64_t (*KoeCredentialCallback)(void *ctx, uint32_t op, const char *ref);
+            typedef struct KoeSample {
+                uint32_t count;
+                uint8_t pad[4];
+            } KoeSample;
+            uint32_t koe_ping(uint64_t handle, bool extra);
+            uint32_t koe_pong(uint32_t handle);
+            void koe_only_in_header(void);
+            #ifdef __cplusplus
+            }
+            #endif
+            #endif
+            '''
+        )
+        errors = validate_c_abi_parity(rust_abi, drifted_header)
+        joined = '\n'.join(errors)
+        self.assertIn("callback typedef 'KoeCredentialCallback' return type mismatch", joined)
+        self.assertIn("struct 'KoeSample' layout mismatch", joined)
+        self.assertIn("extern \"C\" function 'koe_ping' return type mismatch", joined)
+        self.assertIn("extern \"C\" function 'koe_ping' parameter count mismatch", joined)
+        self.assertIn("extern \"C\" function 'koe_pong' parameter types mismatch", joined)
+        self.assertIn("Rust exports extern \"C\" function 'koe_only_in_rust'", joined)
+        self.assertIn("koe_host_api.h declares extern \"C\" function 'koe_only_in_header'", joined)
+
+    def test_command_size_limits_match_across_rust_bridge_and_jni(self) -> None:
+        errors = validate_command_size_limits(
+            RUST_RUNTIME_LIB_RS.read_text(encoding='utf-8'),
+            RUST_LOCAL_BRIDGE_RS.read_text(encoding='utf-8'),
+            ANDROID_CLIENT_JNI_CPP.read_text(encoding='utf-8'),
+        )
+        self.assertEqual(errors, [], '\n'.join(errors))
+
+    def test_command_size_limits_reject_synthetic_drift(self) -> None:
+        errors = validate_command_size_limits(
+            'pub const MAX_COMMAND_JSON_BYTES: usize = 2 * 1024 * 1024;',
+            'const MAX_LINE_BYTES: u64 = 1024 * 1024;',
+            'constexpr size_t kMaxCommandJsonBytes = 4 * 1024 * 1024;',
+        )
+        joined = '\n'.join(errors)
+        self.assertIn('MAX_LINE_BYTES', joined)
+        self.assertIn('kMaxCommandJsonBytes', joined)
+
+    def test_no_client_chinese_record_status_checks(self) -> None:
+        source_files: list[tuple[str, str]] = []
+        for directory in CLIENT_STATUS_CHECK_DIRS:
+            for ext in ('*.swift', '*.kt'):
+                for path in sorted(directory.rglob(ext)):
+                    source_files.append(
+                        (str(path.relative_to(REPO_ROOT)), path.read_text(encoding='utf-8'))
+                    )
+        self.assertGreaterEqual(len(source_files), 40)
+        violations = find_client_chinese_status_checks(source_files)
+        self.assertEqual(violations, [], '\n'.join(violations))
+
+    def test_client_chinese_record_status_check_rejects_synthetic_literals(self) -> None:
+        synthetic = find_client_chinese_status_checks(
+            [
+                (
+                    'synthetic/Record.swift',
+                    '// "转写中" in comment is ignored\nlet x = status == "转写中" || status == "等待转写"\n',
+                ),
+                (
+                    'synthetic/Record.kt',
+                    'val canTrash = status != "整理中"\n',
+                ),
+            ]
+        )
+        self.assertEqual(len(synthetic), 3)
 
 
 if __name__ == '__main__':

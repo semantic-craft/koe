@@ -1,6 +1,6 @@
 import Foundation
 
-public struct QwenAsrModelOption: Identifiable, Equatable, Sendable {
+public struct QwenAsrModelOption: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let note: String
     public let badge: String?
@@ -28,7 +28,7 @@ public struct QwenAsrModelOption: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct LlmModelOption: Identifiable, Equatable, Sendable {
+public struct LlmModelOption: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let primaryBadge: String
     public let primaryBadgeRecommended: Bool
@@ -108,12 +108,11 @@ public enum ModelSettingsCatalog {
     ]
 
     public static func qwenHost(workspaceId: String) -> String {
-        let cleaned = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "dashscope.aliyuncs.com" : "\(cleaned).cn-beijing.maas.aliyuncs.com"
+        ProviderCatalogSnapshot.fallback.qwenHost(workspaceId: workspaceId)
     }
 
     public static func qwenAsrOption(for id: String) -> QwenAsrModelOption {
-        qwenAsrModels.first(where: { $0.id == id }) ?? qwenAsrModels[0]
+        ProviderCatalogSnapshot.fallback.qwenAsrOption(for: id)
     }
 }
 
@@ -133,9 +132,10 @@ public struct ModelSettingsDraft: Equatable, Sendable {
     public init() {}
 
     public mutating func sync(from provider: ProviderSnapshot) {
+        let catalog = provider.effectiveCatalog
         qwenWorkspaceId = provider.qwenWorkspaceId
         asrProvider = provider.asrProvider == "deepseek" ? "deepseek" : "qwen"
-        if ModelSettingsCatalog.qwenAsrModels.contains(where: { $0.id == provider.asrModel }) {
+        if catalog.qwenAsrModels.contains(where: { $0.id == provider.asrModel }) {
             qwenAsrModel = provider.asrModel
         } else if !provider.asrModel.isEmpty {
             qwenAsrModel = provider.asrModel
@@ -145,15 +145,15 @@ public struct ModelSettingsDraft: Equatable, Sendable {
             customLlmModel = provider.model
         } else {
             let validDeepSeek = provider.llmProvider == "deepseek" && !provider.model.isEmpty
-            deepseekLlmModel = validDeepSeek ? provider.model : "deepseek-flash"
+            deepseekLlmModel = validDeepSeek ? provider.model : catalog.defaultDeepseekLlmModel
         }
         enableThinking = provider.enableThinking
 
-        let defaultChat = computedDefaultChatEndpoint()
+        let defaultChat = provider.defaultChatEndpoint ?? computedDefaultChatEndpoint(catalog: catalog)
         customChatEndpoint = (llmProvider == "custom" || (provider.llmProvider == "deepseek" && provider.chatEndpoint != defaultChat))
             ? provider.chatEndpoint
             : ""
-        let defaultAsr = computedDefaultAsrEndpoint()
+        let defaultAsr = provider.defaultAsrEndpoint ?? computedDefaultAsrEndpoint(catalog: catalog)
         customAsrEndpoint = provider.asrEndpoint != defaultAsr ? provider.asrEndpoint : ""
     }
 
@@ -186,7 +186,7 @@ public struct ModelSettingsDraft: Equatable, Sendable {
     public var resolvedLlmModelForSave: String {
         switch llmProvider {
         case "custom": customLlmModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        default: deepseekLlmModel.isEmpty ? "deepseek-flash" : deepseekLlmModel
+        default: deepseekLlmModel.isEmpty ? ProviderCatalogSnapshot.fallback.defaultDeepseekLlmModel : deepseekLlmModel
         }
     }
 
@@ -199,51 +199,51 @@ public struct ModelSettingsDraft: Equatable, Sendable {
         }
     }
 
-    public func computedDefaultAsrEndpoint() -> String {
+    public func computedDefaultAsrEndpoint(catalog: ProviderCatalogSnapshot = .fallback) -> String {
         if asrProvider == "deepseek" {
-            return "https://api.deepseek.com/v1/tools/asr"
+            return catalog.defaultDeepseekAsrEndpoint
         }
-        let host = ModelSettingsCatalog.qwenHost(workspaceId: qwenWorkspaceId)
-        let meta = ModelSettingsCatalog.qwenAsrOption(for: qwenAsrModel)
+        let host = catalog.qwenHost(workspaceId: qwenWorkspaceId)
+        let meta = catalog.qwenAsrOption(for: qwenAsrModel)
         return (meta.isRealtime ? "wss://" : "https://") + host + meta.path
     }
 
-    public func effectiveAsrEndpoint() -> String {
+    public func effectiveAsrEndpoint(catalog: ProviderCatalogSnapshot = .fallback) -> String {
         let custom = customAsrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        return custom.isEmpty ? computedDefaultAsrEndpoint() : custom
+        return custom.isEmpty ? computedDefaultAsrEndpoint(catalog: catalog) : custom
     }
 
-    public func computedDefaultChatEndpoint() -> String {
-        "https://api.deepseek.com/chat/completions"
+    public func computedDefaultChatEndpoint(catalog: ProviderCatalogSnapshot = .fallback) -> String {
+        catalog.defaultDeepseekChatEndpoint
     }
 
-    public func effectiveChatEndpoint() -> String {
+    public func effectiveChatEndpoint(catalog: ProviderCatalogSnapshot = .fallback) -> String {
         let custom = customChatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         if llmProvider == "custom" {
             return custom
         }
-        return custom.isEmpty ? computedDefaultChatEndpoint() : custom
+        return custom.isEmpty ? computedDefaultChatEndpoint(catalog: catalog) : custom
     }
 
-    public mutating func applyPreset(_ preset: String) {
+    public mutating func applyPreset(_ preset: String, catalog: ProviderCatalogSnapshot = .fallback) {
         customAsrEndpoint = ""
         customChatEndpoint = ""
         switch preset {
         case "deepseek-full":
             asrProvider = "deepseek"
             llmProvider = "deepseek"
-            deepseekLlmModel = "deepseek-flash"
+            deepseekLlmModel = catalog.defaultDeepseekLlmModel
         default:
             asrProvider = "qwen"
-            qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming"
+            qwenAsrModel = catalog.defaultQwenAsrModel
             llmProvider = "deepseek"
-            deepseekLlmModel = "deepseek-flash"
+            deepseekLlmModel = catalog.defaultDeepseekLlmModel
         }
     }
 
-    public func matchedPreset(speechEngine: String) -> String? {
+    public func matchedPreset(speechEngine: String, catalog: ProviderCatalogSnapshot = .fallback) -> String? {
         guard speechEngine == "cloud" else { return nil }
-        if asrProvider == "qwen" && qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming" && llmProvider == "deepseek" {
+        if asrProvider == "qwen" && qwenAsrModel == catalog.defaultQwenAsrModel && llmProvider == "deepseek" {
             return "hybrid"
         }
         if asrProvider == "deepseek" && llmProvider == "deepseek" {

@@ -157,7 +157,8 @@ fun SettingsSheet(
         }
     }
 
-    val matchedPreset = draft.matchedPreset(speech.engine)
+    val catalog = provider.effectiveCatalog
+    val matchedPreset = draft.matchedPreset(speech.engine, catalog)
 
     KoeModalSheet(onDismissRequest = onDismiss, modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -276,7 +277,7 @@ fun SettingsSheet(
                                 if (speech.engine != "cloud") {
                                     store.send(HostCommand.ConfigureSpeech("cloud"))
                                 }
-                                updateDraft(draft.applyPreset("hybrid"))
+                                updateDraft(draft.applyPreset("hybrid", catalog))
                             },
                             modifier = Modifier.testTag("settings-preset-hybrid"),
                         )
@@ -287,7 +288,7 @@ fun SettingsSheet(
                                 if (speech.engine != "cloud") {
                                     store.send(HostCommand.ConfigureSpeech("cloud"))
                                 }
-                                updateDraft(draft.applyPreset("deepseek-full"))
+                                updateDraft(draft.applyPreset("deepseek-full", catalog))
                             },
                             modifier = Modifier.testTag("settings-preset-deepseek-full"),
                         )

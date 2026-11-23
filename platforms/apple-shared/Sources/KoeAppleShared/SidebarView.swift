@@ -29,7 +29,7 @@ public struct SidebarView: View {
             navigationRow(
                 HostSection.tasks,
                 section: sidebar.section,
-                count: sidebar.proposedActionCount > 0 ? sidebar.proposedActionCount : nil
+                count: sidebar.proposedTaskCount > 0 ? sidebar.proposedTaskCount : nil
             )
             navigationRow(
                 HostSection.memory,

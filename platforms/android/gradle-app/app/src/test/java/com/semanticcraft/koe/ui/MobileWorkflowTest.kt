@@ -100,7 +100,7 @@ class MobileWorkflowTest {
     }
 
     @Test fun archivedDetailCannotBeTrashed() {
-        val store = store(fixture.copy(detail = detail.copy(archived = true)))
+        val store = store(fixture.copy(detail = detail.copy(archived = true, canTrash = false)))
         ui.setContent { KoeTheme { RecordDetailScreen(store, detail.id) } }
         ui.onNodeWithText("移入回收站").assertIsNotEnabled()
     }

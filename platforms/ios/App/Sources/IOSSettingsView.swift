@@ -15,6 +15,7 @@ struct IOSSettingsView: View {
     var body: some View {
         let platform = store.platform
         let provider = store.settings.provider
+        let catalog = provider.effectiveCatalog
         let speech = store.settings.speech
 
         NavigationStack {
@@ -94,14 +95,14 @@ struct IOSSettingsView: View {
                                 draft.customAsrEndpoint = ""
                             }
                         )) {
-                            ForEach(ModelSettingsCatalog.qwenAsrModels) { option in
+                            ForEach(catalog.qwenAsrModels) { option in
                                 Text(option.id).tag(option.id)
                             }
                         }
                     }
-                    IOSSpeechModeNotice(draft: draft)
+                    IOSSpeechModeNotice(draft: draft, catalog: catalog)
                     DisclosureGroup("自定义识别端点") {
-                        settingsField(draft.computedDefaultAsrEndpoint(), text: $draft.customAsrEndpoint)
+                        settingsField(draft.computedDefaultAsrEndpoint(catalog: catalog), text: $draft.customAsrEndpoint)
                             .accessibilityLabel("识别接口地址")
                             .keyboardType(.URL)
                     }
@@ -132,7 +133,7 @@ struct IOSSettingsView: View {
                         chatEndpoint
                     } else {
                         Picker("模型", selection: $draft.deepseekLlmModel) {
-                            ForEach(ModelSettingsCatalog.deepseekLlmModels) { option in
+                            ForEach(catalog.deepseekLlmModels) { option in
                                 Text(option.id).tag(option.id)
                             }
                         }

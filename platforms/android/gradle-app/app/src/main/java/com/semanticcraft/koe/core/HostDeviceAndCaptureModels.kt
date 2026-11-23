@@ -122,6 +122,8 @@ data class DeviceSnapshot(
     val progress: Double = 0.0,
     val guide: DeviceGuideSnapshot? = null,
     val transferPhase: String = "idle",
+    val transferErrorCode: Int? = null,
+    val audioDecryptReady: Boolean = false,
     val liveDurationMs: Long = 0L,
     val liveBytes: Long = 0L,
     val liveRecordId: String? = null,
@@ -151,10 +153,16 @@ data class ProviderSnapshot(
     val qwenWorkspaceId: String = "",
     val asrEndpoint: String = "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
     val chatEndpoint: String = "https://api.deepseek.com/chat/completions",
+    val defaultAsrEndpoint: String? = null,
+    val defaultChatEndpoint: String? = null,
+    val catalog: ProviderCatalogSnapshot? = null,
     val credentialState: String = "missing",
     val deepseekCredentialState: String = "missing",
     val isolated: Boolean = true,
 ) {
+    val effectiveCatalog: ProviderCatalogSnapshot
+        get() = catalog ?: ModelSettingsCatalog.fallback
+
     companion object {
         val empty = ProviderSnapshot()
     }
@@ -172,6 +180,7 @@ data class SpeechModelSnapshot(
     val id: String,
     val name: String,
     val sizeBytes: Long = 0L,
+    val languages: List<String> = emptyList(),
     val state: String = "not_downloaded",
     val downloadedBytes: Long = 0L,
     val message: String? = null,

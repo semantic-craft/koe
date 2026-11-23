@@ -18,7 +18,7 @@
 namespace {
 
 constexpr size_t kMaxIdentifierBytes = 64 * 1024;
-constexpr size_t kMaxCommandJsonBytes = 4 * 1024 * 1024;
+constexpr size_t kMaxCommandJsonBytes = 2 * 1024 * 1024;
 constexpr size_t kMaxBleChunkBytes = 1024 * 1024;
 constexpr jint kMaxPcmSamples = 8192;
 constexpr uint32_t kPcmStatusRejected = 2;

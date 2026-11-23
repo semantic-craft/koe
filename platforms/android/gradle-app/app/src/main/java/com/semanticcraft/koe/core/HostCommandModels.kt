@@ -178,7 +178,14 @@ sealed interface HostCommand {
     @Serializable @SerialName("device_close_guide") data object DeviceCloseGuide : HostCommand
     @Serializable @SerialName("device_refresh") data object DeviceRefresh : HostCommand
     @Serializable @SerialName("device_release") data object DeviceRelease : HostCommand
-    @Serializable @SerialName("device_download") data class DeviceDownload(val fileId: Long) : HostCommand
+    @Serializable @SerialName("device_download")
+    data class DeviceDownload(val fileId: Long) : HostCommand {
+        init {
+            require(fileId in 0L..0xFFFF_FFFFL) {
+                "DeviceDownload.fileId must fit unsigned 32-bit range (0..4294967295), got $fileId"
+            }
+        }
+    }
     @Serializable @SerialName("device_download_all") data object DeviceDownloadAll : HostCommand
     @Serializable @SerialName("set_ble_auto_connect") data class SetBleAutoConnect(val enabled: Boolean) : HostCommand
 

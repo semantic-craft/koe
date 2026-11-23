@@ -68,10 +68,6 @@ public enum RecordProjectFilter: Equatable, Hashable, Sendable {
 }
 
 extension RecordSnapshot {
-    public var canTrash: Bool {
-        !archived && status != "转写中" && status != "整理中"
-    }
-
     public func matches(
         filter: RecordFilterCategory,
         projectFilter: RecordProjectFilter,

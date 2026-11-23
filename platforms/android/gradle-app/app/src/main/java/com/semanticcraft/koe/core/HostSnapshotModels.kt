@@ -157,6 +157,32 @@ data class SegmentSnapshot(
 )
 
 @Serializable
+data class ReviewCountsSnapshot(
+    val proposedTaskCount: Int = 0,
+    val proposedMemoryCount: Int = 0,
+    val proposedActionCount: Int = 0,
+    val activeMemoryCount: Int = 0,
+)
+
+@Serializable
+data class CaptureSpanSnapshot(
+    val epoch: Long = 0L,
+    val startNs: Long = 0L,
+    val sampleOffset: Long = 0L,
+    val sampleCount: Long = 0L,
+)
+
+@Serializable
+data class CaptureLaneDetailSnapshot(
+    val lane: String,
+    val audioPath: String? = null,
+    val sampleRate: Int? = null,
+    val durationMs: Long = 0L,
+    val interruption: String? = null,
+    val timeline: List<CaptureSpanSnapshot> = emptyList(),
+)
+
+@Serializable
 data class RecordSnapshot(
     val id: String,
     val title: String,
@@ -167,16 +193,13 @@ data class RecordSnapshot(
     val segmentCount: Int = 0,
     val preview: String = "",
     val archived: Boolean = false,
+    val canTrash: Boolean = !archived,
+    val isTranscribing: Boolean = false,
     val runId: String? = null,
     val ordinal: Long? = null,
     val mode: String? = null,
     val project: String? = null,
 ) {
-    val canTrash: Boolean get() = !archived && status != "转写中" && status != "整理中"
-
-    val isTranscribing: Boolean
-        get() = status == "转写中" || status == "等待转写"
-
     val effectiveMode: String
         get() = mode?.takeIf { it.isNotEmpty() } ?: if (runId != null) "all_day" else "quick_note"
 
@@ -234,12 +257,12 @@ data class RecordDetailSnapshot(
     val audioPath: String? = null,
     val canRetranscribe: Boolean = false,
     val isProcessing: Boolean = false,
+    val canTrash: Boolean = !archived && !isProcessing,
     val minutesStale: Boolean = false,
     val canEditTranscript: Boolean = false,
     val speakers: List<SpeakerSummarySnapshot> = emptyList(),
+    val captureLanes: List<CaptureLaneDetailSnapshot> = emptyList(),
 ) {
-    val canTrash: Boolean get() = !archived && !isProcessing
-
     val modeLabel: String
         get() = (CaptureMode.fromRaw(mode ?: "quick_note") ?: CaptureMode.QUICK_NOTE).title
 }
@@ -320,6 +343,7 @@ data class HostSnapshot(
     val detail: RecordDetailSnapshot? = null,
     val tasks: List<TaskSnapshot> = emptyList(),
     val memories: List<MemorySnapshot> = emptyList(),
+    val reviewCounts: ReviewCountsSnapshot? = null,
     val ask: AskSnapshot = AskSnapshot(),
     val device: DeviceSnapshot = DeviceSnapshot.empty,
     val provider: ProviderSnapshot = ProviderSnapshot.empty,
