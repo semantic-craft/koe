@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KoeAppleShared
+@testable import KoeMacUI
 
 @Suite("Record retention and trash snapshot contract")
 struct RecordSessionSnapshotTests {

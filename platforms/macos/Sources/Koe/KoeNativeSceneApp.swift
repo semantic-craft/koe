@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import Observation
 import SwiftUI
 

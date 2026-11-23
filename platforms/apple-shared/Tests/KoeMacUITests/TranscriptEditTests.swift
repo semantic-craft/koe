@@ -4,7 +4,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import Testing
-@testable import KoeAppleShared
+@testable import KoeMacUI
 
 @Suite("Transcript segment editing and speaker merge over C ABI v2")
 struct TranscriptEditTests {

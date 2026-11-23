@@ -1,7 +1,7 @@
 import AVFoundation
 import CoreAudio
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 
 public struct MicrophoneInput: Equatable, Sendable {
     public let id: String

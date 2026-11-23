@@ -1,6 +1,6 @@
 import CoreAudio
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import os
 
 enum SystemAudioHAL {

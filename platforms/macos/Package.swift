@@ -31,7 +31,7 @@ let package = Package(
         .executableTarget(
             name: "Koe",
             dependencies: [
-                .product(name: "KoeAppleShared", package: "apple-shared"),
+                .product(name: "KoeMacUI", package: "apple-shared"),
             ],
             path: "Sources/Koe",
             swiftSettings: strictConcurrencySettings,
@@ -46,7 +46,7 @@ let package = Package(
             dependencies: [
                 "Koe",
                 .product(name: "KoeAppleCore", package: "apple-shared"),
-                .product(name: "KoeAppleShared", package: "apple-shared"),
+                .product(name: "KoeMacUI", package: "apple-shared"),
             ],
             path: "Tests/KoeMacHostTests",
             swiftSettings: strictConcurrencySettings,

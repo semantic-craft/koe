@@ -1,5 +1,5 @@
 import AVFoundation
-import KoeAppleShared
+import KoeMacUI
 import XCTest
 @testable import Koe
 

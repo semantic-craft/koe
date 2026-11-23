@@ -866,7 +866,7 @@ class InstallMacosScriptTest(unittest.TestCase):
         expected_release = str(REPO_ROOT / "target" / "release" / "libkoe_host_api.a")
         packages = (
             (REPO_ROOT / "platforms" / "macos", ("Koe", "KoeMacHostTests")),
-            (REPO_ROOT / "platforms" / "apple-shared", ("KoeAppleCoreTests", "KoeAppleSharedTests")),
+            (REPO_ROOT / "platforms" / "apple-shared", ("KoeAppleCoreTests", "KoeMacUITests")),
         )
         for pkg_dir, target_names in packages:
             manifest = json.loads(

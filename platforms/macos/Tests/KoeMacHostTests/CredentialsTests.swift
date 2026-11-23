@@ -1,5 +1,5 @@
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import os
 import Security
 import Testing
