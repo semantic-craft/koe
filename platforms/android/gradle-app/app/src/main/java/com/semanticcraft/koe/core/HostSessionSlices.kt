@@ -198,13 +198,13 @@ data class TodaySlice(
         fun from(snapshot: HostSnapshot): TodaySlice {
             val picker = snapshot.workspaces?.picker
             val resolvedBeanControl = picker?.resolvedBeanControlState ?: "this_device"
-            val proposedTasks = snapshot.tasks.count { it.state == "proposed" }
-            val proposedMemories = snapshot.memories.count { it.state == "proposed" }
+            val proposedActionCount = snapshot.reviewCounts?.proposedActionCount
+                ?: (snapshot.tasks.count { it.state == "proposed" } + snapshot.memories.count { it.state == "proposed" })
             return TodaySlice(
                 picker = picker,
                 beanControlState = resolvedBeanControl,
                 recordCount = snapshot.records.size,
-                proposedActionCount = proposedTasks + proposedMemories,
+                proposedActionCount = proposedActionCount,
                 deviceConnected = snapshot.device.connected,
                 deviceState = snapshot.device.state,
                 captureSelectedBadge = snapshot.capture.selectedBadge,

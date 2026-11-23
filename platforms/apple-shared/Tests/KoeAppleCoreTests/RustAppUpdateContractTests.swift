@@ -242,4 +242,117 @@ struct RustAppUpdateContractTests {
         let decoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(String(cString: rawPtr).utf8))
         #expect(decoded.version == 2)
     }
+
+    @Test("Real Rust snapshot projects authoritative canTrash, isTranscribing, reviewCounts, provider catalog, captureLanes, device transfer fields, and speech languages")
+    @MainActor
+    func realRustSingleSourceOfTruthSnapshotContract() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+        let t0: UInt64 = 1_800_300_000
+
+        let initialProvider = store.settings.provider
+        let catalog = try #require(initialProvider.catalog)
+        #expect(catalog.qwenAsrModels.count == 4)
+        #expect(catalog.deepseekLlmModels.count == 2)
+        #expect(catalog.defaultQwenHost == "dashscope.aliyuncs.com")
+        #expect(catalog.qwenWorkspaceHostSuffix == ".cn-beijing.maas.aliyuncs.com")
+        #expect(catalog.defaultDeepseekAsrEndpoint == "https://api.deepseek.com/v1/tools/asr")
+        #expect(catalog.defaultDeepseekChatEndpoint == "https://api.deepseek.com/chat/completions")
+        #expect(catalog.defaultQwenAsrModel == "qwen-audio-3.1-asr-flash-streaming")
+        #expect(catalog.defaultDeepseekLlmModel == "deepseek-flash")
+        #expect(initialProvider.defaultAsrEndpoint == "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
+        #expect(initialProvider.defaultChatEndpoint == "https://api.deepseek.com/chat/completions")
+
+        store.send(
+            .configureProvider(
+                asrProvider: "qwen",
+                asrModel: "qwen-audio-3.1-asr-flash-filetrans",
+                llmProvider: "deepseek",
+                model: "deepseek-flash",
+                qwenWorkspaceId: "ws-swift-1",
+                asrEndpoint: "",
+                chatEndpoint: ""
+            ),
+            nowEpochSec: t0 + 1
+        )
+        let expectedWsEndpoint = "https://ws-swift-1.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/asr/transcription"
+        #expect(store.settings.provider.defaultAsrEndpoint == expectedWsEndpoint)
+        #expect(store.settings.provider.asrEndpoint == expectedWsEndpoint)
+
+        #expect(store.device.transferErrorCode == 0)
+        #expect(store.device.audioDecryptReady == false)
+        #expect(!store.settings.speech.models.isEmpty)
+        #expect(store.settings.speech.models.allSatisfy { !$0.languages.isEmpty })
+
+        store.send(.createNote(title: "单一真相笔记", text: "第一句。\n第二句。", stayOnPage: false), nowEpochSec: t0 + 2)
+        let noteDetail = try #require(store.recordDetail.detail)
+        let noteRow = try #require(store.records.first(where: { $0.id == noteDetail.id }))
+        #expect(noteRow.canTrash == true)
+        #expect(noteRow.isTranscribing == false)
+        #expect(noteDetail.canTrash == true)
+
+        store.send(.setRecordArchived(recordId: noteDetail.id, archived: true), nowEpochSec: t0 + 3)
+        #expect(store.records.first(where: { $0.id == noteDetail.id })?.canTrash == false)
+        #expect(store.recordDetail.detail?.canTrash == false)
+        store.send(.setRecordArchived(recordId: noteDetail.id, archived: false), nowEpochSec: t0 + 4)
+        #expect(store.records.first(where: { $0.id == noteDetail.id })?.canTrash == true)
+
+        let firstSegment = try #require(noteDetail.segments.first)
+        store.send(.createTask(recordId: noteDetail.id, segmentId: firstSegment.id), nowEpochSec: t0 + 5)
+        store.send(.saveMemory(recordId: noteDetail.id, segmentId: firstSegment.id), nowEpochSec: t0 + 6)
+        let taskID = try #require(store.tasks.first?.id)
+        let memoryID = try #require(store.memories.first?.id)
+        store.send(.reviewItem(itemId: taskID, decision: .reset), nowEpochSec: t0 + 7)
+        store.send(.reviewItem(itemId: memoryID, decision: .reset), nowEpochSec: t0 + 8)
+
+        let counts = try #require(store.snapshot.reviewCounts)
+        #expect(counts == ReviewCountsSnapshot(
+            proposedTaskCount: 1,
+            proposedMemoryCount: 1,
+            proposedActionCount: 2,
+            activeMemoryCount: 1
+        ))
+        #expect(store.sidebar.proposedTaskCount == 1)
+        #expect(store.sidebar.memoryCount == 1)
+        #expect(store.today.proposedActionCount == 2)
+
+        store.send(.reviewItem(itemId: memoryID, decision: .dismiss), nowEpochSec: t0 + 9)
+        #expect(store.snapshot.reviewCounts?.activeMemoryCount == 0)
+        #expect(store.sidebar.proposedTaskCount == 1)
+        #expect(store.sidebar.memoryCount == 0)
+        #expect(store.today.proposedActionCount == 1)
+
+        store.send(.startCaptureMode(mode: .quickNote, stayOnPage: true), nowEpochSec: t0 + 10)
+        let mic = try #require(store.snapshot.microphone)
+        store.send(.microphonePrepared(recordId: mic.recordId, sessionId: mic.sessionId, epoch: 0, clockNs: 1_000_000_000), nowEpochSec: t0 + 10)
+        store.send(.microphoneStarted(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sampleRate: 16000), nowEpochSec: t0 + 10)
+        let ingest = store.ingestMicrophonePCM(
+            recordId: mic.recordId,
+            sessionId: mic.sessionId,
+            lane: "microphone",
+            sequence: 0,
+            epoch: 0,
+            capturedStartNs: 1_000_000_000,
+            samples: [Int16](repeating: 240, count: 320),
+            nowEpochSec: t0 + 10
+        )
+        #expect(ingest.status == .accepted)
+        store.send(.selectRecord(recordId: mic.recordId), nowEpochSec: t0 + 10)
+        let activeRow = try #require(store.records.first(where: { $0.id == mic.recordId }))
+        #expect(activeRow.canTrash == false)
+        #expect(activeRow.isTranscribing == true)
+        #expect(store.recordDetail.detail?.canTrash == false)
+
+        store.send(.captureAction(action: .end), nowEpochSec: t0 + 11)
+        store.send(.microphoneStopped(recordId: mic.recordId, sessionId: mic.sessionId, lane: "microphone", sequence: 1, epoch: 0), nowEpochSec: t0 + 11)
+        store.send(.selectRecord(recordId: mic.recordId), nowEpochSec: t0 + 12)
+        let capturedDetail = try #require(store.recordDetail.detail)
+        let micLane = try #require(capturedDetail.captureLanes.first(where: { $0.lane == "microphone" }))
+        #expect(micLane.sampleRate == 16000)
+        #expect(micLane.durationMs > 0)
+        #expect(micLane.timeline.first?.sampleCount == 320)
+        try assertRawSnapshotDecodes(handle: store.handle, now: t0 + 12)
+    }
 }

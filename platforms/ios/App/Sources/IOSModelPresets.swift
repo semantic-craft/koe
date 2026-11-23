@@ -12,12 +12,13 @@ struct IOSModelPresets: View {
 
     private func applyPreset(_ preset: String) {
         if store.settings.speech.engine != "cloud", store.sendReturningError(.configureSpeech(engine: "cloud")) != nil { return }
-        draft.applyPreset(preset)
+        draft.applyPreset(preset, catalog: store.settings.provider.effectiveCatalog)
     }
 }
 
 struct IOSSpeechModeNotice: View {
     let draft: ModelSettingsDraft
+    var catalog: ProviderCatalogSnapshot = .fallback
 
     var body: some View {
         if let warning = nonRealtimeWarning {
@@ -29,6 +30,6 @@ struct IOSSpeechModeNotice: View {
         if draft.asrProvider == "deepseek" {
             return "DeepSeek 语音在录音结束后转写，不提供实时字幕。单段最长 120 秒，长录音按静音点切段。"
         }
-        return ModelSettingsCatalog.qwenAsrOption(for: draft.qwenAsrModel).nonRealtimeWarning
+        return catalog.qwenAsrOption(for: draft.qwenAsrModel).nonRealtimeWarning
     }
 }

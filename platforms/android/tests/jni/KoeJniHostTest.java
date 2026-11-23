@@ -385,10 +385,27 @@ public final class KoeJniHostTest {
       assertTrue(
           KoeNativeBridge.nativeSessionDispatchJson(handle, withNul, now + 12) == null,
           "dispatchJson must reject embedded NUL bytes");
-      byte[] tooLarge = new byte[(4 * 1024 * 1024) + 1];
+      byte[] prefix = utf8("{\"type\":\"back\"");
+      byte[] exactLimit = new byte[2 * 1024 * 1024];
+      java.util.Arrays.fill(exactLimit, (byte) ' ');
+      System.arraycopy(prefix, 0, exactLimit, 0, prefix.length);
+      exactLimit[exactLimit.length - 1] = '}';
+      byte[] exactReply = KoeNativeBridge.nativeSessionDispatchJson(handle, exactLimit, now + 12);
+      assertTrue(
+          exactReply != null && exactReply.length > 0,
+          "dispatchJson must accept exact 2 MiB command across JNI and Rust");
+      String exactJson = new String(exactReply, StandardCharsets.UTF_8);
+      assertTrue(
+          exactJson.contains("\"error\":null"),
+          "exact 2 MiB valid JSON command must succeed without error: " + exactJson);
+
+      byte[] tooLarge = new byte[(2 * 1024 * 1024) + 1];
+      java.util.Arrays.fill(tooLarge, (byte) ' ');
+      System.arraycopy(prefix, 0, tooLarge, 0, prefix.length);
+      tooLarge[tooLarge.length - 1] = '}';
       assertTrue(
           KoeNativeBridge.nativeSessionDispatchJson(handle, tooLarge, now + 12) == null,
-          "dispatchJson must reject commands > 4 MiB");
+          "dispatchJson must reject commands > 2 MiB at the JNI boundary");
 
       assertTrue(KoeNativeBridge.nativeSessionDestroy(handle), "first destroy must return true");
       long destroyedHandle = handle;

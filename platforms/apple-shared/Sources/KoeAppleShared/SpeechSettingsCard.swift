@@ -86,12 +86,13 @@ struct SpeechSettingsCard: View {
     }
 
     private var cloudAsrPanel: some View {
-        let qwenMeta = ModelSettingsCatalog.qwenAsrOption(for: draft.qwenAsrModel)
+        let catalog = provider.effectiveCatalog
+        let qwenMeta = catalog.qwenAsrOption(for: draft.qwenAsrModel)
         let isQwen = draft.asrProvider == "qwen"
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                qwenAsrCard(selected: isQwen)
-                deepseekAsrCard(selected: !isQwen)
+                qwenAsrCard(selected: isQwen, catalog: catalog)
+                deepseekAsrCard(selected: !isQwen, catalog: catalog)
             }
 
             if isQwen, let warning = qwenMeta.nonRealtimeWarning {
@@ -112,7 +113,7 @@ struct SpeechSettingsCard: View {
                     .font(.system(size: AppFontSizes.xs))
                     .foregroundStyle(AppColors.textMuted)
                 Spacer()
-                Text(draft.effectiveAsrEndpoint())
+                Text(draft.effectiveAsrEndpoint(catalog: catalog))
                     .font(.system(size: AppFontSizes.xs, design: .monospaced))
                     .foregroundStyle(AppColors.textSecondary)
                     .lineLimit(1)
@@ -125,7 +126,7 @@ struct SpeechSettingsCard: View {
         }
     }
 
-    private func qwenAsrCard(selected: Bool) -> some View {
+    private func qwenAsrCard(selected: Bool, catalog: ProviderCatalogSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 draft.asrProvider = "qwen"
@@ -149,7 +150,7 @@ struct SpeechSettingsCard: View {
                 .foregroundStyle(AppColors.textSecondary)
 
             VStack(spacing: 6) {
-                ForEach(ModelSettingsCatalog.qwenAsrModels) { option in
+                ForEach(catalog.qwenAsrModels) { option in
                     let picked = selected && draft.qwenAsrModel == option.id
                     Button {
                         draft.asrProvider = "qwen"
@@ -189,7 +190,7 @@ struct SpeechSettingsCard: View {
         .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(selected ? AppColors.accent : AppColors.border))
     }
 
-    private func deepseekAsrCard(selected: Bool) -> some View {
+    private func deepseekAsrCard(selected: Bool, catalog: ProviderCatalogSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 draft.asrProvider = "deepseek"
@@ -218,7 +219,7 @@ struct SpeechSettingsCard: View {
                 specTile(label: "超长策略", value: "自动静音切段")
             }
 
-            Text("POST https://api.deepseek.com/v1/tools/asr")
+            Text("POST \(catalog.defaultDeepseekAsrEndpoint)")
                 .font(.system(size: AppFontSizes.xs, design: .monospaced))
                 .foregroundStyle(AppColors.textSecondary)
                 .padding(.horizontal, 8)

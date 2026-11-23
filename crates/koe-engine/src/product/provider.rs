@@ -1,5 +1,9 @@
 use super::{ProductError, ProductWorkspace};
 
+/// Default DashScope host name when no Qwen Beijing workspace ID is set.
+pub const DEFAULT_QWEN_HOST: &str = "dashscope.aliyuncs.com";
+/// Host suffix appended to a Qwen Beijing workspace ID.
+pub const QWEN_WORKSPACE_HOST_SUFFIX: &str = ".cn-beijing.maas.aliyuncs.com";
 /// Default DashScope streaming ASR WebSocket endpoint.
 pub const DEFAULT_DASHSCOPE_WS_URL: &str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
 /// Default DashScope synchronous non-realtime ASR HTTP endpoint (`qwen-audio-3.1-asr-flash`).
@@ -18,12 +22,149 @@ pub const DEFAULT_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
 pub const DEFAULT_TEXT_MODEL: &str = "deepseek-flash";
 /// Default DeepSeek text generation and summarization model identifier.
 pub const DEFAULT_DEEPSEEK_TEXT_MODEL: &str = "deepseek-flash";
+/// DeepSeek flagship reasoning text model identifier.
+pub const DEEPSEEK_PRO_TEXT_MODEL: &str = "deepseek-v4-pro";
 /// Qwen non-realtime synchronous ASR model identifier (<= 5 min, diarization).
 pub const QWEN_FLASH_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash";
 /// Qwen asynchronous file transcription model identifier (long audio, diarization).
 pub const QWEN_FILETRANS_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-filetrans";
 /// Qwen short-segment real-time WebSocket ASR model identifier.
 pub const QWEN_MESSAGE_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-message";
+
+/// Canonical metadata for one supported Qwen cloud ASR model option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QwenAsrModelOption {
+    /// Model identifier sent to DashScope.
+    pub id: &'static str,
+    /// Concise Chinese capability note shown in settings.
+    pub note: &'static str,
+    /// Optional highlight badge (for example, `"默认"`).
+    pub badge: Option<&'static str>,
+    /// Whether the model supports real-time WebSocket streaming captions.
+    pub is_realtime: bool,
+    /// Label describing the endpoint protocol mode.
+    pub endpoint_label: &'static str,
+    /// URL path appended to the resolved Qwen host.
+    pub path: &'static str,
+    /// Warning shown when live captions are unavailable for this model.
+    pub non_realtime_warning: Option<&'static str>,
+}
+
+/// Canonical metadata for one supported DeepSeek official LLM model option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LlmModelOption {
+    /// Model identifier sent to the chat completions API.
+    pub id: &'static str,
+    /// Primary positioning badge shown in settings.
+    pub primary_badge: &'static str,
+    /// Whether the primary badge highlights the recommended default.
+    pub primary_badge_recommended: bool,
+    /// Secondary model capability badges.
+    pub meta_badges: &'static [&'static str],
+    /// Concise Chinese description shown in settings.
+    pub description: &'static str,
+}
+
+/// Authoritative provider model catalog and default endpoint metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderCatalog {
+    /// Supported Qwen cloud ASR model options.
+    pub qwen_asr_models: &'static [QwenAsrModelOption],
+    /// Supported DeepSeek official LLM model options.
+    pub deepseek_llm_models: &'static [LlmModelOption],
+    /// Default Qwen DashScope authority host when no workspace ID is set.
+    pub default_qwen_host: &'static str,
+    /// Host suffix appended to a Qwen Beijing workspace ID.
+    pub qwen_workspace_host_suffix: &'static str,
+    /// Default DeepSeek standalone HTTP ASR endpoint.
+    pub default_deepseek_asr_endpoint: &'static str,
+    /// Default DeepSeek OpenAI-compatible chat endpoint.
+    pub default_deepseek_chat_endpoint: &'static str,
+    /// Default Qwen ASR model identifier.
+    pub default_qwen_asr_model: &'static str,
+    /// Default DeepSeek LLM model identifier.
+    pub default_deepseek_llm_model: &'static str,
+}
+
+/// Canonical Qwen cloud ASR model options shared across all hosts.
+pub const QWEN_ASR_MODELS: &[QwenAsrModelOption] = &[
+    QwenAsrModelOption {
+        id: DEFAULT_ASR_MODEL,
+        note: "WebSocket 实时流式 | 会议/字幕/长录音 | 中间结果与时间戳",
+        badge: Some("默认"),
+        is_realtime: true,
+        endpoint_label: "当前 ASR 接口（WebSocket 实时流式）",
+        path: "/api-ws/v1/inference",
+        non_realtime_warning: None,
+    },
+    QwenAsrModelOption {
+        id: QWEN_MESSAGE_ASR_MODEL,
+        note: "WebSocket 实时短段 | 随心闪记 | 支持原生文本润色",
+        badge: None,
+        is_realtime: true,
+        endpoint_label: "当前 ASR 接口（WebSocket 实时短段）",
+        path: "/api-ws/v1/inference",
+        non_realtime_warning: None,
+    },
+    QwenAsrModelOption {
+        id: QWEN_FLASH_ASR_MODEL,
+        note: "HTTP 非实时（<=5 分钟）| 支持说话人分离与润色",
+        badge: None,
+        is_realtime: false,
+        endpoint_label: "当前 ASR 接口（HTTP 同步 <=5 分钟）",
+        path: "/api/v1/services/aigc/multimodal-generation/generation",
+        non_realtime_warning: Some(
+            "qwen-audio-3.1-asr-flash 为 HTTP 非实时接口（单段 <=5 分钟，支持说话人分离），录音结束后自动转写，不输出边录边看实时字幕。",
+        ),
+    },
+    QwenAsrModelOption {
+        id: QWEN_FILETRANS_ASR_MODEL,
+        note: "HTTP 异步长录音 | 录音豆离线文件 | 支持说话人分离",
+        badge: None,
+        is_realtime: false,
+        endpoint_label: "当前 ASR 接口（HTTP 异步任务）",
+        path: "/api/v1/services/audio/asr/transcription",
+        non_realtime_warning: Some(
+            "qwen-audio-3.1-asr-flash-filetrans 为异步文件转写任务（适合录音豆离线长录音并支持说话人分离），录音结束后自动转写，不输出实时字幕。",
+        ),
+    },
+];
+
+/// Canonical DeepSeek official LLM model options shared across all hosts.
+pub const DEEPSEEK_LLM_MODELS: &[LlmModelOption] = &[
+    LlmModelOption {
+        id: DEFAULT_DEEPSEEK_TEXT_MODEL,
+        primary_badge: "默认推荐",
+        primary_badge_recommended: true,
+        meta_badges: &["DeepSeek-V4.1-Flash", "1M / 384K"],
+        description: "官方最新主力模型，空闲时段 1 元/百万输入、4 元/百万输出（高峰 2 元/8 元），支持思考切换。",
+    },
+    LlmModelOption {
+        id: DEEPSEEK_PRO_TEXT_MODEL,
+        primary_badge: "旗舰推理",
+        primary_badge_recommended: false,
+        meta_badges: &["DeepSeek-V4-Pro", "1M / 384K"],
+        description: "面向深度分析与复杂结构化纪要，空闲 4.5 元/13.5 元（高峰 9 元/27 元），最大输出 384K。",
+    },
+];
+
+/// Canonical provider catalog projected to native hosts.
+pub const PROVIDER_CATALOG: ProviderCatalog = ProviderCatalog {
+    qwen_asr_models: QWEN_ASR_MODELS,
+    deepseek_llm_models: DEEPSEEK_LLM_MODELS,
+    default_qwen_host: DEFAULT_QWEN_HOST,
+    qwen_workspace_host_suffix: QWEN_WORKSPACE_HOST_SUFFIX,
+    default_deepseek_asr_endpoint: DEFAULT_DEEPSEEK_ASR_URL,
+    default_deepseek_chat_endpoint: DEFAULT_DEEPSEEK_CHAT_URL,
+    default_qwen_asr_model: DEFAULT_ASR_MODEL,
+    default_deepseek_llm_model: DEFAULT_DEEPSEEK_TEXT_MODEL,
+};
+
+/// Returns the authoritative provider model catalog.
+#[must_use]
+pub const fn provider_catalog() -> ProviderCatalog {
+    PROVIDER_CATALOG
+}
 
 /// Whether meeting audio may be sent to a remote speech service.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -191,9 +332,9 @@ impl ProviderConfiguration {
     pub fn qwen_host(workspace_id: &str) -> String {
         let trimmed = workspace_id.trim();
         if trimmed.is_empty() {
-            "dashscope.aliyuncs.com".into()
+            DEFAULT_QWEN_HOST.into()
         } else {
-            format!("{trimmed}.cn-beijing.maas.aliyuncs.com")
+            format!("{trimmed}{QWEN_WORKSPACE_HOST_SUFFIX}")
         }
     }
 
@@ -559,5 +700,45 @@ mod tests {
             validate_provider_endpoint("FTP://api.deepseek.com/chat/completions", &["https", "http"]),
             Err(EndpointValidationError::UnsupportedScheme)
         );
+    }
+
+    #[test]
+    fn provider_catalog_matches_default_endpoints_and_qwen_host_rules() {
+        let catalog = provider_catalog();
+        assert_eq!(catalog.default_qwen_host, DEFAULT_QWEN_HOST);
+        assert_eq!(
+            catalog.qwen_workspace_host_suffix,
+            QWEN_WORKSPACE_HOST_SUFFIX
+        );
+        assert_eq!(
+            catalog.default_deepseek_asr_endpoint,
+            DEFAULT_DEEPSEEK_ASR_URL
+        );
+        assert_eq!(
+            catalog.default_deepseek_chat_endpoint,
+            DEFAULT_DEEPSEEK_CHAT_URL
+        );
+        assert_eq!(catalog.default_qwen_asr_model, DEFAULT_ASR_MODEL);
+        assert_eq!(catalog.default_deepseek_llm_model, DEFAULT_DEEPSEEK_TEXT_MODEL);
+        assert_eq!(catalog.qwen_asr_models.len(), 4);
+        assert_eq!(catalog.deepseek_llm_models.len(), 2);
+
+        for ws in ["", "ws-bj-01"] {
+            let host = ProviderConfiguration::qwen_host(ws);
+            for opt in catalog.qwen_asr_models {
+                let scheme = if opt.is_realtime { "wss://" } else { "https://" };
+                let expected = format!("{scheme}{host}{}", opt.path);
+                assert_eq!(
+                    ProviderConfiguration::default_asr_endpoint(
+                        CloudAsrProvider::Qwen,
+                        opt.id,
+                        ws,
+                    ),
+                    expected,
+                    "endpoint mismatch for model {}",
+                    opt.id
+                );
+            }
+        }
     }
 }

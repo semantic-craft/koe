@@ -7,6 +7,7 @@ struct TextServiceSettingsCard: View {
 
     var body: some View {
         let provider = store.settings.provider
+        let catalog = provider.effectiveCatalog
         KoeCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
@@ -28,7 +29,7 @@ struct TextServiceSettingsCard: View {
 
                 if draft.llmProvider != "custom" {
                     HStack(alignment: .top, spacing: 10) {
-                        ForEach(ModelSettingsCatalog.deepseekLlmModels) { option in
+                        ForEach(catalog.deepseekLlmModels) { option in
                             llmOptionCard(option, selected: draft.deepseekLlmModel == option.id) {
                                 draft.deepseekLlmModel = option.id
                             }
@@ -62,7 +63,7 @@ struct TextServiceSettingsCard: View {
                         .font(.system(size: AppFontSizes.xs))
                         .foregroundStyle(AppColors.textMuted)
                     Spacer()
-                    Text(endpointPreview)
+                    Text(endpointPreview(catalog: catalog))
                         .font(.system(size: AppFontSizes.xs, design: .monospaced))
                         .foregroundStyle(AppColors.textSecondary)
                         .lineLimit(1)
@@ -94,8 +95,8 @@ struct TextServiceSettingsCard: View {
         }
     }
 
-    private var endpointPreview: String {
-        let ep = draft.effectiveChatEndpoint()
+    private func endpointPreview(catalog: ProviderCatalogSnapshot) -> String {
+        let ep = draft.effectiveChatEndpoint(catalog: catalog)
         return ep.isEmpty ? "自定义地址（见服务商凭证高级展开项）" : ep
     }
 

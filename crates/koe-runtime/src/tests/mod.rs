@@ -5,3 +5,4 @@ mod capture_tests;
 mod lifecycle_tests;
 mod mcp_device_tests;
 mod navigation_tests;
+mod projection_contract_tests;

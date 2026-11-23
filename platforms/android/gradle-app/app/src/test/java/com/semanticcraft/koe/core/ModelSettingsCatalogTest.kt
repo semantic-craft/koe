@@ -146,11 +146,8 @@ class ModelSettingsCatalogTest {
         assertEquals("deepseek-v4-pro", blankCmd.model)
         assertEquals(true, blankCmd.enableThinking)
         assertEquals("ws-9", blankCmd.qwenWorkspaceId)
-        assertEquals(
-            "wss://ws-9.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
-            blankCmd.asrEndpoint,
-        )
-        assertEquals("https://api.deepseek.com/chat/completions", blankCmd.chatEndpoint)
+        assertEquals("", blankCmd.asrEndpoint)
+        assertEquals("", blankCmd.chatEndpoint)
 
         val blankJson = HostJson.json.parseToJsonElement(blankCmd.toJsonString()) as JsonObject
         assertFalse(blankJson.containsKey("apiKey"))
@@ -161,11 +158,14 @@ class ModelSettingsCatalogTest {
             qwenApiKey = "  sk-qwen-123  ",
             deepseekApiKey = "  sk-ds-456  ",
             asrProvider = "deepseek",
+            customAsrEndpoint = "  https://proxy.example.com/v1/tools/asr  ",
+            customChatEndpoint = "  https://proxy.example.com/chat/completions  ",
         ).toConfigureProviderCommand()
         assertEquals("sk-qwen-123", deepseekCmd.apiKey)
         assertEquals("sk-ds-456", deepseekCmd.deepseekApiKey)
         assertEquals("deepseek", deepseekCmd.asrProvider)
         assertEquals("", deepseekCmd.asrModel)
-        assertEquals("https://api.deepseek.com/v1/tools/asr", deepseekCmd.asrEndpoint)
+        assertEquals("https://proxy.example.com/v1/tools/asr", deepseekCmd.asrEndpoint)
+        assertEquals("https://proxy.example.com/chat/completions", deepseekCmd.chatEndpoint)
     }
 }

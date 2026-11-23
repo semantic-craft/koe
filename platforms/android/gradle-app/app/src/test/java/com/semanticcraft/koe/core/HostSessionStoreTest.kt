@@ -275,6 +275,18 @@ class HostSessionStoreTest {
         ) as JsonObject
         assertEquals("capture_action", actionObj["type"]?.jsonPrimitive?.content)
         assertEquals("retry_save", actionObj["action"]?.jsonPrimitive?.content)
+
+        assertEquals(0L, HostCommand.DeviceDownload(0L).fileId)
+        assertEquals(0xFFFF_FFFFL, HostCommand.DeviceDownload(0xFFFF_FFFFL).fileId)
+        for (invalidFileId in listOf(-1L, 0x1_0000_0000L)) {
+            var rejected = false
+            try {
+                HostCommand.DeviceDownload(invalidFileId)
+            } catch (_: IllegalArgumentException) {
+                rejected = true
+            }
+            assertTrue("DeviceDownload must reject out-of-range fileId $invalidFileId", rejected)
+        }
     }
 
     @Test

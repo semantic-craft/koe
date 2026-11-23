@@ -39,6 +39,8 @@ use std::{
 
 /// Version of the native JSON snapshot and command contract.
 pub const KOE_HOST_SNAPSHOT_VERSION: u32 = 2;
+/// Maximum accepted byte length of a native JSON command payload.
+pub const MAX_COMMAND_JSON_BYTES: usize = 2 * 1024 * 1024;
 
 
 /// Borrowed native microphone or system audio PCM16 chunk ingested into [`KoeRuntime`].
@@ -273,7 +275,7 @@ impl KoeRuntime {
 
     /// Applies a native command and returns a projection including any operation failure.
     pub fn dispatch_json(&mut self, json: &str, now: u64) -> String {
-        let result = if json.len() > 2 * 1024 * 1024 {
+        let result = if json.len() > MAX_COMMAND_JSON_BYTES {
             Err("操作内容过大".into())
         } else {
             DispatchMessage::parse(json).and_then(|message| {

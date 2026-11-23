@@ -56,7 +56,7 @@ public struct NavigationChromeSlice: Equatable, Sendable {
 public struct SidebarSlice: Equatable, Sendable {
     public let section: String
     public let recordCount: Int
-    public let proposedActionCount: Int
+    public let proposedTaskCount: Int
     public let memoryCount: Int
     public let activeModeIds: Set<String>
     public let appVersion: String
@@ -76,8 +76,10 @@ public struct SidebarSlice: Equatable, Sendable {
     public init(snapshot: HostSnapshot) {
         section = snapshot.section
         recordCount = snapshot.records.count
-        proposedActionCount = snapshot.tasks.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
-        memoryCount = snapshot.memories.reduce(0) { $0 + ($1.state != "dismissed" ? 1 : 0) }
+        proposedTaskCount = snapshot.reviewCounts?.proposedTaskCount
+            ?? snapshot.tasks.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
+        memoryCount = snapshot.reviewCounts?.activeMemoryCount
+            ?? snapshot.memories.reduce(0) { $0 + ($1.state != "dismissed" ? 1 : 0) }
         activeModeIds = Set(
             (snapshot.workspaces?.picker.cards ?? [])
                 .filter(\.isSessionActive)
@@ -117,8 +119,9 @@ public struct TodaySlice: Equatable, Sendable {
         beanControlState = snapshot.workspaces?.picker.beanControlState
             ?? (owner == "phone" ? "released" : "this_device")
         recordCount = snapshot.records.count
-        proposedActionCount = snapshot.tasks.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
-            + snapshot.memories.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
+        proposedActionCount = snapshot.reviewCounts?.proposedActionCount
+            ?? (snapshot.tasks.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) }
+                + snapshot.memories.reduce(0) { $0 + ($1.state == "proposed" ? 1 : 0) })
         deviceConnected = snapshot.device.connected
         deviceState = snapshot.device.state
         captureSelectedBadge = snapshot.capture.selectedBadge

@@ -3,12 +3,15 @@
 mod ask;
 mod provider;
 pub use provider::{
-    CloudAsrProvider, CredentialBinding, DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_FILETRANS_ASR_URL,
-    DEFAULT_DASHSCOPE_FLASH_ASR_URL, DEFAULT_DASHSCOPE_WS_URL, DEFAULT_DEEPSEEK_ASR_URL,
-    DEFAULT_DEEPSEEK_CHAT_URL, DEFAULT_DEEPSEEK_TEXT_MODEL, DEFAULT_TEXT_MODEL,
-    EndpointValidationError, LlmProvider, MeetingAudioPolicy, ProviderConfiguration,
-    QWEN_FILETRANS_ASR_MODEL, QWEN_FLASH_ASR_MODEL, QWEN_MESSAGE_ASR_MODEL, SpeechEngine,
-    is_loopback_host_str, is_loopback_http_endpoint, valid_reference, validate_provider_endpoint,
+    CloudAsrProvider, CredentialBinding, DEEPSEEK_LLM_MODELS, DEEPSEEK_PRO_TEXT_MODEL,
+    DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_FILETRANS_ASR_URL, DEFAULT_DASHSCOPE_FLASH_ASR_URL,
+    DEFAULT_DASHSCOPE_WS_URL, DEFAULT_DEEPSEEK_ASR_URL, DEFAULT_DEEPSEEK_CHAT_URL,
+    DEFAULT_DEEPSEEK_TEXT_MODEL, DEFAULT_QWEN_HOST, DEFAULT_TEXT_MODEL, EndpointValidationError,
+    LlmModelOption, LlmProvider, MeetingAudioPolicy, PROVIDER_CATALOG, ProviderCatalog,
+    ProviderConfiguration, QWEN_ASR_MODELS, QWEN_FILETRANS_ASR_MODEL, QWEN_FLASH_ASR_MODEL,
+    QWEN_MESSAGE_ASR_MODEL, QWEN_WORKSPACE_HOST_SUFFIX, QwenAsrModelOption, SpeechEngine,
+    is_loopback_host_str, is_loopback_http_endpoint, provider_catalog, valid_reference,
+    validate_provider_endpoint,
 };
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};

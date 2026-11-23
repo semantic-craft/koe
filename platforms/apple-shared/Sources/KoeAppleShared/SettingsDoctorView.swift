@@ -47,7 +47,8 @@ public struct SettingsDoctorView: View {
     }
 
     private func presetBar(speechEngine: String) -> some View {
-        let matched = draft.matchedPreset(speechEngine: speechEngine)
+        let catalog = store.settings.provider.effectiveCatalog
+        let matched = draft.matchedPreset(speechEngine: speechEngine, catalog: catalog)
         return HStack(spacing: 8) {
             Text("快捷组合")
                 .font(.system(size: AppFontSizes.xs))
@@ -67,7 +68,7 @@ public struct SettingsDoctorView: View {
             if store.settings.speech.engine != "cloud" {
                 store.send(.configureSpeech(engine: "cloud"))
             }
-            draft.applyPreset(id)
+            draft.applyPreset(id, catalog: store.settings.provider.effectiveCatalog)
         } label: {
             Text(title)
                 .font(.system(size: AppFontSizes.xs, weight: .medium))
@@ -89,7 +90,7 @@ public struct SettingsDoctorView: View {
                 .lineLimit(2)
             Spacer(minLength: 8)
             KoeActionButton("恢复官方默认") {
-                draft.applyPreset("hybrid")
+                draft.applyPreset("hybrid", catalog: store.settings.provider.effectiveCatalog)
                 draft.qwenWorkspaceId = ""
                 draft.enableThinking = false
                 if speech.engine != "cloud" {

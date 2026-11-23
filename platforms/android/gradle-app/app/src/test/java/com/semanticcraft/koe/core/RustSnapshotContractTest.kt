@@ -179,6 +179,154 @@ class RustSnapshotContractTest {
         }
     }
 
+    @Test
+    fun realRustSingleSourceOfTruthSnapshotContractDecodesAllAuthoritativeFields() {
+        ensureHostJniLoaded()
+        val workspaceDir = Files.createTempDirectory("koe-rust-kotlin-ssot-").toFile()
+        val bridge = RecordingHostJniBridgeClient()
+        val store = HostSessionStore(
+            workspacePath = workspaceDir.absolutePath,
+            bridge = bridge,
+            autoOpen = true,
+        )
+        try {
+            val baseNow = 1_800_310_000L
+            val initialProvider = store.settings.value.provider
+            val catalog = checkNotNull(initialProvider.catalog)
+            assertEquals(4, catalog.qwenAsrModels.size)
+            assertEquals(2, catalog.deepseekLlmModels.size)
+            assertEquals("dashscope.aliyuncs.com", catalog.defaultQwenHost)
+            assertEquals(".cn-beijing.maas.aliyuncs.com", catalog.qwenWorkspaceHostSuffix)
+            assertEquals("https://api.deepseek.com/v1/tools/asr", catalog.defaultDeepseekAsrEndpoint)
+            assertEquals("https://api.deepseek.com/chat/completions", catalog.defaultDeepseekChatEndpoint)
+            assertEquals("qwen-audio-3.1-asr-flash-streaming", catalog.defaultQwenAsrModel)
+            assertEquals("deepseek-flash", catalog.defaultDeepseekLlmModel)
+            assertEquals("wss://dashscope.aliyuncs.com/api-ws/v1/inference", initialProvider.defaultAsrEndpoint)
+            assertEquals("https://api.deepseek.com/chat/completions", initialProvider.defaultChatEndpoint)
+
+            val wsDraft = ModelSettingsDraft(
+                asrProvider = "qwen",
+                qwenAsrModel = "qwen-audio-3.1-asr-flash-filetrans",
+                llmProvider = "deepseek",
+                deepseekLlmModel = "deepseek-flash",
+                qwenWorkspaceId = "ws-and-1",
+            )
+            store.send(wsDraft.toConfigureProviderCommand(), nowEpochSec = baseNow + 1)
+            val expectedWsEndpoint =
+                "https://ws-and-1.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/asr/transcription"
+            assertEquals(expectedWsEndpoint, store.settings.value.provider.defaultAsrEndpoint)
+            assertEquals(expectedWsEndpoint, store.settings.value.provider.asrEndpoint)
+
+            assertEquals(0, store.device.value.transferErrorCode)
+            assertFalse(store.device.value.audioDecryptReady)
+            assertTrue(store.settings.value.speech.models.isNotEmpty())
+            assertTrue(store.settings.value.speech.models.all { it.languages.isNotEmpty() })
+
+            store.send(
+                HostCommand.CreateNote(title = "Android 单源笔记", text = "第一句。\n第二句。", stayOnPage = false),
+                nowEpochSec = baseNow + 2,
+            )
+            val noteDetail = checkNotNull(store.recordDetail.value.detail)
+            val noteRow = checkNotNull(store.records.value.firstOrNull { it.id == noteDetail.id })
+            assertTrue(noteRow.canTrash)
+            assertFalse(noteRow.isTranscribing)
+            assertTrue(noteDetail.canTrash)
+
+            store.send(HostCommand.SetRecordArchived(noteDetail.id, archived = true), nowEpochSec = baseNow + 3)
+            assertFalse(checkNotNull(store.records.value.firstOrNull { it.id == noteDetail.id }).canTrash)
+            assertFalse(checkNotNull(store.recordDetail.value.detail).canTrash)
+            store.send(HostCommand.SetRecordArchived(noteDetail.id, archived = false), nowEpochSec = baseNow + 4)
+            assertTrue(checkNotNull(store.records.value.firstOrNull { it.id == noteDetail.id }).canTrash)
+
+            val firstSeg = noteDetail.segments.first()
+            store.send(HostCommand.CreateTask(noteDetail.id, firstSeg.id), nowEpochSec = baseNow + 5)
+            store.send(HostCommand.SaveMemory(noteDetail.id, firstSeg.id), nowEpochSec = baseNow + 6)
+            val taskId = store.tasks.value.first().id
+            val memoryId = store.memories.value.first().id
+            store.send(HostCommand.ReviewItem(taskId, ReviewDecision.RESET), nowEpochSec = baseNow + 7)
+            store.send(HostCommand.ReviewItem(memoryId, ReviewDecision.RESET), nowEpochSec = baseNow + 8)
+
+            val latestSnap = HostJson.json.decodeFromString(HostSnapshot.serializer(), bridge.rawSnapshots.last())
+            assertEquals(
+                ReviewCountsSnapshot(
+                    proposedTaskCount = 1,
+                    proposedMemoryCount = 1,
+                    proposedActionCount = 2,
+                    activeMemoryCount = 1,
+                ),
+                latestSnap.reviewCounts,
+            )
+            assertEquals(2, store.today.value.proposedActionCount)
+
+            store.send(HostCommand.ReviewItem(memoryId, ReviewDecision.DISMISS), nowEpochSec = baseNow + 9)
+            val dismissedSnap = HostJson.json.decodeFromString(HostSnapshot.serializer(), bridge.rawSnapshots.last())
+            assertEquals(0, dismissedSnap.reviewCounts?.activeMemoryCount)
+            assertEquals(1, store.today.value.proposedActionCount)
+
+            store.send(
+                HostCommand.StartCaptureMode(mode = CaptureMode.QUICK_NOTE, stayOnPage = true),
+                nowEpochSec = baseNow + 10,
+            )
+            val mic = checkNotNull(store.currentMicrophone())
+            store.send(
+                HostAdapterEvent.MicrophonePrepared(
+                    recordId = mic.recordId,
+                    sessionId = mic.sessionId,
+                    epoch = 0L,
+                    clockNs = 1_000_000_000L,
+                ),
+                nowEpochSec = baseNow + 10,
+            )
+            store.send(
+                HostAdapterEvent.MicrophoneStarted(
+                    recordId = mic.recordId,
+                    sessionId = mic.sessionId,
+                    lane = "microphone",
+                    sampleRate = 16_000,
+                ),
+                nowEpochSec = baseNow + 10,
+            )
+            val ingest = store.ingestMicrophonePcm(
+                recordId = mic.recordId,
+                sessionId = mic.sessionId,
+                lane = "microphone",
+                sequence = 0L,
+                epoch = 0L,
+                capturedStartNs = 1_000_000_000L,
+                samples = ShortArray(320) { 240 },
+                sampleCount = 320,
+                nowEpochSec = baseNow + 10,
+            )
+            assertEquals(PcmIngestStatus.ACCEPTED, ingest.status)
+            store.send(HostCommand.SelectRecord(mic.recordId), nowEpochSec = baseNow + 10)
+            val liveRow = checkNotNull(store.records.value.firstOrNull { it.id == mic.recordId })
+            assertFalse(liveRow.canTrash)
+            assertTrue(liveRow.isTranscribing)
+            assertFalse(checkNotNull(store.recordDetail.value.detail).canTrash)
+
+            store.send(HostCommand.CaptureActionCommand(CaptureAction.END), nowEpochSec = baseNow + 11)
+            store.send(
+                HostAdapterEvent.MicrophoneStopped(
+                    recordId = mic.recordId,
+                    sessionId = mic.sessionId,
+                    lane = "microphone",
+                    sequence = 1L,
+                    epoch = 0L,
+                ),
+                nowEpochSec = baseNow + 11,
+            )
+            store.send(HostCommand.SelectRecord(mic.recordId), nowEpochSec = baseNow + 12)
+            val capturedDetail = checkNotNull(store.recordDetail.value.detail)
+            val micLane = checkNotNull(capturedDetail.captureLanes.firstOrNull { it.lane == "microphone" })
+            assertEquals(16_000, micLane.sampleRate)
+            assertTrue(micLane.durationMs > 0L)
+            assertEquals(320L, micLane.timeline.first().sampleCount)
+        } finally {
+            store.shutdown()
+            workspaceDir.deleteRecursively()
+        }
+    }
+
     private class LoopbackReleaseHttpServer(
         private val routes: Map<String, Pair<String, ByteArray>>,
     ) : AutoCloseable {

@@ -1,15 +1,19 @@
 package com.semanticcraft.koe.core
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class QwenAsrModelOption(
     val id: String,
     val note: String,
-    val badge: String?,
+    val badge: String? = null,
     val isRealtime: Boolean,
     val endpointLabel: String,
     val path: String,
-    val nonRealtimeWarning: String?,
+    val nonRealtimeWarning: String? = null,
 )
 
+@Serializable
 data class LlmModelOption(
     val id: String,
     val primaryBadge: String,
@@ -17,6 +21,28 @@ data class LlmModelOption(
     val metaBadges: List<String>,
     val description: String,
 )
+
+@Serializable
+data class ProviderCatalogSnapshot(
+    val qwenAsrModels: List<QwenAsrModelOption>,
+    val deepseekLlmModels: List<LlmModelOption>,
+    val defaultQwenHost: String,
+    val qwenWorkspaceHostSuffix: String,
+    val defaultDeepseekAsrEndpoint: String,
+    val defaultDeepseekChatEndpoint: String,
+    val defaultQwenAsrModel: String,
+    val defaultDeepseekLlmModel: String,
+) {
+    fun qwenHost(workspaceId: String): String {
+        val cleaned = workspaceId.trim()
+        return if (cleaned.isEmpty()) defaultQwenHost else "$cleaned$qwenWorkspaceHostSuffix"
+    }
+
+    fun qwenAsrOption(id: String): QwenAsrModelOption =
+        qwenAsrModels.firstOrNull { it.id == id }
+            ?: qwenAsrModels.firstOrNull()
+            ?: ModelSettingsCatalog.qwenAsrModels[0]
+}
 
 object ModelSettingsCatalog {
     val qwenAsrModels: List<QwenAsrModelOption> = listOf(
@@ -75,13 +101,20 @@ object ModelSettingsCatalog {
         ),
     )
 
-    fun qwenHost(workspaceId: String): String {
-        val cleaned = workspaceId.trim()
-        return if (cleaned.isEmpty()) "dashscope.aliyuncs.com" else "$cleaned.cn-beijing.maas.aliyuncs.com"
-    }
+    val fallback: ProviderCatalogSnapshot = ProviderCatalogSnapshot(
+        qwenAsrModels = qwenAsrModels,
+        deepseekLlmModels = deepseekLlmModels,
+        defaultQwenHost = "dashscope.aliyuncs.com",
+        qwenWorkspaceHostSuffix = ".cn-beijing.maas.aliyuncs.com",
+        defaultDeepseekAsrEndpoint = "https://api.deepseek.com/v1/tools/asr",
+        defaultDeepseekChatEndpoint = "https://api.deepseek.com/chat/completions",
+        defaultQwenAsrModel = "qwen-audio-3.1-asr-flash-streaming",
+        defaultDeepseekLlmModel = "deepseek-flash",
+    )
 
-    fun qwenAsrOption(id: String): QwenAsrModelOption =
-        qwenAsrModels.firstOrNull { it.id == id } ?: qwenAsrModels[0]
+    fun qwenHost(workspaceId: String): String = fallback.qwenHost(workspaceId)
+
+    fun qwenAsrOption(id: String): QwenAsrModelOption = fallback.qwenAsrOption(id)
 }
 
 data class ModelSettingsDraft(
@@ -106,10 +139,11 @@ data class ModelSettingsDraft(
     val resolvedLlmModelForSave: String
         get() = when (llmProvider) {
             "custom" -> customLlmModel.trim()
-            else -> deepseekLlmModel.ifEmpty { "deepseek-flash" }
+            else -> deepseekLlmModel.ifEmpty { ModelSettingsCatalog.fallback.defaultDeepseekLlmModel }
         }
 
     fun syncWith(provider: ProviderSnapshot): ModelSettingsDraft {
+        val catalog = provider.effectiveCatalog
         val nextAsrProvider = if (provider.asrProvider == "deepseek") "deepseek" else "qwen"
         val nextQwenAsrModel = if (provider.asrModel.isNotEmpty()) provider.asrModel else qwenAsrModel
         val nextLlmProvider = if (provider.llmProvider == "custom") "custom" else "deepseek"
@@ -119,7 +153,7 @@ data class ModelSettingsDraft(
         } else if (provider.llmProvider == "deepseek" && provider.model.isNotEmpty()) {
             provider.model
         } else {
-            "deepseek-flash"
+            catalog.defaultDeepseekLlmModel
         }
 
         val updated = copy(
@@ -131,7 +165,7 @@ data class ModelSettingsDraft(
             customLlmModel = nextCustomLlmModel,
             enableThinking = provider.enableThinking,
         )
-        val defaultChat = updated.computedDefaultChatEndpoint()
+        val defaultChat = provider.defaultChatEndpoint ?: updated.computedDefaultChatEndpoint(catalog)
         val nextCustomChatEndpoint = if (
             nextLlmProvider == "custom" ||
             (provider.llmProvider == "deepseek" && provider.chatEndpoint != defaultChat)
@@ -140,7 +174,7 @@ data class ModelSettingsDraft(
         } else {
             ""
         }
-        val defaultAsr = updated.computedDefaultAsrEndpoint()
+        val defaultAsr = provider.defaultAsrEndpoint ?: updated.computedDefaultAsrEndpoint(catalog)
         val nextCustomAsrEndpoint = if (provider.asrEndpoint != defaultAsr) provider.asrEndpoint else ""
         return updated.copy(
             customChatEndpoint = nextCustomChatEndpoint,
@@ -158,50 +192,52 @@ data class ModelSettingsDraft(
         }
     }
 
-    fun computedDefaultAsrEndpoint(): String {
+    fun computedDefaultAsrEndpoint(catalog: ProviderCatalogSnapshot = ModelSettingsCatalog.fallback): String {
         if (asrProvider == "deepseek") {
-            return "https://api.deepseek.com/v1/tools/asr"
+            return catalog.defaultDeepseekAsrEndpoint
         }
-        val host = ModelSettingsCatalog.qwenHost(qwenWorkspaceId)
-        val meta = ModelSettingsCatalog.qwenAsrOption(qwenAsrModel)
+        val host = catalog.qwenHost(qwenWorkspaceId)
+        val meta = catalog.qwenAsrOption(qwenAsrModel)
         val scheme = if (meta.isRealtime) "wss://" else "https://"
         return scheme + host + meta.path
     }
 
-    fun effectiveAsrEndpoint(): String {
+    fun effectiveAsrEndpoint(catalog: ProviderCatalogSnapshot = ModelSettingsCatalog.fallback): String {
         val custom = customAsrEndpoint.trim()
-        return custom.ifEmpty { computedDefaultAsrEndpoint() }
+        return custom.ifEmpty { computedDefaultAsrEndpoint(catalog) }
     }
 
-    fun computedDefaultChatEndpoint(): String = "https://api.deepseek.com/chat/completions"
+    fun computedDefaultChatEndpoint(catalog: ProviderCatalogSnapshot = ModelSettingsCatalog.fallback): String =
+        catalog.defaultDeepseekChatEndpoint
 
-    fun effectiveChatEndpoint(): String {
+    fun effectiveChatEndpoint(catalog: ProviderCatalogSnapshot = ModelSettingsCatalog.fallback): String {
         val custom = customChatEndpoint.trim()
         if (llmProvider == "custom") return custom
-        return custom.ifEmpty { computedDefaultChatEndpoint() }
+        return custom.ifEmpty { computedDefaultChatEndpoint(catalog) }
     }
 
-    fun applyPreset(preset: String): ModelSettingsDraft = when (preset) {
-        "deepseek-full" -> copy(
-            customAsrEndpoint = "",
-            customChatEndpoint = "",
-            asrProvider = "deepseek",
-            llmProvider = "deepseek",
-            deepseekLlmModel = "deepseek-flash",
-        )
-        else -> copy(
-            customAsrEndpoint = "",
-            customChatEndpoint = "",
-            asrProvider = "qwen",
-            qwenAsrModel = "qwen-audio-3.1-asr-flash-streaming",
-            llmProvider = "deepseek",
-            deepseekLlmModel = "deepseek-flash",
-        )
-    }
+    fun applyPreset(preset: String, catalog: ProviderCatalogSnapshot = ModelSettingsCatalog.fallback): ModelSettingsDraft =
+        when (preset) {
+            "deepseek-full" -> copy(
+                customAsrEndpoint = "",
+                customChatEndpoint = "",
+                asrProvider = "deepseek",
+                llmProvider = "deepseek",
+                deepseekLlmModel = catalog.defaultDeepseekLlmModel,
+            )
+            else -> copy(
+                customAsrEndpoint = "",
+                customChatEndpoint = "",
+                asrProvider = "qwen",
+                qwenAsrModel = catalog.defaultQwenAsrModel,
+                llmProvider = "deepseek",
+                deepseekLlmModel = catalog.defaultDeepseekLlmModel,
+            )
+        }
 
-    fun matchedPreset(speechEngine: String): String? {
+    fun matchedPreset(speechEngine: String, catalog: ProviderCatalogSnapshot = ModelSettingsCatalog.fallback): String? {
         if (speechEngine != "cloud") return null
-        if (asrProvider == "qwen" && qwenAsrModel == "qwen-audio-3.1-asr-flash-streaming" && llmProvider == "deepseek") {
+        if (asrProvider == "qwen" && qwenAsrModel == catalog.defaultQwenAsrModel && llmProvider == "deepseek") {
             return "hybrid"
         }
         if (asrProvider == "deepseek" && llmProvider == "deepseek") {
@@ -224,8 +260,8 @@ data class ModelSettingsDraft(
         model = resolvedLlmModelForSave,
         enableThinking = enableThinking,
         qwenWorkspaceId = qwenWorkspaceId.trim(),
-        asrEndpoint = effectiveAsrEndpoint(),
-        chatEndpoint = effectiveChatEndpoint(),
+        asrEndpoint = customAsrEndpoint.trim(),
+        chatEndpoint = customChatEndpoint.trim(),
     )
 
     companion object {

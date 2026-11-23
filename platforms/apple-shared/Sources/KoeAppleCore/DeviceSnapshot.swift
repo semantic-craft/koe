@@ -72,6 +72,8 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public let progress: Double
     public let guide: DeviceGuideSnapshot?
     public var transferPhase: String
+    public let transferErrorCode: UInt8?
+    public let audioDecryptReady: Bool
     public var liveDurationMs: UInt64
     public var liveBytes: UInt64
     public var liveRecordId: String?
@@ -82,8 +84,66 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         case phase, state, statusDetail, connected, busy, recording, stopping, deviceName
         case batteryPercent, charging, boxBatteryPercent, boxCharging
         case serialNumber, firmwareVersion, storageLabel, storageUsedRatio, files, progress, guide
-        case transferPhase, liveDurationMs, liveBytes, liveRecordId
+        case transferPhase, transferErrorCode, audioDecryptReady, liveDurationMs, liveBytes, liveRecordId
         case autoConnect, teardownStopFramesHex
+    }
+
+    public init(
+        phase: String,
+        state: String,
+        statusDetail: String,
+        connected: Bool,
+        busy: Bool,
+        recording: Bool,
+        stopping: Bool,
+        deviceName: String,
+        batteryPercent: Int?,
+        charging: Bool,
+        boxBatteryPercent: Int?,
+        boxCharging: Bool,
+        serialNumber: String,
+        firmwareVersion: String,
+        storageLabel: String,
+        storageUsedRatio: Double?,
+        files: [DeviceFileSnapshot],
+        progress: Double,
+        guide: DeviceGuideSnapshot?,
+        transferPhase: String,
+        transferErrorCode: UInt8? = nil,
+        audioDecryptReady: Bool = false,
+        liveDurationMs: UInt64,
+        liveBytes: UInt64,
+        liveRecordId: String?,
+        autoConnect: Bool,
+        teardownStopFramesHex: [String]
+    ) {
+        self.phase = phase
+        self.state = state
+        self.statusDetail = statusDetail
+        self.connected = connected
+        self.busy = busy
+        self.recording = recording
+        self.stopping = stopping
+        self.deviceName = deviceName
+        self.batteryPercent = batteryPercent
+        self.charging = charging
+        self.boxBatteryPercent = boxBatteryPercent
+        self.boxCharging = boxCharging
+        self.serialNumber = serialNumber
+        self.firmwareVersion = firmwareVersion
+        self.storageLabel = storageLabel
+        self.storageUsedRatio = storageUsedRatio
+        self.files = files
+        self.progress = progress
+        self.guide = guide
+        self.transferPhase = transferPhase
+        self.transferErrorCode = transferErrorCode
+        self.audioDecryptReady = audioDecryptReady
+        self.liveDurationMs = liveDurationMs
+        self.liveBytes = liveBytes
+        self.liveRecordId = liveRecordId
+        self.autoConnect = autoConnect
+        self.teardownStopFramesHex = teardownStopFramesHex
     }
 
     public static let empty = DeviceSnapshot(
@@ -107,6 +167,8 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         progress: 0,
         guide: nil,
         transferPhase: "idle",
+        transferErrorCode: nil,
+        audioDecryptReady: false,
         liveDurationMs: 0,
         liveBytes: 0,
         liveRecordId: nil,
@@ -140,6 +202,8 @@ extension DeviceSnapshot {
         progress = try c.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0
         guide = try c.decodeIfPresent(DeviceGuideSnapshot.self, forKey: .guide)
         transferPhase = try c.decodeIfPresent(String.self, forKey: .transferPhase) ?? "idle"
+        transferErrorCode = try c.decodeIfPresent(UInt8.self, forKey: .transferErrorCode)
+        audioDecryptReady = try c.decodeIfPresent(Bool.self, forKey: .audioDecryptReady) ?? false
         liveDurationMs = try c.decodeIfPresent(UInt64.self, forKey: .liveDurationMs) ?? 0
         liveBytes = try c.decodeIfPresent(UInt64.self, forKey: .liveBytes) ?? 0
         liveRecordId = try c.decodeIfPresent(String.self, forKey: .liveRecordId)

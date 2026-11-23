@@ -77,7 +77,7 @@ class AndroidSystemUxTest {
 
     @Test fun protectedRowsCannotSwipeToTrash() {
         val records = listOf(RecordSnapshot("archive", "归档条目", archived = true),
-            RecordSnapshot("saving", "保存条目"), RecordSnapshot("busy", "整理条目", status = "整理中"))
+            RecordSnapshot("saving", "保存条目"), RecordSnapshot("busy", "整理条目", status = "整理中", canTrash = false))
         val snapshot = fixture.copy(records = records, microphone = MicrophoneSnapshot("saving", "session", "microphone", "input", phase = "saving"))
         val store = store(snapshot)
         ui.setContent { KoeTheme { RecordsScreen(store, {}) } }

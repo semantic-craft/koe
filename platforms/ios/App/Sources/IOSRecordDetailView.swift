@@ -314,7 +314,3 @@ struct IOSRecordDetailView: View {
         }
     }
 }
-
-private extension RecordDetailSnapshot {
-    var canTrash: Bool { !archived && !isProcessing }
-}

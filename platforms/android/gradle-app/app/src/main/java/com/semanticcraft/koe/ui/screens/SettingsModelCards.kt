@@ -31,7 +31,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.semanticcraft.koe.core.HostPlatformSnapshot
 import com.semanticcraft.koe.core.LlmModelOption
-import com.semanticcraft.koe.core.ModelSettingsCatalog
 import com.semanticcraft.koe.core.ModelSettingsDraft
 import com.semanticcraft.koe.core.ProviderSnapshot
 import com.semanticcraft.koe.core.QwenAsrModelOption
@@ -57,9 +56,10 @@ fun SettingsAsrCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = KoeTheme.colors
+    val catalog = provider.effectiveCatalog
     val isCloud = speech.engine == "cloud"
     val isQwen = draft.asrProvider == "qwen"
-    val qwenOption = ModelSettingsCatalog.qwenAsrOption(draft.qwenAsrModel)
+    val qwenOption = catalog.qwenAsrOption(draft.qwenAsrModel)
 
     KoeCard(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -100,7 +100,7 @@ fun SettingsAsrCard(
 
                 if (isQwen) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        ModelSettingsCatalog.qwenAsrModels.forEach { option ->
+                        catalog.qwenAsrModels.forEach { option ->
                             QwenAsrOptionRow(
                                 option = option,
                                 selected = draft.qwenAsrModel == option.id,
@@ -136,7 +136,7 @@ fun SettingsAsrCard(
 
                 EndpointPreviewBox(
                     label = if (isQwen) qwenOption.endpointLabel else "当前 ASR 接口（HTTP 整段上传 <=120s）",
-                    endpoint = draft.effectiveAsrEndpoint(),
+                    endpoint = draft.effectiveAsrEndpoint(catalog),
                 )
             } else {
                 Surface(shape = KoeShapes.control, color = colors.bgSubtle, modifier = Modifier.fillMaxWidth()) {
@@ -184,6 +184,7 @@ fun SettingsLlmCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = KoeTheme.colors
+    val catalog = provider.effectiveCatalog
     val isCustom = draft.llmProvider == "custom"
 
     KoeCard(modifier = modifier) {
@@ -218,7 +219,7 @@ fun SettingsLlmCard(
 
             if (!isCustom) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModelSettingsCatalog.deepseekLlmModels.forEach { option ->
+                    catalog.deepseekLlmModels.forEach { option ->
                         DeepSeekLlmOptionCard(
                             option = option,
                             selected = draft.deepseekLlmModel == option.id,
@@ -254,7 +255,7 @@ fun SettingsLlmCard(
 
             EndpointPreviewBox(
                 label = "当前 LLM 接口（OpenAI 兼容）",
-                endpoint = draft.effectiveChatEndpoint().ifEmpty { "请填写自定义兼容服务对话接口地址" },
+                endpoint = draft.effectiveChatEndpoint(catalog).ifEmpty { "请填写自定义兼容服务对话接口地址" },
             )
 
             SettingsToggleRow(
