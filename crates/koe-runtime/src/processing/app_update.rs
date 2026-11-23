@@ -225,7 +225,7 @@ impl KoeRuntime {
             };
             return Ok(());
         }
-        if self.app_update.pending_operation_id.is_some() {
+        if self.app_update.pending_operation_id.is_some() || self.env.is_replay_mode() {
             return Ok(());
         }
         let operation_id = self.next_job;

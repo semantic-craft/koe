@@ -309,6 +309,11 @@ fn handle_rpc_call(
         .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string())),
         "koe/doctor" => with_session(handle, |rt| rt.doctor_snapshot(now(0)))
             .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string())),
+        "koe/diagnostics" => with_session(handle, |rt| {
+            serde_json::to_value(rt.export_diagnostics_bundle(now(0)))
+                .map_err(|e| (-32603, format!("序列化诊断包失败：{e}")))
+        })
+        .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?,
         "koe/mcp_tools_list" => Ok(KoeRuntime::mcp_tools_list()),
         "koe/mcp_tool_call" => handle_mcp_tool_call(handle, request, shutdown),
         _ => Err((-32601, "未知方法".to_string())),

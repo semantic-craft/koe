@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct IOSSettingsView: View {
     let store: HostSessionStore
+    private let onExportDiagnostics: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focusedField: String?
     @State private var draft = ModelSettingsDraft()
@@ -11,6 +12,11 @@ struct IOSSettingsView: View {
 
     @State private var trace: IOSTraceDocument?
     @State private var exportingTrace = false
+
+    init(store: HostSessionStore, onExportDiagnostics: (() -> Void)? = nil) {
+        self.store = store
+        self.onExportDiagnostics = onExportDiagnostics
+    }
 
     var body: some View {
         let platform = store.platform
@@ -144,6 +150,13 @@ struct IOSSettingsView: View {
                 }
                 Section("关于 Koe") {
                     LabeledContent("版本", value: store.settings.appUpdate.versionWithBuildLabel)
+                    if let onExportDiagnostics {
+                        Button("导出诊断包") {
+                            onExportDiagnostics()
+                            dismiss()
+                        }
+                        .accessibilityIdentifier("settings-export-diagnostics-bundle")
+                    }
                     Button("导出诊断追踪") {
                         trace = IOSTraceDocument(json: store.exportTraceJSON())
                         exportingTrace = true

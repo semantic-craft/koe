@@ -125,7 +125,14 @@ impl ProductStore {
             .path
             .parent()
             .ok_or_else(|| StoreError::InvalidData("工作区路径无父目录".to_string()))?;
-        if let Err(error) = fs::File::open(parent).and_then(|directory| directory.sync_all()) {
+        if let Err(error) = fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .and_then(|()| {
+                koe_client_base::fault_injection::check(
+                    koe_client_base::fault_injection::FsFaultPoint::StoreDirSync,
+                )
+            })
+        {
             self.uncertain = true;
             return Err(StoreError::CommitUncertain(error));
         }

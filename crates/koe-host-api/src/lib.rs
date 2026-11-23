@@ -182,6 +182,16 @@ pub extern "C" fn koe_host_session_snapshot_json(handle: u64, epoch: u64) -> *mu
     })
 }
 
+/// Returns redacted diagnostics bundle JSON; release the result with `koe_host_string_free`.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn koe_host_session_export_diagnostics_json(handle: u64, epoch: u64) -> *mut c_char {
+    guarded(|| {
+        with_session(handle, |rt| string(rt.export_diagnostics_json(now(epoch))))
+            .unwrap_or(std::ptr::null_mut())
+    })
+}
+
 /// Applies a command; domain failures are represented in the returned snapshot.
 /// # Safety
 /// `command` must point to a valid terminated UTF-8 string, or be null.

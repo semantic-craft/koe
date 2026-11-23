@@ -24,6 +24,8 @@ public final class KoeNativeBridge {
 
   public static native byte[] nativeSessionSnapshotJson(long handle, long nowEpochSec);
 
+  public static native byte[] nativeSessionExportDiagnosticsJson(long handle, long nowEpochSec);
+
   public static native byte[] nativeSessionDispatchJson(
       long handle, byte[] commandUtf8, long nowEpochSec);
 

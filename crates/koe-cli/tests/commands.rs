@@ -1472,3 +1472,147 @@ fn mcp_stdio_online_ask_polls_live_host_session_over_unix_socket() {
     assert!(persisted.text.contains("周五前交付原生界面"));
     assert_eq!(persisted.sources[0].source.recording_key, seed_id);
 }
+
+#[test]
+fn cli_doctor_bundle_and_replay_roundtrip_online_and_offline_without_leaking_secrets() {
+    let workspace = Workspace::new();
+    let now_sec = 1_820_000_000u64;
+    let bundle_path = workspace.0.join("exported-bundle.json");
+
+    let host = HostSessionGuard::open(&workspace.0).expect("live host session must open");
+    let _ = host
+        .dispatch_json(
+            &json!({
+                "type": "configure_provider",
+                "apiKey": "sk-cli-secret-88888",
+                "model": "deepseek-flash"
+            })
+            .to_string(),
+            now_sec,
+        )
+        .unwrap();
+    let _ = host
+        .dispatch_json(
+            &json!({
+                "type": "create_note",
+                "title": "CLI私密标题",
+                "text": "CLI私密正文"
+            })
+            .to_string(),
+            now_sec + 1,
+        )
+        .unwrap();
+
+    // Online bundle export to stdout via local bridge.
+    let stdout_out = cli(&workspace.0, &["doctor", "--bundle"]);
+    assert!(
+        stdout_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stdout_out.stderr)
+    );
+    let stdout_text = String::from_utf8(stdout_out.stdout).unwrap();
+    assert!(!stdout_text.contains("sk-cli-secret-88888"));
+    assert!(!stdout_text.contains("CLI私密标题"));
+    assert!(!stdout_text.contains("CLI私密正文"));
+    let online_bundle: Value = serde_json::from_str(&stdout_text).unwrap();
+    assert_eq!(online_bundle["bundleVersion"], 1);
+    assert!(online_bundle["doctor"]["runtimeState"].is_object());
+    assert!(online_bundle["flightRecorder"]["entries"].as_array().unwrap().len() >= 2);
+
+    // Online bundle export to explicit path.
+    let file_out = cli(
+        &workspace.0,
+        &["doctor", "--bundle", bundle_path.to_str().unwrap()],
+    );
+    assert!(
+        file_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file_out.stderr)
+    );
+    let file_raw = std::fs::read_to_string(&bundle_path).unwrap();
+    assert!(!file_raw.contains("sk-cli-secret-88888"));
+    let file_bundle: Value = serde_json::from_str(&file_raw).unwrap();
+    assert_eq!(file_bundle["bundleVersion"], 1);
+
+    // Replay must succeed WITHOUT requiring or locking the live workspace!
+    let replay_out = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .args(["doctor", "--replay", bundle_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        replay_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay_out.stderr)
+    );
+    let report: Value = serde_json::from_slice(&replay_out.stdout).unwrap();
+    assert_eq!(
+        report["finalGeneration"],
+        file_bundle["doctor"]["generation"]
+    );
+    assert_eq!(
+        report["doctor"]["runtimeState"],
+        file_bundle["doctor"]["runtimeState"]
+    );
+    assert_eq!(report["snapshotSummary"]["recordCount"], 1);
+
+    // Offline bundle export after closing live host.
+    drop(host);
+    let offline_out = cli(&workspace.0, &["doctor", "--bundle"]);
+    assert!(
+        offline_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&offline_out.stderr)
+    );
+    let offline_bundle: Value = serde_json::from_slice(&offline_out.stdout).unwrap();
+    assert_eq!(offline_bundle["bundleVersion"], 1);
+    assert!(offline_bundle["doctor"]["runtimeState"].is_object());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&bundle_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "exported diagnostics bundle must have 0600 permissions");
+    }
+
+    // `koe --bundle doctor --workspace <ws>` must not swallow `doctor` as bundle path.
+    let prefix_flag_out = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .args(["--bundle", "doctor", "--workspace"])
+        .arg(&workspace.0)
+        .output()
+        .unwrap();
+    assert!(
+        prefix_flag_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prefix_flag_out.stderr)
+    );
+    let prefix_bundle: Value = serde_json::from_slice(&prefix_flag_out.stdout).unwrap();
+    assert_eq!(prefix_bundle["bundleVersion"], 1);
+    assert!(!workspace.0.join("doctor").exists());
+}
+
+#[test]
+fn online_bridge_diagnostics_succeeds_after_2048_large_ble_chunks() {
+    let workspace = Workspace::new();
+    let now_sec = 1_820_100_000u64;
+    let host = HostSessionGuard::open(&workspace.0).expect("live host session must open");
+
+    let chunk = vec![0xABu8; 512];
+    for i in 0..2048u64 {
+        let _ = host.ingest_ble(&chunk, now_sec + i);
+    }
+
+    let out = cli(&workspace.0, &["doctor", "--bundle"]);
+    assert!(
+        out.status.success(),
+        "online bridge diagnostics must stay under 2 MiB IPC limit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.len() < 2 * 1024 * 1024,
+        "diagnostics payload {} bytes exceeded 2 MiB",
+        out.stdout.len()
+    );
+    let bundle: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(bundle["bundleVersion"], 1);
+    assert!(bundle["flightRecorder"]["droppedCount"].as_u64().unwrap() > 0);
+}

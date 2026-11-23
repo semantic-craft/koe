@@ -558,6 +558,7 @@ dependencies = [
 name = "koe-cli"
 version = "2.7.1"
 dependencies = [
+ "koe-client-base",
  "koe-engine",
  "koe-host-api",
  "koe-opus",

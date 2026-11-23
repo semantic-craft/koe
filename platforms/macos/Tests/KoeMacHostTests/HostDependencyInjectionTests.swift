@@ -166,6 +166,73 @@ struct HostDependencyInjectionTests {
         #expect(store.snapshot.error == nil)
     }
 
+    @Test("NativeFileActions exports redacted diagnostics bundle via FilePanelPresenting")
+    func nativeFileActionsExportsRedactedDiagnosticsBundleViaPanelPresenter() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("koe-diag-di-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let diagnostics = HostDiagnosticLog(maxCapacity: 50)
+        diagnostics.warning(
+            category: "test",
+            event: "simulated_failure",
+            detail: "header Authorization: Bearer mac-host-secret-888 failed"
+        )
+        let store = HostSessionStore(workspacePath: directory.path, diagnostics: diagnostics)
+        defer { store.shutdown() }
+
+        let now: UInt64 = 1_800_300_000
+        store.send(
+            .configureProvider(apiKey: "sk-mac-export-secret-9999", model: "deepseek-flash"),
+            nowEpochSec: now
+        )
+        store.send(
+            .createNote(title: "Mac私密标题", text: "Mac私密正文"),
+            nowEpochSec: now + 1
+        )
+
+        let presenter = FakeFilePanelPresenter()
+        let outURL = directory.appendingPathComponent("exported-diagnostics.json")
+        presenter.exportFileURL = outURL
+        let actions = NativeFileActions(panelPresenter: presenter)
+        actions.store = store
+
+        actions.exportDiagnosticsBundle(nowEpochSec: now + 2)
+
+        let request = try #require(presenter.exportFileRequests.last)
+        #expect(request.title == "导出诊断包")
+        #expect(request.suggestedFilename == "koe-diagnostics-1800300002.json")
+        #expect(request.allowedContentTypes == [.json])
+        #expect(FileManager.default.fileExists(atPath: outURL.path))
+
+        let raw = try String(contentsOf: outURL, encoding: .utf8)
+        for forbidden in [
+            "sk-mac-export-secret-9999",
+            "mac-host-secret-888",
+            "Mac私密标题",
+            "Mac私密正文",
+        ] {
+            #expect(!raw.contains(forbidden))
+        }
+
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+        )
+        let rust = try #require(json["rust"] as? [String: Any])
+        #expect(rust["bundleVersion"] as? Int == 1)
+        let doctor = try #require(rust["doctor"] as? [String: Any])
+        #expect(doctor["runtimeState"] is [String: Any])
+        let flightRecorder = try #require(rust["flightRecorder"] as? [String: Any])
+        let recorded = try #require(flightRecorder["entries"] as? [Any])
+        #expect(recorded.count >= 2)
+        let hostDiag = try #require(json["hostDiagnostics"] as? [[String: Any]])
+        #expect(hostDiag.contains { ($0["event"] as? String) == "simulated_failure" })
+        #expect(json["hostTrace"] is [Any])
+        let attributes = try FileManager.default.attributesOfItem(atPath: outURL.path)
+        let permissions = try #require(attributes[.posixPermissions] as? Int)
+        #expect((permissions & 0o777) == 0o600)
+    }
+
     @Test("KoeSelfCheckRunner.runSmokeTest exercises real KoeAppDelegate wiring cleanly without mutating UserDefaults")
     func smokeTestExercisesHostDelegateCleanly() {
         let key = BluetoothBridge.savedPeripheralKey

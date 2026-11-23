@@ -93,11 +93,16 @@ final class IOSDetailWorkflowTests: XCTestCase {
             provider["deepseekCredentialState"] = "missing_saved"
             json["provider"] = provider
         }
-        let view = try IOSSettingsView(store: store).inspect()
+        var exportRequested = 0
+        let view = try IOSSettingsView(store: store, onExportDiagnostics: { exportRequested += 1 }).inspect()
         try view.find(button: "重试读取安全配置").tap()
         XCTAssertTrue(store.recentTraceEntries.contains { $0.name == "retry_provider_credentials" })
         XCTAssertNoThrow(try view.find(button: "Qwen 语音 + DeepSeek 文本"))
+        try view.find(button: "导出诊断包").tap()
+        XCTAssertEqual(exportRequested, 1)
         XCTAssertNoThrow(try view.find(button: "导出诊断追踪"))
+        let unwired = try IOSSettingsView(store: store).inspect()
+        XCTAssertThrowsError(try unwired.find(button: "导出诊断包"))
     }
 
     func testEditingTitleTranscriptAndSpeakersPreservesTheOriginalAndMergesSegments() throws {

@@ -119,6 +119,7 @@ class AndroidFileActionsTest {
         var exportWorkspacePayload: String? = "# 导出纪要\n内容"
         var exportWorkspaceError: String? = null
         var exportBatchFiles: Map<String, String> = emptyMap()
+        var diagnosticsJson: String? = null
 
         override fun apiVersion(): Int = 2
         override fun sessionCreate(directory: String): Long = 901L
@@ -132,6 +133,8 @@ class AndroidFileActionsTest {
         override fun sessionGeneration(handle: Long): Long = current.generation
         override fun sessionSnapshotJson(handle: Long, nowEpochSec: Long): String =
             HostJson.json.encodeToString(HostSnapshot.serializer(), current)
+
+        override fun sessionExportDiagnosticsJson(handle: Long, nowEpochSec: Long): String? = diagnosticsJson
 
         override fun sessionDispatchJson(handle: Long, commandJson: String, nowEpochSec: Long): String {
             val obj = HostJson.json.parseToJsonElement(commandJson) as JsonObject
@@ -417,5 +420,97 @@ class AndroidFileActionsTest {
         queuedJobs.removeAt(0).run()
         assertTrue("unbound store must not receive commands", bridge.commands.isEmpty())
         assertNull(store.navigation.value.effectiveError)
+    }
+
+    @Test
+    fun exportDiagnosticsBundleStagesInIsolatedDirPrunesOldestAndSurvivesSessionBind() = withTempRoots { importRoot, exportRoot ->
+        val bridge = FileActionBridgeClient()
+        bridge.diagnosticsJson = """{"bundleVersion":1,"doctor":{"runtimeState":{"generation":1}},"flightRecorder":{"entries":[]}}"""
+        val store = HostSessionStore("/tmp/koe-diag-export", bridge = bridge)
+        val safIo = FakeSafIo()
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        val appExportRoot = File(app.cacheDir, "koe-saf-export").apply { mkdirs() }
+        val appDiagnosticsRoot = File(app.cacheDir, "koe-diagnostics").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val launchedIntents = mutableListOf<android.content.Intent>()
+        val launcher = AndroidDiagnosticsShareLauncher(app) { intent -> launchedIntents.add(intent) }
+        val actions = AndroidFileActions(
+            safIo = safIo,
+            importStagingRoot = importRoot,
+            exportStagingRoot = appExportRoot,
+            ioExecutor = Executor { it.run() },
+            diagnosticsExportRoot = appDiagnosticsRoot,
+            diagnosticsShareLauncher = launcher,
+        )
+        actions.onSessionBound(store)
+        try {
+            actions.requestExportDiagnosticsBundle(nowEpochSec = 1_800_400_000L)
+
+            assertEquals(1, launchedIntents.size)
+            val chooser = launchedIntents.single()
+            assertEquals(android.content.Intent.ACTION_CHOOSER, chooser.action)
+            val shareIntent = chooser.getParcelableExtra(android.content.Intent.EXTRA_INTENT, android.content.Intent::class.java)
+            assertEquals(android.content.Intent.ACTION_SEND, shareIntent?.action)
+            assertEquals("application/json", shareIntent?.type)
+            assertTrue((shareIntent?.flags ?: 0) and android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            val streamUri = shareIntent?.getParcelableExtra(android.content.Intent.EXTRA_STREAM, Uri::class.java)
+            assertEquals(
+                "content://${app.packageName}.fileprovider/diagnostics/koe-diagnostics-1800400000.json",
+                streamUri.toString(),
+            )
+            val staged = File(appDiagnosticsRoot, "koe-diagnostics-1800400000.json")
+            assertTrue("expected staged diagnostics bundle in isolated koe-diagnostics dir", staged.isFile)
+            assertTrue(appExportRoot.listFiles().orEmpty().isEmpty())
+            val contents = staged.readText()
+            assertTrue(contents.contains("\"bundleVersion\": 1"))
+            assertTrue(contents.contains("\"hostDiagnostics\""))
+            assertTrue(contents.contains("\"hostTrace\""))
+
+            val unredactedMarkdown = File(appExportRoot, "private-notes.md").apply { writeText("# secret") }
+            val exposed = runCatching {
+                androidx.core.content.FileProvider.getUriForFile(
+                    app,
+                    "${app.packageName}.fileprovider",
+                    unredactedMarkdown,
+                )
+            }
+            assertTrue("FileProvider must reject unredacted files under koe-saf-export", exposed.isFailure)
+
+            // Re-binding session sweeps koe-saf-export but preserves active diagnostics shares.
+            actions.onSessionBound(store)
+            assertFalse(unredactedMarkdown.exists())
+            assertTrue("onSessionBound must not delete staged diagnostics bundle", staged.isFile)
+
+            // Exporting additional bundles prunes older ones, keeping only the 3 most recent.
+            for (offset in 1L..4L) {
+                actions.requestExportDiagnosticsBundle(nowEpochSec = 1_800_400_000L + offset)
+            }
+            val retained = appDiagnosticsRoot.listFiles().orEmpty().map { it.name }.sorted()
+            assertEquals(
+                listOf(
+                    "koe-diagnostics-1800400002.json",
+                    "koe-diagnostics-1800400003.json",
+                    "koe-diagnostics-1800400004.json",
+                ),
+                retained,
+            )
+
+            val failingActions = AndroidFileActions(
+                safIo = safIo,
+                importStagingRoot = importRoot,
+                exportStagingRoot = exportRoot,
+                ioExecutor = Executor { it.run() },
+                diagnosticsExportRoot = appDiagnosticsRoot,
+                diagnosticsShareLauncher = DiagnosticsShareLauncher { throw android.content.ActivityNotFoundException("no share sheet") },
+            )
+            failingActions.onSessionBound(store)
+            failingActions.requestExportDiagnosticsBundle(nowEpochSec = 1_800_400_010L)
+            assertEquals("系统没有可分享诊断包的应用。", store.navigation.value.effectiveError)
+        } finally {
+            appExportRoot.deleteRecursively()
+            appDiagnosticsRoot.deleteRecursively()
+        }
     }
 }

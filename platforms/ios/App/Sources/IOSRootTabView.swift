@@ -15,6 +15,7 @@ enum IOSDetailRoute: Hashable {
 
 struct IOSRootTabView: View {
     let store: HostSessionStore
+    @Environment(IOSFileActions.self) private var fileActions: IOSFileActions?
 
     @State private var selectedTab: IOSAppTab = .today
     @State private var todayPath: [IOSDetailRoute] = []
@@ -24,6 +25,7 @@ struct IOSRootTabView: View {
     @State private var dismissedNotice: String?
     @State private var showingDeviceSheet = false
     @State private var showingSettingsSheet = false
+    @State private var pendingDiagnosticsExport = false
 
     private var tabSelection: Binding<IOSAppTab> {
         Binding(
@@ -107,8 +109,16 @@ struct IOSRootTabView: View {
         .sheet(isPresented: $showingDeviceSheet) {
             IOSDeviceSheetView(store: store, onOpenRecord: openRecordInCurrentTab)
         }
-        .sheet(isPresented: $showingSettingsSheet) {
-            IOSSettingsView(store: store)
+        .sheet(isPresented: $showingSettingsSheet, onDismiss: {
+            if pendingDiagnosticsExport {
+                pendingDiagnosticsExport = false
+                fileActions?.exportDiagnosticsBundle()
+            }
+        }) {
+            IOSSettingsView(
+                store: store,
+                onExportDiagnostics: fileActions == nil ? nil : { pendingDiagnosticsExport = true }
+            )
         }
     }
 

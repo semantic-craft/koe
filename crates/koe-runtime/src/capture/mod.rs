@@ -229,6 +229,26 @@ impl ActiveCaptureSession {
         }
     }
 
+    pub(crate) const fn tag(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::SingleShotMic { .. } => "single_shot_mic",
+            Self::AllDay {
+                source: AllDayActiveSource::Bean,
+                ..
+            } => "all_day_bean",
+            Self::AllDay {
+                source: AllDayActiveSource::Microphone(_),
+                ..
+            } => "all_day_mic",
+            Self::AllDay {
+                source: AllDayActiveSource::DrainingMicrophone,
+                ..
+            } => "all_day_draining_mic",
+            Self::BeanSingleShot { .. } => "bean_single_shot",
+        }
+    }
+
     pub(crate) const fn state_fingerprint(&self) -> (u8, bool, Option<SingleShotMode>) {
         match self {
             Self::Idle => (0, false, None),
@@ -405,7 +425,7 @@ impl KoeRuntime {
         Ok(id)
     }
     pub(crate) fn drive_analysis_queue(&mut self) {
-        if self.is_quitting() {
+        if self.is_quitting() || self.env.is_replay_mode() {
             return;
         }
         let _ = self.reclaim_stale_summaries();

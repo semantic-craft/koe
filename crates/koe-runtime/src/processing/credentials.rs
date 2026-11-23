@@ -33,11 +33,48 @@ pub trait CredentialStore: Send {
 }
 
 /// Session-only adapter used by CLI, tests and unsigned development hosts.
-#[derive(Default)]
 pub struct IsolatedCredentials {
     items: BTreeMap<String, String>,
     next: u64,
+    instance_id: u64,
+    clock: crate::observability::env::RuntimeClock,
 }
+
+impl Default for IsolatedCredentials {
+    fn default() -> Self {
+        Self {
+            items: BTreeMap::new(),
+            next: 0,
+            instance_id: u64::from(std::process::id()),
+            clock: crate::observability::env::RuntimeClock::system(),
+        }
+    }
+}
+
+impl IsolatedCredentials {
+    /// Creates an isolated in-memory credential store with deterministic reference allocation.
+    #[must_use]
+    pub fn deterministic(seed: u64) -> Self {
+        Self {
+            items: BTreeMap::new(),
+            next: 0,
+            instance_id: seed,
+            clock: crate::observability::env::RuntimeClock::deterministic(seed % 1_000_000_000),
+        }
+    }
+
+    /// Creates an isolated credential store backed by an injected [`crate::RuntimeClock`].
+    #[must_use]
+    pub fn with_clock(clock: crate::observability::env::RuntimeClock, instance_id: u64) -> Self {
+        Self {
+            items: BTreeMap::new(),
+            next: 0,
+            instance_id,
+            clock,
+        }
+    }
+}
+
 impl CredentialStore for IsolatedCredentials {
     fn isolated(&self) -> bool {
         true
@@ -47,15 +84,8 @@ impl CredentialStore for IsolatedCredentials {
     }
     fn prepare(&mut self, _secret: &str) -> Result<String, CredentialError> {
         self.next += 1;
-        Ok(format!(
-            "isolated-{}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| CredentialError)?
-                .as_nanos(),
-            self.next
-        ))
+        let nonce = self.clock.now_nanos().map_err(|_| CredentialError)?;
+        Ok(format!("isolated-{}-{nonce}-{}", self.instance_id, self.next))
     }
     fn create(&mut self, reference: &str, secret: &str) -> Result<(), CredentialError> {
         self.items.insert(reference.into(), secret.into());

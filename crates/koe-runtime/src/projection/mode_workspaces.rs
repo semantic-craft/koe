@@ -5,7 +5,7 @@ use crate::{
         studio::CaptureSelection,
     },
     command::CaptureMode,
-    projection::{local_date, status},
+    projection::status,
     workspace::platform::HostPlatformKind,
     *,
 };
@@ -147,6 +147,9 @@ impl KoeRuntime {
         include_analysis: bool,
         include_sources: bool,
     ) -> Result<(), String> {
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         let options = MarkdownExportOptions {
             include_analysis,
             include_sources,
@@ -168,7 +171,7 @@ impl KoeRuntime {
                 .filter(|r| {
                     r.is_live()
                         && r.mode == RecordMode::AllDay
-                        && local_date(r.aggregate.created_at_epoch_sec) == Some(parsed)
+                        && self.local_date(r.aggregate.created_at_epoch_sec) == Some(parsed)
                 })
                 .collect();
             day_records.sort_by_key(|r| {
@@ -193,6 +196,9 @@ impl KoeRuntime {
         include_analysis: bool,
         include_sources: bool,
     ) -> Result<(), String> {
+        if self.env.is_replay_mode() {
+            return Ok(());
+        }
         if !directory.is_dir() {
             return Err("导出目录不存在或无法写入".into());
         }
@@ -362,14 +368,14 @@ impl KoeRuntime {
         } = counts;
         let can_control = !self.is_quitting() && !self.store.requires_reopen();
         let can_start = self.can_start_capture_mode(capture_selection);
-        let today = local_date(now);
+        let today = self.local_date(now);
         let today_all_day: Vec<&ProductRecord> = records
             .iter()
             .copied()
             .filter(|r| {
                 r.is_live()
                     && r.mode == RecordMode::AllDay
-                    && local_date(r.aggregate.created_at_epoch_sec) == today
+                    && self.local_date(r.aggregate.created_at_epoch_sec) == today
             })
             .collect();
         let today_timeline = build_day_timeline(&today_all_day);

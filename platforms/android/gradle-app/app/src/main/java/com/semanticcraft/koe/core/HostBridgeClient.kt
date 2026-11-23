@@ -52,6 +52,8 @@ interface HostBridgeClient {
     fun sessionDrainLocalAsr(handle: Long): ByteArray?
 
     fun sessionPollTimers(handle: Long, elapsedMs: Long, nowEpochSec: Long): Long
+
+    fun sessionExportDiagnosticsJson(handle: Long, nowEpochSec: Long): String? = null
 }
 
 class JniHostBridgeClient : HostBridgeClient {
@@ -191,6 +193,12 @@ class JniHostBridgeClient : HostBridgeClient {
     override fun sessionPollTimers(handle: Long, elapsedMs: Long, nowEpochSec: Long): Long {
         ensureLibrariesLoaded()
         return KoeNativeBridge.nativeSessionPollTimers(handle, elapsedMs, nowEpochSec)
+    }
+
+    override fun sessionExportDiagnosticsJson(handle: Long, nowEpochSec: Long): String? {
+        ensureLibrariesLoaded()
+        val raw = KoeNativeBridge.nativeSessionExportDiagnosticsJson(handle, nowEpochSec) ?: return null
+        return String(raw, StandardCharsets.UTF_8)
     }
 
     companion object {

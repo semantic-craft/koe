@@ -310,7 +310,7 @@ impl KoeRuntime {
                     results.push_back(LiveEvent::Failed(
                         "请先配置云端语音凭据；原始录音已保留".into(),
                     ));
-                } else {
+                } else if !self.env.is_replay_mode() {
                     let cfg = self.workspace().provider_configuration();
                     let asr_model = if cfg.asr_model.trim().is_empty() {
                         DEFAULT_ASR_MODEL.to_string()

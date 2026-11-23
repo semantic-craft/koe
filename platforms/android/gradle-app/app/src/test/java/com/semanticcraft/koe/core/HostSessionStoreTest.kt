@@ -30,6 +30,8 @@ class HostSessionStoreTest {
     ) : HostBridgeClient {
         val dispatchedCommands = mutableListOf<String>()
         var destroyedHandle: Long? = null
+        var diagnosticsJson: String? = null
+        var lastDiagnosticsEpochSec: Long? = null
 
         override fun apiVersion(): Int = version
 
@@ -93,6 +95,11 @@ class HostSessionStoreTest {
         override fun sessionDrainLocalAsr(handle: Long): ByteArray = ByteArray(0)
 
         override fun sessionPollTimers(handle: Long, elapsedMs: Long, nowEpochSec: Long): Long = 0L
+
+        override fun sessionExportDiagnosticsJson(handle: Long, nowEpochSec: Long): String? {
+            lastDiagnosticsEpochSec = nowEpochSec
+            return diagnosticsJson
+        }
     }
 
     private fun loadRichAndroidSnapshot(): String {
@@ -499,6 +506,37 @@ class HostSessionStoreTest {
             releaseFirst.countDown()
             store.shutdown()
             executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun exportDiagnosticsBundleComposesRustHostLogsAndTraceAndFormatsFilename() {
+        KoeLogger.clearForTests()
+        val bridge = FakeHostBridgeClient(
+            snapshotJson = HostJson.json.encodeToString(HostSnapshot.serializer(), HostSnapshot.empty.copy(generation = 5L)),
+        )
+        bridge.diagnosticsJson = """{"bundleVersion":1,"doctor":{"runtimeState":{"generation":5}},"flightRecorder":{"entries":[]}}"""
+        val store = HostSessionStore(
+            workspacePath = "/tmp/koe-diag-compose",
+            bridge = bridge,
+            clockEpochSec = { 1_800_300_000L },
+            clockEpochMs = { 1_800_300_000_000L },
+        )
+        try {
+            KoeLogger.i("KoeSession", "diag_probe", "apiKey=sk-secret-unit-123")
+            val json = store.exportDiagnosticsBundleJson(nowEpochSec = 1_800_300_010L)
+            assertFalse(json.contains("sk-secret-unit-123"))
+            assertEquals("koe-diagnostics-1800300010.json", diagnosticsBundleFilename(1_800_300_010L))
+
+            val parsed = HostJson.json.parseToJsonElement(json) as JsonObject
+            val rust = parsed["rust"] as JsonObject
+            assertEquals(1, rust["bundleVersion"]?.jsonPrimitive?.content?.toInt())
+            assertNotNull(parsed["hostDiagnostics"])
+            assertNotNull(parsed["hostTrace"])
+            assertEquals(1_800_300_010L, bridge.lastDiagnosticsEpochSec)
+        } finally {
+            store.shutdown()
+            KoeLogger.clearForTests()
         }
     }
 }

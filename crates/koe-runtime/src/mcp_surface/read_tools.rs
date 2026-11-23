@@ -53,7 +53,7 @@ impl KoeRuntime {
             "get_today_brief" => {
                 ensure_allowed_keys(obj, &[])?;
                 let eff_now = if now > 0 { now } else { self.last_now_sec };
-                let today = crate::projection::local_date(eff_now);
+                let today = self.local_date(eff_now);
                 let live_records: Vec<&ProductRecord> = self
                     .sorted_records()
                     .into_iter()
@@ -69,8 +69,7 @@ impl KoeRuntime {
                     .iter()
                     .filter(|r| {
                         today.is_some_and(|t| {
-                            crate::projection::local_date(r.aggregate.created_at_epoch_sec)
-                                == Some(t)
+                            self.local_date(r.aggregate.created_at_epoch_sec) == Some(t)
                         })
                     })
                     .map(|r| r.aggregate.recording_id.as_str())

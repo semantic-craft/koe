@@ -313,6 +313,17 @@ Java_com_semanticcraft_koe_bridge_KoeNativeBridge_nativeSessionSnapshotJson(
 }
 
 JNIEXPORT jbyteArray JNICALL
+Java_com_semanticcraft_koe_bridge_KoeNativeBridge_nativeSessionExportDiagnosticsJson(
+    JNIEnv *env, jclass, jlong handle, jlong nowEpochSec) {
+  if (handle <= 0 || nowEpochSec < 0) {
+    return nullptr;
+  }
+  char *json = koe_host_session_export_diagnostics_json(
+      static_cast<uint64_t>(handle), static_cast<uint64_t>(nowEpochSec));
+  return owned_cstr_to_byte_array(env, json);
+}
+
+JNIEXPORT jbyteArray JNICALL
 Java_com_semanticcraft_koe_bridge_KoeNativeBridge_nativeSessionDispatchJson(
     JNIEnv *env, jclass, jlong handle, jbyteArray commandUtf8,
     jlong nowEpochSec) {

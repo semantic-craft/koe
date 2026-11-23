@@ -268,6 +268,7 @@ open class KoeApplication : Application() {
                     requestImportFile = { fileActions.requestImportFile() },
                     requestExportWorkspace = fileActions::requestExportWorkspace,
                     requestExportRecords = { recordIds -> fileActions.requestExportRecords(recordIds) },
+                    requestExportDiagnosticsBundle = { fileActions.requestExportDiagnosticsBundle() },
                 ),
             )
         }

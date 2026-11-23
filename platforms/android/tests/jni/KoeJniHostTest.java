@@ -381,6 +381,24 @@ public final class KoeJniHostTest {
       long polledGen = KoeNativeBridge.nativeSessionPollTimers(handle, 500L, now + 12);
       assertTrue(polledGen > 0, "pollTimers must return generation > 0");
 
+      String diagnosticsBundle = utf8String(
+          KoeNativeBridge.nativeSessionExportDiagnosticsJson(handle, now + 12));
+      assertContains(diagnosticsBundle, "\"bundleVersion\":1", "diagnostics bundle version must be 1");
+      assertContains(diagnosticsBundle, "\"runtimeState\":{", "diagnostics bundle must include doctor.runtimeState");
+      assertContains(diagnosticsBundle, "\"flightRecorder\":{", "diagnostics bundle must include flightRecorder");
+      assertTrue(
+          !diagnosticsBundle.contains("sk-qwen-jni-12345678"),
+          "qwen secret must never leak into JNI diagnostics bundle");
+      assertTrue(
+          !diagnosticsBundle.contains("sk-deepseek-jni-87654321"),
+          "deepseek secret must never leak into JNI diagnostics bundle");
+      assertTrue(
+          !diagnosticsBundle.contains("sk-qwen-retry-999999"),
+          "retried secret must never leak into JNI diagnostics bundle");
+      assertTrue(
+          !diagnosticsBundle.contains(supplementary),
+          "private note text must be redacted in JNI diagnostics bundle");
+
       byte[] withNul = new byte[] {'{', 0, '}'};
       assertTrue(
           KoeNativeBridge.nativeSessionDispatchJson(handle, withNul, now + 12) == null,
@@ -459,6 +477,12 @@ public final class KoeJniHostTest {
       assertTrue(
           KoeNativeBridge.nativeSessionSnapshotJson(handle, -1L) == null,
           "negative nowEpochSec snapshotJson must return null");
+      assertTrue(
+          KoeNativeBridge.nativeSessionExportDiagnosticsJson(-1L, now) == null,
+          "negative handle exportDiagnosticsJson must return null");
+      assertTrue(
+          KoeNativeBridge.nativeSessionExportDiagnosticsJson(handle, -1L) == null,
+          "negative nowEpochSec exportDiagnosticsJson must return null");
 
       byte[] navCmd = utf8("{\"type\":\"navigate\",\"section\":\"records\"}");
       assertTrue(
