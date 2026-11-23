@@ -109,41 +109,40 @@ final class IOSLaunchLifecycleTests: XCTestCase {
             "Koe", "-koe-workspace", root.appendingPathComponent("workspace").path,
             "-koe-trace-output", output.path,
         ], environment: [:], allowsCoreBluetooth: false)
-        defer { session.shutdown() }
-        addTeardownBlock { try FileManager.default.removeItem(at: root) }
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async { continuation.resume() }
+        addTeardownBlock {
+            await IOSLaunchSession.flushTraceQueue()
+            try FileManager.default.removeItem(at: root)
         }
 
-        session.store.refreshSnapshot()
+        let nowEpochSec = UInt64(Date().timeIntervalSince1970)
+        session.store.refreshSnapshot(nowEpochSec: nowEpochSec)
+        let snapshot = session.store.snapshot
+        session.store.reportNativeError("测试追踪快照")
+        session.store.refreshSnapshot(nowEpochSec: nowEpochSec)
+        XCTAssertEqual(session.store.snapshot, snapshot)
+        XCTAssertEqual(session.store.recentTraceEntries.last?.kind, "snapshot")
+
+        session.shutdown()
         let expected = session.store.recentTraceEntries
-        let deadline = ContinuousClock.now + .seconds(1)
-        var entries: [HostTraceEntry] = []
-        repeat {
-            if let data = try? Data(contentsOf: output) {
-                entries = try JSONDecoder().decode([HostTraceEntry].self, from: data)
-            }
-            if entries == expected { break }
-            try await Task.sleep(for: .milliseconds(25))
-        } while ContinuousClock.now < deadline
-        XCTAssertEqual(entries.count, expected.count, "快照未变时也应保留最后一次追踪事件")
-        XCTAssertEqual(entries.last, expected.last)
+        await IOSLaunchSession.flushTraceQueue()
+        let entries = try JSONDecoder().decode([HostTraceEntry].self, from: Data(contentsOf: output))
+        XCTAssertEqual(entries, expected, "快照未变时也应保留最后一次追踪事件")
     }
 
     func testTraceWriteFailureDoesNotPolluteUserErrorBar() async throws {
         let root = directory
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        addTeardownBlock { try FileManager.default.removeItem(at: root) }
+        addTeardownBlock {
+            await IOSLaunchSession.flushTraceQueue()
+            try FileManager.default.removeItem(at: root)
+        }
         let session = IOSLaunchSession(bridgeActions: HostBridgeActions(), arguments: [
             "Koe", "-koe-workspace", root.appendingPathComponent("workspace").path,
             "-koe-trace-output", root.path,
         ], environment: [:], allowsCoreBluetooth: false)
         defer { session.shutdown() }
 
-        await withCheckedContinuation { continuation in
-            IOSLaunchSession.traceQueue.async { continuation.resume() }
-        }
-        await Task.yield()
+        await IOSLaunchSession.flushTraceQueue()
         XCTAssertNil(session.store.nativeError)
         XCTAssertNil(session.store.navigation.effectiveError)
     }

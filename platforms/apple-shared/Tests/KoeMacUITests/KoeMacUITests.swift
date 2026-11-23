@@ -1,10 +1,10 @@
 import Foundation
 import Testing
 @testable import KoeAppleCore
-@testable import KoeAppleShared
+@testable import KoeMacUI
 
 @Suite("Native product contract")
-struct KoeAppleSharedTests {
+struct KoeMacUITests {
     @Test("An older snapshot cannot replace the current state")
     @MainActor
     func rejectsStaleSnapshot() {

@@ -1,7 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import SwiftUI
 import Testing
 @testable import Koe

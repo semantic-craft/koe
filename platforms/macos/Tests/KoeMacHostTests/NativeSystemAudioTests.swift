@@ -1,6 +1,6 @@
 import CoreAudio
 import CoreGraphics
-import KoeAppleShared
+import KoeMacUI
 import XCTest
 @testable import Koe
 

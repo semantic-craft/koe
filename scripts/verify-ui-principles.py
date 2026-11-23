@@ -665,7 +665,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
                 violations.extend(
                     _check_scoped_observation(path_str, comment_stripped, slice_kind="@Observable")
                 )
-        elif "/platforms/apple-shared/Sources/KoeAppleShared/" in norm_path:
+        elif "/platforms/apple-shared/Sources/KoeMacUI/" in norm_path:
             if filename not in SNAPSHOT_ALLOWED_APPLE_SHARED_FILES:
                 violations.extend(
                     _check_scoped_observation(
@@ -838,7 +838,7 @@ def check_install_script(script_text: str) -> list[str]:
 
 
 def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
-    theme_path = root / "platforms" / "apple-shared" / "Sources" / "KoeAppleShared" / "DesignKit.swift"
+    theme_path = root / "platforms" / "apple-shared" / "Sources" / "KoeMacUI" / "DesignKit.swift"
     theme_res = (
         check_theme_file(theme_path.read_text(encoding="utf-8"))
         if theme_path.exists()

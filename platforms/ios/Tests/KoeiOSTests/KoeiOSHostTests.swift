@@ -193,7 +193,10 @@ final class KoeiOSHostTests: XCTestCase {
         )
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("koe-ios-launch-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        addTeardownBlock {
+            await IOSLaunchSession.flushTraceQueue()
+            try FileManager.default.removeItem(at: tempDir)
+        }
         let workspaceDir = tempDir.appendingPathComponent("workspace", isDirectory: true)
         let traceURL = tempDir.appendingPathComponent("trace.json")
 
@@ -207,7 +210,6 @@ final class KoeiOSHostTests: XCTestCase {
             ],
             environment: [:], allowsCoreBluetooth: false
         )
-        defer { session.shutdown() }
 
         XCTAssertEqual(session.store.platform.hostDisplayName, "iPhone")
         XCTAssertEqual(session.store.device.deviceName, "Soundcore Work")
@@ -221,14 +223,10 @@ final class KoeiOSHostTests: XCTestCase {
         let secret = "sk-should-never-appear-in-trace"
         session.store.send(.configureProvider(apiKey: secret, model: "deepseek-flash"))
 
+        session.shutdown()
         let expected = session.store.recentTraceEntries
-        let deadline = ContinuousClock.now + .seconds(2)
-        var traceText = ""
-        repeat {
-            traceText = (try? String(contentsOf: traceURL, encoding: .utf8)) ?? ""
-            if (try? JSONDecoder().decode([HostTraceEntry].self, from: Data(traceText.utf8))) == expected { break }
-            try await Task.sleep(for: .milliseconds(20))
-        } while ContinuousClock.now < deadline
+        await IOSLaunchSession.flushTraceQueue()
+        let traceText = try String(contentsOf: traceURL, encoding: .utf8)
         XCTAssertFalse(traceText.contains(secret))
         XCTAssertFalse(traceText.contains("iOS 架构同步会"))
         let entries = try JSONDecoder().decode([HostTraceEntry].self, from: Data(traceText.utf8))

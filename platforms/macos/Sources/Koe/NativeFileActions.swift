@@ -1,5 +1,5 @@
 import AppKit
-import KoeAppleShared
+import KoeMacUI
 import UniformTypeIdentifiers
 
 @MainActor

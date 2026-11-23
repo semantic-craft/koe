@@ -1,6 +1,6 @@
 import Foundation
 @testable import KoeAppleCore
-import KoeAppleShared
+import KoeMacUI
 import Testing
 @testable import Koe
 

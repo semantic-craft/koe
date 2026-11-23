@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 
 @MainActor
 final class NativeActivity {

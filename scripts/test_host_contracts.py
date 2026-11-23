@@ -26,7 +26,7 @@ KOTLIN_ADAPTER_EVENT = (
 )
 CLIENT_STATUS_CHECK_DIRS = (
     REPO_ROOT / 'platforms/apple-shared/Sources/KoeAppleCore',
-    REPO_ROOT / 'platforms/apple-shared/Sources/KoeAppleShared',
+    REPO_ROOT / 'platforms/apple-shared/Sources/KoeMacUI',
     REPO_ROOT / 'platforms/macos/Sources/Koe',
     REPO_ROOT / 'platforms/ios/App/Sources',
     REPO_ROOT / 'platforms/android/gradle-app/app/src/main/java',

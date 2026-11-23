@@ -17,7 +17,7 @@ let strictConcurrencySettings: [SwiftSetting] = [
 ]
 
 let package = Package(
-    name: "KoeAppleShared",
+    name: "KoeApple",
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
@@ -28,8 +28,8 @@ let package = Package(
             targets: ["KoeAppleCore"]
         ),
         .library(
-            name: "KoeAppleShared",
-            targets: ["KoeAppleShared"]
+            name: "KoeMacUI",
+            targets: ["KoeMacUI"]
         ),
     ],
     targets: [
@@ -45,9 +45,9 @@ let package = Package(
             swiftSettings: strictConcurrencySettings
         ),
         .target(
-            name: "KoeAppleShared",
+            name: "KoeMacUI",
             dependencies: ["KoeAppleCore"],
-            path: "Sources/KoeAppleShared",
+            path: "Sources/KoeMacUI",
             swiftSettings: strictConcurrencySettings
         ),
         .testTarget(
@@ -58,9 +58,9 @@ let package = Package(
             linkerSettings: hostApiLinkerSettings
         ),
         .testTarget(
-            name: "KoeAppleSharedTests",
-            dependencies: ["KoeAppleShared", "KoeAppleCore", "CKoeHostApi"],
-            path: "Tests/KoeAppleSharedTests",
+            name: "KoeMacUITests",
+            dependencies: ["KoeMacUI", "KoeAppleCore", "CKoeHostApi"],
+            path: "Tests/KoeMacUITests",
             swiftSettings: strictConcurrencySettings,
             linkerSettings: hostApiLinkerSettings
         ),

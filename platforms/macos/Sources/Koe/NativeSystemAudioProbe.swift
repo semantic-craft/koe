@@ -2,7 +2,7 @@ import AudioToolbox
 import CoreAudio
 import CoreGraphics
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import os
 
 protocol SystemAudioAuthorizer: Sendable {

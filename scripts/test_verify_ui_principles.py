@@ -21,7 +21,7 @@ verifier = load_verifier()
 
 VALID_LIGHT_THEME = (
     Path(__file__).resolve().parent.parent
-    / "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+    / "platforms/apple-shared/Sources/KoeMacUI/DesignKit.swift"
 ).read_text(encoding="utf-8")
 
 VALID_ANDROID_THEME = (
@@ -67,7 +67,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/SampleView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/SampleView.swift",
             bad_swift_ui,
             strict_scale=True,
         )
@@ -94,7 +94,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/CleanView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/CleanView.swift",
             clean_swift_ui,
             strict_scale=True,
         )
@@ -115,7 +115,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/TokenView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/TokenView.swift",
             token_ui,
             strict_scale=True,
         )
@@ -124,7 +124,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
 
         bad_token_ui = token_ui.replace("AppFontSizes.lg", "AppFontSizes.xxl")
         res_bad = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/TokenView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/TokenView.swift",
             bad_token_ui,
             strict_scale=True,
         )
@@ -148,7 +148,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/AdversarialView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/AdversarialView.swift",
             adversarial_ui,
             strict_scale=True,
         )
@@ -191,7 +191,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/AskView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/AskView.swift",
             bad_plain_order,
             strict_scale=True,
         )
@@ -270,7 +270,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res_player = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/PlayerBarView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/PlayerBarView.swift",
             bad_player,
             strict_scale=True,
         )
@@ -399,7 +399,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
 
     def test_repository_rejects_native_palette_regressions(self) -> None:
         root = Path(__file__).resolve().parent.parent
-        theme_path = Path("platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift")
+        theme_path = Path("platforms/apple-shared/Sources/KoeMacUI/DesignKit.swift")
         native_theme = (root / theme_path).read_text(encoding="utf-8")
         for before, after, violation in (
             ("accent = Color(hex: 0x242426)", "accent = Color(hex: 0xFF0000)", "approved charcoal"),
@@ -456,7 +456,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         '''
         for path in (
-            "platforms/apple-shared/Sources/KoeAppleShared/InterpView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/InterpView.swift",
             "platforms/ios/App/Sources/InterpView.swift",
             "platforms/macos/Sources/Koe/InterpView.swift",
         ):
@@ -527,7 +527,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         android_theme_rel = Path(
             "platforms/android/gradle-app/app/src/main/java/com/semanticcraft/koe/ui/theme/KoeTheme.kt"
         )
-        swift_theme_rel = Path("platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift")
+        swift_theme_rel = Path("platforms/apple-shared/Sources/KoeMacUI/DesignKit.swift")
         with tempfile.TemporaryDirectory() as tmp:
             fixture_root = Path(tmp)
             (fixture_root / swift_theme_rel).parent.mkdir(parents=True)
@@ -561,7 +561,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/CommentedView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/CommentedView.swift",
             commented_swift,
             strict_scale=True,
         )
@@ -579,7 +579,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res_snapshot = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/SidebarView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/SidebarView.swift",
             bad_snapshot_view,
             strict_scale=True,
         )
@@ -589,14 +589,14 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         )
 
         allowed_store = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/HostSessionStore.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/HostSessionStore.swift",
             bad_snapshot_view,
             strict_scale=True,
         )
         self.assertEqual(allowed_store["violations"], [])
 
         allowed_slices = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/HostSessionSlices.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/HostSessionSlices.swift",
             bad_snapshot_view,
             strict_scale=True,
         )
@@ -614,7 +614,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             }}
             """
             res_hf = verifier.check_ui_file(
-                "platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift",
+                "platforms/apple-shared/Sources/KoeMacUI/WorkspaceRootView.swift",
                 bad_hf_view,
                 strict_scale=True,
             )
@@ -640,7 +640,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             }}
             """
             res_leaf = verifier.check_ui_file(
-                f"platforms/apple-shared/Sources/KoeAppleShared/{leaf_file}",
+                f"platforms/apple-shared/Sources/KoeMacUI/{leaf_file}",
                 compliant_leaf,
                 strict_scale=True,
             )
@@ -657,7 +657,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res_lm_leak = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/LiveMinutesView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/LiveMinutesView.swift",
             live_minutes_parent_leak,
             strict_scale=True,
         )
@@ -678,7 +678,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res_cross_leak = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/PlayerBarView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/PlayerBarView.swift",
             cross_leaf_leak,
             strict_scale=True,
         )
@@ -726,7 +726,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res_page = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/WorkspaceRootView.swift",
             compliant_page,
             strict_scale=True,
         )
@@ -862,7 +862,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             """,
         ):
             res = verifier.check_ui_file(
-                "platforms/apple-shared/Sources/KoeAppleShared/OffsetView.swift",
+                "platforms/apple-shared/Sources/KoeMacUI/OffsetView.swift",
                 bad_foreach,
                 strict_scale=True,
             )
@@ -883,7 +883,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         }
         """
         res_ok = verifier.check_ui_file(
-            "platforms/apple-shared/Sources/KoeAppleShared/SafeView.swift",
+            "platforms/apple-shared/Sources/KoeMacUI/SafeView.swift",
             commented_offset,
             strict_scale=True,
         )
@@ -1263,7 +1263,7 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
     def test_analyze_repository_scans_android_kotlin_and_skips_build_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture_root = Path(tmp)
-            theme_path = fixture_root / "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+            theme_path = fixture_root / "platforms/apple-shared/Sources/KoeMacUI/DesignKit.swift"
             theme_path.parent.mkdir(parents=True)
             theme_path.write_text(VALID_LIGHT_THEME, encoding="utf-8")
 

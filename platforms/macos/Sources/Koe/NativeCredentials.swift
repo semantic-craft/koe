@@ -1,5 +1,5 @@
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import Security
 
 private struct MacKeychainInteractionGate: AppleKeychainInteractionGate {

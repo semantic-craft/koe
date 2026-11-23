@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
 import Foundation
-import KoeAppleShared
+import KoeMacUI
 import Observation
 import SwiftUI
 import Testing

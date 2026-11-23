@@ -43,7 +43,7 @@ final class IOSLaunchSession {
     let fileActions: IOSFileActions
     let coordinator: IOSHostCoordinator
     private let inputMonitor: IOSAudioInputMonitor
-    static let traceQueue = DispatchQueue(label: "com.semanticcraft.koe.ios.trace", qos: .utility)
+    private static let traceQueue = DispatchQueue(label: "com.semanticcraft.koe.ios.trace", qos: .utility)
     private let traceURLs: [URL]
 
     init(
@@ -138,6 +138,12 @@ final class IOSLaunchSession {
                     Self.logger.error("Trace write failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
+        }
+    }
+
+    static func flushTraceQueue() async {
+        await withCheckedContinuation { continuation in
+            Self.traceQueue.async { continuation.resume() }
         }
     }
 

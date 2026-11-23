@@ -8,7 +8,7 @@ packages:
   ViewInspector:
     url: https://github.com/nalexn/ViewInspector.git
     exactVersion: 0.10.5
-  KoeAppleShared:
+  KoeApple:
     path: ../apple-shared
 targets:
   KoeiOSApp:
@@ -19,7 +19,7 @@ targets:
       - path: App/Sources
       - path: App/Assets.xcassets
     dependencies:
-      - package: KoeAppleShared
+      - package: KoeApple
         product: KoeAppleCore
     settings:
       base:

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KoeAppleShared
+@testable import KoeMacUI
 
 @Suite("Mode workspaces snapshot and decoupled controls")
 struct ModeWorkspacesTests {

@@ -3,7 +3,7 @@ import Foundation
 import Observation
 import Testing
 @testable import KoeAppleCore
-@testable import KoeAppleShared
+@testable import KoeMacUI
 
 private final class ObservationCounter: @unchecked Sendable {
     private let lock = NSLock()
