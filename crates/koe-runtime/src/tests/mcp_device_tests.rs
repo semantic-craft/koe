@@ -1381,6 +1381,24 @@ fn manage_vocabulary_enforces_bounds_is_idempotent_and_preserves_terms_when_conf
     );
     assert_eq!(
         runtime
+            .call_mcp_tool_step(
+                "manage_vocabulary",
+                &json!({"action": "set", "terms": "not-an-array"}),
+                NOW,
+            )
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set", "terms": null}), NOW)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        runtime
             .call_mcp_tool_step("manage_vocabulary", &json!({"action": "clear"}), NOW)
             .unwrap_err()
             .code,
@@ -1429,13 +1447,25 @@ fn manage_vocabulary_enforces_bounds_is_idempotent_and_preserves_terms_when_conf
             .code,
         -32602
     );
-    assert_eq!(
-        runtime
-            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set", "terms": ["Koe\nLine2"]}), NOW + 4)
-            .unwrap_err()
-            .code,
-        -32602
-    );
+    for injected in [
+        "Koe\nLine2",
+        "Koe\u{2028}injected",
+        "Koe\u{2029}injected",
+        "\u{2028}",
+    ] {
+        assert_eq!(
+            runtime
+                .call_mcp_tool_step(
+                    "manage_vocabulary",
+                    &json!({"action": "set", "terms": [injected]}),
+                    NOW + 4,
+                )
+                .unwrap_err()
+                .code,
+            -32602,
+            "manage_vocabulary must reject {injected:?} with -32602"
+        );
+    }
 
     let cfg_snap: Value = serde_json::from_str(&runtime.dispatch_json(
         &json!({"type": "configure_provider", "model": "deepseek-v4-pro"}).to_string(),
@@ -1444,17 +1474,22 @@ fn manage_vocabulary_enforces_bounds_is_idempotent_and_preserves_terms_when_conf
     .unwrap();
     assert!(cfg_snap["error"].is_null(), "{cfg_snap}");
 
-    let bad_cfg_snap: Value = serde_json::from_str(&runtime.dispatch_json(
-        &json!({
-            "type": "configure_provider",
-            "model": "deepseek-v4-pro",
-            "minutesVocabulary": ["bad\nterm"]
-        })
-        .to_string(),
-        NOW + 6,
-    ))
-    .unwrap();
-    assert!(!bad_cfg_snap["error"].is_null(), "{bad_cfg_snap}");
+    for bad_term in ["bad\nterm", "Koe\u{2028}injected", "Koe\u{2029}injected", "\u{2028}"] {
+        let bad_cfg_snap: Value = serde_json::from_str(&runtime.dispatch_json(
+            &json!({
+                "type": "configure_provider",
+                "model": "deepseek-v4-pro",
+                "minutesVocabulary": [bad_term]
+            })
+            .to_string(),
+            NOW + 6,
+        ))
+        .unwrap();
+        assert!(
+            !bad_cfg_snap["error"].is_null(),
+            "configure_provider must reject {bad_term:?}: {bad_cfg_snap}"
+        );
+    }
 
     let after_cfg = call_ok(&mut runtime, json!({"action": "get"}), NOW + 7);
     assert_eq!(after_cfg["terms"], json!(["语".repeat(64)]));

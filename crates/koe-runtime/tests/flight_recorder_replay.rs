@@ -739,6 +739,80 @@ fn export_diagnostics_redacts_speakers_paths_messages_and_url_credentials() {
 }
 
 #[test]
+fn export_diagnostics_redacts_minutes_vocabulary_and_replays_cleanly() {
+    let seed = 0x7711_2233_4455_6688u64;
+    let now = 1_800_092_000u64;
+    let ws_live = TempWorkspace::new("vocab-redaction-live");
+    let mut rt = KoeRuntime::open_with_env(
+        &ws_live.0,
+        Box::new(IsolatedCredentials::deterministic(seed)),
+        RuntimeEnv::deterministic(now, seed, Some(8 * 3600)),
+    )
+    .unwrap();
+
+    let cfg = dispatch(
+        &mut rt,
+        json!({
+            "type": "configure_provider",
+            "model": "deepseek-flash",
+            "minutesVocabulary": [
+                "Project-Falcon-Secret",
+                "Alice-Zhang",
+                "Bob-Johnson"
+            ]
+        }),
+        now,
+    );
+    assert!(cfg["error"].is_null(), "{cfg}");
+
+    let exported = rt.export_diagnostics_json(now + 1);
+    for forbidden in ["Project-Falcon-Secret", "Alice-Zhang", "Bob-Johnson"] {
+        assert!(
+            !exported.contains(forbidden),
+            "minutesVocabulary term `{forbidden}` leaked into diagnostics JSON"
+        );
+    }
+
+    let bundle: DiagnosticsBundle = serde_json::from_str(&exported).unwrap();
+    let recorded_terms = bundle
+        .flight_recorder
+        .entries
+        .iter()
+        .find_map(|entry| match &entry.input {
+            koe_runtime::RuntimeInput::DispatchJson { command, .. }
+                if command["type"] == "configure_provider" =>
+            {
+                command["minutesVocabulary"].as_array()
+            }
+            _ => None,
+        })
+        .expect("configure_provider entry must retain redacted minutesVocabulary array");
+    assert_eq!(recorded_terms.len(), 3);
+    for term in recorded_terms {
+        let text = term.as_str().expect("redacted vocabulary term must remain string");
+        assert!(
+            text.starts_with("[REDACTED_TEXT_") && text.ends_with(']'),
+            "unexpected redacted vocabulary token: {text}"
+        );
+        assert!(
+            text.chars().count() <= 64,
+            "redacted vocabulary token exceeds 64 chars: {text}"
+        );
+    }
+
+    let ws_replay = TempWorkspace::new("vocab-redaction-replay");
+    let report = KoeRuntime::replay_bundle(&ws_replay.0, &bundle).unwrap();
+    assert_eq!(
+        report.final_generation,
+        bundle.doctor["generation"].as_u64().unwrap()
+    );
+    assert_eq!(report.doctor["runtimeState"], bundle.doctor["runtimeState"]);
+    assert!(rt.workspace().revision() >= 1);
+    assert_eq!(report.snapshot_summary.revision, rt.workspace().revision());
+    assert!(report.snapshot_summary.error.is_none());
+}
+
+#[test]
 fn export_diagnostics_is_side_effect_free_skips_noop_polls_and_reports_replay_caveats() {
     let ws = TempWorkspace::new("side-effect-free");
     let now = 1_800_095_000u64;

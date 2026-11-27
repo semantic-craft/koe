@@ -456,6 +456,7 @@ fn is_private_text_key(key: &str) -> bool {
             | "project"
             | "devicename"
             | "message"
+            | "minutesvocabulary"
     )
 }
 

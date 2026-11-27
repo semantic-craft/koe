@@ -1431,6 +1431,47 @@ fn legacy_workspace_without_minutes_vocabulary_opens_and_persisted_vocabulary_su
 }
 
 #[test]
+fn open_rejects_manually_edited_unnormalized_or_invalid_minutes_vocabulary() {
+    let root = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&root.0).unwrap();
+    let configured = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "model": "deepseek-flash",
+            "minutesVocabulary": ["Kido Kantai"]
+        }),
+    );
+    assert!(configured["error"].is_null(), "{configured}");
+    drop(runtime);
+
+    let ws_path = root.0.join("product-workspace.json");
+    let base_raw: Value = serde_json::from_str(&fs::read_to_string(&ws_path).unwrap()).unwrap();
+
+    for invalid_terms in [
+        json!(["  LeadingWhitespace  "]),
+        json!(["DuplicateTerm", "DuplicateTerm"]),
+        json!(["Koe\u{2028}injected"]),
+        json!(["Koe\u{2029}injected"]),
+    ] {
+        let mut tampered = base_raw.clone();
+        tampered["provider"]["minutes_vocabulary"] = invalid_terms.clone();
+        fs::write(&ws_path, serde_json::to_string(&tampered).unwrap()).unwrap();
+
+        let err = match KoeRuntime::open(&root.0) {
+            Ok(_) => panic!(
+                "KoeRuntime::open must reject tampered minutes_vocabulary: {invalid_terms}"
+            ),
+            Err(err) => err,
+        };
+        assert!(
+            !err.trim().is_empty(),
+            "expected non-empty error for tampered minutes_vocabulary {invalid_terms}"
+        );
+    }
+}
+
+#[test]
 fn summary_and_live_summary_requests_include_persisted_minutes_vocabulary() {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};

@@ -473,7 +473,7 @@ impl ProviderConfiguration {
 /// Failure classification returned by [`normalize_minutes_vocabulary`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinutesVocabularyError {
-    /// A term contains control characters such as newline, carriage return, or NUL.
+    /// A term contains control characters or Unicode line/paragraph separators (`U+2028`/`U+2029`).
     ControlCharacters,
     /// A trimmed term exceeds [`MAX_MINUTES_VOCABULARY_TERM_CHARS`] Unicode scalar values.
     TermTooLong,
@@ -499,11 +499,16 @@ impl std::fmt::Display for MinutesVocabularyError {
 
 impl std::error::Error for MinutesVocabularyError {}
 
+fn is_disallowed_vocabulary_char(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+}
+
 /// Normalizes and validates meeting-minutes hot-word terms.
 ///
 /// Trims leading and trailing whitespace, drops empty entries, deduplicates
-/// preserving first-seen order and casing, rejects control characters, and
-/// enforces [`MAX_MINUTES_VOCABULARY_TERM_CHARS`] per term and
+/// preserving first-seen order and casing, rejects control characters and
+/// Unicode line/paragraph separators, and enforces
+/// [`MAX_MINUTES_VOCABULARY_TERM_CHARS`] per term and
 /// [`MAX_MINUTES_VOCABULARY_TERMS`] unique terms.
 pub fn normalize_minutes_vocabulary(
     terms: &[String],
@@ -512,7 +517,7 @@ pub fn normalize_minutes_vocabulary(
     let mut out = Vec::with_capacity(capacity);
     let mut seen = std::collections::HashSet::with_capacity(capacity);
     for raw in terms {
-        if raw.chars().any(char::is_control) {
+        if raw.chars().any(is_disallowed_vocabulary_char) {
             return Err(MinutesVocabularyError::ControlCharacters);
         }
         let clean = raw.trim();
@@ -541,7 +546,7 @@ fn is_valid_persisted_minutes_vocabulary(terms: &[String]) -> bool {
         let trimmed = term.trim();
         if trimmed.is_empty()
             || trimmed != term
-            || term.chars().any(char::is_control)
+            || term.chars().any(is_disallowed_vocabulary_char)
             || trimmed.chars().count() > MAX_MINUTES_VOCABULARY_TERM_CHARS
             || !seen.insert(trimmed)
         {
@@ -920,5 +925,30 @@ mod tests {
             ..Default::default()
         };
         assert!(valid.validate().is_ok());
+    }
+
+    #[test]
+    fn normalize_and_validate_reject_unicode_line_and_paragraph_separators() {
+        for bad in [
+            "Koe\u{2028}injected",
+            "Koe\u{2029}injected",
+            "\u{2028}",
+            "\u{2029}",
+        ] {
+            assert_eq!(
+                normalize_minutes_vocabulary(&[bad.into()]),
+                Err(MinutesVocabularyError::ControlCharacters),
+                "normalize_minutes_vocabulary must reject {bad:?}"
+            );
+            let cfg = ProviderConfiguration {
+                minutes_vocabulary: vec![bad.into()],
+                ..Default::default()
+            };
+            assert_eq!(
+                cfg.validate(),
+                Err(ProductError::InvalidConfiguration),
+                "ProviderConfiguration::validate must reject {bad:?}"
+            );
+        }
     }
 }
