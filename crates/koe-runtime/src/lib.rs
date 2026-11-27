@@ -30,6 +30,7 @@ pub use observability::flight_recorder::{
 /// Secure platform I/O; credential values never enter product snapshots.
 pub use processing::credentials;
 pub use speech::local_asr::LocalAsrEffect;
+pub use speech::LocalSpeechJobView;
 
 use device::DeviceRuntime;
 use koe_client_providers::{ProviderLane, ProviderPool};

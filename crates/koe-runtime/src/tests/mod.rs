@@ -1,6 +1,7 @@
 mod all_day_disconnect_tests;
 mod ask_tests;
 mod audio_policy_tests;
+mod batch_recovery_tests;
 mod capture_tests;
 mod lifecycle_tests;
 mod mcp_device_tests;

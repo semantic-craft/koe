@@ -12,3 +12,5 @@ mod cloud_analysis;
 mod credentials;
 #[path = "formal_models/dual_capture.rs"]
 mod dual_capture;
+#[path = "formal_models/local_batch_recovery.rs"]
+mod local_batch_recovery;
