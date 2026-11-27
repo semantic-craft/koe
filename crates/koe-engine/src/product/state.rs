@@ -206,7 +206,7 @@ impl ProductWorkspace {
             for slot in record.analysis_slots() {
                 if let AnalysisState::Pending { key, .. }
                 | AnalysisState::Failed { key, .. }
-                | AnalysisState::Interrupted { key } = slot
+                | AnalysisState::Interrupted { key, .. } = slot
                 {
                     max_operation = max_operation.max(key.attempt);
                 }
@@ -305,8 +305,11 @@ impl ProductWorkspace {
         let mut changed = false;
         for record in self.records.values_mut() {
             for slot in record.analysis_slots_mut() {
-                if let AnalysisState::Pending { key, .. } = slot {
-                    *slot = AnalysisState::Interrupted { key: key.clone() };
+                if let AnalysisState::Pending { key, stage } = slot {
+                    *slot = AnalysisState::Interrupted {
+                        key: key.clone(),
+                        stage: Some(*stage),
+                    };
                     changed = true;
                 }
             }

@@ -55,7 +55,10 @@ fn live_minutes_complete_after_appended_finals_without_stopping_asr_or_proposing
     w.fail_live_summary(&next, "provider error").unwrap();
     assert!(matches!(
         w.record("a").unwrap().live_summary,
-        AnalysisState::Failed { .. }
+        AnalysisState::Failed {
+            stage: Some(AnalysisStage::Summarizing),
+            ..
+        }
     ));
     w.finish_transcription(&asr).unwrap();
     let final_key = w.begin_analysis("a", AnalysisStage::Summarizing).unwrap();
@@ -124,22 +127,38 @@ fn restored_live_request_is_validated_and_interrupted_independently() {
             Err(ProductError::InvalidPersistedState)
         );
     }
-    let mut bad = state.clone();
-    bad.records[0].live_summary = AnalysisState::Pending {
-        key: live.clone(),
-        stage: AnalysisStage::Transcribing,
-    };
-    assert_eq!(
-        ProductWorkspace::restore(bad),
-        Err(ProductError::InvalidPersistedState)
-    );
+    for invalid_live_summary in [
+        AnalysisState::Pending {
+            key: live.clone(),
+            stage: AnalysisStage::Transcribing,
+        },
+        AnalysisState::Failed {
+            key: live.clone(),
+            message: "wrong stage".into(),
+            stage: Some(AnalysisStage::Transcribing),
+        },
+        AnalysisState::Interrupted {
+            key: live.clone(),
+            stage: Some(AnalysisStage::Transcribing),
+        },
+    ] {
+        let mut bad = state.clone();
+        bad.records[0].live_summary = invalid_live_summary;
+        assert_eq!(
+            ProductWorkspace::restore(bad),
+            Err(ProductError::InvalidPersistedState)
+        );
+    }
     let mut restored = ProductWorkspace::restore(state).unwrap();
     assert!(restored.interrupt_pending());
     let record = restored.record("a").unwrap();
     assert_eq!(record.analysis, AnalysisState::Idle);
     assert_eq!(
         record.live_summary,
-        AnalysisState::Interrupted { key: live }
+        AnalysisState::Interrupted {
+            key: live,
+            stage: Some(AnalysisStage::Summarizing),
+        }
     );
     assert!(!restored.interrupt_pending());
 }

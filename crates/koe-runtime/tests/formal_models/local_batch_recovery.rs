@@ -20,10 +20,11 @@ enum EngineMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum RecordStatus {
     IdleBean,
-    PendingLocal,
-    PendingCloudAsr,
-    InterruptedLocal,
-    InterruptedCloudAsr,
+    PendingLocal { resumed_partial: bool },
+    FailedLocal,
+    PendingCloudAsr { cloud_bound: bool },
+    InterruptedLocal { resumed_partial: bool },
+    InterruptedCloudAsr { cloud_bound: bool },
     Transcribed,
     PendingSummary,
     InterruptedSummary,
@@ -42,12 +43,16 @@ struct BatchState {
     summary_inflight: u8,
     crash_budget: u8,
     switch_budget: u8,
+    fail_budget: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BatchAction {
     DriveQueue,
     CompleteLocal(usize),
+    FailLocal(usize),
+    DrainWorkerSlots,
+    RetryFailedWithCloud(usize),
     CompleteCloudAsr(usize),
     CompleteSummary(usize),
     CrashAndRestart,
@@ -58,24 +63,31 @@ enum BatchAction {
 enum BatchMutant {
     Clean,
     UnboundedLocalAdmission,
+    IgnoreWorkerSlotLeak,
     RetryCloudOnRestart,
+    ForgetCloudBindOnRetry,
     DropIdleBeanOnRestart,
+    DropBoundLocalOnCloudSwitch,
+    DropSecondInterruptedLocal,
 }
 
 struct LocalBatchRecoveryModel {
     mutant: BatchMutant,
 }
 
-const WINDOWS_PER_FILE: u8 = 2;
+const WINDOWS_PER_FILE: u8 = 3;
 const WORKER_MAX_OUTSTANDING: u8 = 4;
 
 impl BatchState {
     fn has_cloud_asr_inflight(&self) -> bool {
-        self.records.contains(&RecordStatus::PendingCloudAsr)
+        self.records
+            .iter()
+            .any(|r| matches!(r, RecordStatus::PendingCloudAsr { .. }))
     }
 
     fn has_any_inflight(&self) -> bool {
         self.active_local_sessions > 0
+            || self.worker_outstanding > 0
             || self.summary_inflight > 0
             || self.has_cloud_asr_inflight()
     }
@@ -102,13 +114,14 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                 summary_inflight: 0,
                 crash_budget: 1,
                 switch_budget: 1,
+                fail_budget: 1,
             },
             BatchState {
                 engine: EngineMode::Cloud,
                 expects_local_drain: false,
                 records: [
                     RecordStatus::IdleBean,
-                    RecordStatus::PendingCloudAsr,
+                    RecordStatus::PendingCloudAsr { cloud_bound: true },
                     RecordStatus::PendingSummary,
                 ],
                 auto_transcribe: 0b001,
@@ -118,36 +131,91 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                 summary_inflight: 1,
                 crash_budget: 1,
                 switch_budget: 1,
+                fail_budget: 0,
+            },
+            BatchState {
+                engine: EngineMode::Cloud,
+                expects_local_drain: false,
+                records: [
+                    RecordStatus::FailedLocal,
+                    RecordStatus::IdleBean,
+                    RecordStatus::Transcribed,
+                ],
+                auto_transcribe: 0,
+                auto_summarize: 0,
+                active_local_sessions: 0,
+                worker_outstanding: 0,
+                summary_inflight: 0,
+                crash_budget: 1,
+                switch_budget: 1,
+                fail_budget: 0,
+            },
+            BatchState {
+                engine: EngineMode::Local,
+                expects_local_drain: true,
+                records: [
+                    RecordStatus::PendingLocal {
+                        resumed_partial: false,
+                    },
+                    RecordStatus::IdleBean,
+                    RecordStatus::Transcribed,
+                ],
+                auto_transcribe: 0b010,
+                auto_summarize: 0,
+                active_local_sessions: 1,
+                worker_outstanding: WINDOWS_PER_FILE,
+                summary_inflight: 0,
+                crash_budget: 2,
+                switch_budget: 1,
+                fail_budget: 0,
             },
         ]
     }
 
     fn actions(&self, s: &BatchState) -> Vec<BatchAction> {
         let mut acts = Vec::new();
+        let can_admit_local = match self.mutant {
+            BatchMutant::UnboundedLocalAdmission => true,
+            BatchMutant::IgnoreWorkerSlotLeak => s.active_local_sessions == 0,
+            _ => s.active_local_sessions == 0 && s.worker_outstanding == 0,
+        };
         let can_drive_summary = s.summary_inflight == 0 && s.auto_summarize != 0;
         let can_drive_transcribe = (0..3).any(|idx| {
             if (s.auto_transcribe & (1 << idx)) == 0 {
                 return false;
             }
             match s.records[idx] {
-                RecordStatus::InterruptedCloudAsr => !s.has_cloud_asr_inflight(),
+                RecordStatus::InterruptedLocal { .. } => can_admit_local,
+                RecordStatus::InterruptedCloudAsr { .. } => !s.has_cloud_asr_inflight(),
                 RecordStatus::InterruptedSummary => true,
                 _ => match s.engine {
                     EngineMode::Cloud => !s.has_cloud_asr_inflight(),
-                    EngineMode::Local => {
-                        self.mutant == BatchMutant::UnboundedLocalAdmission
-                            || s.active_local_sessions == 0
-                    }
+                    EngineMode::Local => can_admit_local,
                 },
             }
         });
         if can_drive_summary || can_drive_transcribe {
             acts.push(BatchAction::DriveQueue);
         }
+        if s.active_local_sessions == 0 && s.worker_outstanding > 0 {
+            acts.push(BatchAction::DrainWorkerSlots);
+        }
         for (idx, status) in s.records.iter().enumerate() {
             match status {
-                RecordStatus::PendingLocal => acts.push(BatchAction::CompleteLocal(idx)),
-                RecordStatus::PendingCloudAsr => acts.push(BatchAction::CompleteCloudAsr(idx)),
+                RecordStatus::PendingLocal { .. } => {
+                    acts.push(BatchAction::CompleteLocal(idx));
+                    if s.fail_budget > 0 {
+                        acts.push(BatchAction::FailLocal(idx));
+                    }
+                }
+                RecordStatus::FailedLocal
+                    if s.engine == EngineMode::Cloud && !s.has_cloud_asr_inflight() =>
+                {
+                    acts.push(BatchAction::RetryFailedWithCloud(idx));
+                }
+                RecordStatus::PendingCloudAsr { .. } => {
+                    acts.push(BatchAction::CompleteCloudAsr(idx));
+                }
                 RecordStatus::PendingSummary => acts.push(BatchAction::CompleteSummary(idx)),
                 _ => {}
             }
@@ -155,12 +223,19 @@ impl ProtocolModel for LocalBatchRecoveryModel {
         if s.crash_budget > 0 && (s.has_any_inflight() || s.auto_transcribe != 0) {
             acts.push(BatchAction::CrashAndRestart);
         }
-        if s.switch_budget > 0 && !s.has_any_inflight() {
-            let other = match s.engine {
-                EngineMode::Local => EngineMode::Cloud,
-                EngineMode::Cloud => EngineMode::Local,
-            };
-            acts.push(BatchAction::SwitchEngine(other));
+        if s.switch_budget > 0 && s.summary_inflight == 0 {
+            let idle_switch = s.active_local_sessions == 0 && s.worker_outstanding == 0;
+            let cloud_switch_while_local_active = s.engine == EngineMode::Local
+                && s.records
+                    .iter()
+                    .any(|r| matches!(r, RecordStatus::PendingLocal { .. }));
+            if idle_switch || cloud_switch_while_local_active {
+                let other = match s.engine {
+                    EngineMode::Local => EngineMode::Cloud,
+                    EngineMode::Cloud => EngineMode::Local,
+                };
+                acts.push(BatchAction::SwitchEngine(other));
+            }
         }
         acts
     }
@@ -178,38 +253,49 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                         }
                     }
                 }
+                let can_admit_local = match self.mutant {
+                    BatchMutant::UnboundedLocalAdmission => true,
+                    BatchMutant::IgnoreWorkerSlotLeak => next.active_local_sessions == 0,
+                    _ => next.active_local_sessions == 0 && next.worker_outstanding == 0,
+                };
                 let candidate = (0..3).find(|&idx| {
                     if (next.auto_transcribe & (1 << idx)) == 0 {
                         return false;
                     }
                     match next.records[idx] {
-                        RecordStatus::InterruptedCloudAsr => !next.has_cloud_asr_inflight(),
+                        RecordStatus::InterruptedLocal { .. } => can_admit_local,
+                        RecordStatus::InterruptedCloudAsr { .. } => !next.has_cloud_asr_inflight(),
                         RecordStatus::InterruptedSummary => true,
                         _ => match next.engine {
                             EngineMode::Cloud => !next.has_cloud_asr_inflight(),
-                            EngineMode::Local => {
-                                self.mutant == BatchMutant::UnboundedLocalAdmission
-                                    || next.active_local_sessions == 0
-                            }
+                            EngineMode::Local => can_admit_local,
                         },
                     }
                 });
                 if let Some(idx) = candidate {
                     next.auto_transcribe &= !(1 << idx);
                     match next.records[idx] {
-                        RecordStatus::IdleBean | RecordStatus::InterruptedLocal => {
-                            if next.engine == EngineMode::Local
-                                || next.records[idx] == RecordStatus::InterruptedLocal
-                            {
-                                next.records[idx] = RecordStatus::PendingLocal;
+                        RecordStatus::InterruptedLocal { .. } => {
+                            next.records[idx] = RecordStatus::PendingLocal {
+                                resumed_partial: true,
+                            };
+                            next.active_local_sessions += 1;
+                            next.worker_outstanding += WINDOWS_PER_FILE;
+                        }
+                        RecordStatus::IdleBean => {
+                            if next.engine == EngineMode::Local {
+                                next.records[idx] = RecordStatus::PendingLocal {
+                                    resumed_partial: false,
+                                };
                                 next.active_local_sessions += 1;
                                 next.worker_outstanding += WINDOWS_PER_FILE;
                             } else {
-                                next.records[idx] = RecordStatus::PendingCloudAsr;
+                                next.records[idx] =
+                                    RecordStatus::PendingCloudAsr { cloud_bound: true };
                             }
                         }
-                        RecordStatus::InterruptedCloudAsr => {
-                            next.records[idx] = RecordStatus::PendingCloudAsr;
+                        RecordStatus::InterruptedCloudAsr { cloud_bound } => {
+                            next.records[idx] = RecordStatus::PendingCloudAsr { cloud_bound };
                         }
                         RecordStatus::InterruptedSummary => {
                             next.records[idx] = RecordStatus::PendingSummary;
@@ -220,7 +306,7 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                 }
             }
             BatchAction::CompleteLocal(idx) => {
-                if next.records[idx] == RecordStatus::PendingLocal {
+                if matches!(next.records[idx], RecordStatus::PendingLocal { .. }) {
                     next.records[idx] = RecordStatus::Transcribed;
                     next.active_local_sessions = next.active_local_sessions.saturating_sub(1);
                     next.worker_outstanding =
@@ -228,8 +314,31 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                     next.auto_summarize |= 1 << idx;
                 }
             }
+            BatchAction::FailLocal(idx) => {
+                if matches!(next.records[idx], RecordStatus::PendingLocal { .. })
+                    && next.fail_budget > 0
+                {
+                    next.fail_budget -= 1;
+                    next.records[idx] = RecordStatus::FailedLocal;
+                    next.active_local_sessions = next.active_local_sessions.saturating_sub(1);
+                }
+            }
+            BatchAction::DrainWorkerSlots => {
+                if next.active_local_sessions == 0 {
+                    next.worker_outstanding = 0;
+                }
+            }
+            BatchAction::RetryFailedWithCloud(idx) => {
+                if next.records[idx] == RecordStatus::FailedLocal
+                    && next.engine == EngineMode::Cloud
+                    && !next.has_cloud_asr_inflight()
+                {
+                    let cloud_bound = self.mutant != BatchMutant::ForgetCloudBindOnRetry;
+                    next.records[idx] = RecordStatus::PendingCloudAsr { cloud_bound };
+                }
+            }
             BatchAction::CompleteCloudAsr(idx) => {
-                if next.records[idx] == RecordStatus::PendingCloudAsr {
+                if matches!(next.records[idx], RecordStatus::PendingCloudAsr { .. }) {
                     next.records[idx] = RecordStatus::Transcribed;
                     next.auto_summarize |= 1 << idx;
                 }
@@ -250,8 +359,12 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                 next.summary_inflight = 0;
                 for status in &mut next.records {
                     *status = match *status {
-                        RecordStatus::PendingLocal => RecordStatus::InterruptedLocal,
-                        RecordStatus::PendingCloudAsr => RecordStatus::InterruptedCloudAsr,
+                        RecordStatus::PendingLocal { resumed_partial } => {
+                            RecordStatus::InterruptedLocal { resumed_partial }
+                        }
+                        RecordStatus::PendingCloudAsr { cloud_bound } => {
+                            RecordStatus::InterruptedCloudAsr { cloud_bound }
+                        }
                         RecordStatus::PendingSummary => RecordStatus::InterruptedSummary,
                         other => other,
                     };
@@ -260,20 +373,42 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                     let recover = match self.mutant {
                         BatchMutant::RetryCloudOnRestart => matches!(
                             status,
-                            RecordStatus::InterruptedLocal
-                                | RecordStatus::InterruptedCloudAsr
+                            RecordStatus::InterruptedLocal { .. }
+                                | RecordStatus::InterruptedCloudAsr { .. }
                                 | RecordStatus::InterruptedSummary
-                        ) || (next.engine == EngineMode::Local && *status == RecordStatus::IdleBean),
+                        ) || (next.engine == EngineMode::Local
+                            && *status == RecordStatus::IdleBean),
                         BatchMutant::DropIdleBeanOnRestart => {
-                            next.engine == EngineMode::Local
-                                && *status == RecordStatus::InterruptedLocal
+                            matches!(status, RecordStatus::InterruptedLocal { .. })
                         }
-                        BatchMutant::Clean | BatchMutant::UnboundedLocalAdmission => {
+                        BatchMutant::DropBoundLocalOnCloudSwitch => {
                             next.engine == EngineMode::Local
                                 && matches!(
                                     status,
-                                    RecordStatus::IdleBean | RecordStatus::InterruptedLocal
+                                    RecordStatus::IdleBean
+                                        | RecordStatus::InterruptedLocal { .. }
+                                        | RecordStatus::InterruptedCloudAsr { cloud_bound: false }
                                 )
+                        }
+                        BatchMutant::DropSecondInterruptedLocal => {
+                            matches!(
+                                status,
+                                RecordStatus::InterruptedLocal {
+                                    resumed_partial: false
+                                } | RecordStatus::InterruptedCloudAsr { cloud_bound: false }
+                            ) || (next.engine == EngineMode::Local
+                                && *status == RecordStatus::IdleBean)
+                        }
+                        BatchMutant::Clean
+                        | BatchMutant::UnboundedLocalAdmission
+                        | BatchMutant::IgnoreWorkerSlotLeak
+                        | BatchMutant::ForgetCloudBindOnRetry => {
+                            matches!(
+                                status,
+                                RecordStatus::InterruptedLocal { .. }
+                                    | RecordStatus::InterruptedCloudAsr { cloud_bound: false }
+                            ) || (next.engine == EngineMode::Local
+                                && *status == RecordStatus::IdleBean)
                         }
                     };
                     if recover {
@@ -315,8 +450,8 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                 for (idx, status) in next.records.iter().enumerate() {
                     if matches!(
                         status,
-                        RecordStatus::PendingLocal
-                            | RecordStatus::PendingCloudAsr
+                        RecordStatus::PendingLocal { .. }
+                            | RecordStatus::PendingCloudAsr { .. }
                             | RecordStatus::PendingSummary
                     ) {
                         return Err(format!(
@@ -325,7 +460,7 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                     }
                     if matches!(
                         status,
-                        RecordStatus::InterruptedCloudAsr | RecordStatus::InterruptedSummary
+                        RecordStatus::InterruptedCloudAsr { .. } | RecordStatus::InterruptedSummary
                     ) && ((next.auto_transcribe & (1 << idx)) != 0
                         || (next.auto_summarize & (1 << idx)) != 0)
                     {
@@ -333,22 +468,32 @@ impl ProtocolModel for LocalBatchRecoveryModel {
                             "no_silent_paid_retry_on_restart: {status:?} auto-enqueued on restart"
                         ));
                     }
-                }
-                if next.engine == EngineMode::Cloud && next.auto_transcribe != 0 {
-                    return Err(
-                        "no_silent_paid_retry_on_restart: auto_transcribe non-empty under Cloud engine"
-                            .into(),
-                    );
+                    if next.engine == EngineMode::Cloud
+                        && (next.auto_transcribe & (1 << idx)) != 0
+                        && !matches!(status, RecordStatus::InterruptedLocal { .. })
+                    {
+                        return Err(format!(
+                            "no_silent_paid_retry_on_restart: non-bound-local {status:?} enqueued under Cloud engine"
+                        ));
+                    }
                 }
             }
             for idx in 0..3 {
                 if matches!(
                     p.records[idx],
-                    RecordStatus::InterruptedCloudAsr | RecordStatus::InterruptedSummary
+                    RecordStatus::InterruptedCloudAsr { .. } | RecordStatus::InterruptedSummary
                 ) && next.records[idx] != p.records[idx]
                 {
                     return Err(format!(
                         "no_silent_paid_retry_on_restart: {:?} silently transitioned to {:?}",
+                        p.records[idx], next.records[idx]
+                    ));
+                }
+                if matches!(p.records[idx], RecordStatus::InterruptedLocal { .. })
+                    && matches!(next.records[idx], RecordStatus::PendingCloudAsr { .. })
+                {
+                    return Err(format!(
+                        "no_silent_paid_retry_on_restart: bound local {:?} escalated to {:?}",
                         p.records[idx], next.records[idx]
                     ));
                 }
@@ -358,18 +503,19 @@ impl ProtocolModel for LocalBatchRecoveryModel {
     }
 
     fn is_live_goal(&self, state: &BatchState) -> bool {
-        let local_drained = !state.expects_local_drain
-            || !state.records.iter().any(|status| {
-                matches!(
-                    status,
-                    RecordStatus::IdleBean
-                        | RecordStatus::PendingLocal
-                        | RecordStatus::InterruptedLocal
-                )
-            });
-        local_drained
+        let bound_local_stranded = state.records.iter().any(|status| {
+            matches!(
+                status,
+                RecordStatus::PendingLocal { .. } | RecordStatus::InterruptedLocal { .. }
+            )
+        });
+        let idle_bean_stranded =
+            state.expects_local_drain && state.records.contains(&RecordStatus::IdleBean);
+        !bound_local_stranded
+            && !idle_bean_stranded
             && state.auto_transcribe == 0
             && state.active_local_sessions == 0
+            && state.worker_outstanding == 0
             && state.summary_inflight == 0
             && state.auto_summarize == 0
             && !state.has_cloud_asr_inflight()
@@ -385,6 +531,7 @@ impl ProtocolModel for LocalBatchRecoveryModel {
             action,
             BatchAction::DriveQueue
                 | BatchAction::CompleteLocal(_)
+                | BatchAction::DrainWorkerSlots
                 | BatchAction::CompleteCloudAsr(_)
                 | BatchAction::CompleteSummary(_)
         )
@@ -495,6 +642,29 @@ fn local_batch_recovery_mutant_unbounded_local_admission() {
 }
 
 #[test]
+fn local_batch_recovery_mutant_ignore_worker_slot_leak() {
+    let model = LocalBatchRecoveryModel {
+        mutant: BatchMutant::IgnoreWorkerSlotLeak,
+    };
+    match explore_bfs(&model, 50_000) {
+        ModelOutcome::InvariantViolation {
+            violation, trace, ..
+        } => {
+            println!(
+                "[MUTANT] ignore_worker_slot_leak -> {violation}\n{}",
+                format_trace(&trace)
+            );
+            assert!(
+                violation.contains("single_flight_local_file_admission"),
+                "unexpected violation: {violation}\n{}",
+                format_trace(&trace)
+            );
+        }
+        other => panic!("expected single_flight_local_file_admission violation, got {other:?}"),
+    }
+}
+
+#[test]
 fn local_batch_recovery_mutant_retry_cloud_on_restart() {
     let model = LocalBatchRecoveryModel {
         mutant: BatchMutant::RetryCloudOnRestart,
@@ -505,6 +675,29 @@ fn local_batch_recovery_mutant_retry_cloud_on_restart() {
         } => {
             println!(
                 "[MUTANT] retry_cloud_on_restart -> {violation}\n{}",
+                format_trace(&trace)
+            );
+            assert!(
+                violation.contains("no_silent_paid_retry_on_restart"),
+                "unexpected violation: {violation}\n{}",
+                format_trace(&trace)
+            );
+        }
+        other => panic!("expected no_silent_paid_retry_on_restart violation, got {other:?}"),
+    }
+}
+
+#[test]
+fn local_batch_recovery_mutant_forget_cloud_bind_on_retry() {
+    let model = LocalBatchRecoveryModel {
+        mutant: BatchMutant::ForgetCloudBindOnRetry,
+    };
+    match explore_bfs(&model, 50_000) {
+        ModelOutcome::InvariantViolation {
+            violation, trace, ..
+        } => {
+            println!(
+                "[MUTANT] forget_cloud_bind_on_retry -> {violation}\n{}",
                 format_trace(&trace)
             );
             assert!(
@@ -543,6 +736,67 @@ fn local_batch_recovery_mutant_drop_idle_bean_on_restart() {
             );
         }
         other => panic!("expected TrappedScc for drop_idle_bean_on_restart, got {other:?}"),
+    }
+}
+
+#[test]
+fn local_batch_recovery_mutant_drop_bound_local_on_cloud_switch() {
+    let model = LocalBatchRecoveryModel {
+        mutant: BatchMutant::DropBoundLocalOnCloudSwitch,
+    };
+    match check_liveness(&model, 50_000) {
+        LivenessOutcome::TrappedScc {
+            scc_size,
+            trace_to_trap,
+            trap_states,
+            ..
+        } => {
+            println!(
+                "[MUTANT] drop_bound_local_on_cloud_switch -> TrappedScc(size={scc_size})\n{}",
+                format_trace(&trace_to_trap)
+            );
+            assert!(
+                trap_states.iter().any(|s| {
+                    s.engine == EngineMode::Cloud
+                        && s.records
+                            .iter()
+                            .any(|r| matches!(r, RecordStatus::InterruptedLocal { .. }))
+                }),
+                "expected stranded bound InterruptedLocal under Cloud engine:\n{}",
+                format_trace(&trace_to_trap)
+            );
+        }
+        other => panic!("expected TrappedScc for drop_bound_local_on_cloud_switch, got {other:?}"),
+    }
+}
+
+#[test]
+fn local_batch_recovery_mutant_drop_second_interrupted_local() {
+    let model = LocalBatchRecoveryModel {
+        mutant: BatchMutant::DropSecondInterruptedLocal,
+    };
+    match check_liveness(&model, 50_000) {
+        LivenessOutcome::TrappedScc {
+            scc_size,
+            trace_to_trap,
+            trap_states,
+            ..
+        } => {
+            println!(
+                "[MUTANT] drop_second_interrupted_local -> TrappedScc(size={scc_size})\n{}",
+                format_trace(&trace_to_trap)
+            );
+            assert!(
+                trap_states.iter().any(|s| {
+                    s.records.contains(&RecordStatus::InterruptedLocal {
+                        resumed_partial: true,
+                    })
+                }),
+                "expected stranded resumed_partial InterruptedLocal trap:\n{}",
+                format_trace(&trace_to_trap)
+            );
+        }
+        other => panic!("expected TrappedScc for drop_second_interrupted_local, got {other:?}"),
     }
 }
 

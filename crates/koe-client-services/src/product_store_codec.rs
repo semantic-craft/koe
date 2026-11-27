@@ -298,10 +298,24 @@ struct KeyDto {
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 enum AnalysisDto {
     Idle,
-    Pending { key: KeyDto, stage: String },
-    Ready { input_revision: u64 },
-    Failed { key: KeyDto, message: String },
-    Interrupted { key: KeyDto },
+    Pending {
+        key: KeyDto,
+        stage: String,
+    },
+    Ready {
+        input_revision: u64,
+    },
+    Failed {
+        key: KeyDto,
+        message: String,
+        #[serde(default)]
+        stage: Option<String>,
+    },
+    Interrupted {
+        key: KeyDto,
+        #[serde(default)]
+        stage: Option<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -743,10 +757,39 @@ impl<'a> KeyRef<'a> {
 #[serde(tag = "state", rename_all = "snake_case")]
 enum AnalysisRef<'a> {
     Idle,
-    Pending { key: KeyRef<'a>, stage: &'static str },
-    Ready { input_revision: u64 },
-    Failed { key: KeyRef<'a>, message: &'a str },
-    Interrupted { key: KeyRef<'a> },
+    Pending {
+        key: KeyRef<'a>,
+        stage: &'static str,
+    },
+    Ready {
+        input_revision: u64,
+    },
+    Failed {
+        key: KeyRef<'a>,
+        message: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stage: Option<&'static str>,
+    },
+    Interrupted {
+        key: KeyRef<'a>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stage: Option<&'static str>,
+    },
+}
+
+fn format_analysis_stage(stage: AnalysisStage) -> &'static str {
+    match stage {
+        AnalysisStage::Transcribing => "transcribing",
+        AnalysisStage::Summarizing => "summarizing",
+    }
+}
+
+fn parse_analysis_stage(stage: &str) -> Result<AnalysisStage, StoreError> {
+    match stage {
+        "transcribing" => Ok(AnalysisStage::Transcribing),
+        "summarizing" => Ok(AnalysisStage::Summarizing),
+        _ => Err(invalid("invalid analysis stage")),
+    }
 }
 
 impl<'a> AnalysisRef<'a> {
@@ -755,20 +798,23 @@ impl<'a> AnalysisRef<'a> {
             AnalysisState::Idle => Self::Idle,
             AnalysisState::Pending { key, stage } => Self::Pending {
                 key: KeyRef::from_key(key),
-                stage: match stage {
-                    AnalysisStage::Transcribing => "transcribing",
-                    AnalysisStage::Summarizing => "summarizing",
-                },
+                stage: format_analysis_stage(*stage),
             },
             AnalysisState::Ready { input_revision } => Self::Ready {
                 input_revision: *input_revision,
             },
-            AnalysisState::Failed { key, message } => Self::Failed {
+            AnalysisState::Failed {
+                key,
+                message,
+                stage,
+            } => Self::Failed {
                 key: KeyRef::from_key(key),
                 message: message.as_str(),
+                stage: stage.map(format_analysis_stage),
             },
-            AnalysisState::Interrupted { key } => Self::Interrupted {
+            AnalysisState::Interrupted { key, stage } => Self::Interrupted {
                 key: KeyRef::from_key(key),
+                stage: stage.map(format_analysis_stage),
             },
         }
     }
@@ -1215,19 +1261,21 @@ impl AnalysisDto {
             Self::Idle => AnalysisState::Idle,
             Self::Pending { key, stage } => AnalysisState::Pending {
                 key: key.into_key(),
-                stage: match stage.as_str() {
-                    "transcribing" => AnalysisStage::Transcribing,
-                    "summarizing" => AnalysisStage::Summarizing,
-                    _ => return Err(invalid("invalid analysis stage")),
-                },
+                stage: parse_analysis_stage(&stage)?,
             },
             Self::Ready { input_revision } => AnalysisState::Ready { input_revision },
-            Self::Failed { key, message } => AnalysisState::Failed {
+            Self::Failed {
+                key,
+                message,
+                stage,
+            } => AnalysisState::Failed {
                 key: key.into_key(),
                 message,
+                stage: stage.as_deref().map(parse_analysis_stage).transpose()?,
             },
-            Self::Interrupted { key } => AnalysisState::Interrupted {
+            Self::Interrupted { key, stage } => AnalysisState::Interrupted {
                 key: key.into_key(),
+                stage: stage.as_deref().map(parse_analysis_stage).transpose()?,
             },
         })
     }
