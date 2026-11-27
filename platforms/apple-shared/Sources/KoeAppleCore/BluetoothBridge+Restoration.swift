@@ -93,7 +93,7 @@ extension BluetoothBridge {
     public static let iosRestoreIdentifier = "com.semanticcraft.koe.ios.central"
 
     func createIOSCentral() -> any BleCentral {
-        makeIOSCentral(self, [CBCentralManagerOptionRestoreIdentifierKey: Self.iosRestoreIdentifier])
+        makeCentral(self, [CBCentralManagerOptionRestoreIdentifierKey: Self.iosRestoreIdentifier])
     }
 
     public func restoreCentralIfNeeded(restoreIdentifiers: [String]) {

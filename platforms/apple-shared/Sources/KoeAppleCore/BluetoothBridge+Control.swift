@@ -39,6 +39,10 @@ struct BleTeardownResources {
     var reconnectingPeripheral: (any BlePeripheral)?
     var teardownDeadline: Timer?
     var outboundFlushTimer: Timer?
+    var reconnectTimer: Timer?
+    var scanWindowTimer: Timer?
+    var cancelScheduledReconnect: (@MainActor @Sendable () -> Void)?
+    var cancelScheduledScanWindow: (@MainActor @Sendable () -> Void)?
 }
 
 @MainActor
@@ -95,6 +99,10 @@ extension BluetoothBridge {
             }
             resources.teardownDeadline?.invalidate()
             resources.outboundFlushTimer?.invalidate()
+            resources.reconnectTimer?.invalidate()
+            resources.scanWindowTimer?.invalidate()
+            resources.cancelScheduledReconnect?()
+            resources.cancelScheduledScanWindow?()
             if let central = resources.central {
                 if central.isScanning { central.stopScan() }
                 central.delegate = nil
@@ -118,19 +126,39 @@ extension BluetoothBridge {
         if teardownPending {
             if !device.autoConnect {
                 scanAfterTeardown = false
+                resumeReconnectOnPowerOn = false
+                applyReconnectTrigger(.autoConnectChanged(false))
             } else if wasAutoConnectDisabled {
                 scanAfterTeardown = true
+                applyReconnectTrigger(.autoConnectChanged(true), deferAutoEnableScan: true)
             }
             return
         }
         let disabledAutoConnect = !device.autoConnect && !wasAutoConnectDisabled
-        if hasLocalLink && (disabledAutoConnect || device.phase == "disconnected") {
-            beginTeardown(for: device, disconnectRuntime: disabledAutoConnect && device.phase != "disconnected")
+        if disabledAutoConnect {
+            resumeReconnectOnPowerOn = false
+            applyReconnectTrigger(.autoConnectChanged(false))
+            if hasLocalLink {
+                beginTeardown(for: device, disconnectRuntime: device.phase != "disconnected")
+                return
+            }
+        } else if !device.autoConnect && !hasLocalLink {
+            resumeReconnectOnPowerOn = false
+            applyReconnectTrigger(.autoConnectChanged(false))
+        }
+        if hasLocalLink && device.phase == "disconnected" {
+            resumeReconnectOnPowerOn = false
+            applyReconnectTrigger(.userDisconnectOrRelease)
+            beginTeardown(for: device, disconnectRuntime: false)
             return
         }
         // Rust clears the projection when it accepts a disconnect or a release.
         projectedStopFramesHex = device.teardownStopFramesHex
-        if wasAutoConnectDisabled && device.autoConnect && device.phase == "disconnected" { scheduleScanIfIdle() }
+        if wasAutoConnectDisabled && device.autoConnect {
+            let wasSuppressed = reconnectState == .suppressedByUser
+            applyReconnectTrigger(.autoConnectChanged(true), deferAutoEnableScan: true)
+            if !wasSuppressed && device.phase == "disconnected" { scheduleScanIfIdle() }
+        }
     }
 
     func scheduleScanIfIdle() {
