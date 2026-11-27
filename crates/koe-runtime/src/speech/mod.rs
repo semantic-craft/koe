@@ -274,6 +274,23 @@ impl SpeechState {
         }
     }
 }
+pub(crate) fn record_effective_speech_engine<'a>(
+    record: &'a ProductRecord,
+    configured_engine: &'a SpeechEngine,
+) -> &'a SpeechEngine {
+    if matches!(
+        record.analysis,
+        AnalysisState::Interrupted {
+            stage: None | Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ) {
+        record.speech_engine.as_ref().unwrap_or(configured_engine)
+    } else {
+        configured_engine
+    }
+}
+
 impl KoeRuntime {
     /// Returns read-only views of all active on-device speech transcription sessions.
     #[must_use]
@@ -382,16 +399,11 @@ impl KoeRuntime {
     }
 
     pub(crate) fn record_speech_engine(&self, id: &str) -> SpeechEngine {
-        self.workspace()
-            .record(id)
-            .filter(|r| matches!(r.analysis, AnalysisState::Interrupted { .. }))
-            .and_then(|r| r.speech_engine.clone())
-            .unwrap_or_else(|| {
-                self.workspace()
-                    .provider_configuration()
-                    .speech_engine
-                    .clone()
-            })
+        let configured = &self.workspace().provider_configuration().speech_engine;
+        self.workspace().record(id).map_or_else(
+            || configured.clone(),
+            |record| record_effective_speech_engine(record, configured).clone(),
+        )
     }
     pub(crate) fn speech_ready(&self, engine: &SpeechEngine) -> bool {
         match engine {

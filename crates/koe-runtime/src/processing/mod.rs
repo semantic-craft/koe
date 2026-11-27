@@ -123,7 +123,13 @@ impl KoeRuntime {
             if !record.aggregate.spine.is_empty()
                 && !matches!(
                     record.analysis,
-                    AnalysisState::Interrupted { .. } | AnalysisState::Failed { .. }
+                    AnalysisState::Interrupted {
+                        stage: None | Some(AnalysisStage::Transcribing),
+                        ..
+                    } | AnalysisState::Failed {
+                        stage: None | Some(AnalysisStage::Transcribing),
+                        ..
+                    }
                 )
             {
                 return Err("本机转写保留已有原文，请导入新副本后重新转写".into());

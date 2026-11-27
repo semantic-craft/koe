@@ -1360,3 +1360,475 @@ fn interrupted_cloud_retry_over_failed_local_record_never_auto_recovers() {
         std::io::ErrorKind::WouldBlock
     );
 }
+
+#[test]
+fn reopen_recovers_bound_local_interrupted_job_even_after_switching_default_engine_to_cloud() {
+    let dir = Sandbox::new("bound-local-after-cloud-switch");
+    let asr_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    asr_listener.set_nonblocking(true).unwrap();
+    let chat_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    chat_listener.set_nonblocking(true).unwrap();
+    let asr_endpoint = format!("ws://{}", asr_listener.local_addr().unwrap());
+    let chat_endpoint = format!(
+        "http://{}/chat/completions",
+        chat_listener.local_addr().unwrap()
+    );
+
+    {
+        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "configure_speech", "engine": "apple_speech"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+            )["error"]
+                .is_null()
+        );
+
+        seed_bean_record(&mut runtime, &dir.0, "bound-apple-running", 1, true);
+        seed_bean_record(&mut runtime, &dir.0, "unbound-bean-idle", 2, true);
+
+        let started = dispatch(
+            &mut runtime,
+            json!({"type": "transcribe", "recordId": "bound-apple-running"}),
+        );
+        assert!(started["error"].is_null(), "{started}");
+        let start_ops: Vec<u64> = runtime
+            .drain_local_asr_effects()
+            .into_iter()
+            .filter_map(|effect| match effect {
+                LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(start_ops.len(), 1);
+        assert_eq!(
+            runtime
+                .workspace()
+                .record("bound-apple-running")
+                .unwrap()
+                .speech_engine,
+            Some(SpeechEngine::AppleSpeech)
+        );
+
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "configure_speech", "engine": "cloud"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "set_meeting_audio_policy", "policy": "cloud_allowed"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({
+                    "type": "configure_provider",
+                    "apiKey": "cloud-switch-guard-key",
+                    "model": "fixture",
+                    "asrEndpoint": asr_endpoint,
+                    "chatEndpoint": chat_endpoint
+                }),
+            )["error"]
+                .is_null()
+        );
+    }
+
+    let mut reopened = KoeRuntime::open(&dir.0).unwrap();
+    assert_eq!(
+        reopened.auto_transcribe,
+        ["bound-apple-running"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        "bound local interrupted job must recover even after switching default engine to Cloud, without queueing Idle Bean"
+    );
+    assert!(
+        dispatch(
+            &mut reopened,
+            json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+        )["error"]
+            .is_null()
+    );
+    reopened.poll_timers(0, NOW + 1);
+    reopened.poll_timers(0, NOW + 1);
+    let jobs = reopened.active_local_speech_jobs();
+    assert_eq!(jobs.len(), 1, "expected 1 recovered local job, got {jobs:?}");
+    assert_eq!(jobs[0].record_id, "bound-apple-running");
+    assert_eq!(jobs[0].engine, "apple_speech");
+
+    let op = reopened
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .expect("recovered bound local job must emit AppleSpeech Start effect");
+    assert!(
+        dispatch(
+            &mut reopened,
+            json!({
+                "type": "local_asr_result",
+                "operationId": op,
+                "text": "Recovered on AppleSpeech after cloud switch",
+                "startMs": 0,
+                "endMs": 80,
+                "isFinal": true
+            }),
+        )["error"]
+            .is_null()
+    );
+    assert!(
+        dispatch(
+            &mut reopened,
+            json!({"type": "local_asr_finished", "operationId": op}),
+        )["error"]
+            .is_null()
+    );
+
+    let recovered = reopened.workspace().record("bound-apple-running").unwrap();
+    assert_eq!(recovered.aggregate.spine.len(), 1);
+    assert_eq!(
+        recovered.aggregate.spine.segments()[0].text,
+        "Recovered on AppleSpeech after cloud switch"
+    );
+    assert!(matches!(recovered.analysis, AnalysisState::Idle));
+    assert!(reopened.auto_transcribe.is_empty());
+    assert!(matches!(
+        reopened.workspace().record("unbound-bean-idle").unwrap().analysis,
+        AnalysisState::Idle
+    ));
+    assert!(reopened
+        .workspace()
+        .record("unbound-bean-idle")
+        .unwrap()
+        .aggregate
+        .spine
+        .is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[test]
+fn reopen_recovers_partial_local_transcription_across_two_consecutive_interruptions() {
+    let dir = Sandbox::new("partial-consecutive-interruptions");
+    {
+        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "configure_speech", "engine": "apple_speech"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+            )["error"]
+                .is_null()
+        );
+
+        seed_bean_record(&mut runtime, &dir.0, "partial-double-crash", 1, false);
+        save_test_wav(&dir.0, "partial-double-crash", 16_000 * 10);
+
+        let started = dispatch(
+            &mut runtime,
+            json!({"type": "transcribe", "recordId": "partial-double-crash"}),
+        );
+        assert!(started["error"].is_null(), "{started}");
+        let op1 = runtime
+            .drain_local_asr_effects()
+            .into_iter()
+            .find_map(|effect| match effect {
+                LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+                _ => None,
+            })
+            .expect("expected initial AppleSpeech Start effect");
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({
+                    "type": "local_asr_result",
+                    "operationId": op1,
+                    "text": "First half before crash 1",
+                    "startMs": 0,
+                    "endMs": 5_000,
+                    "isFinal": true
+                }),
+            )["error"]
+                .is_null()
+        );
+        assert_eq!(
+            runtime
+                .workspace()
+                .record("partial-double-crash")
+                .unwrap()
+                .aggregate
+                .spine
+                .len(),
+            1
+        );
+    }
+
+    {
+        let mut reopen1 = KoeRuntime::open(&dir.0).unwrap();
+        assert_eq!(
+            reopen1.auto_transcribe,
+            ["partial-double-crash"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        );
+        assert!(
+            dispatch(
+                &mut reopen1,
+                json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+            )["error"]
+                .is_null()
+        );
+        reopen1.poll_timers(0, NOW + 1);
+        let jobs = reopen1.active_local_speech_jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].record_id, "partial-double-crash");
+        let op2 = reopen1
+            .drain_local_asr_effects()
+            .into_iter()
+            .find_map(|effect| match effect {
+                LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+                _ => None,
+            })
+            .expect("expected resumed AppleSpeech Start effect after crash 1");
+        let rec_before_crash2 = reopen1.workspace().record("partial-double-crash").unwrap();
+        assert!(matches!(
+            &rec_before_crash2.analysis,
+            AnalysisState::Pending {
+                key,
+                stage: AnalysisStage::Transcribing,
+            } if key.input_revision == rec_before_crash2.content_revision
+        ));
+        let _ = op2;
+    }
+
+    let mut reopen2 = KoeRuntime::open(&dir.0).unwrap();
+    assert!(matches!(
+        reopen2
+            .workspace()
+            .record("partial-double-crash")
+            .unwrap()
+            .analysis,
+        AnalysisState::Interrupted {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+    assert_eq!(
+        reopen2.auto_transcribe,
+        ["partial-double-crash"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        "partially transcribed local record must recover after a second consecutive interruption"
+    );
+    assert!(
+        dispatch(
+            &mut reopen2,
+            json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+        )["error"]
+            .is_null()
+    );
+    reopen2.poll_timers(0, NOW + 2);
+    let jobs = reopen2.active_local_speech_jobs();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].record_id, "partial-double-crash");
+    let op3 = reopen2
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .expect("expected resumed AppleSpeech Start effect after crash 2");
+    assert!(
+        dispatch(
+            &mut reopen2,
+            json!({
+                "type": "local_asr_result",
+                "operationId": op3,
+                "text": "Second half after crash 2",
+                "startMs": 0,
+                "endMs": 5_000,
+                "isFinal": true
+            }),
+        )["error"]
+            .is_null()
+    );
+    assert!(
+        dispatch(
+            &mut reopen2,
+            json!({"type": "local_asr_finished", "operationId": op3}),
+        )["error"]
+            .is_null()
+    );
+
+    let finished = reopen2.workspace().record("partial-double-crash").unwrap();
+    assert!(matches!(finished.analysis, AnalysisState::Idle));
+    assert_eq!(finished.aggregate.spine.len(), 2);
+    assert_eq!(
+        finished.aggregate.spine.segments()[0].text,
+        "First half before crash 1"
+    );
+    assert_eq!(
+        finished.aggregate.spine.segments()[1].text,
+        "Second half after crash 2"
+    );
+    assert!(reopen2.auto_transcribe.is_empty());
+}
+
+#[test]
+fn reopen_handles_legacy_interrupted_json_without_stage_safely() {
+    use koe_client_services::product_store::{ProductStore, PRODUCT_WORKSPACE_FILE};
+
+    let dir = Sandbox::new("legacy-interrupted-no-stage");
+    let summary_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    summary_listener.set_nonblocking(true).unwrap();
+    let summary_endpoint = format!(
+        "http://{}/chat/completions",
+        summary_listener.local_addr().unwrap()
+    );
+
+    {
+        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "configure_speech", "engine": "apple_speech"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({
+                    "type": "configure_provider",
+                    "model": "fixture",
+                    "chatEndpoint": summary_endpoint
+                }),
+            )["error"]
+                .is_null()
+        );
+
+        seed_bean_record(&mut runtime, &dir.0, "legacy-bound-empty", 1, true);
+        runtime
+            .commit(|w| {
+                w.bind_speech_engine("legacy-bound-empty", SpeechEngine::AppleSpeech)?;
+                w.begin_analysis("legacy-bound-empty", AnalysisStage::Transcribing)?;
+                Ok(())
+            })
+            .unwrap();
+
+        seed_bean_record(&mut runtime, &dir.0, "legacy-unbound-empty", 2, true);
+        runtime
+            .commit(|w| {
+                w.begin_analysis("legacy-unbound-empty", AnalysisStage::Transcribing)?;
+                Ok(())
+            })
+            .unwrap();
+
+        seed_bean_record(&mut runtime, &dir.0, "legacy-partial", 3, true);
+        runtime
+            .commit(|w| {
+                w.bind_speech_engine("legacy-partial", SpeechEngine::AppleSpeech)?;
+                let key = w.begin_analysis("legacy-partial", AnalysisStage::Transcribing)?;
+                w.accept_transcript(&key, "1", "partial segment", 0, 500, "apple-speech")?;
+                Ok(())
+            })
+            .unwrap();
+
+        seed_bean_record(&mut runtime, &dir.0, "legacy-summary", 4, true);
+        runtime
+            .commit(|w| {
+                w.bind_speech_engine("legacy-summary", SpeechEngine::AppleSpeech)?;
+                let asr = w.begin_analysis("legacy-summary", AnalysisStage::Transcribing)?;
+                w.accept_transcript(&asr, "1", "finished local text", 0, 500, "apple-speech")?;
+                w.finish_transcription(&asr)?;
+                w.begin_analysis("legacy-summary", AnalysisStage::Summarizing)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    drop(ProductStore::open(&dir.0).unwrap());
+
+    let ws_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let mut raw: Value = serde_json::from_slice(&fs::read(&ws_path).unwrap()).unwrap();
+    for rec in raw["records"].as_array_mut().unwrap() {
+        let analysis = rec["analysis"].as_object_mut().unwrap();
+        assert_eq!(analysis.get("state").and_then(Value::as_str), Some("interrupted"));
+        analysis.remove("stage");
+    }
+    fs::write(&ws_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    {
+        let reopened = KoeRuntime::open(&dir.0).unwrap();
+        let expected_local: std::collections::BTreeSet<String> = [
+            "legacy-bound-empty",
+            "legacy-unbound-empty",
+            "legacy-partial",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(
+            reopened.auto_transcribe, expected_local,
+            "legacy interrupted JSON without stage must recover empty/partial local transcriptions and refuse legacy interrupted summary"
+        );
+        assert!(reopened.auto_summarize.is_empty());
+        assert!(matches!(
+            reopened.workspace().record("legacy-bound-empty").unwrap().analysis,
+            AnalysisState::Interrupted { stage: None, .. }
+        ));
+        assert!(matches!(
+            reopened.workspace().record("legacy-summary").unwrap().analysis,
+            AnalysisState::Interrupted { stage: None, .. }
+        ));
+        assert_eq!(
+            summary_listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    raw["provider"]["speech_engine"] = Value::String("cloud".into());
+    fs::write(&ws_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let reopened_cloud = KoeRuntime::open(&dir.0).unwrap();
+    let expected_cloud: std::collections::BTreeSet<String> =
+        ["legacy-bound-empty", "legacy-partial"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+    assert_eq!(
+        reopened_cloud.auto_transcribe, expected_cloud,
+        "legacy JSON under Cloud default must recover explicitly bound local records and never recover unbound or summary records"
+    );
+    assert!(reopened_cloud.auto_summarize.is_empty());
+    assert_eq!(
+        summary_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
