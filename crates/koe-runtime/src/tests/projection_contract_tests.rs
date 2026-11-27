@@ -463,3 +463,75 @@ fn dispatch_json_rejects_payload_exceeding_max_command_json_bytes() {
         serde_json::from_str(&runtime.dispatch_json(&oversized, 1_800_000_000)).unwrap();
     assert_eq!(snap["error"], json!("操作内容过大"));
 }
+
+#[test]
+fn device_snapshot_explicit_disconnect_count_tracks_explicit_disconnects_and_ignores_link_drops() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+
+    let initial = runtime.snapshot(1_800_000_000);
+    assert_eq!(initial["device"]["phase"], json!("disconnected"));
+    assert_eq!(initial["device"]["explicitDisconnectCount"], json!(0));
+
+    dispatch(
+        &mut runtime,
+        json!({"type": "device_event", "event": "scanning", "connectionId": "conn-1"}),
+    );
+    dispatch(
+        &mut runtime,
+        json!({"type": "device_event", "event": "connecting", "connectionId": "conn-1", "deviceName": "Soundcore Work"}),
+    );
+    let dropped = dispatch(
+        &mut runtime,
+        json!({"type": "device_event", "event": "disconnected", "connectionId": "conn-1"}),
+    );
+    assert_eq!(dropped["device"]["phase"], json!("disconnected"));
+    assert_eq!(dropped["device"]["explicitDisconnectCount"], json!(0));
+
+    let mcp_disconnect = match runtime
+        .call_mcp_tool_step(
+            "device_control",
+            &json!({"action": "disconnect"}),
+            1_800_000_001,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("unexpected MCP device_control result: {other:?}"),
+    };
+    assert_eq!(mcp_disconnect["device"]["phase"], json!("disconnected"));
+    assert_eq!(
+        mcp_disconnect["device"]["explicitDisconnectCount"],
+        json!(1)
+    );
+    assert_eq!(
+        runtime.snapshot(1_800_000_001)["device"]["explicitDisconnectCount"],
+        json!(1)
+    );
+
+    let direct_disconnect = dispatch(&mut runtime, json!({"type": "device_disconnect"}));
+    assert_eq!(
+        direct_disconnect["device"]["explicitDisconnectCount"],
+        json!(2)
+    );
+
+    let released = dispatch(&mut runtime, json!({"type": "device_release"}));
+    assert_eq!(released["device"]["autoConnect"], json!(false));
+    assert_eq!(released["device"]["explicitDisconnectCount"], json!(3));
+
+    dispatch(&mut runtime, json!({"type": "request_quit"}));
+    let rejected = dispatch(&mut runtime, json!({"type": "device_disconnect"}));
+    assert!(rejected["error"].is_string());
+    assert_eq!(rejected["device"]["explicitDisconnectCount"], json!(3));
+
+    dispatch(&mut runtime, json!({"type": "cancel_quit"}));
+    dispatch(
+        &mut runtime,
+        json!({"type": "device_event", "event": "scanning", "connectionId": "conn-2"}),
+    );
+    let dropped_again = dispatch(
+        &mut runtime,
+        json!({"type": "device_event", "event": "disconnected", "connectionId": "conn-2"}),
+    );
+    assert_eq!(dropped_again["device"]["explicitDisconnectCount"], json!(3));
+}

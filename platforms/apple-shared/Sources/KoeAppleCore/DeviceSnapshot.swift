@@ -78,6 +78,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public var liveBytes: UInt64
     public var liveRecordId: String?
     public let autoConnect: Bool
+    public let explicitDisconnectCount: UInt64
     public let teardownStopFramesHex: [String]
 
     private enum CodingKeys: String, CodingKey {
@@ -85,7 +86,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         case batteryPercent, charging, boxBatteryPercent, boxCharging
         case serialNumber, firmwareVersion, storageLabel, storageUsedRatio, files, progress, guide
         case transferPhase, transferErrorCode, audioDecryptReady, liveDurationMs, liveBytes, liveRecordId
-        case autoConnect, teardownStopFramesHex
+        case autoConnect, explicitDisconnectCount, teardownStopFramesHex
     }
 
     public init(
@@ -115,6 +116,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         liveBytes: UInt64,
         liveRecordId: String?,
         autoConnect: Bool,
+        explicitDisconnectCount: UInt64 = 0,
         teardownStopFramesHex: [String]
     ) {
         self.phase = phase
@@ -143,6 +145,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         self.liveBytes = liveBytes
         self.liveRecordId = liveRecordId
         self.autoConnect = autoConnect
+        self.explicitDisconnectCount = explicitDisconnectCount
         self.teardownStopFramesHex = teardownStopFramesHex
     }
 
@@ -173,6 +176,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         liveBytes: 0,
         liveRecordId: nil,
         autoConnect: true,
+        explicitDisconnectCount: 0,
         teardownStopFramesHex: []
     )
 }
@@ -208,6 +212,7 @@ extension DeviceSnapshot {
         liveBytes = try c.decodeIfPresent(UInt64.self, forKey: .liveBytes) ?? 0
         liveRecordId = try c.decodeIfPresent(String.self, forKey: .liveRecordId)
         autoConnect = try c.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
+        explicitDisconnectCount = try c.decodeIfPresent(UInt64.self, forKey: .explicitDisconnectCount) ?? 0
         teardownStopFramesHex = try c.decodeIfPresent([String].self, forKey: .teardownStopFramesHex) ?? []
     }
 }

@@ -1920,3 +1920,233 @@ fn manage_record_if_idle_handles_legacy_stage_none_partial_transcription_and_sum
     assert!(reopened.active_local_speech_jobs().is_empty());
     assert_eq!(reopened.workspace().records().len(), count_before);
 }
+
+#[test]
+fn manage_record_if_idle_skips_cloud_partial_transcriptions_without_creating_retry_copies() {
+    let asr_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    asr_listener.set_nonblocking(true).unwrap();
+    let asr_endpoint = format!("ws://{}/asr", asr_listener.local_addr().unwrap());
+
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    for cmd in [
+        json!({"type": "configure_speech", "engine": "cloud"}),
+        json!({"type": "set_meeting_audio_policy", "policy": "cloud_allowed"}),
+        json!({
+            "type": "configure_provider",
+            "apiKey": "cloud-if-idle-guard-key",
+            "model": "fixture",
+            "asrEndpoint": asr_endpoint
+        }),
+        json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+    ] {
+        let snap: Value =
+            serde_json::from_str(&runtime.dispatch_json(&cmd.to_string(), NOW)).unwrap();
+        assert!(snap["error"].is_null(), "{cmd} failed: {snap}");
+    }
+
+    let cloud_interrupted_id = "cloud-interrupted-partial";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                cloud_interrupted_id.into(),
+                "Cloud Interrupted Partial".into(),
+                RecordOrigin::Microphone,
+                0,
+                NOW,
+                3_000,
+            )?;
+            w.bind_speech_engine(cloud_interrupted_id, SpeechEngine::Cloud)?;
+            let key = w.begin_analysis(cloud_interrupted_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "云端中断前已保存", 0, 1_000, "cloud-live")?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, cloud_interrupted_id, 3_000);
+    assert!(matches!(
+        runtime.workspace().record(cloud_interrupted_id).unwrap().analysis,
+        AnalysisState::Interrupted {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+
+    let count_before_cloud = runtime.workspace().records().len();
+    let skip_cloud_interrupted = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": cloud_interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(skip_cloud_interrupted["ok"], true);
+    assert_eq!(
+        skip_cloud_interrupted["skipped"], true,
+        "Cloud-bound interrupted partial must skip under if_idle instead of spawning retry copy (records before={count_before_cloud}, after={}): {skip_cloud_interrupted}",
+        runtime.workspace().records().len()
+    );
+    assert_eq!(skip_cloud_interrupted["reason"], "already_transcribed");
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_cloud,
+        "Cloud-bound interrupted partial must not create -retry- copies"
+    );
+    assert!(runtime.pending.is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let switch_local: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+            NOW + 1,
+        ),
+    )
+    .unwrap();
+    assert!(switch_local["error"].is_null(), "{switch_local}");
+    let skip_cloud_bound_under_local_default = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": cloud_interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 2,
+    );
+    assert_eq!(skip_cloud_bound_under_local_default["ok"], true);
+    assert_eq!(skip_cloud_bound_under_local_default["skipped"], true);
+    assert_eq!(
+        skip_cloud_bound_under_local_default["reason"],
+        "already_transcribed"
+    );
+    assert_eq!(runtime.workspace().records().len(), count_before_cloud);
+    assert!(runtime.pending.is_empty());
+
+    let switch_cloud: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "configure_speech", "engine": "cloud"}).to_string(),
+            NOW + 2,
+        ),
+    )
+    .unwrap();
+    assert!(switch_cloud["error"].is_null(), "{switch_cloud}");
+
+    let failed_partial_id = "failed-partial-under-cloud";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                failed_partial_id.into(),
+                "Failed Partial Under Cloud".into(),
+                RecordOrigin::Bean,
+                201,
+                NOW + 3,
+                3_000,
+            )?;
+            w.bind_speech_engine(failed_partial_id, SpeechEngine::AppleSpeech)?;
+            let key = w.begin_analysis(failed_partial_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "失败前已保存", 0, 1_000, "apple-speech")?;
+            w.fail_analysis(&key, "转写中断失败")?;
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, failed_partial_id, 3_000);
+    assert!(matches!(
+        runtime.workspace().record(failed_partial_id).unwrap().analysis,
+        AnalysisState::Failed {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+
+    let count_before_failed = runtime.workspace().records().len();
+    let skip_failed_under_cloud = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": failed_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 4,
+    );
+    assert_eq!(skip_failed_under_cloud["ok"], true);
+    assert_eq!(
+        skip_failed_under_cloud["skipped"], true,
+        "Failed partial under Cloud default must skip under if_idle instead of spawning retry copy (records before={count_before_failed}, after={}): {skip_failed_under_cloud}",
+        runtime.workspace().records().len()
+    );
+    assert_eq!(skip_failed_under_cloud["reason"], "already_transcribed");
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_failed,
+        "Failed partial under Cloud default must not create -retry- copies"
+    );
+    assert!(runtime.pending.is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let bound_apple_id = "bound-apple-interrupted-under-cloud";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                bound_apple_id.into(),
+                "Bound Apple Interrupted Under Cloud".into(),
+                RecordOrigin::Bean,
+                202,
+                NOW + 5,
+                3_000,
+            )?;
+            w.bind_speech_engine(bound_apple_id, SpeechEngine::AppleSpeech)?;
+            let key = w.begin_analysis(bound_apple_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "本机已保存前半段", 0, 1_000, "apple-speech")?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, bound_apple_id, 3_000);
+
+    let count_before_apple = runtime.workspace().records().len();
+    let resume_bound_apple = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": bound_apple_id, "action": "transcribe", "if_idle": true}),
+        NOW + 6,
+    );
+    assert_eq!(resume_bound_apple["ok"], true);
+    assert!(
+        resume_bound_apple.get("skipped").is_none(),
+        "Bound AppleSpeech interrupted partial must resume in place even when default engine is Cloud: {resume_bound_apple}"
+    );
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_apple,
+        "Bound AppleSpeech in-place resume must not create a copy"
+    );
+    assert!(matches!(
+        runtime.workspace().record(bound_apple_id).unwrap().analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ));
+    assert_eq!(runtime.active_local_speech_jobs().len(), 1);
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, bound_apple_id);
+    assert_eq!(runtime.active_local_speech_jobs()[0].engine, "apple_speech");
+    assert!(runtime.pending.is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    complete_active_apple_speech_job(&mut runtime, "本机补全后半段", NOW + 7);
+    let completed_apple = runtime.workspace().record(bound_apple_id).unwrap();
+    assert_eq!(completed_apple.aggregate.spine.len(), 2);
+    assert!(matches!(completed_apple.analysis, AnalysisState::Idle));
+
+    let skip_completed_apple = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": bound_apple_id, "action": "transcribe", "if_idle": true}),
+        NOW + 8,
+    );
+    assert_eq!(skip_completed_apple["ok"], true);
+    assert_eq!(skip_completed_apple["skipped"], true);
+    assert_eq!(skip_completed_apple["reason"], "already_transcribed");
+    assert_eq!(runtime.workspace().records().len(), count_before_apple);
+}

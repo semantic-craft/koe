@@ -23,11 +23,16 @@ protocol BlePeripheral: AnyObject {
     var delegate: CBPeripheralDelegate? { get set }
     var services: [CBService]? { get }
     func discoverServices(_ serviceUUIDs: [CBUUID]?)
+    func discoverCharacteristics(_ characteristicUUIDs: [CBUUID]?, for service: CBService)
     func isNotifying(_ characteristic: CBCharacteristic) -> Bool
     func setNotifyValue(_ enabled: Bool, for characteristic: CBCharacteristic)
     var canSendWriteWithoutResponse: Bool { get }
     func maximumWriteValueLength(for type: CBCharacteristicWriteType) -> Int
     func writeValue(_ data: Data, for characteristic: CBCharacteristic, type: CBCharacteristicWriteType)
+}
+
+extension BlePeripheral {
+    func discoverCharacteristics(_ characteristicUUIDs: [CBUUID]?, for service: CBService) {}
 }
 
 extension CBPeripheral: BlePeripheral {
@@ -93,7 +98,7 @@ extension BluetoothBridge {
     public static let iosRestoreIdentifier = "com.semanticcraft.koe.ios.central"
 
     func createIOSCentral() -> any BleCentral {
-        makeIOSCentral(self, [CBCentralManagerOptionRestoreIdentifierKey: Self.iosRestoreIdentifier])
+        makeCentral(self, [CBCentralManagerOptionRestoreIdentifierKey: Self.iosRestoreIdentifier])
     }
 
     public func restoreCentralIfNeeded(restoreIdentifiers: [String]) {

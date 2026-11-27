@@ -37,18 +37,39 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     static let logger = Logger(subsystem: "com.semanticcraft.koe", category: "ble")
     #endif
     static let savedPeripheralKey = "koe.ble.lastPeripheralUUID"
-    public weak var store: HostSessionStore?
+    public weak var store: HostSessionStore? {
+        didSet {
+            if oldValue !== store {
+                lastObservedExplicitDisconnectCount = store?.runtimeDevice.explicitDisconnectCount ?? 0
+            }
+        }
+    }
     public private(set) var isHostActivated = false
     public private(set) var allowsCoreBluetooth = true
     public internal(set) var scanStartCount = 0
     public internal(set) var isScanRequested = false
-    private var scanInitiatedByUser = false
+    public internal(set) var reconnectState: BleReconnectState = .idle
+    var scanInitiatedByUser = false
+    var isBoundedReconnectScan = false
+    var resumeReconnectOnPowerOn = false
+    var lastObservedExplicitDisconnectCount: UInt64 = 0
+    var reconnectScanWindowSeconds: TimeInterval = BleReconnectPolicy.defaultScanWindowSeconds
+    var scheduleReconnectTimer: ((TimeInterval, @escaping @MainActor @Sendable () -> Void) -> (@MainActor @Sendable () -> Void))?
+    var makeCentral: (CBCentralManagerDelegate, [String: Any]?) -> any BleCentral = { delegate, options in
+        CBCentralManager(delegate: delegate, queue: .main, options: options)
+    }
     #if os(iOS)
     var sceneInBackground = false
     var pendingRestoration: (peripherals: [any BlePeripheral], scanServices: [CBUUID])?
     var awaitingStateRestoration = false
-    var makeIOSCentral: (CBCentralManagerDelegate, [String: Any]) -> any BleCentral = {
-        CBCentralManager(delegate: $0, queue: .main, options: $1)
+    var makeIOSCentral: (CBCentralManagerDelegate, [String: Any]) -> any BleCentral {
+        get {
+            let factory = makeCentral
+            return { delegate, options in factory(delegate, options) }
+        }
+        set {
+            makeCentral = { delegate, options in newValue(delegate, options ?? [:]) }
+        }
     }
     #endif
     let teardownBox = OSAllocatedUnfairLock<BleTeardownResources>(uncheckedState: BleTeardownResources())
@@ -62,21 +83,26 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     var scanAfterTeardown = false
     var teardownDeadline: Timer? { get { teardownBox.withLockUnchecked(\.teardownDeadline) } set { teardownBox.withLockUnchecked { $0.teardownDeadline = newValue } } }
     var projectedStopFramesHex: [String] = []
-    private var lastCentralState: CBManagerState = .unknown
+    var lastCentralState: CBManagerState = .unknown
     var outboundQueue = BleOutboundQueue()
     var outboundFlushTimer: Timer? { get { teardownBox.withLockUnchecked(\.outboundFlushTimer) } set { teardownBox.withLockUnchecked { $0.outboundFlushTimer = newValue } } }
+    var reconnectTimer: Timer? { get { teardownBox.withLockUnchecked(\.reconnectTimer) } set { teardownBox.withLockUnchecked { $0.reconnectTimer = newValue } } }
+    var scanWindowTimer: Timer? { get { teardownBox.withLockUnchecked(\.scanWindowTimer) } set { teardownBox.withLockUnchecked { $0.scanWindowTimer = newValue } } }
     public internal(set) var lastTeardownStopFrames: [Data] = []
     public internal(set) var lastObservedAutoConnect: Bool?
     var notifyReady = false
     var notifyFound = false
-    private var pendingServices = 0
+    var pendingServices = 0
     var reportedReady = false
     var connectionID = ""
     let defaultsStore: any BluetoothDefaultsStore
     private var discoveredName: String?
 
     public init(store: HostSessionStore? = nil, defaultsStore: any BluetoothDefaultsStore = SystemBluetoothDefaultsStore()) {
-        self.store = store; self.defaultsStore = defaultsStore; super.init()
+        self.store = store
+        self.defaultsStore = defaultsStore
+        self.lastObservedExplicitDisconnectCount = store?.runtimeDevice.explicitDisconnectCount ?? 0
+        super.init()
     }
     deinit { Self.releaseTeardownResources(teardownBox) }
 
@@ -102,6 +128,26 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     }
 
     public func startScanningIfPoweredOn(initiatedByUser: Bool = false) {
+        if initiatedByUser {
+            let (nextState, _) = BleReconnectPolicy.reduce(
+                state: reconnectState,
+                trigger: .userScan,
+                autoConnect: store?.runtimeDevice.autoConnect ?? true,
+                hasSavedPeer: hasSavedPeripheral,
+                teardownPending: teardownPending,
+                isConnectedOrReady: isLinkHealthyAndReady
+            )
+            reconnectState = nextState
+        } else {
+            guard reconnectState != .suppressedByUser else { return }
+            if !teardownPending && !isLinkHealthyAndReady {
+                reconnectState = .scanning(windowAttempt: 0)
+            }
+        }
+        beginScanAttempt(initiatedByUser: initiatedByUser)
+    }
+
+    func beginScanAttempt(initiatedByUser: Bool, boundedScanWindow: Bool = false) {
         if teardownPending {
             scanAfterTeardown = true
             return
@@ -111,6 +157,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
             flushOutboundFrames()
             return
         }
+        cancelReconnectTimers()
         if let stale = peripheral {
             central?.cancelPeer(stale)
             resetLinkState()
@@ -123,17 +170,12 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         outboundFlushTimer?.invalidate()
         outboundFlushTimer = nil
         scanInitiatedByUser = initiatedByUser
+        isBoundedReconnectScan = boundedScanWindow
         isScanRequested = true
         connectionID = UUID().uuidString
         scanStartCount += 1
         emit("scanning")
         scanWithCurrentState()
-    }
-
-    public func reconnectKnownIfAvailable() {
-        guard store?.runtimeDevice.autoConnect != false, !reportedReady, peripheral == nil, reconnectingPeripheral == nil,
-              let saved = defaultsStore.string(forKey: Self.savedPeripheralKey), UUID(uuidString: saved) != nil else { return }
-        startScanningIfPoweredOn()
     }
 
     private func scanWithCurrentState() {
@@ -144,7 +186,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
             #if os(iOS)
             central = createIOSCentral()
             #else
-            central = CBCentralManager(delegate: self, queue: .main)
+            central = makeCentral(self, nil)
             #endif
             return
         }
@@ -152,18 +194,24 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     }
 
     public func disconnect() {
+        resumeReconnectOnPowerOn = false
+        scanAfterTeardown = false
+        applyReconnectTrigger(.userDisconnectOrRelease)
         beginTeardown(for: store?.runtimeDevice, disconnectRuntime: true)
     }
 
     public func shutdown() {
         isHostActivated = false
+        resumeReconnectOnPowerOn = false
         #if os(iOS)
         pendingRestoration = nil
         awaitingStateRestoration = false
         #endif
         scanAfterTeardown = false
+        cancelReconnectTimers()
+        reconnectState = .idle
         if isScanRequested || reportedReady || peripheral != nil || reconnectingPeripheral != nil {
-            disconnect()
+            beginTeardown(for: store?.runtimeDevice, disconnectRuntime: true)
         }
         if !teardownPending {
             central?.delegate = nil
@@ -201,6 +249,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         writeLink = GattWriteLink(central, peripheral, characteristic)
         defaultsStore.set(peripheral.identifier.uuidString, forKey: Self.savedPeripheralKey)
         reportedReady = true
+        applyReconnectTrigger(.peerReady)
         emit("ready")
         flushOutboundFrames()
     }
@@ -212,6 +261,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         awaitingWriteResponse = false
         outboundFlushTimer?.invalidate()
         outboundFlushTimer = nil
+        cancelReconnectTimers()
         outboundQueue.reset()
         projectedStopFramesHex = []
         writeLink = nil
@@ -224,6 +274,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         reportedReady = false
         isScanRequested = false
         scanInitiatedByUser = false
+        isBoundedReconnectScan = false
         if scanAfterTeardown {
             scanAfterTeardown = false
             scheduleScanIfIdle()
@@ -239,10 +290,20 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         store?.reportNativeError(message)
     }
 
-    func failLink(_ message: String, error: (any Error)? = nil) {
+    func failLink(
+        _ message: String,
+        error: (any Error)? = nil,
+        reconnectTrigger: BleReconnectTrigger = .unexpectedDisconnect
+    ) {
+        let wasTeardownPending = teardownPending
         teardownLocalBleLink()
         emit("disconnected")
         reportError(message, error: error)
+        #if !os(iOS)
+        if !wasTeardownPending {
+            applyReconnectTrigger(reconnectTrigger)
+        }
+        #endif
     }
 
     public static func decodeHex(_ hex: String) -> Data? {
@@ -272,45 +333,6 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
             guard self.central === central else { return }
             self.centralStateDidChange(central.state)
         }
-    }
-
-    func centralStateDidChange(_ state: CBManagerState) {
-        Self.logger.info("CoreBluetooth manager state=\(state.rawValue)")
-        lastCentralState = state
-        #if os(iOS)
-        if state == .poweredOn, let central {
-            let wasAwaitingWithoutState = awaitingStateRestoration && pendingRestoration == nil
-            awaitingStateRestoration = false
-            resumeRestoration(on: central)
-            if wasAwaitingWithoutState { beginDeferredKnownReconnectIfAvailable() }
-        }
-        #endif
-        guard isScanRequested || peripheral != nil || reconnectingPeripheral != nil || reportedReady else { return }
-        switch state {
-        case .poweredOn:
-            if isScanRequested, let central { beginDiscoveryAndReconnect(central) }
-        case .poweredOff: unavailable("蓝牙已关闭，请在系统设置中打开。")
-        case .unauthorized: unavailable("请在系统设置中允许 Koe 使用蓝牙。")
-        case .unsupported: unavailable("这台设备不支持蓝牙连接。")
-        case .resetting: unavailable("蓝牙正在重置，请稍后重新扫描。")
-        default: break
-        }
-    }
-
-    private func unavailable(_ message: String) {
-        // CoreBluetooth invalidates peripheral handles when the manager leaves poweredOn.
-        #if os(iOS)
-        let showError = scanInitiatedByUser || peripheral != nil || reconnectingPeripheral != nil || reportedReady
-        #endif
-        resetLinkState()
-        emit("disconnected")
-        #if os(iOS)
-        guard showError else {
-            Self.logger.info("Passive Bluetooth scan ended: \(message, privacy: .public)")
-            return
-        }
-        #endif
-        reportError(message)
     }
 
     nonisolated public func centralManager(
@@ -357,6 +379,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
             central.stopScan()
         }
         guard peripheral === connected else { return }
+        cancelScanWindowTimerOnly()
         connected.delegate = self
         Self.logger.info("Connected to D3200, discovering GATT services")
         connected.discoverServices(nil)
@@ -366,112 +389,31 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
         onMainActorIsolated { self.didFailToConnect(failed, on: central, error: error) }
     }
 
-    func didFailToConnect(_ failed: any BlePeripheral, on central: any BleCentral, error: (any Error)?) {
-        guard self.central === central else { return }
-        if reconnectingPeripheral === failed {
-            reconnectingPeripheral = nil
-            #if os(iOS)
-            if isHostActivated, store?.runtimeDevice.autoConnect != false, central.state == .poweredOn, !central.isScanning {
-                isScanRequested = true
-                emit("scanning")
-                scan(central)
-            }
-            #endif
-            reportError("未能重连上次的录音豆，仍在扫描附近设备。", error: error)
-            return
-        }
-        guard peripheral === failed else { return }
-        failLink("无法连接录音豆，请确认设备已放入充电仓并短按下方按钮。", error: error)
-    }
-
     nonisolated public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral disconnected: CBPeripheral,
                                            error: (any Error)?) {
         onMainActorIsolated {
-            guard self.peripheral === disconnected else { return }
-            let stopPending = self.teardownPending
-            self.resetLinkState()
-            self.emit("disconnected")
-            if stopPending {
-                self.reportError("录音豆已断开，未能确认停录指令写入。", error: error)
-            } else if let error {
-                self.reportError("录音豆连接中断。", error: error)
-            }
+            self.didDisconnect(disconnected, on: central, error: error)
         }
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didDiscoverServices error: (any Error)?) {
-        onMainActorIsolated {
-            guard self.peripheral === source else { return }
-            guard error == nil, let services = source.services, !services.isEmpty else {
-                self.failLink("无法读取录音豆服务，请重新连接。", error: error)
-                return
-            }
-            Self.logger.info("Discovered \(services.count) D3200 GATT services")
-            self.pendingServices = services.count
-            for service in services {
-                source.discoverCharacteristics(nil, for: service)
-            }
-        }
+        onMainActorIsolated { self.didDiscoverServices(for: source, error: error) }
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
                                        error: (any Error)?) {
-        onMainActorIsolated {
-            guard self.peripheral === source else { return }
-            guard error == nil else {
-                self.failLink("无法读取录音豆通信通道，请重新连接。", error: error)
-                return
-            }
-            self.pendingServices = max(0, self.pendingServices - 1)
-            for characteristic in service.characteristics ?? [] {
-                if Self.isPrimaryD3200Service(service.uuid), Self.isWritableD3200Characteristic(characteristic) {
-                    if Self.shouldPreferWriteCharacteristic(
-                        existingServiceUUID: self.writeCharacteristic?.service?.uuid,
-                        candidateServiceUUID: service.uuid
-                    ) {
-                        self.writeCharacteristic = characteristic
-                    }
-                }
-                if Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: service.uuid) {
-                    self.notifyFound = true
-                    source.setNotifyValue(true, for: characteristic)
-                }
-            }
-            if self.pendingServices == 0 && (self.writeCharacteristic == nil || !self.notifyFound) {
-                self.failLink("此设备没有提供支持的录音通信通道。", error: error)
-                return
-            }
-            self.checkReady()
-        }
+        onMainActorIsolated { self.didDiscoverCharacteristics(for: source, service: service, error: error) }
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
-        onMainActorIsolated {
-            guard self.peripheral === source,
-                  Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: characteristic.service?.uuid) else { return }
-            guard error == nil, characteristic.isNotifying else {
-                self.failLink("无法订阅录音豆通知，请重新连接。", error: error)
-                return
-            }
-            self.notifyReady = true
-            self.checkReady()
-        }
+        onMainActorIsolated { self.didUpdateNotificationState(for: source, characteristic: characteristic, error: error) }
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
         guard Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: characteristic.service?.uuid) else { return }
-        onMainActorIsolated {
-            guard self.peripheral === source, self.reportedReady else { return }
-            guard error == nil, let data = characteristic.value else {
-                self.failLink("读取录音豆通知失败，请重新连接。", error: error)
-                return
-            }
-            guard !self.teardownPending else { return }
-            self.store?.ingestBleChunk(data)
-            self.flushOutboundFrames()
-        }
+        onMainActorIsolated { self.didUpdateValue(for: source, characteristic: characteristic, error: error) }
     }
 
     nonisolated public func peripheralIsReady(toSendWriteWithoutResponse source: CBPeripheral) {

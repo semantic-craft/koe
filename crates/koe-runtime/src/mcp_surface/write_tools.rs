@@ -344,9 +344,10 @@ impl KoeRuntime {
                 if self.auto_transcribe.contains(record_id) {
                     return Some("already_queued");
                 }
-                if !record.aggregate.spine.is_empty()
-                    && !has_recoverable_partial_transcription(record)
-                {
+                let can_resume_local_partial = self.record_speech_engine(record_id)
+                    != SpeechEngine::Cloud
+                    && has_recoverable_partial_transcription(record);
+                if !record.aggregate.spine.is_empty() && !can_resume_local_partial {
                     return Some("already_transcribed");
                 }
                 None
