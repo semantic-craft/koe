@@ -120,11 +120,18 @@ extension BluetoothBridge {
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {
         let wasAutoConnectDisabled = lastObservedAutoConnect == false
         lastObservedAutoConnect = device.autoConnect
+        let explicitDisconnectCount = store?.explicitDeviceDisconnectCount ?? lastObservedExplicitDisconnectCount
+        let receivedExplicitDisconnect = explicitDisconnectCount != lastObservedExplicitDisconnectCount
+        lastObservedExplicitDisconnectCount = explicitDisconnectCount
         let hasLocalLink = reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil
 
         if !device.autoConnect { defaultsStore.removeObject(forKey: Self.savedPeripheralKey) }
         if teardownPending {
-            if !device.autoConnect {
+            if receivedExplicitDisconnect {
+                scanAfterTeardown = false
+                resumeReconnectOnPowerOn = false
+                applyReconnectTrigger(.userDisconnectOrRelease)
+            } else if !device.autoConnect {
                 scanAfterTeardown = false
                 resumeReconnectOnPowerOn = false
                 applyReconnectTrigger(.autoConnectChanged(false))
@@ -137,6 +144,7 @@ extension BluetoothBridge {
         let disabledAutoConnect = !device.autoConnect && !wasAutoConnectDisabled
         if disabledAutoConnect {
             resumeReconnectOnPowerOn = false
+            scanAfterTeardown = false
             applyReconnectTrigger(.autoConnectChanged(false))
             if hasLocalLink {
                 beginTeardown(for: device, disconnectRuntime: device.phase != "disconnected")
@@ -144,12 +152,16 @@ extension BluetoothBridge {
             }
         } else if !device.autoConnect && !hasLocalLink {
             resumeReconnectOnPowerOn = false
+            scanAfterTeardown = false
             applyReconnectTrigger(.autoConnectChanged(false))
         }
-        if hasLocalLink && device.phase == "disconnected" {
+        if receivedExplicitDisconnect || (hasLocalLink && device.phase == "disconnected") {
             resumeReconnectOnPowerOn = false
+            scanAfterTeardown = false
             applyReconnectTrigger(.userDisconnectOrRelease)
-            beginTeardown(for: device, disconnectRuntime: false)
+            if hasLocalLink {
+                beginTeardown(for: device, disconnectRuntime: false)
+            }
             return
         }
         // Rust clears the projection when it accepts a disconnect or a release.
@@ -293,5 +305,68 @@ extension BluetoothBridge {
             return
         }
         pumpOutboundQueue()
+    }
+
+    func didDiscoverServices(for source: any BlePeripheral, error: (any Error)?) {
+        guard peripheral === source else { return }
+        guard error == nil, let services = source.services, !services.isEmpty else {
+            failLink("无法读取录音豆服务，请重新连接。", error: error)
+            return
+        }
+        Self.logger.info("Discovered \(services.count) D3200 GATT services")
+        pendingServices = services.count
+        for service in services {
+            source.discoverCharacteristics(nil, for: service)
+        }
+    }
+
+    func didDiscoverCharacteristics(for source: any BlePeripheral, service: CBService, error: (any Error)?) {
+        guard peripheral === source else { return }
+        guard error == nil else {
+            failLink("无法读取录音豆通信通道，请重新连接。", error: error)
+            return
+        }
+        pendingServices = max(0, pendingServices - 1)
+        for characteristic in service.characteristics ?? [] {
+            if Self.isPrimaryD3200Service(service.uuid), Self.isWritableD3200Characteristic(characteristic) {
+                if Self.shouldPreferWriteCharacteristic(
+                    existingServiceUUID: writeCharacteristic?.service?.uuid,
+                    candidateServiceUUID: service.uuid
+                ) {
+                    writeCharacteristic = characteristic
+                }
+            }
+            if Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: service.uuid) {
+                notifyFound = true
+                source.setNotifyValue(true, for: characteristic)
+            }
+        }
+        if pendingServices == 0 && (writeCharacteristic == nil || !notifyFound) {
+            failLink("此设备没有提供支持的录音通信通道。", error: error)
+            return
+        }
+        checkReady()
+    }
+
+    func didUpdateNotificationState(for source: any BlePeripheral, characteristic: CBCharacteristic, error: (any Error)?) {
+        guard peripheral === source,
+              Self.isD3200NotifyCharacteristic(characteristic.uuid, serviceUUID: characteristic.service?.uuid) else { return }
+        guard error == nil, source.isNotifying(characteristic) else {
+            failLink("无法订阅录音豆通知，请重新连接。", error: error)
+            return
+        }
+        notifyReady = true
+        checkReady()
+    }
+
+    func didUpdateValue(for source: any BlePeripheral, characteristic: CBCharacteristic, error: (any Error)?) {
+        guard peripheral === source, reportedReady else { return }
+        guard error == nil, let data = characteristic.value else {
+            failLink("读取录音豆通知失败，请重新连接。", error: error)
+            return
+        }
+        guard !teardownPending else { return }
+        store?.ingestBleChunk(data)
+        flushOutboundFrames()
     }
 }

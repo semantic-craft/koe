@@ -121,7 +121,20 @@ extension BluetoothBridge {
     }
 
     public func reconnectKnownIfAvailable() {
-        guard store?.runtimeDevice.autoConnect != false, !reportedReady, peripheral == nil, reconnectingPeripheral == nil,
+        if let device = store?.runtimeDevice, lastObservedAutoConnect == false, device.autoConnect {
+            lastObservedAutoConnect = true
+            let (nextState, _) = BleReconnectPolicy.reduce(
+                state: reconnectState,
+                trigger: .autoConnectChanged(true),
+                autoConnect: true,
+                hasSavedPeer: hasSavedPeripheral,
+                teardownPending: teardownPending,
+                isConnectedOrReady: isLinkHealthyAndReady
+            )
+            reconnectState = nextState
+        }
+        guard store?.runtimeDevice.autoConnect != false, reconnectState != .suppressedByUser,
+              !reportedReady, peripheral == nil, reconnectingPeripheral == nil,
               hasSavedPeripheral else { return }
         startScanningIfPoweredOn()
     }
@@ -173,13 +186,7 @@ extension BluetoothBridge {
             if deferScan {
                 scheduleScanIfIdle()
             } else {
-                let attempt: Int
-                if case let .scanning(windowAttempt) = reconnectState {
-                    attempt = windowAttempt
-                } else {
-                    attempt = 0
-                }
-                beginScanAttempt(initiatedByUser: false, windowAttempt: attempt)
+                beginScanAttempt(initiatedByUser: false, boundedScanWindow: true)
             }
         case let .scheduleAfter(delay):
             cancelReconnectTimers()
@@ -226,9 +233,15 @@ extension BluetoothBridge {
         }
     }
 
-    func armScanWindowIfNeeded(windowAttempt: Int, initiatedByUser: Bool) {
+    func armScanWindowIfNeeded() {
         #if !os(iOS)
-        guard windowAttempt > 0, !initiatedByUser, isHostActivated, isScanRequested,
+        let shouldBound: Bool
+        if case let .scanning(windowAttempt) = reconnectState {
+            shouldBound = isBoundedReconnectScan || windowAttempt > 0
+        } else {
+            shouldBound = false
+        }
+        guard shouldBound, !scanInitiatedByUser, isHostActivated, isScanRequested,
               peripheral == nil, !reportedReady, !teardownPending,
               central?.state == .poweredOn else { return }
         scheduleTimer(after: reconnectScanWindowSeconds, slot: .scanWindow) { [weak self] in
@@ -309,9 +322,7 @@ extension BluetoothBridge {
             if isScanRequested, let central {
                 resumeReconnectOnPowerOn = false
                 beginDiscoveryAndReconnect(central)
-                if case let .scanning(windowAttempt) = reconnectState {
-                    armScanWindowIfNeeded(windowAttempt: windowAttempt, initiatedByUser: scanInitiatedByUser)
-                }
+                armScanWindowIfNeeded()
                 return
             }
             let wasRadioInterrupted = previousState == .poweredOff || previousState == .resetting || resumeReconnectOnPowerOn
@@ -397,10 +408,11 @@ extension BluetoothBridge {
             return
         }
         guard peripheral === failed else { return }
-        failLink("无法连接录音豆，请确认设备已放入充电仓并短按下方按钮。", error: error)
-        #if !os(iOS)
-        applyReconnectTrigger(.connectFailed)
-        #endif
+        failLink(
+            "无法连接录音豆，请确认设备已放入充电仓并短按下方按钮。",
+            error: error,
+            reconnectTrigger: .connectFailed
+        )
     }
 
     func didDisconnect(_ disconnected: any BlePeripheral, on central: any BleCentral, error: (any Error)?) {

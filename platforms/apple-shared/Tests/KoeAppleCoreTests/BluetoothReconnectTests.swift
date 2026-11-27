@@ -4,7 +4,7 @@ import Foundation
 import os
 import Testing
 
-private final class ReconnectTestDefaultsStore: BluetoothDefaultsStore {
+final class ReconnectTestDefaultsStore: BluetoothDefaultsStore {
     private let values = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
     init(initial: [String: String] = [:]) { values.withLock { $0 = initial } }
     func string(forKey defaultName: String) -> String? { values.withLock { $0[defaultName] } }
@@ -13,7 +13,7 @@ private final class ReconnectTestDefaultsStore: BluetoothDefaultsStore {
 }
 
 @MainActor
-private final class VirtualReconnectClock {
+final class VirtualReconnectClock {
     struct Entry {
         let id: Int
         let fireTime: TimeInterval
@@ -22,6 +22,7 @@ private final class VirtualReconnectClock {
     }
 
     private(set) var now: TimeInterval = 0
+    private(set) var scheduleCount = 0
     private var nextId = 1
     private var entries: [Entry] = []
     var activeCount: Int { entries.filter { !$0.cancelled }.count }
@@ -29,6 +30,7 @@ private final class VirtualReconnectClock {
     func schedule(_ delay: TimeInterval, action: @escaping @MainActor @Sendable () -> Void) -> (@MainActor @Sendable () -> Void) {
         let id = nextId
         nextId += 1
+        scheduleCount += 1
         entries.append(Entry(id: id, fireTime: now + delay, action: action))
         return { [weak self] in
             guard let self, let index = self.entries.firstIndex(where: { $0.id == id }) else { return }
@@ -57,7 +59,7 @@ private final class VirtualReconnectClock {
 }
 
 @MainActor
-private final class ReconnectTestCentral: BleCentral {
+final class ReconnectTestCentral: BleCentral {
     var state: CBManagerState = .poweredOn
     var isScanning = false
     weak var delegate: CBCentralManagerDelegate?
@@ -77,7 +79,7 @@ private final class ReconnectTestCentral: BleCentral {
 }
 
 @MainActor
-private final class ReconnectTestPeer: BlePeripheral {
+final class ReconnectTestPeer: BlePeripheral {
     let identifier = UUID()
     var name: String? = "soundcore Work"
     var state: CBPeripheralState = .connected
