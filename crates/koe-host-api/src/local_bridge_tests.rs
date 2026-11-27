@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     os::unix::{
         fs::{FileTypeExt, MetadataExt},
         net::{UnixListener, UnixStream},
@@ -329,6 +329,163 @@ fn get_record_paginates_oversized_record_under_line_budget_over_live_bridge() {
     assert_eq!(reconstructed.len(), SEGMENT_COUNT);
     assert_eq!(reconstructed.first().unwrap(), "S1");
     assert_eq!(reconstructed.last().unwrap(), "S4000");
+
+    drop(reader);
+    drop(client);
+    drop(session);
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn get_record_bounds_giant_highlighted_segment_over_live_bridge() {
+    const NOW: u64 = 1_800_000_000;
+    const MAX_PAGINATED_RESPONSE_BYTES: usize = 1_572_864;
+    let ws = temp_workspace();
+    let _ = fs::remove_dir_all(&ws);
+
+    let record_id = {
+        let mut runtime = KoeRuntime::open(&ws).expect("seed runtime should open");
+        let giant_seg = "中".repeat(550_000);
+        let text = format!("{giant_seg}\n{giant_seg}\nfollow-up short segment");
+        let created = match runtime
+            .call_mcp_tool_step(
+                "create_note",
+                &json!({"title": "Giant Highlighted Fixture", "text": text}),
+                NOW,
+            )
+            .unwrap()
+        {
+            McpToolCallState::Completed(Ok(value)) => value,
+            other => panic!("create_note failed: {other:?}"),
+        };
+        let id = created["id"].as_str().unwrap().to_string();
+        for seg_id in ["S1", "S2"] {
+            match runtime
+                .call_mcp_tool_step(
+                    "annotate_segment",
+                    &json!({
+                        "record_id": id,
+                        "segment_id": seg_id,
+                        "kind": "highlight"
+                    }),
+                    NOW + 1,
+                )
+                .unwrap()
+            {
+                McpToolCallState::Completed(Ok(_)) => {}
+                other => panic!("annotate_segment({seg_id}) failed: {other:?}"),
+            }
+        }
+        id
+    };
+
+    let sock_path = resolve_bridge_socket_path(&ws).unwrap();
+    let session = HostSessionGuard::open(&ws).expect("host session should open");
+    let mut client = UnixStream::connect(&sock_path).unwrap();
+    let mut reader = BufReader::new(client.try_clone().unwrap());
+
+    let mut rpc = |id: u64, args: Value| -> (usize, Value) {
+        writeln!(
+            client,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "koe/mcp_tool_call",
+                "params": {
+                    "name": "get_record",
+                    "arguments": args
+                }
+            })
+        )
+        .unwrap();
+        client.flush().unwrap();
+        let mut buf = Vec::new();
+        let bytes = reader
+            .by_ref()
+            .take(super::MAX_LINE_BYTES + 1)
+            .read_until(b'\n', &mut buf)
+            .unwrap();
+        assert!(bytes > 0, "bridge closed unexpectedly");
+        assert!(
+            bytes as u64 <= super::MAX_LINE_BYTES,
+            "koe.sock response exceeded 2 MiB MAX_LINE_BYTES and poisoned connection: {bytes}"
+        );
+        let parsed: Value = serde_json::from_slice(&buf).unwrap();
+        (bytes, parsed)
+    };
+
+    let (meta_bytes, meta_resp) = rpc(
+        1,
+        json!({"record_id": record_id, "include_segments": false}),
+    );
+    assert!(
+        meta_resp.get("error").is_none(),
+        "include_segments=false failed: {meta_resp}"
+    );
+    assert!(
+        meta_bytes <= MAX_PAGINATED_RESPONSE_BYTES,
+        "include_segments=false exceeded 1.5 MiB: {meta_bytes}"
+    );
+    let meta_val = &meta_resp["result"]["value"];
+    assert_eq!(meta_val["metadataTruncated"], true);
+    assert_eq!(meta_val["segments"], json!([]));
+    assert_eq!(meta_val["totalSegments"], 3);
+    assert_eq!(meta_val["segmentsTruncated"], true);
+    assert_eq!(meta_val["nextSegmentOffset"], 0);
+    assert_eq!(meta_val["highlights"].as_array().unwrap().len(), 2);
+    assert!(
+        meta_val["highlights"][0]["quote"]
+            .as_str()
+            .unwrap()
+            .ends_with('…')
+    );
+
+    let (page0_bytes, page0_resp) = rpc(
+        2,
+        json!({"record_id": record_id, "include_segments": true, "segment_offset": 0}),
+    );
+    assert!(
+        page0_resp.get("error").is_none(),
+        "page 0 failed: {page0_resp}"
+    );
+    assert!(
+        page0_bytes <= MAX_PAGINATED_RESPONSE_BYTES,
+        "page 0 exceeded 1.5 MiB: {page0_bytes}"
+    );
+    let page0_val = &page0_resp["result"]["value"];
+    assert_eq!(page0_val["metadataTruncated"], true);
+    let page0_segs = page0_val["segments"].as_array().unwrap();
+    assert_eq!(
+        page0_segs.len(),
+        1,
+        "page 0 must return capped S1 instead of empty starved segments"
+    );
+    assert_eq!(page0_segs[0]["id"], "S1");
+    assert!(page0_segs[0]["text"].as_str().unwrap().ends_with('…'));
+    assert_eq!(page0_val["segmentsTruncated"], true);
+    assert_eq!(page0_val["nextSegmentOffset"], 1);
+
+    let (page2_bytes, page2_resp) = rpc(
+        3,
+        json!({"record_id": record_id, "include_segments": true, "segment_offset": 2}),
+    );
+    assert!(
+        page2_resp.get("error").is_none(),
+        "page 2 failed: {page2_resp}"
+    );
+    assert!(
+        page2_bytes <= MAX_PAGINATED_RESPONSE_BYTES,
+        "page 2 exceeded 1.5 MiB: {page2_bytes}"
+    );
+    let page2_val = &page2_resp["result"]["value"];
+    assert_eq!(page2_val["metadataTruncated"], true);
+    let page2_segs = page2_val["segments"].as_array().unwrap();
+    assert_eq!(page2_segs.len(), 1);
+    assert_eq!(page2_segs[0]["id"], "S3");
+    assert_eq!(page2_segs[0]["text"], "follow-up short segment");
+    assert_eq!(page2_val["segmentsTruncated"], false);
+    assert!(page2_val["nextSegmentOffset"].is_null());
 
     drop(reader);
     drop(client);
