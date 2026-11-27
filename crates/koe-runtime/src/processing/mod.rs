@@ -193,9 +193,10 @@ impl KoeRuntime {
         };
         let pcm16 = recording_assets::transcription_pcm(&self.root, id)?;
         let timeout = Duration::from_secs((pcm16.len() as u64 / 32_000 + 120).min(1800));
-        let key = self
-            .store
-            .transact(|w| w.begin_analysis(id, AnalysisStage::Transcribing))?;
+        let key = self.store.transact(|w| {
+            w.bind_speech_engine(id, SpeechEngine::Cloud)?;
+            w.begin_analysis(id, AnalysisStage::Transcribing)
+        })?;
         let config = self.asr_config();
         let result = self.submit(
             id,

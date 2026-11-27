@@ -871,3 +871,492 @@ fn active_local_speech_jobs_reports_single_inflight_job_and_clears_on_completion
 
     assert!(runtime.active_local_speech_jobs().is_empty());
 }
+
+#[cfg(feature = "offline-speech")]
+#[test]
+fn downloaded_batch_waits_for_leaked_worker_slots_after_failure_and_cancellation() {
+    use koe_client_providers::{OfflineSpeechEvent, OfflineSpeechSegment};
+
+    const WINDOW_SAMPLES: usize = 16_000 * 15;
+
+    let dir = Sandbox::new("downloaded-worker-slot-drain");
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let configured = dispatch(
+        &mut runtime,
+        json!({"type": "configure_speech", "engine": "downloaded", "modelId": "sensevoice-small"}),
+    );
+    assert!(configured["error"].is_null(), "{configured}");
+    runtime.mark_downloaded_model_ready_for_test("sensevoice-small");
+
+    let specs = [
+        ("batch-00-fail", 1u32, 3usize),
+        ("batch-01-cancel", 2u32, 4usize),
+        ("batch-02-ok", 3u32, 4usize),
+        ("batch-03-ok", 4u32, 4usize),
+    ];
+    for (id, file_id, windows) in specs {
+        seed_bean_record(&mut runtime, &dir.0, id, file_id, false);
+        save_test_wav(&dir.0, id, WINDOW_SAMPLES * windows);
+        runtime.auto_transcribe.insert(id.into());
+    }
+
+    runtime.drive_analysis_queue();
+    for _ in 0..2 {
+        runtime.drive_speech_files();
+    }
+    let fail_jobs = runtime.active_local_speech_jobs();
+    assert_eq!(fail_jobs.len(), 1);
+    assert_eq!(fail_jobs[0].record_id, "batch-00-fail");
+    let fail_op = fail_jobs[0].operation_id;
+
+    runtime.accept_offline_speech_event(OfflineSpeechEvent::TranscriptionFailed {
+        operation_id: fail_op,
+        error: "injected window 1 failure".into(),
+    });
+    assert!(matches!(
+        runtime
+            .workspace()
+            .record("batch-00-fail")
+            .unwrap()
+            .analysis,
+        AnalysisState::Failed { .. }
+    ));
+    runtime.clear_error();
+
+    runtime.drive_analysis_queue();
+    for _ in 0..3 {
+        runtime.drive_speech_files();
+    }
+    assert!(
+        runtime.error_str().is_none(),
+        "batch must wait for leaked worker slots after failure instead of overflowing: {:?}",
+        runtime.error_str()
+    );
+    assert!(
+        runtime.active_local_speech_jobs().is_empty(),
+        "next file must wait while failed file still occupies worker slots: {:?}",
+        runtime.active_local_speech_jobs()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while runtime.active_local_speech_jobs().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "batch did not resume after failed file slots drained"
+        );
+        runtime.poll_offline_speech();
+        assert!(
+            runtime.error_str().is_none(),
+            "draining orphaned worker events must not surface an error: {:?}",
+            runtime.error_str()
+        );
+        runtime.drive_analysis_queue();
+        thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, "batch-01-cancel");
+    for _ in 0..3 {
+        runtime.drive_speech_files();
+    }
+    assert!(runtime.error_str().is_none(), "{:?}", runtime.error_str());
+
+    runtime.cancel_capture_speech("batch-01-cancel");
+    runtime.drive_analysis_queue();
+    assert!(
+        runtime.error_str().is_none(),
+        "batch must wait for cancelled worker slots instead of overflowing: {:?}",
+        runtime.error_str()
+    );
+    assert!(
+        runtime.active_local_speech_jobs().is_empty(),
+        "next file must wait while cancelled file still occupies worker slots: {:?}",
+        runtime.active_local_speech_jobs()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while runtime.active_local_speech_jobs().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "batch did not resume after cancelled file slots drained"
+        );
+        runtime.poll_offline_speech();
+        assert!(
+            runtime.error_str().is_none(),
+            "draining cancelled worker events must not surface an error: {:?}",
+            runtime.error_str()
+        );
+        runtime.drive_analysis_queue();
+        thread::sleep(Duration::from_millis(2));
+    }
+
+    for expected_id in ["batch-02-ok", "batch-03-ok"] {
+        for window_idx in 0..4 {
+            let jobs = runtime.active_local_speech_jobs();
+            assert_eq!(jobs.len(), 1);
+            assert_eq!(jobs[0].record_id, expected_id);
+            let op = jobs[0].operation_id;
+
+            let slot_deadline = Instant::now() + Duration::from_secs(5);
+            while runtime.drain_offline_worker_slots_for_test() == 0 {
+                assert!(
+                    Instant::now() < slot_deadline,
+                    "worker did not drain synthetic slot for {expected_id} window {window_idx}"
+                );
+                thread::sleep(Duration::from_millis(2));
+            }
+
+            runtime.accept_offline_speech_event(OfflineSpeechEvent::Transcribed {
+                operation_id: op,
+                text: format!("{expected_id} w{window_idx}"),
+                segments: vec![OfflineSpeechSegment {
+                    start_ms: 0,
+                    end_ms: 100,
+                    text: format!("{expected_id} w{window_idx}"),
+                }],
+            });
+            assert!(
+                runtime.error_str().is_none(),
+                "unexpected error while completing {expected_id}: {:?}",
+                runtime.error_str()
+            );
+            runtime.drive_speech_files();
+            runtime.drive_analysis_queue();
+        }
+        let record = runtime.workspace().record(expected_id).unwrap();
+        assert_eq!(record.aggregate.spine.len(), 4);
+        assert!(matches!(record.analysis, AnalysisState::Idle));
+    }
+
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert!(runtime.auto_transcribe.is_empty());
+    assert!(runtime.error_str().is_none());
+}
+
+#[test]
+fn manual_transcribe_rejects_concurrent_apple_file_session_during_live_capture() {
+    let dir = Sandbox::new("apple-live-blocks-manual-file");
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    assert!(
+        dispatch(
+            &mut runtime,
+            json!({"type": "configure_speech", "engine": "apple_speech"}),
+        )["error"]
+            .is_null()
+    );
+    assert!(
+        dispatch(
+            &mut runtime,
+            json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+        )["error"]
+            .is_null()
+    );
+
+    seed_bean_record(&mut runtime, &dir.0, "queued-file", 1, true);
+
+    let started = dispatch(
+        &mut runtime,
+        json!({"type": "start_microphone", "inputId": "fixture"}),
+    );
+    assert!(started["error"].is_null(), "{started}");
+    let ticket = started["microphone"].clone();
+    let live_record_id = ticket["recordId"].as_str().unwrap().to_owned();
+    let mic_started = dispatch(
+        &mut runtime,
+        json!({
+            "type": "microphone_started",
+            "recordId": ticket["recordId"],
+            "sessionId": ticket["sessionId"],
+            "lane": ticket["lane"],
+            "sampleRate": 16_000
+        }),
+    );
+    assert!(mic_started["error"].is_null(), "{mic_started}");
+
+    runtime.ingest_microphone_pcm(crate::MicrophonePcmChunk {
+        record_id: &live_record_id,
+        session_id: ticket["sessionId"].as_str().unwrap(),
+        lane: ticket["lane"].as_str().unwrap(),
+        sequence: 0,
+        samples: &[64i16; 320],
+        timing: None,
+        now: NOW,
+    });
+    let live_op = runtime
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .expect("live capture must start an AppleLocal operation");
+    assert_eq!(
+        runtime.active_local_speech_jobs(),
+        vec![LocalSpeechJobView {
+            operation_id: live_op,
+            record_id: live_record_id.clone(),
+            engine: "apple_speech".into(),
+        }]
+    );
+
+    let refused = dispatch(
+        &mut runtime,
+        json!({"type": "transcribe", "recordId": "queued-file"}),
+    );
+    assert!(
+        refused["error"].is_string(),
+        "manual HostIntent::Transcribe must reject while live Apple capture is active: {refused}"
+    );
+    assert_eq!(
+        runtime.active_local_speech_jobs(),
+        vec![LocalSpeechJobView {
+            operation_id: live_op,
+            record_id: live_record_id.clone(),
+            engine: "apple_speech".into(),
+        }],
+        "rejected manual transcribe must not spawn a second AppleLocal session"
+    );
+    assert!(matches!(
+        runtime.workspace().record("queued-file").unwrap().analysis,
+        AnalysisState::Idle
+    ));
+    assert!(runtime.drain_local_asr_effects().is_empty());
+
+    assert!(dispatch(&mut runtime, json!({"type": "stop_microphone"}))["error"].is_null());
+    assert!(
+        dispatch(
+            &mut runtime,
+            json!({
+                "type": "microphone_stopped",
+                "recordId": ticket["recordId"],
+                "sessionId": ticket["sessionId"],
+                "lane": ticket["lane"],
+                "sequence": 1
+            }),
+        )["error"]
+            .is_null()
+    );
+    assert!(
+        dispatch(
+            &mut runtime,
+            json!({
+                "type": "local_asr_result",
+                "operationId": live_op,
+                "text": "Live capture text",
+                "startMs": 0,
+                "endMs": 40,
+                "isFinal": true
+            }),
+        )["error"]
+            .is_null()
+    );
+    assert!(
+        dispatch(
+            &mut runtime,
+            json!({"type": "local_asr_finished", "operationId": live_op}),
+        )["error"]
+            .is_null()
+    );
+    assert!(runtime.active_local_speech_jobs().is_empty());
+
+    let accepted = dispatch(
+        &mut runtime,
+        json!({"type": "transcribe", "recordId": "queued-file"}),
+    );
+    assert!(
+        accepted["error"].is_null(),
+        "manual transcribe must succeed once live Apple capture completes: {accepted}"
+    );
+    let file_op = runtime
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .expect("file transcription must start once AppleSpeech is idle");
+    assert_eq!(
+        runtime.active_local_speech_jobs(),
+        vec![LocalSpeechJobView {
+            operation_id: file_op,
+            record_id: "queued-file".into(),
+            engine: "apple_speech".into(),
+        }]
+    );
+}
+
+#[test]
+fn interrupted_cloud_retry_over_failed_local_record_never_auto_recovers() {
+    let dir = Sandbox::new("cloud-retry-binds-engine");
+    let asr_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let asr_endpoint = format!("ws://{}", asr_listener.local_addr().unwrap());
+    let chat_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    chat_listener.set_nonblocking(true).unwrap();
+    let chat_endpoint = format!(
+        "http://{}/chat/completions",
+        chat_listener.local_addr().unwrap()
+    );
+
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let asr_server = thread::spawn(move || {
+        if let Ok((stream, _)) = asr_listener.accept() {
+            let _ = accepted_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            drop(stream);
+        }
+    });
+
+    {
+        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "configure_speech", "engine": "apple_speech"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+            )["error"]
+                .is_null()
+        );
+
+        seed_bean_record(&mut runtime, &dir.0, "rec-cloud-retry", 1, true);
+        let local_start = dispatch(
+            &mut runtime,
+            json!({"type": "transcribe", "recordId": "rec-cloud-retry"}),
+        );
+        assert!(local_start["error"].is_null(), "{local_start}");
+        let local_op = runtime
+            .drain_local_asr_effects()
+            .into_iter()
+            .find_map(|effect| match effect {
+                LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+                _ => None,
+            })
+            .expect("expected initial AppleSpeech Start effect");
+        let local_fail = dispatch(
+            &mut runtime,
+            json!({
+                "type": "local_asr_failed",
+                "operationId": local_op,
+                "message": "local recognizer failed"
+            }),
+        );
+        assert_eq!(local_fail["error"].as_str(), Some("local recognizer failed"));
+        runtime.clear_error();
+        let failed_rec = runtime.workspace().record("rec-cloud-retry").unwrap();
+        assert!(matches!(failed_rec.analysis, AnalysisState::Failed { .. }));
+        assert_eq!(failed_rec.speech_engine, Some(SpeechEngine::AppleSpeech));
+
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "configure_speech", "engine": "cloud"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({"type": "set_meeting_audio_policy", "policy": "cloud_allowed"}),
+            )["error"]
+                .is_null()
+        );
+        assert!(
+            dispatch(
+                &mut runtime,
+                json!({
+                    "type": "configure_provider",
+                    "apiKey": "cloud-retry-fixture-key",
+                    "model": "fixture",
+                    "asrEndpoint": asr_endpoint,
+                    "chatEndpoint": chat_endpoint
+                }),
+            )["error"]
+                .is_null()
+        );
+
+        let cloud_start = dispatch(
+            &mut runtime,
+            json!({"type": "transcribe", "recordId": "rec-cloud-retry"}),
+        );
+        assert!(cloud_start["error"].is_null(), "{cloud_start}");
+        accepted_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("cloud batch ASR request must reach ASR endpoint");
+        assert!(matches!(
+            runtime
+                .workspace()
+                .record("rec-cloud-retry")
+                .unwrap()
+                .analysis,
+            AnalysisState::Pending {
+                stage: AnalysisStage::Transcribing,
+                ..
+            }
+        ));
+    }
+
+    let _ = release_tx.send(());
+    asr_server.join().unwrap();
+
+    {
+        let mut crashed_reopen = KoeRuntime::open(&dir.0).unwrap();
+        assert!(matches!(
+            crashed_reopen
+                .workspace()
+                .record("rec-cloud-retry")
+                .unwrap()
+                .analysis,
+            AnalysisState::Interrupted { .. }
+        ));
+        assert!(
+            dispatch(
+                &mut crashed_reopen,
+                json!({"type": "configure_speech", "engine": "apple_speech"}),
+            )["error"]
+                .is_null()
+        );
+    }
+
+    let mut local_reopen = KoeRuntime::open(&dir.0).unwrap();
+    assert!(
+        local_reopen.auto_transcribe.is_empty(),
+        "interrupted cloud retry must not auto-recover after switching back to local: {:?}",
+        local_reopen.auto_transcribe
+    );
+    let rec = local_reopen.workspace().record("rec-cloud-retry").unwrap();
+    assert_eq!(
+        rec.speech_engine,
+        Some(SpeechEngine::Cloud),
+        "cloud batch ASR must persist SpeechEngine::Cloud over prior local engine"
+    );
+    assert!(
+        dispatch(
+            &mut local_reopen,
+            json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+        )["error"]
+            .is_null()
+    );
+    for _ in 0..5 {
+        local_reopen.poll_timers(10, NOW + 2);
+    }
+    assert!(local_reopen.active_local_speech_jobs().is_empty());
+    assert!(local_reopen.drain_local_asr_effects().is_empty());
+    assert!(local_reopen.auto_summarize.is_empty());
+    assert!(matches!(
+        local_reopen
+            .workspace()
+            .record("rec-cloud-retry")
+            .unwrap()
+            .analysis,
+        AnalysisState::Interrupted { .. }
+    ));
+    assert_eq!(
+        chat_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
