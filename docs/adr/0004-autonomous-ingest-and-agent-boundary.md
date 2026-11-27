@@ -1,8 +1,18 @@
 # 无人值守采集、四系统边界与外部代理契约
 
+## 状态与落地记录
+
+- **状态：** 已采纳。第一阶段 Koe 四项核心里程碑及跨进程 MCP 主动断开抑制对齐均已合并进 `main`，实体硬件真机验收独立跟踪于 `#834` 与 `#757`，第二阶段外部薄调度层待接入。
+- **主线落地：**
+  - 决策归档：`#833`（`c761df0`）确立本 ADR 与 [架构与状态所有权](../ARCHITECTURE.md)、[路线图](../../ROADMAP.md) 的边界指针。
+  - 里程碑一（macOS BLE 断链与休眠唤醒自动重连）：`#835`（`26284dc`）在 `KoeAppleCore` 新增 `BleReconnectPolicy` 有界退避状态机与 `NSWorkspace` 休眠唤醒监听；`#839`（`326f896`）由 Rust `DeviceSnapshot.explicitDisconnectCount` 统一投影主动断开计数，补齐跨进程 `koe.sock` MCP 断开后的自动重连抑制。
+  - 里程碑二（本机免费批处理恢复与单路准入）：`#836`（`7109866`）落地本机文件转写单飞准入、持久化 `AnalysisStage` 的免费队列幂等恢复，以及严禁云端 `Interrupted` 静默重扣费守门。
+  - 里程碑三（`--bridge-only`、大记录分页与幂等控制）：`#837`（`3c8b0c8`）落地零抢锁 `--bridge-only`、`get_record` 分段与 1.2 MB 预算裁剪、`poll_updates` 重启回绕及活跃本机任务暴露，以及 `download_all`、`set_project` 与 `if_idle`。
+  - 里程碑四（200 词纪要热词表与第 17 项 MCP 工具）：`#838`（`8b5f8d7`）持久化规范化 `minutes_vocabulary` 并注入纪要与实时纪要提示词、纳入 `FlightRecorder` 脱敏，新增第 17 项 MCP 工具 `manage_vocabulary`。
+
 ## 问题
 
-`Koe` 已在纯 Rust 内核与 macOS 原生宿主中实现 D3200（soundcore Work）BLE 加密拉取、音频落盘与 `CustodyReceipt` 签发、本机与云端转写、基于 `validate_minutes_grounding` 的反幻觉纪要、带 `SourceRef` 的 `SourcedItem` 候选待办，以及经 `koe.sock` 暴露的 16 项 MCP 工具。要将这套底座用于「随身佩戴 D3200 回到 Mac 旁自动回传、批量转写与出纪要、再交由外部代理分流建单或派发任务」的无人值守链路，现有实现仍存在五类明确缺口。
+`Koe` 已在纯 Rust 内核与 macOS 原生宿主中实现 D3200（soundcore Work）BLE 加密拉取、音频落盘与 `CustodyReceipt` 签发、本机与云端转写、基于 `validate_minutes_grounding` 的反幻觉纪要、带 `SourceRef` 的 `SourcedItem` 候选待办，以及经 `koe.sock` 暴露的 MCP 工具集（起草基线时尚无词表同步工具，里程碑四 `#838` 新增 `manage_vocabulary` 后已扩充为 17 项 MCP 工具）。要将这套底座用于「随身佩戴 D3200 回到 Mac 旁自动回传、批量转写与出纪要、再交由外部代理分流建单或派发任务」的无人值守链路，现有实现仍存在五类明确缺口。
 
 1. **中途 BLE 断链与休眠唤醒缺口。** macOS 宿主仅在 `Koe.app` 启动时经由 `BluetoothBridge` 扫描并直连已知设备。录音豆离开蓝牙范围触发 `didDisconnectPeripheral` 后，`resetLinkState` 会清空扫描与连接状态且不再重启扫描；既有的 `reconnectKnownIfAvailable` 未在生产路径调用；macOS 宿主也未监听系统休眠唤醒通知以恢复扫描。用户外出返回 Mac 附近后，宿主不会自动感知设备并接续离线拉取。
 2. **无头 MCP 回退抢占工作区排他锁。** `Koe.app` 未运行时，`koe --mcp-stdio` 会回退直开 `ProductStore`，持有 `.koe-workspace.lock` 排他锁，并落入无 CoreBluetooth 驱动、无 Keychain 凭据的 `IsolatedCredentials` 模式。外部调度进程一旦先于 `Koe.app` 启动 MCP，既读不到真实设备与云端凭据，还会阻塞随后启动的 `Koe.app` 打开工作区。
@@ -67,4 +77,4 @@ D3200 协议的按文件删档命令 `0x1A/0x10`（见 [D3200 协议笔记](../.
 - **里程碑二自动化验收。** 连续入队 12 条及以上本机下载模型离线录音时，按单路并发顺序完成且不出现 `OfflineSpeechWorker` 队列满错误；重启 `KoeRuntime` 后未完成的本机免费 `RecordOrigin::Bean` 录音自动续跑，而处于 `Interrupted` 的云端转写与文字纪要保持暂停、绝不静默重发请求。
 - **里程碑三自动化验收。** 在 `Koe.app` 未运行时启动 `koe --mcp-stdio --bridge-only`，不占用 `.koe-workspace.lock` 且工具调用返回明确离线错误，宿主开放 `koe.sock` 后同一会话自动恢复可用；超过 2 MiB 序列化体积的合成长记录经 `get_record` 分页完整取回且不触发连接 `Poisoned`；宿主重启后 `poll_updates` 返回 `generationReset` 并在 `pendingJobs` 暴露活跃本机转写任务；`download_all`、`set_project` 与 `if_idle` 防重复制均由行为回归测试覆盖，MCP 仍拒绝永久清除记录。
 - **里程碑四自动化验收。** 通过 MCP 写入的 `minutes_vocabulary` 经去重与 200 词上限校验后持久化并跨重启保留，超限请求明确报错且不破坏既有配置；缺少该字段的历史工作区可无损读取；摘要请求正文包含已配置词表；跨端宿主契约检查继续通过。
-- **实体硬件与真机验收分离。** 实体 D3200 离开并返回 Mac 蓝牙范围、真实 macOS 休眠锁屏恢复、手机与 Mac 蓝牙交接、以及长周期离线批量拉取与真实云端联调（延续 `#757`、`#612`、`#725`、`#731`），不以替身测试或模拟器结果替代，统一按 [贡献规则](../../CONTRIBUTING.md) 拆分为独立 `ready-for-human` 工单并在 [进度页](../../progress/) 单独跟踪。核心架构定位同步关联 [ADR 0003](0003-shared-speech-and-all-day.md) 与 [路线图](../../ROADMAP.md)。
+- **实体硬件与真机验收分离。** 实体 D3200 离开并返回 Mac 蓝牙范围、真实 macOS 休眠锁屏恢复、手机与 Mac 蓝牙交接、以及长周期离线批量拉取与真实云端联调（由开放的 `ready-for-human` 工单 `#834`、`#757` 跟踪，锁屏与活动退出场景延续原 `ready-for-human` 工单 `#612` 的验收项），不以替身测试或模拟器结果替代，统一按 [贡献规则](../../CONTRIBUTING.md) 拆分为独立 `ready-for-human` 工单并在 [进度页](../../progress/) 单独跟踪。核心架构定位同步关联 [ADR 0003](0003-shared-speech-and-all-day.md) 与 [路线图](../../ROADMAP.md)。

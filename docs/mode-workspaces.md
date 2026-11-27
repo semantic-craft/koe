@@ -50,7 +50,7 @@
 
 三种模式读取同一份工作区，不各建资料库。Rust领域/服务/runtime拥有录音、原文、来源和派生结果，宿主渲染快照并发送意图。
 
-已有MCP的`list_records`、`search`和`get_record`可提供原文、分析及来源。分段包含text、originalText、时间与说话人，摘要与重点分别返回。`ask`会创建并保存新问答，不是只读读取已有分析。Agent只需读资料时应使用对应读取工具，不因为注册了16个工具就默认授予写入用途。
+已有MCP的`list_records`、`search`和`get_record`可提供原文、分析及来源。分段包含text、originalText、时间与说话人，摘要与重点分别返回。`ask`会创建并保存新问答，不是只读读取已有分析。Agent只需读资料时应使用对应读取工具，不因为注册了17个工具就默认授予写入用途。
 
 在 Koe 源码目录运行 `cargo run --package koe-cli -- mcp-stdio`，可通过 `--workspace <现有工作区>` 沿用实际资料库。实现位置见 [MCP 工具注册](../crates/koe-runtime/src/mcp_surface/mod.rs) 和 [CLI 文档](../README.md#cli-与-mcp)。
 

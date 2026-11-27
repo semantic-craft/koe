@@ -146,7 +146,7 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 `KoeAppleCore` 提供无 UI 的 Apple 契约、快照存储及平台适配组件。macOS 的 `KoeMacUI` 渲染 SwiftUI，AppKit 管窗口、菜单和离屏门控。iOS 的 `KoeiOSApp` 复用 `KoeAppleCore` 并处理 AVAudioSession、CoreBluetooth 恢复、文件分享及锁屏媒控。Android 以 Kotlin 状态切片配 Compose，经 JNI 转发到同一 C ABI，适配 AudioRecord/AudioTrack、前台服务、BLE GATT 与系统文件选择。宿主可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，业务规则和状态变更归 Rust。
 
-CLI 与 MCP 在 macOS 宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）使用本地 JSON-RPC，其中 `koe/diagnostics` 提供诊断导出。宿主未运行时回退直开 `KoeRuntime` 并使用隔离凭据。MCP stdio 暴露 16 项检索、审核、修订与设备工具，永久清除由原生界面保留。无人值守采集、四系统职责边界与外部代理契约演进见 [ADR 0004](adr/0004-autonomous-ingest-and-agent-boundary.md)。
+CLI 与 MCP 在 macOS 宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）使用本地 JSON-RPC，其中 `koe/diagnostics` 提供诊断导出。默认在宿主未运行时回退直开 `KoeRuntime` 并使用隔离凭据；使用 `--bridge-only` 时不回退直开且不抢占 `.koe-workspace.lock`。MCP stdio 暴露 17 项检索、审核、修订、设备与词表工具（含写入 `minutes_vocabulary` 的 `manage_vocabulary`），永久清除由原生界面保留。无人值守采集、四系统职责边界与外部代理契约演进见 [ADR 0004](adr/0004-autonomous-ingest-and-agent-boundary.md)。
 
 ## 飞行记录与确定性回放
 

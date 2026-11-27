@@ -3,8 +3,8 @@
 <title>Koe · Rust 与三端原生产品进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust 与三端原生产品进度</h1>
-<p>Observed: 2026-11-23T12:13:47.580785Z</p>
-<p>Main: <code>main: 03b58d022a7d962606fb6d592161cebe3a72fc02</code></p>
+<p>Observed: 2026-11-27T22:39:58.967694Z</p>
+<p>Main: <code>main: 8b5f8d7dcf726f55fda946cc8cf9170be4850a6b</code></p>
 <section id="mode-workspaces-definition"><h2>三模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>三种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要。本项交付业务定义文档，正式页面已由 PR #712 实现并收敛为三模式工作区。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -95,13 +95,13 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/transcript_edit.rs">file crates/koe-runtime/src/transcript_edit.rs: 录音与处理守卫、过期摘要槽位回收及持久化发布编排。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/TranscriptDetailView.swift">file platforms/apple-shared/Sources/KoeAppleShared/TranscriptDetailView.swift: 原生记录详情说话人胶囊、同人合并面板、单句内联修订与还原及过期纪要横幅。</a></li>
 </ul><p>Next: 实体 D3200 与真实付费云服务下的多说话人转写改名及重算按 #588 验收。</p></article>
-<article id="collar-companion-mcp-bridge"><h3>16 工具实时 MCP 本地桥接</h3><span class="badge">done</span><p>PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 本地 RPC（0700 目录与 0600 套接字、getpeereid 同 UID 校验），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。后续已移除语音输入模式与外部伴侣流接口。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/640">issue 640: 16 工具实时 MCP 本地桥接需求及验收范围。</a></li>
+<article id="collar-companion-mcp-bridge"><h3>17 工具实时 MCP 本地桥接</h3><span class="badge">done</span><p>PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 本地 RPC（0700 目录与 0600 套接字、getpeereid 同 UID 校验），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部只读及可逆工具（不暴露永久删除），关闭时默认回退离线单写模式；并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。后续已移除语音输入模式与外部伴侣流接口，并于 #837/#838 扩展至 17 项 MCP 工具（新增 --bridge-only、get_record 分段分页与 manage_vocabulary 纪要热词同步）。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/640">issue 640: 实时 MCP 本地桥接需求及验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 四层实现、三模型对抗审查 6 项加固、独立分支复验（flash PASS+NOTES）与 CI 通过后 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-host-api/src/local_bridge.rs">file crates/koe-host-api/src/local_bridge.rs: 属主私有 0600 koe.sock JSON-RPC 服务，处理 koe/status、koe/doctor 与 MCP 工具调用。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/src/mcp.rs">file crates/koe-cli/src/mcp.rs: 在线优先回退离线的 16 工具 MCP stdio 服务与宿主重启自动重连。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/src/mcp.rs">file crates/koe-cli/src/mcp.rs: 在线优先回退离线与 --bridge-only 模式的 17 工具 MCP stdio 服务与宿主重启自动重连。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/DeviceConnectionSettingsCard.swift">file platforms/apple-shared/Sources/KoeAppleShared/DeviceConnectionSettingsCard.swift: 原生设置页蓝牙自动连接开关与释放蓝牙控制权卡片。</a></li>
-</ul><p>Next: koe.sock 仅服务本地 CLI 与 16 项 MCP stdio 工具；实体 D3200 真机验收见 #588、#662 与 #731。</p></article>
+</ul><p>Next: koe.sock 服务本地 CLI 与 17 项 MCP stdio 工具（#837 补齐 --bridge-only 与分段分页，#838 新增 manage_vocabulary）；实体 D3200 真机验收见 #834 与 #757。</p></article>
 <article id="capture-source-studio"><h3>独立「录音」音源工作台与实时字幕状态说明</h3><span class="badge">done</span><p>PR #646（#644）新增左侧边栏独立「录音」页（CaptureView），移除今天页顶部的 MicrophoneCard 输入条与阻塞式 NSAlert + NSPopUpButton 下拉弹窗，在 KoeRuntime 统一管理 D3200 蓝牙录音豆、Mac 蓝牙耳机与 CoreAudio 输入设备；Auto 模式按已连闲置非领口待命录音豆、Mac 蓝牙输入、系统默认输入动态选源，支持手动选卡与一键恢复自动优先；仅在正式录音期间由入站采样块计算归一化 RMS 电平以免平时打开音频输入把蓝牙耳机从立体声 A2DP 降级为单声道 HFP；录音豆实时录制遇到只留本机或未配云端密钥时直接说明无实时字幕原因并提供设置跳转。实体硬件联调归入 #645。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/644">issue 644: 独立「录音」音源工作台与实时字幕状态说明需求范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 三层实现、三模型对抗审查 5 项边界加固与远端 CI 通过后 squash 合并。</a></li>
@@ -172,6 +172,18 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Sources/Koe/CoreAudioInputMonitor.swift">file platforms/macos/Sources/Koe/CoreAudioInputMonitor.swift: CoreAudio HAL 属性监听替代 1 Hz 音频设备轮询。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/verify-ui-principles.py">file scripts/verify-ui-principles.py: 4 Hz 高频切片叶子栏读取边界静态门禁。</a></li>
 </ul><p>Next: 安装新版签名包后，按 #725 在实机核对关窗后台录音豆实体按键唤醒弹窗与外接耳机热插拔。</p></article>
+<article id="autonomous-ingest-and-agent-contract"><h3>无人值守采集底座、自动重连与 17 工具外部代理契约（ADR 0004 第一阶段）</h3><span class="badge">done</span><p>ADR 0004（#833，c761df0）第一阶段 Koe 四项核心里程碑及跨进程主动断开对齐已全部通过自动化测试、独立 Pro 盲审与托管 CI 并合并进 main。PR #835（26284dc）落地 macOS BLE 意外断链、蓝牙重置与 NSWorkspace 休眠唤醒退避重连状态机，PR #839（326f896）将 explicitDisconnectCount 上移至 Rust DeviceSnapshot 实现跨进程 koe.sock MCP 主动断开抑制一致；PR #836（7109866）实现本机离线批量转写单飞准入与基于持久化 AnalysisStage 的免费本机队列幂等恢复，严守零云端 Interrupted 静默重扣费；PR #837（3c8b0c8）新增零抢锁 --bridge-only、&lt;= 1.2 MB 预算的 get_record 分段分页、poll_updates 重启代次归零与活跃本机任务暴露，以及幂等 manage_record（set_project / if_idle）与 device_control（download_all）；PR #838（8b5f8d7）持久化 200 词规范化 minutes_vocabulary 注入纪要提示词并纳入 FlightRecorder 脱敏，新增第 17 项 MCP 工具 manage_vocabulary。物理 D3200 自动重连与休眠唤醒实测另归入 #834 独立验收。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/833">pull 833: squash c761df0 已合并：确立 ADR 0004 四系统职责边界、六态生命周期、第一阶段延后硬件自动删档及四项核心工程里程碑。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/835">pull 835: squash 26284dc 已合并：KoeAppleCore 新增 BleReconnectPolicy 退避重连状态机（1/2/5/15/30/60s、10s 扫描窗口）与 NSWorkspace 休眠唤醒监听，保留 iOS 恢复分支。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/839">pull 839: squash 326f896 已合并：在 Rust DeviceRuntime 维护 explicit_disconnect_count 并经 DeviceSnapshot.explicitDisconnectCount 跨端投影，补齐跨进程 koe.sock MCP 主动断开抑制。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/836">pull 836: squash 7109866 已合并：实现本机文件转写单飞准入防 MAX_OUTSTANDING=4 溢出、基于持久化 AnalysisStage 幂等恢复免费本机 Bean 队列，并严格禁止静默重试云端 Interrupted 任务（形式模型 1,547 状态 / 7 变异体全拦）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/837">pull 837: squash 3c8b0c8 已合并：落地零抢锁 --bridge-only、get_record 分段分页与 &lt;= 1.2 MB 预算裁剪、poll_updates 重启代次归零检测与活跃本机任务暴露、以及 download_all / set_project / if_idle 幂等控制。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/838">pull 838: squash 8b5f8d7 已合并：在 ProviderConfiguration 持久化规范化 200 词 minutes_vocabulary 并注入纪要与实时纪要提示词、纳入 FlightRecorder 脱敏，新增第 17 项 MCP 工具 manage_vocabulary。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/834">issue 834: 开放真机验收单：追踪实体 D3200 离身回连、蓝牙开关重置、pmset sleepnow 休眠唤醒与跨进程断开抑制。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/adr/0004-autonomous-ingest-and-agent-boundary.md">file docs/adr/0004-autonomous-ingest-and-agent-boundary.md: 无人值守采集、四系统职责边界、里程碑与落地状态架构决策记录。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleCore/BluetoothBridge%2BReconnect.swift">file platforms/apple-shared/Sources/KoeAppleCore/BluetoothBridge+Reconnect.swift: macOS BLE 退避自动重连状态机与扫描窗口定时管理。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/mcp_surface/definitions.rs">file crates/koe-runtime/src/mcp_surface/definitions.rs: 17 项 MCP 工具单一声明真相源（含 manage_vocabulary）。</a></li>
+</ul><p>Next: 按 #834 完成实体 D3200 自动重连、真实 pmset 休眠唤醒与签名版跨进程断开抑制真机验收，随后推进 ADR 0004 第二阶段外置薄调度层接入。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>该阶段的全量 scripts/check 通过 48 项 Python 契约测试、89 文件 verify-ui-principles 零违规、check_swiftui_perf 零告警、391 项离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared（29 项）及 macos（38 项 Swift Testing + 57 项 XCTest）测试；PR #712、#714、#715、#721、#724、#726 均经独立审查与远端 CI 通过后 squash 合并。</p><ul>
@@ -181,7 +193,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/617">pull 617: N3A 完整门禁、CI 及 gpt-6-astra 独立 PASS+NOTES；真实麦克风未验。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: Slice R1 完整门禁（281 Rust、44 Python、53 Swift）、koe-cli benchmark（66.389 ms）、三模型对抗审查及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/638">pull 638: Slice R2 完整门禁（295 Rust、44 Python、57 Swift）、koe-cli benchmark（release 5 轮中位数 65.721 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 16 工具实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 独立「录音」音源工作台完整门禁（50 文件 UI 原则零违规、全量离线 Rust 与 Swift 测试）、koe-cli benchmark（69.821 ms）、三模型对抗审查 5 项先红后绿加固及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/712">pull 712: 正式四工作区与解耦导航通过全量 scripts/check（80 文件 UI 原则零违规、全量 Rust/Clippy 与 Swift 测试）、三模型对抗审查、独立 pro 复验（PASS+NOTES）及远端 CI。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/721">pull 721: 首页音源条引导与一键切换通过 C ABI 快照回归、UI 原则门禁与远端 CI。</a></li>
@@ -199,7 +211,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/633">pull 633: 静态 Dock 图标注册与原子重装修复已 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: 含归档锁与 30 天回收站的签名版已重装并通过 verify-self 与 smoke-test。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/638">pull 638: 含转写原文分段编辑与说话人合并的签名版已重装并通过 verify-self 与 smoke-test。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 16 项 MCP 工具；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 MCP 工具（初版集合，后于 #838 扩充至 17 项）；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 合并提交 e8e317e 已重装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610）并通过 verify-self 与 smoke-test。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/706">pull 706: 基于 2bcac49 重装 Developer ID 签名版 /Applications/Koe.app（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），通过 verify-self 与 smoke-test，完成四个浅色弹窗实机复核并结案 #654。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/releases/tag/v2.1.0">release v2.1.0: 本机 /Applications/Koe.app 已从正式公证发行包升级至 2.1.0 构建 10（CDHash 10fe6b57bbbd3e64c0555e8269583456c3c70b49，PID 40289），Gatekeeper 通过，68 条记录与 Keychain 授权完整保留，soundcore Work (63:9D) 自动重连并输出「录音豆 已连接」状态胶囊。</a></li>
@@ -351,6 +363,12 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/775">issue 775: 开放真机验收单，追踪 iOS 物理真机硬件验收与 TestFlight Build 17 真机安装实测。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/777">issue 777: 开放真机验收单，追踪 Android 物理真机硬件验收、16 KB 页大小真机验证与 Pixel 11 Pro 覆盖安装。</a></li>
 </ul><p>Next: 本机 /Applications/Koe.app 已就地升级至公证版 2.7.1（构建 17）；Android 设备可通过应用内 GitHub Release 检查或 adb install -r Koe-2.7.1-android-arm64.apk 升级；iOS 可通过 TestFlight Internal Team 安装 Build 17；双端物理真机硬件验收继续保持 unverified 并按 #775 与 #777 推进。</p></article>
+<article id="macos-ble-auto-reconnect-acceptance"><h3>macOS 实体 D3200 自动重连、休眠唤醒与跨进程断开抑制真机验收（#834）</h3><span class="badge">unverified</span><p>PR #835（26284dc）与 PR #839（326f896）已通过虚拟蓝牙适配器、可注入 NSWorkspace 休眠唤醒通知以及真实 koe.sock 跨进程 MCP device_control(action=&quot;disconnect&quot;) 自动化回归测试，但实体硬件行为仍未验证（保持 unverified）。待在实体 Mac 与物理 soundcore Work（D3200）上实测离身断链退避回连、系统蓝牙开关重置恢复、真实 macOS pmset 休眠唤醒，以及签名版 /Applications/Koe.app 下跨进程 MCP 主动断开与切回手机后的零抢连抑制。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/834">issue 834: 开放 ready-for-human 真机验收单：实体 D3200 离身回连、蓝牙开关重置、pmset sleepnow 休眠唤醒与主动断开/切回手机抑制。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/835">pull 835: squash 26284dc 已合并：虚拟蓝牙适配器与可注入休眠通知测试全部通过，但未在物理硬件上实测。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/839">pull 839: squash 326f896 已合并：真实 koe.sock 跨进程 MCP 主动断开抑制回归通过，但未在签名版 /Applications/Koe.app 与实体 D3200 上实测。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/adr/0004-autonomous-ingest-and-agent-boundary.md">file docs/adr/0004-autonomous-ingest-and-agent-boundary.md: ADR 0004 明确自动化门禁与实体硬件真机验收分离原则。</a></li>
+</ul><p>Next: 安装合入 #835 与 #839 后的签名版 /Applications/Koe.app，按 #834 搭配实体 D3200 完成离身回连、蓝牙重置、pmset sleepnow 休眠唤醒及跨进程 MCP 主动断开抑制四项真机核验。</p></article>
 </section>
 <section id="mobile-platforms"><h2>移动端原生宿主（iOS 与 Android）</h2>
 <article id="mobile-core-foundation"><h3>移动端 Rust 跨端底座与 C++17 JNI 桥接（Phase 0）</h3><span class="badge">done</span><p>PR #774（2fdc49f）已合并主线，完成移动端 Rust 与原生桥接实现。本次拆分 offline-speech 与 local-bridge 特性，在 koe-host-api 增加 cdylib 产物，引入 HostPlatformProfile 并泛化 BeanControlOwner，新增 C++17 JniCallbacks 与 client_jni 桥接。产物构建与静态门禁均已本地验证。iOS device 与 simulator 静态库产出 arm64、15 个 C ABI 符号且 minos 为 17.0。Android NDK 28.2 的 arm64-v8a 与 x86_64 产物通过 16 KB LOAD 对齐、ANDROID_RELR 与 NEEDED 白名单校验。桌面 OpenJDK 17 HotSpot JNI 跨线程回调与真实 KoeRuntime 生命周期测试已接入 scripts/verify-local.sh，全量离线测试与托管 macos-26 CI 通过。本项仅含原生库、JNI 与构建校验，不含移动端 App 壳与真机验收。</p><ul>
@@ -468,10 +486,11 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/830">pull 830: 诊断、回放、故障注入与三端导出合入主线。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/SECURITY.md">file SECURITY.md: 诊断包隐私、导出权限与资料包读取边界。</a></li>
 </ul><p>Next: 物理设备诊断与共享流程按各平台真机工单验收。</p></article>
-<article id="docs-and-review-standards"><h3>三端文档同步与代码审查门禁（PR-12）</h3><span class="badge">in_progress</span><p>工作树已更新核心文档、CODEOWNERS 与审查标准，文档链接及退役符号检查接入本地门禁和 CI 的纯文档分流。</p><ul>
+<article id="docs-and-review-standards"><h3>三端文档同步与代码审查门禁（PR-12）</h3><span class="badge">done</span><p>PR #832（e788088）已合并主线，同步全部核心文档至三端原生架构，新增 docs/agents/code-review-standards.md、.github/CODEOWNERS 以及 scripts/check_docs.py（含 6 项回归单测），并接入 scripts/verify-local.sh 与 CI 的纯文档分流检查。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/832">pull 832: squash e788088 已合并主线，同步三端文档真相、新增 CODEOWNERS 与审查标准，并将 check_docs.py 与 6 项单测接入本地门禁及 CI 纯文档分流。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/agents/code-review-standards.md">file docs/agents/code-review-standards.md: 四阶段审查流程和六维验收标准。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check_docs.py">file scripts/check_docs.py: Markdown 相对路径与活跃文档的退役符号门禁。</a></li>
-</ul><p>Next: 由调度宿主审计工作树、提交并审查合入。</p></article>
+</ul><p>Next: 后续文档与契约改动持续通过 scripts/check_docs.py 与代码审查标准门禁校验。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS 与 Android 的 Phase 0 至 Phase 2 跨端底座与原生骨架、双端 Phase 3A–3E 核心适配层、M1–M8 全功能齐平与后台/自适应能力（含 iOS Apple 本机语音识别、iPad 分栏、CoreBluetooth 后台状态恢复、锁屏媒控与 Android 宽屏双栏）、M9–M10 双端轻量九旅程模拟/仿真器 E2E 闭环以及 v2.7.0/v2.7.1（构建 16/17）三端发布交付（Android 签名 APK 已发布并统一官方自适应图标、iOS TestFlight App ID 6837671016 Internal Team 已上传 Build 16 与 Build 17）均已转入对应分组追踪。移动端尚未完成项为物理真机硬件验收（#775/#777）以及明确延后的 iOS ActivityKit 灵动岛。屏幕采集、Mac 与移动端直传互通（#14/#149/#150）、Google 写回与 ACP 仍未实现（planned）。</p><ul>
