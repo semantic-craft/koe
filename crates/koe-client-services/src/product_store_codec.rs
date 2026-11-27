@@ -66,6 +66,8 @@ struct ProviderDto {
     retired_credentials: Vec<String>,
     #[serde(default)]
     pending_credentials: Vec<String>,
+    #[serde(default)]
+    minutes_vocabulary: Vec<String>,
 }
 
 #[derive(Default, Clone, Copy, Serialize, Deserialize)]
@@ -153,6 +155,7 @@ impl From<ProviderDto> for ProviderConfiguration {
             chat_endpoint,
             retired_credentials: p.retired_credentials,
             pending_credentials: p.pending_credentials,
+            minutes_vocabulary: p.minutes_vocabulary,
             credential: p.credential.into(),
             deepseek_credential: p
                 .deepseek_credential
@@ -431,6 +434,8 @@ struct ProviderRef<'a> {
     retired_credentials: &'a [String],
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     pending_credentials: &'a [String],
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    minutes_vocabulary: &'a [String],
 }
 
 impl<'a> ProviderRef<'a> {
@@ -460,6 +465,7 @@ impl<'a> ProviderRef<'a> {
             },
             retired_credentials: p.retired_credentials.as_slice(),
             pending_credentials: p.pending_credentials.as_slice(),
+            minutes_vocabulary: p.minutes_vocabulary.as_slice(),
         }
     }
 }

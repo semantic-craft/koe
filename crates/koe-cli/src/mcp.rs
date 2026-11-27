@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn retryable_read_tool_classification_matches_runtime_read_only_hints() {
         let defs = KoeRuntime::mcp_tool_definitions();
-        assert_eq!(defs.len(), 16);
+        assert_eq!(defs.len(), 17);
         for def in defs {
             let name = def["name"].as_str().unwrap();
             let read_only = def["annotations"]["readOnlyHint"].as_bool().unwrap_or(false);
@@ -341,7 +341,13 @@ mod tests {
 
     #[test]
     fn online_mutating_tools_never_auto_retry_on_bridge_disconnect() {
-        for mutating_tool in ["create_note", "ask", "edit_transcript", "manage_record"] {
+        for mutating_tool in [
+            "create_note",
+            "ask",
+            "edit_transcript",
+            "manage_record",
+            "manage_vocabulary",
+        ] {
             let ws = TempMcpWorkspace::new();
             let listener = ws.bind_listener();
             let mutating_calls = Arc::new(AtomicUsize::new(0));
@@ -501,7 +507,7 @@ mod tests {
             &mut ready,
         )
         .unwrap();
-        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 16);
+        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 17);
         assert!(!lock_path.exists());
 
         let offline = handle(

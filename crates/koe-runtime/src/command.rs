@@ -276,6 +276,8 @@ pub(crate) enum HostIntent {
         asr_endpoint: Option<String>,
         #[serde(default)]
         chat_endpoint: Option<String>,
+        #[serde(default)]
+        minutes_vocabulary: Option<Vec<String>>,
     },
     ClearProviderCredential {
         #[serde(default)]

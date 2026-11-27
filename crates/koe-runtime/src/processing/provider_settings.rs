@@ -1,8 +1,8 @@
 use crate::KoeRuntime;
 use koe_client_services::product_store::StoreError;
 use koe_engine::product::{
-    is_loopback_http_endpoint, valid_reference, CloudAsrProvider, CredentialBinding, LlmProvider,
-    ProviderConfiguration, DEFAULT_ASR_MODEL,
+    is_loopback_http_endpoint, normalize_minutes_vocabulary, valid_reference, CloudAsrProvider,
+    CredentialBinding, LlmProvider, ProviderConfiguration, DEFAULT_ASR_MODEL,
 };
 
 const STORAGE_ERROR: &str = "无法读取或保存安全凭据，请重试读取安全配置。";
@@ -112,6 +112,7 @@ pub(crate) struct ConfigureProviderParams {
     pub qwen_workspace_id: Option<String>,
     pub asr_endpoint: Option<String>,
     pub chat_endpoint: Option<String>,
+    pub minutes_vocabulary: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -383,6 +384,10 @@ impl KoeRuntime {
         }
         if let Some(thinking) = params.enable_thinking {
             configuration.enable_thinking = thinking;
+        }
+        if let Some(terms) = params.minutes_vocabulary {
+            configuration.minutes_vocabulary =
+                normalize_minutes_vocabulary(&terms).map_err(|e| e.to_string())?;
         }
         configuration.model = params.model.trim().into();
 

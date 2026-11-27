@@ -9,7 +9,7 @@ use koe_host_api::HostSessionGuard;
 use koe_runtime::KoeRuntime;
 use serde_json::{json, Value};
 
-const EXPECTED_MCP_TOOLS: [&str; 16] = [
+const EXPECTED_MCP_TOOLS: [&str; 17] = [
     "search",
     "get_today_brief",
     "list_records",
@@ -26,6 +26,7 @@ const EXPECTED_MCP_TOOLS: [&str; 16] = [
     "device_status",
     "device_control",
     "poll_updates",
+    "manage_vocabulary",
 ];
 
 struct Workspace(PathBuf);
