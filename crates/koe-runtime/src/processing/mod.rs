@@ -123,7 +123,13 @@ impl KoeRuntime {
             if !record.aggregate.spine.is_empty()
                 && !matches!(
                     record.analysis,
-                    AnalysisState::Interrupted { .. } | AnalysisState::Failed { .. }
+                    AnalysisState::Interrupted {
+                        stage: None | Some(AnalysisStage::Transcribing),
+                        ..
+                    } | AnalysisState::Failed {
+                        stage: None | Some(AnalysisStage::Transcribing),
+                        ..
+                    }
                 )
             {
                 return Err("本机转写保留已有原文，请导入新副本后重新转写".into());
@@ -193,9 +199,10 @@ impl KoeRuntime {
         };
         let pcm16 = recording_assets::transcription_pcm(&self.root, id)?;
         let timeout = Duration::from_secs((pcm16.len() as u64 / 32_000 + 120).min(1800));
-        let key = self
-            .store
-            .transact(|w| w.begin_analysis(id, AnalysisStage::Transcribing))?;
+        let key = self.store.transact(|w| {
+            w.bind_speech_engine(id, SpeechEngine::Cloud)?;
+            w.begin_analysis(id, AnalysisStage::Transcribing)
+        })?;
         let config = self.asr_config();
         let result = self.submit(
             id,

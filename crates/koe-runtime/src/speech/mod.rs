@@ -15,6 +15,17 @@ use std::collections::VecDeque;
 const WINDOW_SAMPLES: usize = 16_000 * 15;
 const MAX_PENDING_WINDOWS: usize = 4;
 
+/// Read-only view of an active on-device speech transcription session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSpeechJobView {
+    /// Active local operation identifier, or the request attempt while queued to flush.
+    pub operation_id: u64,
+    /// Recording identifier owned by this local speech session.
+    pub record_id: String,
+    /// Stable speech engine identifier (`"apple_speech"` or `"downloaded"`).
+    pub engine: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CaptureOrigin {
     Microphone,
@@ -92,6 +103,45 @@ impl SpeechSession {
 
     pub(in crate::speech) const fn is_downloaded(&self) -> bool {
         matches!(self.backend, SpeechBackend::DownloadedLocal { .. })
+    }
+
+    pub(in crate::speech) const fn is_local(&self) -> bool {
+        matches!(
+            self.backend,
+            SpeechBackend::AppleLocal { .. } | SpeechBackend::DownloadedLocal { .. }
+        )
+    }
+
+    pub(in crate::speech) const fn is_file_backed(&self) -> bool {
+        self.source.is_none()
+    }
+
+    pub(in crate::speech) fn local_job_view(&self, record_id: &str) -> Option<LocalSpeechJobView> {
+        if self.is_terminal() {
+            return None;
+        }
+        let (operation_id, engine) = match &self.backend {
+            SpeechBackend::AppleLocal {
+                operations,
+                active_operation,
+                ..
+            } => (
+                active_operation
+                    .or_else(|| operations.keys().next().copied())
+                    .unwrap_or(self.key.attempt),
+                SpeechEngine::AppleSpeech.as_str(),
+            ),
+            SpeechBackend::DownloadedLocal { operations, .. } => (
+                operations.keys().next().copied().unwrap_or(self.key.attempt),
+                "downloaded",
+            ),
+            SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => return None,
+        };
+        Some(LocalSpeechJobView {
+            operation_id,
+            record_id: record_id.to_owned(),
+            engine: engine.to_owned(),
+        })
     }
 
     pub(in crate::speech) const fn is_deferred_batch(&self) -> bool {
@@ -224,18 +274,136 @@ impl SpeechState {
         }
     }
 }
+pub(crate) fn record_effective_speech_engine<'a>(
+    record: &'a ProductRecord,
+    configured_engine: &'a SpeechEngine,
+) -> &'a SpeechEngine {
+    if matches!(
+        record.analysis,
+        AnalysisState::Interrupted {
+            stage: None | Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ) {
+        record.speech_engine.as_ref().unwrap_or(configured_engine)
+    } else {
+        configured_engine
+    }
+}
+
 impl KoeRuntime {
+    /// Returns read-only views of all active on-device speech transcription sessions.
+    #[must_use]
+    pub fn active_local_speech_jobs(&self) -> Vec<LocalSpeechJobView> {
+        self.captures
+            .sessions
+            .iter()
+            .filter_map(|(record_id, session)| session.local_job_view(record_id))
+            .collect()
+    }
+
+    pub(crate) fn has_active_file_speech_session(&self) -> bool {
+        self.captures
+            .sessions
+            .values()
+            .any(|s| !s.is_terminal() && s.is_local() && s.is_file_backed())
+    }
+
+    fn downloaded_worker_outstanding(&self) -> usize {
+        self.speech
+            .worker
+            .as_ref()
+            .map_or(0, OfflineSpeechWorker::outstanding)
+    }
+
+    pub(super) fn tracked_downloaded_operation_count(&self) -> usize {
+        self.captures
+            .sessions
+            .values()
+            .filter(|s| s.is_downloaded())
+            .map(|s| s.local_operations().map_or(0, BTreeMap::len))
+            .sum()
+    }
+
+    fn active_downloaded_operation_count(&self) -> usize {
+        self.tracked_downloaded_operation_count()
+            .max(self.downloaded_worker_outstanding())
+    }
+
+    fn is_downloaded_speech_busy(&self) -> bool {
+        self.speech.preparation.is_some()
+            || self.active_downloaded_operation_count() > 0
+            || self
+                .captures
+                .sessions
+                .values()
+                .any(|s| !s.is_terminal() && s.is_downloaded())
+    }
+
+    pub(crate) fn can_admit_local_file_speech(&self, engine: &SpeechEngine) -> bool {
+        if !self.speech_ready(engine) || self.has_active_file_speech_session() {
+            return false;
+        }
+        match engine {
+            SpeechEngine::AppleSpeech => {
+                self.speech.apple_owner.is_none()
+                    && !self
+                        .captures
+                        .sessions
+                        .values()
+                        .any(|s| !s.is_terminal() && s.is_apple())
+            }
+            SpeechEngine::Downloaded(_) => !self.is_downloaded_speech_busy(),
+            SpeechEngine::Cloud => false,
+        }
+    }
+
+    fn local_file_speech_rejection(&self, engine: &SpeechEngine) -> String {
+        match engine {
+            SpeechEngine::AppleSpeech if self.local_asr.state == Readiness::Unavailable => format!(
+                "本机语音识别不可用：{}；原始录音已保留",
+                self.local_asr.message
+            ),
+            SpeechEngine::AppleSpeech if self.local_asr.state == Readiness::Preparing => {
+                "本机语音识别正在准备中，请稍后重试".into()
+            }
+            SpeechEngine::Downloaded(id)
+                if self.speech.loaded_model_id.as_deref() != Some(id.as_str()) =>
+            {
+                "请先准备选中的本机语音模型；原始录音已保留".into()
+            }
+            _ => "已有本机转写正在处理，请稍后重试".into(),
+        }
+    }
+
+    #[cfg(all(test, feature = "offline-speech"))]
+    pub(crate) fn mark_downloaded_model_ready_for_test(&mut self, model_id: &str) {
+        self.speech.loaded_model_id = Some(model_id.to_owned());
+        self.speech.preparation = None;
+        self.speech.models.insert(
+            model_id.to_owned(),
+            ModelState {
+                state: "ready".into(),
+                bytes: 1,
+                message: None,
+            },
+        );
+    }
+
+    #[cfg(all(test, feature = "offline-speech"))]
+    pub(crate) fn drain_offline_worker_slots_for_test(&mut self) -> usize {
+        self.speech
+            .worker
+            .as_ref()
+            .map_or(0, |worker| worker.poll().len())
+    }
+
     pub(crate) fn record_speech_engine(&self, id: &str) -> SpeechEngine {
-        self.workspace()
-            .record(id)
-            .filter(|r| matches!(r.analysis, AnalysisState::Interrupted { .. }))
-            .and_then(|r| r.speech_engine.clone())
-            .unwrap_or_else(|| {
-                self.workspace()
-                    .provider_configuration()
-                    .speech_engine
-                    .clone()
-            })
+        let configured = &self.workspace().provider_configuration().speech_engine;
+        self.workspace().record(id).map_or_else(
+            || configured.clone(),
+            |record| record_effective_speech_engine(record, configured).clone(),
+        )
     }
     pub(crate) fn speech_ready(&self, engine: &SpeechEngine) -> bool {
         match engine {
@@ -358,6 +526,12 @@ impl KoeRuntime {
         Ok(())
     }
     pub(crate) fn start_file_speech(&mut self, id: &str, pcm: Vec<u8>) -> Result<(), String> {
+        if !self.captures.sessions.contains_key(id) {
+            let engine = self.record_speech_engine(id);
+            if !self.can_admit_local_file_speech(&engine) {
+                return Err(self.local_file_speech_rejection(&engine));
+            }
+        }
         let offset = self.workspace().record(id).map_or(0, |r| {
             r.aggregate
                 .spine
@@ -392,12 +566,26 @@ impl KoeRuntime {
             .collect();
         let mut changed = false;
         for id in ids {
+            let Some((is_apple, is_downloaded)) = self
+                .captures
+                .sessions
+                .get(&id)
+                .map(|s| (s.is_apple(), s.is_downloaded()))
+            else {
+                continue;
+            };
+            if is_apple && self.speech.apple_owner.is_some() {
+                continue;
+            }
+            if is_downloaded
+                && (self.speech.preparation.is_some()
+                    || self.active_downloaded_operation_count() >= MAX_PENDING_WINDOWS)
+            {
+                continue;
+            }
             let Some(s) = self.captures.sessions.get_mut(&id) else {
                 continue;
             };
-            if s.is_apple() && self.speech.apple_owner.is_some() {
-                continue;
-            }
             let Some(audio) = s.file_audio.as_mut() else {
                 continue;
             };
@@ -525,8 +713,11 @@ impl KoeRuntime {
                 pcm,
                 consumed_samples,
             } => {
+                let other_tracked_ops = self.tracked_downloaded_operation_count();
                 while pcm.len() >= WINDOW_SAMPLES || (finish && !pcm.is_empty()) {
-                    if operations.len() >= MAX_PENDING_WINDOWS {
+                    let occupied = (other_tracked_ops + operations.len())
+                        .max(self.downloaded_worker_outstanding());
+                    if occupied >= MAX_PENDING_WINDOWS {
                         return Err("本机识别队列已满，音频已保留，可稍后补转写".into());
                     }
                     let n = pcm.len().min(WINDOW_SAMPLES);

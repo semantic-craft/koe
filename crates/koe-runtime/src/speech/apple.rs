@@ -26,10 +26,16 @@ impl KoeRuntime {
     }
     pub(crate) fn cancel_capture_speech(&mut self, id: &str) {
         if let Some(mut session) = self.captures.sessions.remove(id) {
-            self.cancel_speech_operations(&mut session);
+            let cancel_worker =
+                self.speech.preparation.is_none() && self.tracked_downloaded_operation_count() == 0;
+            self.cancel_speech_operations(&mut session, cancel_worker);
         }
     }
-    pub(super) fn cancel_speech_operations(&mut self, session: &mut SpeechSession) {
+    pub(super) fn cancel_speech_operations(
+        &mut self,
+        session: &mut SpeechSession,
+        cancel_downloaded_worker: bool,
+    ) {
         match &mut session.backend {
             SpeechBackend::AppleLocal {
                 operations,
@@ -46,7 +52,13 @@ impl KoeRuntime {
                 *active_operation = None;
             }
             SpeechBackend::DownloadedLocal { operations, .. } => {
+                let had_operations = !operations.is_empty();
                 operations.clear();
+                if had_operations && cancel_downloaded_worker {
+                    if let Some(worker) = &self.speech.worker {
+                        worker.cancel();
+                    }
+                }
             }
             SpeechBackend::CloudLive { .. } | SpeechBackend::CloudDeferredBatch => {}
         }

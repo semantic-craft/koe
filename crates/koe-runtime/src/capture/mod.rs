@@ -279,6 +279,53 @@ fn has_recording_asset(root: &Path, id: &str) -> Result<bool, String> {
         || recording_assets::opus_path(root, id)?.exists())
 }
 
+fn is_free_local_speech_engine(engine: &SpeechEngine) -> bool {
+    matches!(
+        engine,
+        SpeechEngine::AppleSpeech | SpeechEngine::Downloaded(_)
+    )
+}
+
+fn should_recover_local_transcription(
+    record: &ProductRecord,
+    configured_engine: &SpeechEngine,
+    has_wav_audio: bool,
+) -> bool {
+    if !record.is_live() || !has_wav_audio {
+        return false;
+    }
+    match &record.analysis {
+        AnalysisState::Interrupted { key, stage } => {
+            let is_transcription = match stage {
+                Some(AnalysisStage::Transcribing) => true,
+                Some(AnalysisStage::Summarizing) => false,
+                None => {
+                    record.aggregate.spine.is_empty()
+                        || (record.completed_request().is_none()
+                            && key.input_revision < record.content_revision)
+                }
+            };
+            is_transcription
+                && is_free_local_speech_engine(crate::speech::record_effective_speech_engine(
+                    record,
+                    configured_engine,
+                ))
+        }
+        AnalysisState::Idle => {
+            is_free_local_speech_engine(configured_engine)
+                && record.origin == RecordOrigin::Bean
+                && record.aggregate.spine.is_empty()
+                && record
+                    .speech_engine
+                    .as_ref()
+                    .is_none_or(is_free_local_speech_engine)
+        }
+        AnalysisState::Pending { .. }
+        | AnalysisState::Ready { .. }
+        | AnalysisState::Failed { .. } => false,
+    }
+}
+
 impl KoeRuntime {
     pub(crate) fn recover_local_captures(&mut self) -> Result<(), String> {
         let ids: Vec<_> = self
@@ -298,22 +345,26 @@ impl KoeRuntime {
                 )?;
             }
         }
-        self.auto_transcribe.extend(
-            self.workspace()
+        if !self.env.is_replay_mode() {
+            let configured_engine = self
+                .workspace()
+                .provider_configuration()
+                .speech_engine
+                .clone();
+            let recoverable: Vec<String> = self
+                .workspace()
                 .records()
                 .values()
-                .filter(|r| {
-                    matches!(r.analysis, AnalysisState::Interrupted { .. })
-                        && matches!(
-                            r.speech_engine,
-                            Some(SpeechEngine::AppleSpeech | SpeechEngine::Downloaded(_))
-                        )
-                        && recording_assets::audio_path(&self.root, &r.aggregate.recording_id)
-                            .is_ok_and(|p| p.is_file())
+                .filter(|record| {
+                    let has_wav =
+                        recording_assets::audio_path(&self.root, &record.aggregate.recording_id)
+                            .is_ok_and(|path| path.is_file());
+                    should_recover_local_transcription(record, &configured_engine, has_wav)
                 })
-                .map(|r| r.aggregate.recording_id.clone())
-                .collect::<Vec<_>>(),
-        );
+                .map(|record| record.aggregate.recording_id.clone())
+                .collect();
+            self.auto_transcribe.extend(recoverable);
+        }
         Ok(())
     }
 
@@ -443,7 +494,7 @@ impl KoeRuntime {
                     if engine == SpeechEngine::Cloud {
                         !self.has_pending_in_lane(ProviderLane::Audio)
                     } else {
-                        self.speech_ready(&engine)
+                        self.can_admit_local_file_speech(&engine)
                     }
                 })
                 .cloned();
@@ -462,7 +513,13 @@ impl KoeRuntime {
                             || record.is_minutes_stale())
                 } else {
                     record.aggregate.spine.is_empty()
-                        || matches!(record.analysis, AnalysisState::Interrupted { .. })
+                        || matches!(
+                            record.analysis,
+                            AnalysisState::Interrupted {
+                                stage: None | Some(AnalysisStage::Transcribing),
+                                ..
+                            }
+                        )
                 }
         });
         let result = if !needed {

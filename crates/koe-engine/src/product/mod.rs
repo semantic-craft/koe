@@ -259,11 +259,15 @@ pub enum AnalysisState {
         key: RequestKey,
         /// User-facing error without credentials.
         message: String,
+        /// Stage of the failed attempt when known (`None` for legacy persisted state).
+        stage: Option<AnalysisStage>,
     },
     /// A process restart interrupted an attempt whose external outcome is unknown.
     Interrupted {
         /// Interrupted attempt, retained for audit and explicit retry.
         key: RequestKey,
+        /// Stage of the interrupted attempt when known (`None` for legacy persisted state).
+        stage: Option<AnalysisStage>,
     },
 }
 

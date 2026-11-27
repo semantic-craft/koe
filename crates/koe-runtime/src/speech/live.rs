@@ -88,6 +88,10 @@ impl KoeRuntime {
     }
     pub(crate) fn poll_captures(&mut self) -> bool {
         let mut sessions = std::mem::take(&mut self.captures.sessions);
+        let active_downloaded_sessions = sessions
+            .values()
+            .filter(|s| !s.is_terminal() && s.is_downloaded())
+            .count();
         let mut changed = false;
         for (id, s) in &mut sessions {
             if let SpeechBackend::CloudLive {
@@ -156,7 +160,9 @@ impl KoeRuntime {
                                 s.clear_live_draft();
                                 s.phase = SpeechPhase::Completed { succeeded: false };
                                 s.drop_cloud_stream();
-                                self.cancel_speech_operations(s);
+                                let cancel_worker = self.speech.preparation.is_none()
+                                    && active_downloaded_sessions == 1;
+                                self.cancel_speech_operations(s, cancel_worker);
                                 s.clear_local_pcm();
                             }
                         }
@@ -171,7 +177,9 @@ impl KoeRuntime {
                         s.phase = SpeechPhase::Cancelled;
                         s.drop_cloud_stream();
                         s.results.clear();
-                        self.cancel_speech_operations(s);
+                        let cancel_worker = self.speech.preparation.is_none()
+                            && active_downloaded_sessions == 1;
+                        self.cancel_speech_operations(s, cancel_worker);
                         break;
                     }
                     Err(error) => {
