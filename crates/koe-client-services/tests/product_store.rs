@@ -71,10 +71,19 @@ fn live_minutes_and_independent_paid_requests_survive_reopen_without_retry() {
     drop(store);
     let mut store = ProductStore::open(&dir.0).unwrap();
     let record = store.workspace().record("a").unwrap();
-    assert_eq!(record.analysis, AnalysisState::Interrupted { key: asr });
+    assert_eq!(
+        record.analysis,
+        AnalysisState::Interrupted {
+            key: asr,
+            stage: Some(AnalysisStage::Transcribing),
+        }
+    );
     assert_eq!(
         record.live_summary,
-        AnalysisState::Interrupted { key: live.clone() }
+        AnalysisState::Interrupted {
+            key: live.clone(),
+            stage: Some(AnalysisStage::Summarizing),
+        }
     );
     assert!(record.aggregate.minutes.is_some());
     assert!(record.is_minutes_stale());
@@ -85,8 +94,69 @@ fn live_minutes_and_independent_paid_requests_survive_reopen_without_retry() {
         .transact(|w| w.fail_live_summary(&next, "known failure"))
         .unwrap();
     drop(store);
+    let reopened_failed = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        reopened_failed.workspace().record("a").unwrap().live_summary,
+        AnalysisState::Failed {
+            key: next.clone(),
+            message: "known failure".into(),
+            stage: Some(AnalysisStage::Summarizing),
+        }
+    );
+    drop(reopened_failed);
+
     let path = dir.0.join(PRODUCT_WORKSPACE_FILE);
     let mut raw: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let rec_a = raw["records"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["id"] == "a")
+        .unwrap();
+    assert_eq!(rec_a["analysis"]["stage"], "transcribing");
+    assert_eq!(rec_a["live_summary"]["stage"], "summarizing");
+
+    let mut invalid_stage = raw.clone();
+    invalid_stage["records"][0]["analysis"]["stage"] = serde_json::json!("unknown");
+    fs::write(&path, serde_json::to_vec(&invalid_stage).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+
+    let mut bad_live_stage = raw.clone();
+    bad_live_stage["records"][0]["live_summary"]["stage"] = serde_json::json!("transcribing");
+    fs::write(&path, serde_json::to_vec(&bad_live_stage).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+
+    let mut legacy = raw.clone();
+    for record in legacy["records"].as_array_mut().unwrap() {
+        if let Some(obj) = record["analysis"].as_object_mut() {
+            obj.remove("stage");
+        }
+        if let Some(obj) = record
+            .get_mut("live_summary")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            obj.remove("stage");
+        }
+    }
+    fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let legacy_store = ProductStore::open(&dir.0).unwrap();
+    let legacy_rec = legacy_store.workspace().record("a").unwrap();
+    assert!(matches!(
+        legacy_rec.analysis,
+        AnalysisState::Interrupted { stage: None, .. }
+    ));
+    assert!(matches!(
+        legacy_rec.live_summary,
+        AnalysisState::Failed { stage: None, .. }
+    ));
+    drop(legacy_store);
+
     for record in raw["records"].as_array_mut().unwrap() {
         record.as_object_mut().unwrap().remove("live_summary");
     }
@@ -203,9 +273,13 @@ fn restart_preserves_partial_finals_and_marks_unknown_requests_interrupted() {
         .unwrap();
     drop(store);
     let mut store = ProductStore::open(&dir.0).unwrap();
-    assert!(
-        matches!(&store.workspace().record("a").unwrap().analysis, AnalysisState::Interrupted { key: current } if current == &key)
-    );
+    assert!(matches!(
+        &store.workspace().record("a").unwrap().analysis,
+        AnalysisState::Interrupted {
+            key: current,
+            stage: Some(AnalysisStage::Transcribing),
+        } if current == &key
+    ));
     assert_eq!(
         store.workspace().record("a").unwrap().aggregate.spine.len(),
         2

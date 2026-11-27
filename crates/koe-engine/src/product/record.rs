@@ -535,6 +535,7 @@ impl ProductWorkspace {
         record.live_summary = AnalysisState::Failed {
             key: key.clone(),
             message: nonempty(message)?,
+            stage: Some(AnalysisStage::Summarizing),
         };
         self.changed();
         Ok(())
@@ -615,13 +616,21 @@ impl ProductWorkspace {
             .get_mut(&key.record_id)
             .ok_or(ProductError::UnknownRecord)?;
         record.ensure_live()?;
-        if !matches!(&record.analysis, AnalysisState::Pending { key: current, .. } if current == key)
-        {
+        let AnalysisState::Pending {
+            key: current,
+            stage,
+        } = &record.analysis
+        else {
+            return Err(ProductError::StaleRequest);
+        };
+        if current != key {
             return Err(ProductError::StaleRequest);
         }
+        let stage = *stage;
         record.analysis = AnalysisState::Failed {
             key: key.clone(),
             message: nonempty(message)?,
+            stage: Some(stage),
         };
         self.changed();
         Ok(())
@@ -709,6 +718,7 @@ impl ProductRecord {
             self.analysis = AnalysisState::Failed {
                 key: key.clone(),
                 message: "原文已变化，请重新整理".to_string(),
+                stage: Some(AnalysisStage::Summarizing),
             };
         } else if !matches!(self.analysis, AnalysisState::Pending { .. }) {
             self.analysis = AnalysisState::Idle;
@@ -734,15 +744,26 @@ impl ProductRecord {
                 key,
                 stage: AnalysisStage::Summarizing,
             }
-            | AnalysisState::Failed { key, .. }
-            | AnalysisState::Interrupted { key } => Some(key),
-            AnalysisState::Pending { .. } => return Err(ProductError::InvalidPersistedState),
+            | AnalysisState::Failed {
+                key,
+                stage: None | Some(AnalysisStage::Summarizing),
+                ..
+            }
+            | AnalysisState::Interrupted {
+                key,
+                stage: None | Some(AnalysisStage::Summarizing),
+            } => Some(key),
+            AnalysisState::Pending { .. }
+            | AnalysisState::Failed { .. }
+            | AnalysisState::Interrupted { .. } => {
+                return Err(ProductError::InvalidPersistedState);
+            }
             AnalysisState::Ready { input_revision }
                 if self.minutes_revision != Some(*input_revision) =>
             {
                 return Err(ProductError::InvalidPersistedState);
             }
-            _ => None,
+            AnalysisState::Idle | AnalysisState::Ready { .. } => None,
         };
         if key.is_some_and(|key| {
             key.record_id != self.aggregate.recording_id
@@ -869,7 +890,7 @@ impl ProductRecord {
         let request = match &analysis {
             AnalysisState::Pending { key, .. }
             | AnalysisState::Failed { key, .. }
-            | AnalysisState::Interrupted { key } => Some(key),
+            | AnalysisState::Interrupted { key, .. } => Some(key),
             _ => None,
         };
         if request

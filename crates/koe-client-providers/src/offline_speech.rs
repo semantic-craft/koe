@@ -36,6 +36,12 @@ mod stub {
             Err(OFFLINE_SPEECH_UNAVAILABLE.to_string())
         }
 
+        /// Reports zero outstanding operations when the offline speech backend is disabled.
+        #[must_use]
+        pub fn outstanding(&self) -> usize {
+            0
+        }
+
         /// No-op cancellation when the offline speech backend is disabled.
         pub fn cancel(&self) {}
 

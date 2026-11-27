@@ -51,13 +51,18 @@ fn invalid_requests_fail_without_claiming_readiness() {
 fn unpolled_completions_apply_backpressure() {
     let root = root();
     let worker = OfflineSpeechWorker::new(root.clone()).unwrap();
+    assert_eq!(worker.outstanding(), 0);
     for id in 0..4 {
         worker.transcribe(id, vec![0; 100]).unwrap();
+        assert_eq!(worker.outstanding(), id as usize + 1);
     }
     assert!(worker.transcribe(5, vec![0; 100]).is_err());
+    assert_eq!(worker.outstanding(), 4);
     let completed = terminal(&worker);
     assert!(!completed.is_empty());
+    assert_eq!(worker.outstanding(), 4 - completed.len());
     worker.transcribe(6, vec![0; 100]).unwrap();
+    assert_eq!(worker.outstanding(), 5 - completed.len());
     drop(worker);
     std::fs::remove_dir(root).unwrap();
 }

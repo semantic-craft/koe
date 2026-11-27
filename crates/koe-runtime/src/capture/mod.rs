@@ -291,21 +291,29 @@ fn should_recover_local_transcription(
     configured_engine: &SpeechEngine,
     has_wav_audio: bool,
 ) -> bool {
-    if !record.is_live() || !has_wav_audio || !is_free_local_speech_engine(configured_engine) {
+    if !record.is_live() || !has_wav_audio {
         return false;
     }
     match &record.analysis {
-        AnalysisState::Interrupted { key } => {
-            record
-                .speech_engine
-                .as_ref()
-                .is_some_and(is_free_local_speech_engine)
-                && (record.aggregate.spine.is_empty()
-                    || (record.completed_request().is_none()
-                        && key.input_revision < record.content_revision))
+        AnalysisState::Interrupted { key, stage } => {
+            let is_transcription = match stage {
+                Some(AnalysisStage::Transcribing) => true,
+                Some(AnalysisStage::Summarizing) => false,
+                None => {
+                    record.aggregate.spine.is_empty()
+                        || (record.completed_request().is_none()
+                            && key.input_revision < record.content_revision)
+                }
+            };
+            is_transcription
+                && is_free_local_speech_engine(crate::speech::record_effective_speech_engine(
+                    record,
+                    configured_engine,
+                ))
         }
         AnalysisState::Idle => {
-            record.origin == RecordOrigin::Bean
+            is_free_local_speech_engine(configured_engine)
+                && record.origin == RecordOrigin::Bean
                 && record.aggregate.spine.is_empty()
                 && record
                     .speech_engine
@@ -505,7 +513,13 @@ impl KoeRuntime {
                             || record.is_minutes_stale())
                 } else {
                     record.aggregate.spine.is_empty()
-                        || matches!(record.analysis, AnalysisState::Interrupted { .. })
+                        || matches!(
+                            record.analysis,
+                            AnalysisState::Interrupted {
+                                stage: None | Some(AnalysisStage::Transcribing),
+                                ..
+                            }
+                        )
                 }
         });
         let result = if !needed {

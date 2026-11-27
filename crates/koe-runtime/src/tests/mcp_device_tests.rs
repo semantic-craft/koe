@@ -1494,3 +1494,429 @@ fn manage_vocabulary_enforces_bounds_is_idempotent_and_preserves_terms_when_conf
     let after_cfg = call_ok(&mut runtime, json!({"action": "get"}), NOW + 7);
     assert_eq!(after_cfg["terms"], json!(["语".repeat(64)]));
 }
+
+fn save_silent_pcm_wav(root: &Path, record_id: &str, duration_ms: u32) {
+    let pcm_bytes = duration_ms.saturating_mul(32);
+    let mut wav = koe_engine::wav::OpusWave::wav_header_with_rate(pcm_bytes, 16_000).to_vec();
+    wav.extend(std::iter::repeat_n(0u8, pcm_bytes as usize));
+    recording_assets::save_audio(root, record_id, &wav).unwrap();
+}
+
+fn call_mcp_ok(runtime: &mut KoeRuntime, name: &str, args: Value, now: u64) -> Value {
+    match runtime.call_mcp_tool_step(name, &args, now).unwrap() {
+        McpToolCallState::Completed(Ok(v)) => v,
+        other => panic!("{name} expected Completed(Ok), got {other:?}"),
+    }
+}
+
+fn complete_active_apple_speech_job(runtime: &mut KoeRuntime, text: &str, now: u64) {
+    let op_id = runtime
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .expect("expected active AppleSpeech Start effect");
+    let final_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({
+                "type": "local_asr_result",
+                "operationId": op_id,
+                "text": text,
+                "startMs": 0,
+                "endMs": 1_000,
+                "isFinal": true
+            })
+            .to_string(),
+            now,
+        ),
+    )
+    .unwrap();
+    assert!(final_snap["error"].is_null(), "{final_snap}");
+    let done_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "local_asr_finished", "operationId": op_id}).to_string(),
+            now,
+        ),
+    )
+    .unwrap();
+    assert!(done_snap["error"].is_null(), "{done_snap}");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+}
+
+#[test]
+fn manage_record_if_idle_recovers_partial_transcriptions_and_skips_completed_or_summary_states() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+        NOW,
+    );
+    let _ = runtime.dispatch_json(
+        &json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}).to_string(),
+        NOW,
+    );
+
+    let interrupted_id = "bean-interrupted-partial";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                interrupted_id.into(),
+                "Interrupted Partial".into(),
+                RecordOrigin::Bean,
+                101,
+                NOW,
+                3_000,
+            )?;
+            w.bind_speech_engine(interrupted_id, SpeechEngine::AppleSpeech)?;
+            let first = w.begin_analysis(interrupted_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&first, "seg-1", "前半段已保存", 0, 1_000, "apple-speech")?;
+            w.interrupt_pending();
+            let _second = w.begin_analysis(interrupted_id, AnalysisStage::Transcribing)?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, interrupted_id, 3_000);
+    let interrupted_rec = runtime.workspace().record(interrupted_id).unwrap();
+    assert!(matches!(
+        &interrupted_rec.analysis,
+        AnalysisState::Interrupted {
+            key,
+            stage: Some(AnalysisStage::Transcribing),
+        } if key.input_revision == interrupted_rec.content_revision
+    ));
+
+    let count_before = runtime.workspace().records().len();
+    let recover_interrupted = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(recover_interrupted["ok"], true);
+    assert!(
+        recover_interrupted.get("skipped").is_none(),
+        "interrupted partial transcription must not be skipped by if_idle: {recover_interrupted}"
+    );
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before,
+        "in-place partial recovery must not create a duplicate retry record"
+    );
+    assert!(matches!(
+        runtime.workspace().record(interrupted_id).unwrap().analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ));
+    assert_eq!(runtime.active_local_speech_jobs().len(), 1);
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, interrupted_id);
+
+    let skip_while_running = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(skip_while_running["ok"], true);
+    assert_eq!(skip_while_running["skipped"], true);
+    assert_eq!(skip_while_running["reason"], "already_processing");
+
+    complete_active_apple_speech_job(&mut runtime, "后半段补全", NOW + 2);
+    let completed_rec = runtime.workspace().record(interrupted_id).unwrap();
+    assert_eq!(completed_rec.aggregate.spine.len(), 2);
+    assert!(matches!(completed_rec.analysis, AnalysisState::Idle));
+
+    let skip_completed = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_completed["ok"], true);
+    assert_eq!(skip_completed["skipped"], true);
+    assert_eq!(skip_completed["reason"], "already_transcribed");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert_eq!(runtime.workspace().records().len(), count_before);
+
+    let failed_id = "bean-failed-partial";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                failed_id.into(),
+                "Failed Partial".into(),
+                RecordOrigin::Bean,
+                102,
+                NOW + 4,
+                3_000,
+            )?;
+            w.bind_speech_engine(failed_id, SpeechEngine::AppleSpeech)?;
+            let key = w.begin_analysis(failed_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "失败前已保存", 0, 1_000, "apple-speech")?;
+            w.fail_analysis(&key, "本地识别超时")?;
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, failed_id, 3_000);
+    assert!(matches!(
+        runtime.workspace().record(failed_id).unwrap().analysis,
+        AnalysisState::Failed {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+
+    let count_before_failed = runtime.workspace().records().len();
+    let recover_failed = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": failed_id, "action": "transcribe", "if_idle": true}),
+        NOW + 5,
+    );
+    assert_eq!(recover_failed["ok"], true);
+    assert!(
+        recover_failed.get("skipped").is_none(),
+        "failed partial transcription must not be skipped by if_idle: {recover_failed}"
+    );
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_failed,
+        "failed partial recovery must not create a duplicate retry record"
+    );
+    assert!(matches!(
+        runtime.workspace().record(failed_id).unwrap().analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ));
+    assert_eq!(runtime.active_local_speech_jobs().len(), 1);
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, failed_id);
+    complete_active_apple_speech_job(&mut runtime, "失败后补全", NOW + 6);
+    assert_eq!(
+        runtime.workspace().record(failed_id).unwrap().aggregate.spine.len(),
+        2
+    );
+
+    runtime
+        .commit(|w| {
+            let _ = w.begin_analysis(interrupted_id, AnalysisStage::Summarizing)?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    let skip_interrupted_summary = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 7,
+    );
+    assert_eq!(skip_interrupted_summary["ok"], true);
+    assert_eq!(skip_interrupted_summary["skipped"], true);
+    assert_eq!(skip_interrupted_summary["reason"], "already_transcribed");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert_eq!(runtime.workspace().records().len(), count_before_failed);
+
+    runtime
+        .commit(|w| {
+            let key = w.begin_analysis(interrupted_id, AnalysisStage::Summarizing)?;
+            w.fail_analysis(&key, "纪要请求超时")?;
+            Ok(())
+        })
+        .unwrap();
+    let skip_failed_summary = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 8,
+    );
+    assert_eq!(skip_failed_summary["ok"], true);
+    assert_eq!(skip_failed_summary["skipped"], true);
+    assert_eq!(skip_failed_summary["reason"], "already_transcribed");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert_eq!(runtime.workspace().records().len(), count_before_failed);
+}
+
+#[test]
+fn manage_record_if_idle_handles_legacy_stage_none_partial_transcription_and_summary() {
+    use koe_client_services::product_store::{ProductStore, PRODUCT_WORKSPACE_FILE};
+
+    let sandbox = Sandbox::new();
+    let failed_partial_id = "legacy-failed-partial";
+    let interrupted_partial_id = "legacy-interrupted-partial";
+    let summary_id = "legacy-interrupted-summary";
+    {
+        let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+        let _ = runtime.dispatch_json(
+            &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+            NOW,
+        );
+        runtime
+            .commit(|w| {
+                w.insert_record(
+                    failed_partial_id.into(),
+                    "Legacy Failed Partial".into(),
+                    RecordOrigin::Bean,
+                    111,
+                    NOW,
+                    3_000,
+                )?;
+                w.bind_speech_engine(failed_partial_id, SpeechEngine::AppleSpeech)?;
+                let partial_key = w.begin_analysis(failed_partial_id, AnalysisStage::Transcribing)?;
+                w.accept_transcript(&partial_key, "1", "旧版失败部分", 0, 1_000, "apple-speech")?;
+                w.fail_analysis(&partial_key, "旧版失败")?;
+
+                w.insert_record(
+                    interrupted_partial_id.into(),
+                    "Legacy Interrupted Partial".into(),
+                    RecordOrigin::Bean,
+                    112,
+                    NOW + 1,
+                    3_000,
+                )?;
+                w.bind_speech_engine(interrupted_partial_id, SpeechEngine::AppleSpeech)?;
+                let int_key =
+                    w.begin_analysis(interrupted_partial_id, AnalysisStage::Transcribing)?;
+                w.accept_transcript(&int_key, "1", "旧版中断部分", 0, 1_000, "apple-speech")?;
+
+                w.insert_record(
+                    summary_id.into(),
+                    "Legacy Summary".into(),
+                    RecordOrigin::Bean,
+                    113,
+                    NOW + 2,
+                    3_000,
+                )?;
+                w.bind_speech_engine(summary_id, SpeechEngine::AppleSpeech)?;
+                let asr_key = w.begin_analysis(summary_id, AnalysisStage::Transcribing)?;
+                w.accept_transcript(&asr_key, "1", "旧版完整转写", 0, 1_000, "apple-speech")?;
+                w.finish_transcription(&asr_key)?;
+                let _ = w.begin_analysis(summary_id, AnalysisStage::Summarizing)?;
+                Ok(())
+            })
+            .unwrap();
+        save_silent_pcm_wav(&sandbox.0, failed_partial_id, 3_000);
+        save_silent_pcm_wav(&sandbox.0, interrupted_partial_id, 3_000);
+        save_silent_pcm_wav(&sandbox.0, summary_id, 3_000);
+    }
+
+    drop(ProductStore::open(&sandbox.0).unwrap());
+
+    let ws_path = sandbox.0.join(PRODUCT_WORKSPACE_FILE);
+    let mut raw: Value = serde_json::from_slice(&fs::read(&ws_path).unwrap()).unwrap();
+    for rec in raw["records"].as_array_mut().unwrap() {
+        rec["analysis"].as_object_mut().unwrap().remove("stage");
+    }
+    fs::write(&ws_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let mut reopened = KoeRuntime::open(&sandbox.0).unwrap();
+    assert!(matches!(
+        reopened.workspace().record(failed_partial_id).unwrap().analysis,
+        AnalysisState::Failed { stage: None, .. }
+    ));
+    assert!(matches!(
+        reopened
+            .workspace()
+            .record(interrupted_partial_id)
+            .unwrap()
+            .analysis,
+        AnalysisState::Interrupted { stage: None, .. }
+    ));
+    assert!(matches!(
+        reopened.workspace().record(summary_id).unwrap().analysis,
+        AnalysisState::Interrupted { stage: None, .. }
+    ));
+    assert!(!reopened.auto_transcribe.contains(failed_partial_id));
+    assert!(reopened.auto_transcribe.contains(interrupted_partial_id));
+    assert!(!reopened.auto_transcribe.contains(summary_id));
+
+    let count_before = reopened.workspace().records().len();
+    let skip_queued_legacy = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": interrupted_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_queued_legacy["ok"], true);
+    assert_eq!(skip_queued_legacy["skipped"], true);
+    assert_eq!(skip_queued_legacy["reason"], "already_queued");
+
+    reopened.auto_transcribe.remove(interrupted_partial_id);
+    let _ = reopened.dispatch_json(
+        &json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}).to_string(),
+        NOW + 3,
+    );
+    assert!(reopened.active_local_speech_jobs().is_empty());
+    let recover_legacy_interrupted = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": interrupted_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 4,
+    );
+    assert_eq!(recover_legacy_interrupted["ok"], true);
+    assert!(
+        recover_legacy_interrupted.get("skipped").is_none(),
+        "legacy stage:None interrupted partial must recover under if_idle: {recover_legacy_interrupted}"
+    );
+    assert_eq!(reopened.workspace().records().len(), count_before);
+    assert_eq!(reopened.active_local_speech_jobs().len(), 1);
+    assert_eq!(
+        reopened.active_local_speech_jobs()[0].record_id,
+        interrupted_partial_id
+    );
+    complete_active_apple_speech_job(&mut reopened, "旧版中断后半段", NOW + 5);
+    assert_eq!(
+        reopened
+            .workspace()
+            .record(interrupted_partial_id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        2
+    );
+
+    let recover_legacy_failed = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": failed_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 6,
+    );
+    assert_eq!(recover_legacy_failed["ok"], true);
+    assert!(
+        recover_legacy_failed.get("skipped").is_none(),
+        "legacy stage:None failed partial must recover under if_idle: {recover_legacy_failed}"
+    );
+    assert_eq!(reopened.workspace().records().len(), count_before);
+    assert_eq!(reopened.active_local_speech_jobs().len(), 1);
+    assert_eq!(
+        reopened.active_local_speech_jobs()[0].record_id,
+        failed_partial_id
+    );
+    complete_active_apple_speech_job(&mut reopened, "旧版失败后半段", NOW + 7);
+    assert_eq!(
+        reopened
+            .workspace()
+            .record(failed_partial_id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        2
+    );
+
+    let skip_legacy_summary = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": summary_id, "action": "transcribe", "if_idle": true}),
+        NOW + 8,
+    );
+    assert_eq!(skip_legacy_summary["ok"], true);
+    assert_eq!(skip_legacy_summary["skipped"], true);
+    assert_eq!(skip_legacy_summary["reason"], "already_transcribed");
+    assert!(reopened.active_local_speech_jobs().is_empty());
+    assert_eq!(reopened.workspace().records().len(), count_before);
+}

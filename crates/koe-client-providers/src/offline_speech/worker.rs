@@ -212,6 +212,12 @@ impl OfflineSpeechWorker {
         Ok(())
     }
 
+    /// Returns the number of operations currently occupying worker queue slots.
+    #[must_use]
+    pub fn outstanding(&self) -> usize {
+        lock_unpoisoned(&self.events).outstanding
+    }
+
     /// Cancels current and queued operations without waiting for native code.
     /// The loaded model remains available for subsequently submitted audio.
     pub fn cancel(&self) {
