@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KoeMacUI
+import os
 import SwiftUI
 
 @MainActor
@@ -67,6 +68,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private var lastSyncedInputs: [HostAudioInputDescriptor]?
     private var lastSyncedAppMetadata: (version: String, build: String)?
     private var lastObservedHardwareGeneration: UInt64 = 0
+    private let workspaceNotificationCenter: NotificationCenter
+    private let workspaceObserverBox = OSAllocatedUnfairLock<[NSObjectProtocol]>(uncheckedState: [])
 
     public override convenience init() {
         self.init(playback: NativePlayback())
@@ -83,6 +86,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         files: NativeFileActions = NativeFileActions(),
         audioInputMonitor: CoreAudioInputMonitor = CoreAudioInputMonitor(),
         defaultInputsProvider: @escaping () -> [MicrophoneInput] = NativeAudioSource.inputs,
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         makeDefaultStore: @escaping @MainActor () -> HostSessionStore = { KoeAppDelegate.createDefaultStore() }
     ) {
         self.bluetoothBridge = bluetoothBridge
@@ -91,8 +95,14 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         self.capture = capture ?? NativeCapture(source: NativeAudioSource(), systemSource: NativeSystemAudioSource())
         self.audioInputMonitor = audioInputMonitor
         self.defaultInputsProvider = defaultInputsProvider
+        self.workspaceNotificationCenter = workspaceNotificationCenter
         self.makeDefaultStore = makeDefaultStore
         super.init()
+        startObservingWorkspacePowerNotifications()
+    }
+
+    deinit {
+        Self.removeWorkspaceObservers(workspaceObserverBox, from: workspaceNotificationCenter)
     }
 
     private static func createDefaultStore() -> HostSessionStore {
@@ -336,6 +346,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         timer = nil
+        Self.removeWorkspaceObservers(workspaceObserverBox, from: workspaceNotificationCenter)
         audioInputMonitor.stop()
         capture.shutdown()
         playback.stop()
@@ -343,6 +354,35 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         lifecycle.shutdown()
         localTranscription.shutdown()
         store?.shutdown()
+    }
+
+    private func startObservingWorkspacePowerNotifications() {
+        let onSleep = workspaceNotificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) { [weak self] _ in
+            guard let delegate = self else { return }
+            Self.runOnMainActor { delegate.bluetoothBridge.handleHostWillSleep() }
+        }
+        let onWake = workspaceNotificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [weak self] _ in
+            guard let delegate = self else { return }
+            Self.runOnMainActor { delegate.bluetoothBridge.handleHostWake() }
+        }
+        workspaceObserverBox.withLockUnchecked { $0 = [onSleep, onWake] }
+    }
+
+    nonisolated private static func removeWorkspaceObservers(_ box: OSAllocatedUnfairLock<[NSObjectProtocol]>, from center: NotificationCenter) {
+        let tokens = box.withLockUnchecked { current -> [NSObjectProtocol] in
+            let snapshot = current
+            current = []
+            return snapshot
+        }
+        tokens.forEach(center.removeObserver)
+    }
+
+    nonisolated private static func runOnMainActor(_ body: @MainActor @Sendable @escaping () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(body)
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated(body) }
+        }
     }
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { buildStatusMenu() }
     public func menuNeedsUpdate(_ menu: NSMenu) { populate(menu) }
@@ -448,7 +488,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
     @objc private func scanFromMenu() {
         prepareManualScan()
-        bluetoothBridge.startScanningIfPoweredOn()
+        bluetoothBridge.startScanningIfPoweredOn(initiatedByUser: true)
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
     }
     @objc private func releaseBleControl() { store?.send(.deviceRelease) }

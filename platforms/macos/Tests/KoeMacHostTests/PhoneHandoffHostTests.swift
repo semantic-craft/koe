@@ -85,7 +85,7 @@ struct PhoneHandoffHostTests {
         store.send(.setBleAutoConnect(enabled: false))
         #expect(store.device.autoConnect == false)
 
-        delegate.bluetoothBridge.startScanningIfPoweredOn()
+        delegate.bluetoothBridge.startScanningIfPoweredOn(initiatedByUser: true)
         store.ingestBleChunk(rxFrame(group: 0x18, command: 0x81, payload: [0x93, 0x03, 0, 0]), nowEpochSec: 1_800_000_000)
         #expect(store.device.recording == true)
         #expect(delegate.bluetoothBridge.isScanRequested == true)
