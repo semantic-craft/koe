@@ -8,6 +8,186 @@ use super::{McpToolCallState, McpToolError};
 use crate::*;
 use koe_engine::product::{ItemKind, ReviewState, SourcedItem};
 
+const GET_RECORD_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordSegmentPageRequest {
+    include_segments: bool,
+    offset: usize,
+    limit: Option<usize>,
+}
+
+fn parse_record_segment_page(
+    obj: &Map<String, Value>,
+) -> Result<RecordSegmentPageRequest, McpToolError> {
+    let include_segments = optional_bool(obj, "include_segments")?.unwrap_or(true);
+    let offset = match optional_u64(obj, "segment_offset")? {
+        None => 0,
+        Some(raw) => usize::try_from(raw)
+            .map_err(|_| McpToolError::invalid_params("segment_offset 超出范围"))?,
+    };
+    let limit = match optional_u64(obj, "segment_limit")? {
+        None => None,
+        Some(0) => {
+            return Err(McpToolError::invalid_params("segment_limit 必须大于等于 1"));
+        }
+        Some(raw) => Some(
+            usize::try_from(raw)
+                .map_err(|_| McpToolError::invalid_params("segment_limit 超出范围"))?,
+        ),
+    };
+    Ok(RecordSegmentPageRequest {
+        include_segments,
+        offset,
+        limit,
+    })
+}
+
+fn set_pagination_fields(
+    detail: &mut Value,
+    total_segments: usize,
+    segment_offset: usize,
+    segments_truncated: bool,
+    next_segment_offset: Option<usize>,
+) {
+    if let Some(obj) = detail.as_object_mut() {
+        obj.insert("totalSegments".into(), json!(total_segments));
+        obj.insert("segmentOffset".into(), json!(segment_offset));
+        obj.insert("segmentsTruncated".into(), json!(segments_truncated));
+        obj.insert("nextSegmentOffset".into(), json!(next_segment_offset));
+    }
+}
+
+fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
+    let mut idx = max_bytes.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn cap_single_segment_to_budget(mut segment: Value, remaining_budget: usize) -> Option<Value> {
+    let obj = segment.as_object_mut()?;
+    let original_text = obj
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    obj.insert("text".into(), Value::String(String::new()));
+    if obj.get("originalText").is_some_and(Value::is_string) {
+        obj.insert("originalText".into(), Value::Null);
+    }
+    let empty_len = serde_json::to_vec(&segment).ok()?.len();
+    if empty_len > remaining_budget {
+        return None;
+    }
+    let suffix = "…";
+    let mut lo = 0usize;
+    let mut hi = original_text.len();
+    let mut best = String::new();
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let cut = floor_char_boundary(&original_text, mid);
+        let mut candidate = String::with_capacity(cut + suffix.len());
+        candidate.push_str(&original_text[..cut]);
+        if cut < original_text.len() {
+            candidate.push_str(suffix);
+        }
+        let quoted_len = serde_json::to_vec(&candidate).ok()?.len();
+        let total_len = empty_len.saturating_sub(2).saturating_add(quoted_len);
+        if total_len <= remaining_budget {
+            best = candidate;
+            if mid == original_text.len() {
+                break;
+            }
+            lo = mid + 1;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if let Some(obj) = segment.as_object_mut() {
+        obj.insert("text".into(), Value::String(best));
+    }
+    (serde_json::to_vec(&segment).ok()?.len() <= remaining_budget).then_some(segment)
+}
+
+fn paginate_record_detail(
+    mut detail: Value,
+    page: RecordSegmentPageRequest,
+    byte_budget: usize,
+) -> Value {
+    let all_segments = detail
+        .get_mut("segments")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let total_segments = all_segments.len();
+
+    if !page.include_segments {
+        let segments_truncated = total_segments > 0;
+        let next_segment_offset = segments_truncated.then_some(0);
+        set_pagination_fields(
+            &mut detail,
+            total_segments,
+            0,
+            segments_truncated,
+            next_segment_offset,
+        );
+        return detail;
+    }
+
+    let start = page.offset.min(total_segments);
+    set_pagination_fields(
+        &mut detail,
+        total_segments,
+        start,
+        false,
+        Some(total_segments.max(9_999)),
+    );
+    let base_bytes = serde_json::to_vec(&detail).map_or(0, |v| v.len());
+    let max_count = page.limit.unwrap_or(usize::MAX);
+    let mut included = Vec::new();
+    let mut used_bytes = base_bytes;
+    let mut capped_single_segment = false;
+
+    for segment in all_segments.into_iter().skip(start).take(max_count) {
+        let sep = usize::from(!included.is_empty());
+        let seg_bytes = serde_json::to_vec(&segment).map_or(usize::MAX, |v| v.len());
+        if used_bytes.saturating_add(sep).saturating_add(seg_bytes) <= byte_budget {
+            used_bytes = used_bytes.saturating_add(sep).saturating_add(seg_bytes);
+            included.push(segment);
+            continue;
+        }
+        if included.is_empty() {
+            let remaining = byte_budget.saturating_sub(base_bytes);
+            if let Some(capped) = cap_single_segment_to_budget(segment, remaining) {
+                included.push(capped);
+                capped_single_segment = true;
+            }
+        }
+        break;
+    }
+
+    let included_count = included.len();
+    let has_more = start.saturating_add(included_count) < total_segments;
+    let segments_truncated = has_more || capped_single_segment;
+    let next_segment_offset =
+        (has_more && included_count > 0).then_some(start.saturating_add(included_count));
+    if let Some(obj) = detail.as_object_mut() {
+        obj.insert("segments".into(), Value::Array(included));
+    }
+    set_pagination_fields(
+        &mut detail,
+        total_segments,
+        start,
+        segments_truncated,
+        next_segment_offset,
+    );
+    detail
+}
+
 impl KoeRuntime {
     pub(super) fn is_mcp_read_tool(name: &str) -> bool {
         matches!(
@@ -191,9 +371,21 @@ impl KoeRuntime {
                 }))))
             }
             "get_record" => {
-                ensure_allowed_keys(obj, &["record_id"])?;
+                ensure_allowed_keys(
+                    obj,
+                    &[
+                        "record_id",
+                        "include_segments",
+                        "segment_offset",
+                        "segment_limit",
+                    ],
+                )?;
                 let id = required_str(obj, "record_id")?;
-                Ok(McpToolCallState::Completed(self.record_detail_json(id)))
+                let page = parse_record_segment_page(obj)?;
+                let result = self.record_detail_json(id).map(|detail| {
+                    paginate_record_detail(detail, page, GET_RECORD_RESPONSE_BYTE_BUDGET)
+                });
+                Ok(McpToolCallState::Completed(result))
             }
             "ask" => {
                 ensure_allowed_keys(obj, &["question", "record_id"])?;
@@ -261,14 +453,16 @@ impl KoeRuntime {
                 let since_revision = optional_u64(obj, "since_revision")?;
                 let generation = self.generation();
                 let revision = self.workspace().revision();
-                let has_updates = match (since_generation, since_revision) {
-                    (None, None) => true,
-                    (g, r) => {
-                        g.is_some_and(|prev| generation > prev)
-                            || r.is_some_and(|prev| revision > prev)
-                    }
-                };
-                let pending_jobs: Vec<Value> = self
+                let generation_reset = since_generation.is_some_and(|prev| prev > generation);
+                let has_updates = generation_reset
+                    || match (since_generation, since_revision) {
+                        (None, None) => true,
+                        (g, r) => {
+                            g.is_some_and(|prev| generation > prev)
+                                || r.is_some_and(|prev| revision > prev)
+                        }
+                    };
+                let mut pending_jobs: Vec<Value> = self
                     .pending
                     .iter()
                     .map(|(op_id, work)| match work {
@@ -283,11 +477,20 @@ impl KoeRuntime {
                         }
                     })
                     .collect();
+                pending_jobs.extend(self.active_local_speech_jobs().into_iter().map(|job| {
+                    json!({
+                        "operationId": job.operation_id,
+                        "kind": "local_transcription",
+                        "recordId": job.record_id,
+                        "engine": job.engine
+                    })
+                }));
                 let device = self.device_json();
                 Ok(McpToolCallState::Completed(Ok(json!({
                     "generation": generation,
                     "revision": revision,
                     "hasUpdates": has_updates,
+                    "generationReset": generation_reset,
                     "pendingJobs": pending_jobs,
                     "askInFlight": self.workspace().ask_session().in_flight,
                     "notice": self.notice,

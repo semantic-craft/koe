@@ -6,7 +6,7 @@ use std::{
 use koe_runtime::{drive_mcp_tool_blocking, KoeRuntime, McpToolError};
 use serde_json::{json, Value};
 
-use crate::bridge_client::BridgeClient;
+use crate::bridge_client::{BridgeClient, BridgeOnlyClient};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
@@ -17,6 +17,7 @@ pub(crate) enum McpBackend<'a> {
         client: &'a mut BridgeClient,
         workspace: &'a Path,
     },
+    BridgeOnly(BridgeOnlyClient),
 }
 
 pub(crate) fn serve(mut backend: McpBackend<'_>) -> Result<(), String> {
@@ -114,7 +115,7 @@ fn handle(
         "ping" => json!({}),
         _ if !*ready => return Some(error(id, -32600, "请先完成 MCP 初始化")),
         "tools/list" => match backend {
-            McpBackend::Offline(_) => KoeRuntime::mcp_tools_list(),
+            McpBackend::Offline(_) | McpBackend::BridgeOnly(_) => KoeRuntime::mcp_tools_list(),
             McpBackend::Online { client, workspace } => {
                 match online_tools_list(client, workspace) {
                     Ok(list) => list,
@@ -134,6 +135,9 @@ fn handle(
                 McpBackend::Offline(runtime) => call_offline_tool(runtime, name, &args),
                 McpBackend::Online { client, workspace } => {
                     online_tool_call(client, workspace, name, &args)
+                }
+                McpBackend::BridgeOnly(bridge) => {
+                    bridge.call_tool(name, &args, is_retryable_read_tool(name))
                 }
             };
             match outcome {
@@ -458,6 +462,178 @@ mod tests {
             .expect("next call after poisoned oversized response must reconnect cleanly")
             .expect("next call value must be Ok");
         assert_eq!(next, json!({ "connected": true }));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn bridge_only_mcp_never_locks_workspace_returns_offline_error_and_lazily_connects() {
+        let ws = TempMcpWorkspace::new();
+        let lock_path = ws.0.join(".koe-workspace.lock");
+        let mut backend = McpBackend::BridgeOnly(BridgeOnlyClient::new(ws.0.clone()));
+        let mut initialized = false;
+        let mut ready = false;
+
+        let init = handle(
+            &mut backend,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}
+            }),
+            &mut initialized,
+            &mut ready,
+        )
+        .unwrap();
+        assert_eq!(init["result"]["protocolVersion"], PROTOCOL_VERSION);
+        assert!(handle(
+            &mut backend,
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            &mut initialized,
+            &mut ready,
+        )
+        .is_none());
+
+        let tools = handle(
+            &mut backend,
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+            &mut initialized,
+            &mut ready,
+        )
+        .unwrap();
+        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 16);
+        assert!(!lock_path.exists());
+
+        let offline = handle(
+            &mut backend,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "poll_updates", "arguments": {}}
+            }),
+            &mut initialized,
+            &mut ready,
+        )
+        .unwrap();
+        assert_eq!(offline["error"]["code"], -32001);
+        assert_eq!(
+            offline["error"]["message"],
+            "Koe.app is not running; start Koe.app to access live BLE and workspace"
+        );
+        assert!(!lock_path.exists());
+
+        let session = koe_host_api::HostSessionGuard::open(&ws.0)
+            .expect("ProductStore / HostSessionGuard must open concurrently while bridge-only MCP runs");
+
+        let live = handle(
+            &mut backend,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "poll_updates", "arguments": {}}
+            }),
+            &mut initialized,
+            &mut ready,
+        )
+        .unwrap();
+        assert_eq!(live["result"]["isError"], false, "{live}");
+        let live_payload: Value =
+            serde_json::from_str(live["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(live_payload["generation"].as_u64().unwrap() >= 1);
+
+        drop(session);
+
+        let after_stop = handle(
+            &mut backend,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "poll_updates", "arguments": {}}
+            }),
+            &mut initialized,
+            &mut ready,
+        )
+        .unwrap();
+        assert_eq!(after_stop["error"]["code"], -32001);
+
+        let restarted = koe_host_api::HostSessionGuard::open(&ws.0)
+            .expect("restarted HostSessionGuard must open cleanly");
+        let after_restart = handle(
+            &mut backend,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "poll_updates",
+                    "arguments": {"since_generation": 50, "since_revision": 0}
+                }
+            }),
+            &mut initialized,
+            &mut ready,
+        )
+        .unwrap();
+        assert_eq!(after_restart["result"]["isError"], false, "{after_restart}");
+        let reset_payload: Value =
+            serde_json::from_str(after_restart["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(reset_payload["hasUpdates"], true);
+        assert_eq!(reset_payload["generationReset"], true);
+        drop(restarted);
+    }
+
+    #[test]
+    fn bridge_only_mutating_tool_never_auto_retries_on_disconnect() {
+        let ws = TempMcpWorkspace::new();
+        let listener = ws.bind_listener();
+        let seen_mutating = Arc::new(AtomicUsize::new(0));
+        let seen_server = Arc::clone(&seen_mutating);
+
+        let server = std::thread::spawn(move || {
+            let (stream1, _) = listener.accept().unwrap();
+            let mut reader1 = BufReader::new(stream1);
+            let mut line1 = String::new();
+            assert!(reader1.read_line(&mut line1).unwrap() > 0);
+            let req1: Value = serde_json::from_str(&line1).unwrap();
+            if req1["params"]["name"] == "manage_record" {
+                seen_server.fetch_add(1, Ordering::SeqCst);
+            }
+            drop(reader1);
+
+            let (stream2, _) = listener.accept().unwrap();
+            let mut reader2 = BufReader::new(stream2.try_clone().unwrap());
+            let mut writer2 = stream2;
+            let mut line2 = String::new();
+            assert!(reader2.read_line(&mut line2).unwrap() > 0);
+            let req2: Value = serde_json::from_str(&line2).unwrap();
+            writeln!(
+                writer2,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": req2["id"],
+                    "result": { "isError": false, "value": { "ok": true } }
+                })
+            )
+            .unwrap();
+            writer2.flush().unwrap();
+        });
+
+        let mut bridge = BridgeOnlyClient::new(ws.0.clone());
+        let err = bridge
+            .call_tool("manage_record", &json!({}), false)
+            .expect_err("mutating call on disconnect must not retry");
+        assert!(err.message.contains("未自动重试"));
+        assert_eq!(seen_mutating.load(Ordering::SeqCst), 1);
+
+        let recovered = bridge
+            .call_tool("device_status", &json!({}), true)
+            .expect("next read-only call should reconnect cleanly")
+            .expect("value must be Ok");
+        assert_eq!(recovered, json!({ "ok": true }));
         server.join().unwrap();
     }
 }

@@ -1026,3 +1026,321 @@ fn device_refresh_during_catalog_loading_emits_no_empty_ble_frames() {
     );
     assert!(frames.contains(&DeviceCommands::get_device_info()));
 }
+
+#[test]
+fn poll_updates_detects_generation_reset_and_surfaces_active_local_speech_jobs() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    assert_eq!(runtime.generation(), 1);
+
+    let reset_poll = match runtime
+        .call_mcp_tool_step(
+            "poll_updates",
+            &json!({"since_generation": 50, "since_revision": 0}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("poll_updates failed: {other:?}"),
+    };
+    assert_eq!(reset_poll["hasUpdates"], true);
+    assert_eq!(reset_poll["generationReset"], true);
+
+    let current_rev = reset_poll["revision"].as_u64().unwrap();
+    let steady_poll = match runtime
+        .call_mcp_tool_step(
+            "poll_updates",
+            &json!({"since_generation": 1, "since_revision": current_rev}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("steady poll_updates failed: {other:?}"),
+    };
+    assert_eq!(steady_poll["hasUpdates"], false);
+    assert_eq!(steady_poll["generationReset"], false);
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+        NOW,
+    );
+    let _ = runtime.dispatch_json(
+        &json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}).to_string(),
+        NOW,
+    );
+    let rec_id = "bean-local-poll";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                rec_id.into(),
+                "Local Poll".into(),
+                RecordOrigin::Bean,
+                77,
+                NOW,
+                1_000,
+            )
+        })
+        .unwrap();
+    let wav = {
+        let mut bytes = koe_engine::wav::OpusWave::wav_header_with_rate(3_200, 16_000).to_vec();
+        bytes.extend(std::iter::repeat_n(0u8, 3_200));
+        bytes
+    };
+    recording_assets::save_audio(&sandbox.0, rec_id, &wav).unwrap();
+    runtime.auto_transcribe.insert(rec_id.into());
+    runtime.poll_timers(0, NOW);
+    runtime.poll_timers(0, NOW);
+
+    let active_jobs = runtime.active_local_speech_jobs();
+    assert_eq!(active_jobs.len(), 1);
+    let expected_op = active_jobs[0].operation_id;
+
+    let active_poll = match runtime
+        .call_mcp_tool_step("poll_updates", &json!({}), NOW)
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("active poll_updates failed: {other:?}"),
+    };
+    let pending_jobs = active_poll["pendingJobs"].as_array().unwrap();
+    assert!(
+        pending_jobs.iter().any(|job| {
+            job["kind"] == "local_transcription"
+                && job["recordId"] == rec_id
+                && job["engine"] == "apple_speech"
+                && job["operationId"] == expected_op
+        }),
+        "expected local_transcription job in pendingJobs, got {pending_jobs:?}"
+    );
+}
+
+#[test]
+fn manage_record_if_idle_prevents_duplication_and_supports_set_project_and_device_download_all() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let call_ok = |rt: &mut KoeRuntime, name: &str, args: Value, now: u64| -> Value {
+        match rt.call_mcp_tool_step(name, &args, now).unwrap() {
+            McpToolCallState::Completed(Ok(v)) => v,
+            other => panic!("{name} expected Completed(Ok), got {other:?}"),
+        }
+    };
+
+    let created = call_ok(
+        &mut runtime,
+        "create_note",
+        json!({"title": "Ops Sync", "text": "部署完成。\n保留审计日志。"}),
+        NOW,
+    );
+    let record_id = created["id"].as_str().unwrap().to_string();
+    let count_before = runtime.workspace().records().len();
+
+    let skip_transcribe = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(skip_transcribe["ok"], true);
+    assert_eq!(skip_transcribe["skipped"], true);
+    assert_eq!(skip_transcribe["recordId"], record_id);
+    assert_eq!(skip_transcribe["action"], "transcribe");
+    assert!(skip_transcribe["reason"].as_str().is_some_and(|r| !r.is_empty()));
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before,
+        "if_idle transcribe must not create duplicate retry record"
+    );
+
+    runtime
+        .commit(|w| {
+            let key = w.begin_analysis(&record_id, AnalysisStage::Summarizing)?;
+            let minutes = koe_engine::minutes::parse_meeting_minutes_json(
+                r#"{"schemaVersion":2,"title":"Ops Sync","overview":"完成部署","topics":[],"decisions":[{"text":"保留审计日志","sources":["S2"]}],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#,
+                &w.record(&record_id).unwrap().aggregate.spine,
+            )
+            .unwrap();
+            w.complete_summary(&key, minutes)
+        })
+        .unwrap();
+
+    let skip_summary = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "summarize", "if_idle": true}),
+        NOW + 2,
+    );
+    assert_eq!(skip_summary["ok"], true);
+    assert_eq!(skip_summary["skipped"], true);
+    assert_eq!(skip_summary["action"], "summarize");
+
+    let empty_id = "bean-queued-idle";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                empty_id.into(),
+                "Queued Bean".into(),
+                RecordOrigin::Bean,
+                91,
+                NOW + 3,
+                1_000,
+            )
+        })
+        .unwrap();
+    runtime.auto_transcribe.insert(empty_id.into());
+    let skip_queued = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": empty_id, "action": "transcribe", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_queued["ok"], true);
+    assert_eq!(skip_queued["skipped"], true);
+
+    runtime.auto_summarize.insert(empty_id.into());
+    let skip_queued_sum = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": empty_id, "action": "summarize", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_queued_sum["ok"], true);
+    assert_eq!(skip_queued_sum["skipped"], true);
+
+    let set_proj = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "set_project", "project": "koe-ops"}),
+        NOW + 4,
+    );
+    assert_eq!(set_proj["ok"], true);
+    assert_eq!(set_proj["action"], "set_project");
+    let detail = call_ok(
+        &mut runtime,
+        "get_record",
+        json!({"record_id": record_id, "include_segments": false}),
+        NOW + 4,
+    );
+    assert_eq!(detail["project"], "koe-ops");
+    assert_eq!(detail["segments"], json!([]));
+    assert_eq!(detail["totalSegments"], 2);
+    assert_eq!(detail["segmentOffset"], 0);
+    assert_eq!(detail["segmentsTruncated"], true);
+    assert_eq!(detail["nextSegmentOffset"], 0);
+    assert!(!detail["summary"].as_array().unwrap().is_empty());
+
+    let _ = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "set_project", "project": null}),
+        NOW + 5,
+    );
+    let cleared = call_ok(
+        &mut runtime,
+        "get_record",
+        json!({"record_id": record_id, "include_segments": false}),
+        NOW + 5,
+    );
+    assert!(cleared["project"].is_null());
+
+    for forbidden in ["purge", "empty_trash"] {
+        let err = runtime
+            .call_mcp_tool_step(
+                "manage_record",
+                &json!({"record_id": record_id, "action": forbidden, "if_idle": true}),
+                NOW + 6,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, -32602);
+    }
+
+    let _ = connect_simulated_bean(&mut runtime, "ble-dl-all", NOW + 7);
+    let _ = runtime.drain_outbound_ble_frames();
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&1u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&8801u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&((NOW + 7) as u32).to_le_bytes());
+    cat_bytes.extend_from_slice(&1_000u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 8);
+    let _ = runtime.drain_outbound_ble_frames();
+    runtime.device.session.transfer.phase = koe_engine::session::TransferPhaseTag::Failed;
+    runtime.device.session.transfer.file_id = 8801;
+
+    let dl_all = call_ok(
+        &mut runtime,
+        "device_control",
+        json!({"action": "download_all"}),
+        NOW + 9,
+    );
+    assert_eq!(dl_all["ok"], true);
+    assert_eq!(dl_all["action"], "download_all");
+    let tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        tx.contains(&DeviceCommands::start_transport_audio_file(8801, 0, 0)),
+        "download_all must dispatch HostIntent::DeviceDownloadAll and emit 1A/07 pull"
+    );
+}
+
+#[test]
+fn get_record_rejects_zero_limit_and_caps_oversized_single_segment() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let giant_text = "中".repeat(550_000);
+    let rec_id = "giant-seg";
+    runtime
+        .commit(|w| {
+            w.insert_record(rec_id.into(), "Giant".into(), RecordOrigin::Note, 0, NOW, 0)?;
+            w.append_transcript(rec_id, &giant_text, 0, 1000, "manual")?;
+            w.append_transcript(rec_id, "second short segment", 1000, 2000, "manual")?;
+            Ok(())
+        })
+        .unwrap();
+
+    let bad_limit = runtime
+        .call_mcp_tool_step(
+            "get_record",
+            &json!({"record_id": rec_id, "segment_limit": 0}),
+            NOW,
+        )
+        .unwrap_err();
+    assert_eq!(bad_limit.code, -32602);
+
+    let first = match runtime
+        .call_mcp_tool_step("get_record", &json!({"record_id": rec_id}), NOW)
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("get_record giant segment failed: {other:?}"),
+    };
+    let encoded_len = serde_json::to_vec(&first).unwrap().len();
+    assert!(
+        encoded_len <= 1_500_000,
+        "capped single-segment response exceeded 1.5MB budget: {encoded_len}"
+    );
+    assert_eq!(first["totalSegments"], 2);
+    assert_eq!(first["segmentOffset"], 0);
+    assert_eq!(first["segmentsTruncated"], true);
+    assert_eq!(first["nextSegmentOffset"], 1);
+    assert_eq!(first["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(first["segments"][0]["id"], "S1");
+
+    let second = match runtime
+        .call_mcp_tool_step(
+            "get_record",
+            &json!({"record_id": rec_id, "segment_offset": 1}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("get_record second page failed: {other:?}"),
+    };
+    assert_eq!(second["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(second["segments"][0]["id"], "S2");
+    assert_eq!(second["segments"][0]["text"], "second short segment");
+    assert_eq!(second["segmentsTruncated"], false);
+    assert!(second["nextSegmentOffset"].is_null());
+}

@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use koe_runtime::resolve_bridge_socket_path;
+use koe_runtime::{KoeRuntime, McpToolCallState, resolve_bridge_socket_path};
 use serde_json::{Value, json};
 
 use crate::HostSessionGuard;
@@ -154,4 +154,184 @@ fn local_bridge_rejects_raw_dispatch() {
     drop(rpc_client);
     drop(session);
     let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn get_record_paginates_oversized_record_under_line_budget_over_live_bridge() {
+    let ws = temp_workspace();
+    let _ = fs::remove_dir_all(&ws);
+
+    const SEGMENT_COUNT: usize = 4_000;
+    const MAX_PAGINATED_RESPONSE_BYTES: usize = 1_572_864;
+    let record_id = {
+        let mut runtime = KoeRuntime::open(&ws).expect("seed runtime should open");
+        let pad = "a".repeat(640);
+        let mut text = String::with_capacity(SEGMENT_COUNT * 660);
+        for i in 1..=SEGMENT_COUNT {
+            if i > 1 {
+                text.push('\n');
+            }
+            text.push_str(&format!("seg-{i:04}-{pad}"));
+        }
+        let created = match runtime
+            .call_mcp_tool_step(
+                "create_note",
+                &json!({"title": "Oversized 4000-segment fixture", "text": text}),
+                1_800_000_000,
+            )
+            .unwrap()
+        {
+            McpToolCallState::Completed(Ok(value)) => value,
+            other => panic!("create_note failed: {other:?}"),
+        };
+        let id = created["id"].as_str().unwrap().to_string();
+        assert!(
+            created.to_string().len() > 2_500_000,
+            "fixture must exceed 2.5 MiB full JSON"
+        );
+        let _ = runtime
+            .call_mcp_tool_step(
+                "edit_transcript",
+                &json!({
+                    "record_id": id,
+                    "action": "set_speaker",
+                    "segment_id": "S1",
+                    "speaker": "Alice"
+                }),
+                1_800_000_001,
+            )
+            .unwrap();
+        let _ = runtime
+            .call_mcp_tool_step(
+                "annotate_segment",
+                &json!({
+                    "record_id": id,
+                    "segment_id": "S1",
+                    "kind": "highlight"
+                }),
+                1_800_000_002,
+            )
+            .unwrap();
+        id
+    };
+
+    let sock_path = resolve_bridge_socket_path(&ws).unwrap();
+    let session = HostSessionGuard::open(&ws).expect("host session should open");
+    let mut client = UnixStream::connect(&sock_path).unwrap();
+    let mut reader = BufReader::new(client.try_clone().unwrap());
+
+    let mut rpc = |id: u64, args: Value| -> (usize, Value) {
+        writeln!(
+            client,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "koe/mcp_tool_call",
+                "params": {
+                    "name": "get_record",
+                    "arguments": args
+                }
+            })
+        )
+        .unwrap();
+        client.flush().unwrap();
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line).unwrap();
+        assert!(bytes > 0, "bridge closed unexpectedly");
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        (bytes, parsed)
+    };
+
+    let (summary_bytes, summary_resp) = rpc(
+        1,
+        json!({"record_id": record_id, "include_segments": false}),
+    );
+    assert!(
+        summary_resp.get("error").is_none(),
+        "include_segments=false failed: {summary_resp}"
+    );
+    assert!(
+        summary_bytes < 64 * 1024,
+        "include_segments=false payload exceeded 64 KiB: {summary_bytes}"
+    );
+    let summary_val = &summary_resp["result"]["value"];
+    assert_eq!(summary_val["segments"].as_array().unwrap().len(), 0);
+    assert_eq!(summary_val["totalSegments"], SEGMENT_COUNT);
+    assert_eq!(summary_val["segmentOffset"], 0);
+    assert_eq!(summary_val["segmentsTruncated"], true);
+    assert_eq!(summary_val["nextSegmentOffset"], 0);
+    assert_eq!(summary_val["speakers"][0]["name"], "Alice");
+    assert_eq!(summary_val["highlights"].as_array().unwrap().len(), 1);
+
+    let (page_bytes, page_resp) = rpc(
+        2,
+        json!({"record_id": record_id, "segment_offset": 10, "segment_limit": 100}),
+    );
+    assert!(
+        page_resp.get("error").is_none(),
+        "explicit segment_limit page failed: {page_resp}"
+    );
+    assert!(
+        page_bytes <= MAX_PAGINATED_RESPONSE_BYTES,
+        "page exceeded 1.5 MiB: {page_bytes}"
+    );
+    let page_val = &page_resp["result"]["value"];
+    let page_segments = page_val["segments"].as_array().unwrap();
+    assert_eq!(page_segments.len(), 100);
+    assert_eq!(page_val["segmentOffset"], 10);
+    assert_eq!(page_val["segmentsTruncated"], true);
+    assert_eq!(page_val["nextSegmentOffset"], 110);
+    assert_eq!(page_segments.first().unwrap()["id"], "S11");
+    assert_eq!(page_segments.last().unwrap()["id"], "S110");
+
+    let mut cursor = 0u64;
+    let mut pages = 0usize;
+    let mut reconstructed = Vec::with_capacity(SEGMENT_COUNT);
+    let mut rpc_id = 10u64;
+    loop {
+        let (bytes, resp) = rpc(
+            rpc_id,
+            json!({"record_id": record_id, "segment_offset": cursor}),
+        );
+        rpc_id += 1;
+        assert!(
+            resp.get("error").is_none(),
+            "budget-sliced page at offset {cursor} failed: {resp}"
+        );
+        assert!(
+            bytes <= MAX_PAGINATED_RESPONSE_BYTES,
+            "budget-sliced page at offset {cursor} exceeded 1.5 MiB: {bytes}"
+        );
+        let val = &resp["result"]["value"];
+        assert_eq!(val["totalSegments"], SEGMENT_COUNT);
+        assert_eq!(val["segmentOffset"], cursor);
+        let segs = val["segments"].as_array().unwrap();
+        assert!(!segs.is_empty(), "empty page at offset {cursor}");
+        for seg in segs {
+            reconstructed.push(seg["id"].as_str().unwrap().to_string());
+        }
+        pages += 1;
+        match val["nextSegmentOffset"].as_u64() {
+            Some(next) => {
+                assert_eq!(val["segmentsTruncated"], true);
+                assert_eq!(next, cursor + segs.len() as u64);
+                cursor = next;
+            }
+            None => {
+                assert_eq!(val["segmentsTruncated"], false);
+                break;
+            }
+        }
+    }
+
+    assert!(pages >= 2, "expected multiple pages for >2.5 MiB record");
+    assert_eq!(reconstructed.len(), SEGMENT_COUNT);
+    assert_eq!(reconstructed.first().unwrap(), "S1");
+    assert_eq!(reconstructed.last().unwrap(), "S4000");
+
+    drop(reader);
+    drop(client);
+    drop(session);
+    let _ = fs::remove_dir_all(&ws);
 }
