@@ -186,7 +186,7 @@ fn build_encrypted_slices_rx(
 }
 
 #[test]
-fn mcp_sixteen_tools_cover_full_workspace_and_reject_unknown_or_destructive_actions() {
+fn mcp_seventeen_tools_cover_full_workspace_and_reject_unknown_or_destructive_actions() {
     let sandbox = Sandbox::new();
     let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
 
@@ -216,6 +216,7 @@ fn mcp_sixteen_tools_cover_full_workspace_and_reject_unknown_or_destructive_acti
             "device_status",
             "device_control",
             "poll_updates",
+            "manage_vocabulary",
         ]
     );
     assert!(!names.contains(&"purge_record"));
@@ -1343,4 +1344,118 @@ fn get_record_rejects_zero_limit_and_caps_oversized_single_segment() {
     assert_eq!(second["segments"][0]["text"], "second short segment");
     assert_eq!(second["segmentsTruncated"], false);
     assert!(second["nextSegmentOffset"].is_null());
+}
+
+#[test]
+fn manage_vocabulary_enforces_bounds_is_idempotent_and_preserves_terms_when_configure_provider_omits_it() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let call_ok = |rt: &mut KoeRuntime, args: Value, now: u64| -> Value {
+        match rt.call_mcp_tool_step("manage_vocabulary", &args, now).unwrap() {
+            McpToolCallState::Completed(Ok(value)) => value,
+            other => panic!("manage_vocabulary expected Completed(Ok), got {other:?}"),
+        }
+    };
+
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "get", "terms": ["x"]}), NOW)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set"}), NOW)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set", "terms": [123]}), NOW)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "clear"}), NOW)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+
+    let mut max_valid: Vec<String> = (1..=200).map(|i| format!("词条{i:03}")).collect();
+    max_valid.push("  词条001  ".into());
+    max_valid.push("".into());
+    max_valid.push("   ".into());
+    let set200 = call_ok(&mut runtime, json!({"action": "set", "terms": max_valid}), NOW);
+    assert_eq!(set200["count"], 200);
+    assert_eq!(set200["maxTerms"], 200);
+    let rev_after_200 = set200["revision"].as_u64().unwrap();
+
+    let repeat200 = call_ok(
+        &mut runtime,
+        json!({"action": "set", "terms": (1..=200).map(|i| format!("词条{i:03}")).collect::<Vec<_>>()}),
+        NOW + 1,
+    );
+    assert_eq!(repeat200["revision"].as_u64().unwrap(), rev_after_200);
+
+    let too_many: Vec<String> = (1..=201).map(|i| format!("词条{i:03}")).collect();
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set", "terms": too_many}), NOW + 2)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        call_ok(&mut runtime, json!({"action": "get"}), NOW + 2)["count"],
+        200
+    );
+
+    let exact_64 = "语".repeat(64);
+    let set64 = call_ok(&mut runtime, json!({"action": "set", "terms": [format!("  {exact_64}  ")]}), NOW + 3);
+    assert_eq!(set64["terms"], json!([exact_64]));
+    assert_eq!(set64["count"], 1);
+
+    let over_64 = "语".repeat(65);
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set", "terms": [over_64]}), NOW + 4)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+    assert_eq!(
+        runtime
+            .call_mcp_tool_step("manage_vocabulary", &json!({"action": "set", "terms": ["Koe\nLine2"]}), NOW + 4)
+            .unwrap_err()
+            .code,
+        -32602
+    );
+
+    let cfg_snap: Value = serde_json::from_str(&runtime.dispatch_json(
+        &json!({"type": "configure_provider", "model": "deepseek-v4-pro"}).to_string(),
+        NOW + 5,
+    ))
+    .unwrap();
+    assert!(cfg_snap["error"].is_null(), "{cfg_snap}");
+
+    let bad_cfg_snap: Value = serde_json::from_str(&runtime.dispatch_json(
+        &json!({
+            "type": "configure_provider",
+            "model": "deepseek-v4-pro",
+            "minutesVocabulary": ["bad\nterm"]
+        })
+        .to_string(),
+        NOW + 6,
+    ))
+    .unwrap();
+    assert!(!bad_cfg_snap["error"].is_null(), "{bad_cfg_snap}");
+
+    let after_cfg = call_ok(&mut runtime, json!({"action": "get"}), NOW + 7);
+    assert_eq!(after_cfg["terms"], json!(["语".repeat(64)]));
 }

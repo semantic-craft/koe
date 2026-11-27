@@ -7,7 +7,9 @@ use super::blocking::{
 use super::{McpToolCallState, McpToolError};
 use crate::command::{AdapterEvent, DispatchMessage, HostIntent};
 use crate::*;
-use koe_engine::product::ItemKind;
+use koe_engine::product::{
+    normalize_minutes_vocabulary, ItemKind, MAX_MINUTES_VOCABULARY_TERMS,
+};
 
 impl KoeRuntime {
     pub(super) fn call_mcp_write_tool(
@@ -275,6 +277,35 @@ impl KoeRuntime {
                 });
                 Ok(McpToolCallState::Completed(result))
             }
+            "manage_vocabulary" => {
+                ensure_allowed_keys(obj, &["action", "terms"])?;
+                let action = required_str(obj, "action")?;
+                match action {
+                    "get" => {
+                        if obj.get("terms").is_some_and(|v| !v.is_null()) {
+                            return Err(McpToolError::invalid_params("get 操作不接受 terms 参数"));
+                        }
+                        let terms = &self.workspace().provider_configuration().minutes_vocabulary;
+                        Ok(McpToolCallState::Completed(Ok(json!({
+                            "ok": true,
+                            "action": "get",
+                            "terms": terms,
+                            "count": terms.len(),
+                            "maxTerms": MAX_MINUTES_VOCABULARY_TERMS,
+                            "generation": self.generation,
+                            "revision": self.workspace().revision(),
+                        }))))
+                    }
+                    "set" => {
+                        let raw_terms = required_string_array(obj, "terms")?;
+                        let normalized = normalize_minutes_vocabulary(&raw_terms)
+                            .map_err(|err| McpToolError::invalid_params(err.to_string()))?;
+                        let result = self.mcp_set_minutes_vocabulary(&normalized, now);
+                        Ok(McpToolCallState::Completed(result))
+                    }
+                    _ => Err(McpToolError::invalid_params("无效的 manage_vocabulary action")),
+                }
+            }
             _ => Err(McpToolError::invalid_params("未知工具")),
         }
     }
@@ -436,4 +467,49 @@ impl KoeRuntime {
             }
         }
     }
+
+    fn mcp_set_minutes_vocabulary(
+        &mut self,
+        normalized: &[String],
+        now: u64,
+    ) -> Result<Value, String> {
+        self.prepare_mcp_write(now)?;
+        let res = self.commit(|w| w.set_minutes_vocabulary(normalized));
+        self.generation = self.generation.saturating_add(1);
+        match res {
+            Ok(terms) => Ok(json!({
+                "ok": true,
+                "action": "set",
+                "terms": terms,
+                "count": terms.len(),
+                "maxTerms": MAX_MINUTES_VOCABULARY_TERMS,
+                "generation": self.generation,
+                "revision": self.workspace().revision(),
+            })),
+            Err(error) => {
+                self.set_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+}
+
+fn required_string_array(
+    obj: &Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, McpToolError> {
+    let items = obj
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpToolError::invalid_params(format!("{key} 必须是字符串数组")))?;
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(text) = item.as_str() else {
+            return Err(McpToolError::invalid_params(format!(
+                "{key} 中的每一项都必须是字符串"
+            )));
+        };
+        values.push(text.to_string());
+    }
+    Ok(values)
 }

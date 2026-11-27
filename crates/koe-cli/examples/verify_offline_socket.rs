@@ -291,7 +291,7 @@ fn run() -> Result<(), String> {
     let doctor_rpc = rpc_call(&sock_path, 2, "koe/doctor", json!({}))?;
     let tools_rpc = rpc_call(&sock_path, 3, "koe/mcp_tools_list", json!({}))?;
     let get_rec_rpc = rpc_call(&sock_path, 4, "koe/mcp_tool_call", json!({"name":"get_record","arguments":{"record_id":imp_id}}))?;
-    if status_rpc["records"].as_array().is_none() || doctor_rpc["workspaceReadable"] != true || tools_rpc["tools"].as_array().is_none_or(|t| t.len() != 16) || get_rec_rpc["isError"] != false {
+    if status_rpc["records"].as_array().is_none() || doctor_rpc["workspaceReadable"] != true || tools_rpc["tools"].as_array().is_none_or(|t| t.len() != 17) || get_rec_rpc["isError"] != false {
         return Err("koe.sock JSON-RPC verification failed".into());
     }
     drop(session);

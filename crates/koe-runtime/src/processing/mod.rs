@@ -241,7 +241,7 @@ impl KoeRuntime {
             "zh",
             &[],
             Some("只写有来源的结论、行动和记忆。没有信息的栏目留空，不补全六个栏目。"),
-            &[],
+            &self.workspace().provider_configuration().minutes_vocabulary,
         );
         let key = self
             .store
@@ -284,7 +284,7 @@ impl KoeRuntime {
             "zh",
             &[],
             Some("录音仍在继续。只整理本次提供原文中有来源的结论，保留未决事项，不推测后续内容。"),
-            &[],
+            &self.workspace().provider_configuration().minutes_vocabulary,
         );
         let key = self.store.transact(|w| w.begin_live_summary(id))?;
         if let Some(session) = self.captures.sessions.get_mut(id) {

@@ -1335,3 +1335,296 @@ fn hybrid_qwen_asr_and_deepseek_flash_llm_route_distinct_keys_and_thinking_wire_
     assert_eq!(observed[1].1["thinking"]["type"], "enabled");
     assert!(observed[1].1.get("enable_thinking").is_none());
 }
+
+#[test]
+fn legacy_workspace_without_minutes_vocabulary_opens_and_persisted_vocabulary_survives_reopen() {
+    use koe_runtime::McpToolCallState;
+
+    let root = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&root.0).unwrap();
+    let seed = send(
+        &mut runtime,
+        json!({"type": "configure_provider", "model": "legacy-seed-model"}),
+    );
+    assert!(seed["error"].is_null(), "{seed}");
+    drop(runtime);
+
+    let ws_path = root.0.join("product-workspace.json");
+    let legacy_raw: Value = serde_json::from_str(&fs::read_to_string(&ws_path).unwrap()).unwrap();
+    assert!(
+        legacy_raw["provider"].get("minutes_vocabulary").is_none(),
+        "empty vocabulary must omit minutes_vocabulary in workspace JSON"
+    );
+
+    let mut reopened = KoeRuntime::open(&root.0).unwrap();
+    let initial = match reopened
+        .call_mcp_tool_step("manage_vocabulary", &json!({"action": "get"}), 101)
+        .expect("manage_vocabulary get must succeed on legacy workspace")
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("unexpected manage_vocabulary get result: {other:?}"),
+    };
+    assert_eq!(initial["ok"], true);
+    assert_eq!(initial["action"], "get");
+    assert_eq!(initial["terms"], json!([]));
+    assert_eq!(initial["count"], 0);
+    assert_eq!(initial["maxTerms"], 200);
+
+    let configured = send(
+        &mut reopened,
+        json!({
+            "type": "configure_provider",
+            "model": "deepseek-flash",
+            "minutesVocabulary": ["  Kido Kantai  ", "", "   ", "Kotone", "Kido Kantai", "Responsay"]
+        }),
+    );
+    assert!(configured["error"].is_null(), "{configured}");
+
+    let updated_model_only = send(
+        &mut reopened,
+        json!({"type": "configure_provider", "model": "deepseek-v4-pro"}),
+    );
+    assert!(updated_model_only["error"].is_null(), "{updated_model_only}");
+    drop(reopened);
+
+    let persisted_raw: Value =
+        serde_json::from_str(&fs::read_to_string(&ws_path).unwrap()).unwrap();
+    assert_eq!(
+        persisted_raw["provider"]["minutes_vocabulary"],
+        json!(["Kido Kantai", "Kotone", "Responsay"])
+    );
+
+    let mut reopened_again = KoeRuntime::open(&root.0).unwrap();
+    let after_reopen = match reopened_again
+        .call_mcp_tool_step("manage_vocabulary", &json!({"action": "get"}), 102)
+        .expect("manage_vocabulary get must succeed after reopen")
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("unexpected manage_vocabulary get result: {other:?}"),
+    };
+    assert_eq!(
+        after_reopen["terms"],
+        json!(["Kido Kantai", "Kotone", "Responsay"])
+    );
+    assert_eq!(after_reopen["count"], 3);
+
+    let cleared = match reopened_again
+        .call_mcp_tool_step(
+            "manage_vocabulary",
+            &json!({"action": "set", "terms": []}),
+            103,
+        )
+        .expect("clearing vocabulary must succeed")
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("unexpected clear result: {other:?}"),
+    };
+    assert_eq!(cleared["terms"], json!([]));
+    assert_eq!(cleared["count"], 0);
+    drop(reopened_again);
+
+    let cleared_raw: Value = serde_json::from_str(&fs::read_to_string(&ws_path).unwrap()).unwrap();
+    assert!(
+        cleared_raw["provider"].get("minutes_vocabulary").is_none(),
+        "cleared vocabulary should be omitted by skip_serializing_if"
+    );
+}
+
+#[test]
+fn summary_and_live_summary_requests_include_persisted_minutes_vocabulary() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let chat_endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+
+    let server = std::thread::spawn(move || {
+        let mut prompts = Vec::new();
+        for summary_title in ["同步方案", "实时讨论"] {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            let body_json: Value = loop {
+                let n = stream.read(&mut buf).unwrap();
+                assert!(n > 0);
+                raw.extend_from_slice(&buf[..n]);
+                if let Some(end) = raw.windows(4).position(|s| s == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&raw[..end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap();
+                    if raw.len() >= end + 4 + content_length {
+                        break serde_json::from_slice(&raw[end + 4..end + 4 + content_length])
+                            .unwrap();
+                    }
+                }
+            };
+            prompts.push(
+                body_json["messages"][0]["content"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            );
+            let minutes = json!({
+                "schemaVersion": 2,
+                "title": summary_title,
+                "overview": "讨论了同步方案。",
+                "topics": [{"text": "同步", "summary": "讨论了同步方案。", "sources": ["S1"]}],
+                "decisions": [],
+                "actions": [],
+                "questions": [],
+                "terms": [],
+                "reviewItems": []
+            })
+            .to_string();
+            let resp_body = json!({"choices": [{"message": {"content": minutes}}]}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            )
+            .unwrap();
+        }
+        prompts
+    });
+
+    let root = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&root.0).unwrap();
+    let cfg = send(
+        &mut runtime,
+        json!({
+            "type": "configure_provider",
+            "model": "fixture-model",
+            "chatEndpoint": chat_endpoint,
+            "minutesVocabulary": ["Kido Kantai", "Kotone", "Responsay"]
+        }),
+    );
+    assert!(cfg["error"].is_null(), "{cfg}");
+
+    let note = send(
+        &mut runtime,
+        json!({
+            "type": "create_note",
+            "title": "词汇同步",
+            "text": "讨论了同步方案。"
+        }),
+    );
+    let record_id = note["selectedRecordId"].as_str().unwrap().to_owned();
+    let sum = send(&mut runtime, json!({"type": "summarize", "recordId": record_id}));
+    assert!(sum["error"].is_null(), "{sum}");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        runtime.poll_timers(50, 200);
+        if matches!(
+            runtime.workspace().record(&record_id).unwrap().analysis,
+            koe_engine::product::AnalysisState::Ready { .. }
+        ) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(matches!(
+        runtime.workspace().record(&record_id).unwrap().analysis,
+        koe_engine::product::AnalysisState::Ready { .. }
+    ));
+
+    let speech = send(
+        &mut runtime,
+        json!({"type": "configure_speech", "engine": "apple_speech"}),
+    );
+    assert!(speech["error"].is_null(), "{speech}");
+    let ready = send(
+        &mut runtime,
+        json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+    );
+    assert!(ready["error"].is_null(), "{ready}");
+    let started = send(
+        &mut runtime,
+        json!({"type": "start_capture_mode", "mode": "meeting"}),
+    );
+    assert!(started["error"].is_null(), "{started}");
+    let mic = started["microphone"].clone();
+    let live_record_id = mic["recordId"].as_str().unwrap().to_owned();
+    let mic_started = send(
+        &mut runtime,
+        json!({
+            "type": "microphone_started",
+            "recordId": live_record_id,
+            "sessionId": mic["sessionId"],
+            "lane": "microphone",
+            "sampleRate": 16000
+        }),
+    );
+    assert!(mic_started["error"].is_null(), "{mic_started}");
+    runtime.ingest_microphone_pcm(koe_runtime::MicrophonePcmChunk {
+        record_id: &live_record_id,
+        session_id: mic["sessionId"].as_str().unwrap(),
+        lane: "microphone",
+        sequence: 0,
+        samples: &vec![100i16; 3200],
+        timing: None,
+        now: 210,
+    });
+    let operation = runtime
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            koe_runtime::LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .unwrap();
+    let final_seg = send(
+        &mut runtime,
+        json!({
+            "type": "local_asr_result",
+            "operationId": operation,
+            "text": "讨论了同步方案。",
+            "startMs": 0,
+            "endMs": 1000,
+            "isFinal": true
+        }),
+    );
+    assert!(final_seg["error"].is_null(), "{final_seg}");
+    let live_sum = send(
+        &mut runtime,
+        json!({"type": "summarize", "recordId": live_record_id}),
+    );
+    assert!(live_sum["error"].is_null(), "{live_sum}");
+
+    let live_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < live_deadline {
+        runtime.poll_timers(50, 220);
+        if matches!(
+            runtime.workspace().record(&live_record_id).unwrap().live_summary,
+            koe_engine::product::AnalysisState::Ready { .. }
+        ) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(matches!(
+        runtime.workspace().record(&live_record_id).unwrap().live_summary,
+        koe_engine::product::AnalysisState::Ready { .. }
+    ));
+
+    let prompts = server.join().unwrap();
+    assert_eq!(prompts.len(), 2);
+    for (idx, prompt) in prompts.iter().enumerate() {
+        for term in ["Kido Kantai", "Kotone", "Responsay"] {
+            assert!(
+                prompt.contains(term),
+                "outgoing summary prompt #{idx} missing vocabulary term {term}: {prompt}"
+            );
+        }
+    }
+}

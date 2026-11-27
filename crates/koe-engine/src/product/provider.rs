@@ -30,6 +30,10 @@ pub const QWEN_FLASH_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash";
 pub const QWEN_FILETRANS_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-filetrans";
 /// Qwen short-segment real-time WebSocket ASR model identifier.
 pub const QWEN_MESSAGE_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-message";
+/// Maximum number of unique normalized meeting-minutes vocabulary terms.
+pub const MAX_MINUTES_VOCABULARY_TERMS: usize = 200;
+/// Maximum Unicode scalar value count for a single meeting-minutes vocabulary term.
+pub const MAX_MINUTES_VOCABULARY_TERM_CHARS: usize = 64;
 
 /// Canonical metadata for one supported Qwen cloud ASR model option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,6 +309,8 @@ pub struct ProviderConfiguration {
     /// References recorded before their secure item is created. Each is either
     /// promoted to `credential` / `deepseek_credential` or deleted; a crash leaves it for reclamation.
     pub pending_credentials: Vec<String>,
+    /// Persisted normalized hot-word vocabulary terms injected into meeting-minutes prompts.
+    pub minutes_vocabulary: Vec<String>,
 }
 impl Default for ProviderConfiguration {
     fn default() -> Self {
@@ -323,6 +329,7 @@ impl Default for ProviderConfiguration {
             deepseek_credential: CredentialBinding::Uninitialized,
             retired_credentials: Vec::new(),
             pending_credentials: Vec::new(),
+            minutes_vocabulary: Vec::new(),
         }
     }
 }
@@ -455,11 +462,93 @@ impl ProviderConfiguration {
                 .iter()
                 .enumerate()
                 .any(|(i, s)| !valid_reference(s) || pending[..i].contains(s))
+            || !is_valid_persisted_minutes_vocabulary(&self.minutes_vocabulary)
         {
             return Err(ProductError::InvalidConfiguration);
         }
         Ok(())
     }
+}
+
+/// Failure classification returned by [`normalize_minutes_vocabulary`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinutesVocabularyError {
+    /// A term contains control characters such as newline, carriage return, or NUL.
+    ControlCharacters,
+    /// A trimmed term exceeds [`MAX_MINUTES_VOCABULARY_TERM_CHARS`] Unicode scalar values.
+    TermTooLong,
+    /// Unique non-empty terms exceed [`MAX_MINUTES_VOCABULARY_TERMS`].
+    TooManyTerms,
+}
+
+impl std::fmt::Display for MinutesVocabularyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ControlCharacters => f.write_str("术语不能包含换行或控制字符"),
+            Self::TermTooLong => write!(
+                f,
+                "单个术语不能超过 {MAX_MINUTES_VOCABULARY_TERM_CHARS} 个字符"
+            ),
+            Self::TooManyTerms => write!(
+                f,
+                "纪要术语表最多支持 {MAX_MINUTES_VOCABULARY_TERMS} 个不重复词条"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MinutesVocabularyError {}
+
+/// Normalizes and validates meeting-minutes hot-word terms.
+///
+/// Trims leading and trailing whitespace, drops empty entries, deduplicates
+/// preserving first-seen order and casing, rejects control characters, and
+/// enforces [`MAX_MINUTES_VOCABULARY_TERM_CHARS`] per term and
+/// [`MAX_MINUTES_VOCABULARY_TERMS`] unique terms.
+pub fn normalize_minutes_vocabulary(
+    terms: &[String],
+) -> Result<Vec<String>, MinutesVocabularyError> {
+    let capacity = terms.len().min(MAX_MINUTES_VOCABULARY_TERMS);
+    let mut out = Vec::with_capacity(capacity);
+    let mut seen = std::collections::HashSet::with_capacity(capacity);
+    for raw in terms {
+        if raw.chars().any(char::is_control) {
+            return Err(MinutesVocabularyError::ControlCharacters);
+        }
+        let clean = raw.trim();
+        if clean.is_empty() {
+            continue;
+        }
+        if clean.chars().count() > MAX_MINUTES_VOCABULARY_TERM_CHARS {
+            return Err(MinutesVocabularyError::TermTooLong);
+        }
+        if seen.insert(clean) {
+            if out.len() >= MAX_MINUTES_VOCABULARY_TERMS {
+                return Err(MinutesVocabularyError::TooManyTerms);
+            }
+            out.push(clean.to_string());
+        }
+    }
+    Ok(out)
+}
+
+fn is_valid_persisted_minutes_vocabulary(terms: &[String]) -> bool {
+    if terms.len() > MAX_MINUTES_VOCABULARY_TERMS {
+        return false;
+    }
+    let mut seen = std::collections::HashSet::with_capacity(terms.len());
+    for term in terms {
+        let trimmed = term.trim();
+        if trimmed.is_empty()
+            || trimmed != term
+            || term.chars().any(char::is_control)
+            || trimmed.chars().count() > MAX_MINUTES_VOCABULARY_TERM_CHARS
+            || !seen.insert(trimmed)
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Failure classification returned by [`validate_provider_endpoint`].
@@ -610,6 +699,20 @@ impl ProductWorkspace {
         }
         Ok(())
     }
+
+    /// Normalizes and updates persisted meeting-minutes vocabulary inside the workspace transaction.
+    pub fn set_minutes_vocabulary(
+        &mut self,
+        terms: &[String],
+    ) -> Result<Vec<String>, ProductError> {
+        let normalized = normalize_minutes_vocabulary(terms)
+            .map_err(|err| ProductError::InvalidInput(err.to_string()))?;
+        if self.provider_configuration.minutes_vocabulary != normalized {
+            self.provider_configuration.minutes_vocabulary = normalized.clone();
+            self.changed();
+        }
+        Ok(normalized)
+    }
 }
 
 #[cfg(test)]
@@ -740,5 +843,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn normalize_minutes_vocabulary_trims_dedupes_and_enforces_limits() {
+        let input: Vec<String> = [
+            "  Kido Kantai  ",
+            "",
+            "   ",
+            "Kotone",
+            "Kido Kantai",
+            "kotone",
+            "Responsay",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(
+            normalize_minutes_vocabulary(&input),
+            Ok(vec![
+                "Kido Kantai".into(),
+                "Kotone".into(),
+                "kotone".into(),
+                "Responsay".into(),
+            ])
+        );
+
+        let exact_200_with_dupes: Vec<String> = (1..=200)
+            .map(|i| format!("Term-{i:03}"))
+            .chain(["  Term-001  ".into(), String::new()])
+            .collect();
+        assert_eq!(normalize_minutes_vocabulary(&exact_200_with_dupes).unwrap().len(), 200);
+
+        let over_200: Vec<String> = (1..=201).map(|i| format!("Term-{i:03}")).collect();
+        assert_eq!(
+            normalize_minutes_vocabulary(&over_200),
+            Err(MinutesVocabularyError::TooManyTerms)
+        );
+
+        assert_eq!(
+            normalize_minutes_vocabulary(&["语".repeat(64)]),
+            Ok(vec!["语".repeat(64)])
+        );
+        assert_eq!(
+            normalize_minutes_vocabulary(&["语".repeat(65)]),
+            Err(MinutesVocabularyError::TermTooLong)
+        );
+
+        for injected in ["Koe\nInject", "Koe\rInject", "Koe\0Null", "\n"] {
+            assert_eq!(
+                normalize_minutes_vocabulary(&[injected.into()]),
+                Err(MinutesVocabularyError::ControlCharacters)
+            );
+        }
+    }
+
+    #[test]
+    fn provider_configuration_validate_rejects_unnormalized_or_invalid_vocabulary() {
+        for bad in [
+            vec!["  leading".into()],
+            vec!["".into()],
+            vec!["dup".into(), "dup".into()],
+            vec!["bad\nterm".into()],
+            vec!["x".repeat(65)],
+            (1..=201).map(|i| format!("t{i}")).collect(),
+        ] {
+            let cfg = ProviderConfiguration {
+                minutes_vocabulary: bad,
+                ..Default::default()
+            };
+            assert_eq!(cfg.validate(), Err(ProductError::InvalidConfiguration));
+        }
+
+        let valid = ProviderConfiguration {
+            minutes_vocabulary: vec!["Kido Kantai".into(), "Kotone".into()],
+            ..Default::default()
+        };
+        assert!(valid.validate().is_ok());
     }
 }

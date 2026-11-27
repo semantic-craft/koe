@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::KoeRuntime;
 
 impl KoeRuntime {
-    /// Returns the canonical 16-tool MCP schema array exposed by Koe.
+    /// Returns the canonical 17-tool MCP schema array exposed by Koe.
     #[must_use]
     pub fn mcp_tool_definitions() -> Vec<Value> {
         vec![
@@ -263,6 +263,28 @@ impl KoeRuntime {
                     "additionalProperties": false
                 },
                 "annotations": { "readOnlyHint": true, "openWorldHint": false }
+            }),
+            json!({
+                "name": "manage_vocabulary",
+                "description": "读取或更新会议纪要专有名词/热词表（最多 200 个不重复词条，单条不超过 64 字符，自动去重并拒绝控制字符）。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "enum": ["get", "set"] },
+                        "terms": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                },
+                "annotations": {
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                }
             }),
         ]
     }

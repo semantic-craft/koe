@@ -6,7 +6,7 @@ mod capture;
 mod command;
 mod device;
 mod dispatch;
-/// Centralized 16-tool MCP registry and step/poll dispatcher shared by native host and CLI.
+/// Centralized 17-tool MCP registry and step/poll dispatcher shared by native host and CLI.
 pub mod mcp_surface;
 mod observability;
 mod processing;

@@ -357,19 +357,22 @@ impl KoeRuntime {
                 qwen_workspace_id,
                 asr_endpoint,
                 chat_endpoint,
+                minutes_vocabulary,
             } => self.configure_provider(
                 crate::processing::provider_settings::ConfigureProviderParams {
-                api_key,
-                deepseek_api_key,
-                asr_provider,
-                asr_model,
-                llm_provider,
-                model,
-                enable_thinking,
-                qwen_workspace_id,
-                asr_endpoint,
-                chat_endpoint,
-            })?,
+                    api_key,
+                    deepseek_api_key,
+                    asr_provider,
+                    asr_model,
+                    llm_provider,
+                    model,
+                    enable_thinking,
+                    qwen_workspace_id,
+                    asr_endpoint,
+                    chat_endpoint,
+                    minutes_vocabulary,
+                },
+            )?,
             HostIntent::ClearProviderCredential { provider } => {
                 self.clear_credential(provider.as_deref())?
             }
