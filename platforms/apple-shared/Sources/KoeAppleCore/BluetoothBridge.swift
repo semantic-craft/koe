@@ -40,7 +40,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     public weak var store: HostSessionStore? {
         didSet {
             if oldValue !== store {
-                lastObservedExplicitDisconnectCount = store?.explicitDeviceDisconnectCount ?? 0
+                lastObservedExplicitDisconnectCount = store?.runtimeDevice.explicitDisconnectCount ?? 0
             }
         }
     }
@@ -101,7 +101,7 @@ public final class BluetoothBridge: NSObject, CBPeripheralDelegate {
     public init(store: HostSessionStore? = nil, defaultsStore: any BluetoothDefaultsStore = SystemBluetoothDefaultsStore()) {
         self.store = store
         self.defaultsStore = defaultsStore
-        self.lastObservedExplicitDisconnectCount = store?.explicitDeviceDisconnectCount ?? 0
+        self.lastObservedExplicitDisconnectCount = store?.runtimeDevice.explicitDisconnectCount ?? 0
         super.init()
     }
     deinit { Self.releaseTeardownResources(teardownBox) }

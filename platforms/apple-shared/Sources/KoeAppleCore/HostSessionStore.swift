@@ -34,7 +34,6 @@ public final class HostSessionStore {
     @ObservationIgnored public private(set) var isUISlicesActive: Bool = true
     @ObservationIgnored var hasDeferredSliceReconcile: Bool = false
     @ObservationIgnored internal private(set) var lastProjectedNowSec: UInt64 = 0
-    @ObservationIgnored internal private(set) var explicitDeviceDisconnectCount: UInt64 = 0
     @ObservationIgnored public private(set) var handle: UInt64 = 0
     @ObservationIgnored public let workspacePath: String
     @ObservationIgnored public var onSnapshotChanged: ((HostSnapshot) -> Void)?
@@ -185,7 +184,6 @@ public final class HostSessionStore {
         guard handle != 0 else { return }
         do {
             let data = try Self.encoder.encode(event)
-            if case .deviceDisconnect = event { explicitDeviceDisconnectCount &+= 1 }
             dispatchEncodedJSON(data, traceKind: "event", commandType: event.eventType, nowEpochSec: nowEpochSec)
         } catch {
             let entry = diagnostics.error(

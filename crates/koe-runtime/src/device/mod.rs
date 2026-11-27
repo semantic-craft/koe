@@ -47,6 +47,7 @@ pub(crate) struct DeviceRuntime {
     pub outbound: Vec<Vec<u8>>,
     pub finalized: Vec<FinalizedRecording>,
     pub explicitly_disconnected: bool,
+    pub explicit_disconnect_count: u64,
     pub captures: std::collections::VecDeque<CaptureEvent>,
     pub auto_pull_attempted: std::collections::BTreeSet<u32>,
     pending_start_ms: u64,
@@ -68,6 +69,7 @@ impl Default for DeviceRuntime {
             outbound: Vec::new(),
             finalized: Vec::new(),
             explicitly_disconnected: false,
+            explicit_disconnect_count: 0,
             captures: Default::default(),
             auto_pull_attempted: Default::default(),
             pending_start_ms: 0,
@@ -147,6 +149,7 @@ impl DeviceRuntime {
 
     pub fn disconnect(&mut self) {
         self.explicitly_disconnected = true;
+        self.explicit_disconnect_count = self.explicit_disconnect_count.saturating_add(1);
         self.connection = None;
         self.awaiting_stop = false;
         self.pending_start_ms = 0;
@@ -492,6 +495,7 @@ impl crate::KoeRuntime {
             "files": files,
             "progress": progress,
             "autoConnect": self.workspace().ble_auto_connect(),
+            "explicitDisconnectCount": self.device.explicit_disconnect_count,
             "teardownStopFramesHex": teardown_stop_frames_hex,
             "guide": self.device.guide_json(),
         })

@@ -1,4 +1,6 @@
+import CKoeHostApi
 import CoreBluetooth
+import Darwin
 import Foundation
 @testable import KoeAppleCore
 import Testing
@@ -250,5 +252,111 @@ struct BluetoothReconnectEdgeCaseTests {
         #expect(clock.scheduleCount == scheduledBeforeWake + 1 && clock.activeCount == 1)
         clock.advance(by: bridge.reconnectScanWindowSeconds)
         #expect(!bridge.isScanRequested && bridge.reconnectState == .waitingBackoff(attempt: 0, delaySeconds: 1))
+    }
+
+    private func sendLocalBridgeMcpDisconnect(socketPath: String) throws -> String {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        try #require(fd >= 0)
+        defer { close(fd) }
+
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(socketPath.utf8CString)
+        try #require(pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path))
+        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dst in
+                for (index, byte) in pathBytes.enumerated() { dst[index] = byte }
+            }
+        }
+        let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let connected = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, addrLen) }
+        }
+        try #require(connected == 0)
+
+        let payload = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"koe/mcp_tool_call\",\"params\":{\"name\":\"device_control\",\"arguments\":{\"action\":\"disconnect\"}}}\n"
+        let written = payload.withCString { write(fd, $0, strlen($0)) }
+        try #require(written == payload.utf8.count)
+
+        var response = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while !response.contains(UInt8(ascii: "\n")) {
+            let count = read(fd, &chunk, chunk.count)
+            try #require(count > 0)
+            response.append(contentsOf: chunk[..<count])
+        }
+        return String(decoding: response, as: UTF8.self)
+    }
+
+    @Test("Out-of-process MCP disconnect over koe.sock and direct Rust disconnect during waitingBackoff suppress reconnect")
+    func outOfProcessMcpDisconnectDuringWaitingBackoffSuppressesReconnect() throws {
+        let peer = ReconnectTestPeer()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("koe-m-\(UUID().uuidString.prefix(8))")
+        let store = HostSessionStore(workspacePath: directory.path)
+        let defaults = ReconnectTestDefaultsStore(initial: [BluetoothBridge.savedPeripheralKey: peer.identifier.uuidString])
+        let central = ReconnectTestCentral()
+        central.knownPeers = [peer]
+        let clock = VirtualReconnectClock()
+        let bridge = BluetoothBridge(store: store, defaultsStore: defaults)
+        bridge.makeCentral = { delegate, _ in central.delegate = delegate; return central }
+        bridge.scheduleReconnectTimer = { delay, action in clock.schedule(delay, action: action) }
+        store.onSnapshotChanged = { bridge.syncWithRuntimeDevice($0.device) }
+        defer {
+            store.onSnapshotChanged = nil; bridge.shutdown(); store.shutdown()
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        bridge.activateHost(allowsCoreBluetooth: true)
+        bridge.centralStateDidChange(.poweredOn)
+        markPeerReady(peer, on: bridge, central: central)
+
+        bridge.didDisconnect(peer, on: central, error: nil)
+        #expect(!bridge.isScanRequested && bridge.peripheral == nil)
+        #expect(store.snapshot.device.explicitDisconnectCount == 0)
+        #expect(bridge.reconnectState == .waitingBackoff(attempt: 0, delaySeconds: 1))
+        #expect(clock.activeCount == 1)
+
+        let socketPath = directory.appendingPathComponent("koe.sock").path
+        try #require(FileManager.default.fileExists(atPath: socketPath))
+        let scansBeforeMcpDisconnect = bridge.scanStartCount
+        let rpcResponse = try sendLocalBridgeMcpDisconnect(socketPath: socketPath)
+        #expect(rpcResponse.contains("\"isError\":false"))
+
+        store.pollTimers(elapsedMs: 0, nowEpochSec: 1_800_000_001)
+        #expect(store.snapshot.device.explicitDisconnectCount == 1)
+        #expect(bridge.reconnectState == .suppressedByUser)
+        #expect(clock.activeCount == 0)
+
+        clock.advance(by: 120)
+        bridge.handleHostWake()
+        #expect(bridge.scanStartCount == scansBeforeMcpDisconnect && !bridge.isScanRequested)
+
+        bridge.requestScan()
+        markPeerReady(peer, on: bridge, central: central)
+        bridge.didDisconnect(peer, on: central, error: nil)
+        #expect(store.snapshot.device.explicitDisconnectCount == 1)
+        #expect(bridge.reconnectState == .waitingBackoff(attempt: 0, delaySeconds: 1))
+        #expect(clock.activeCount == 1)
+
+        let scansBeforeDirectFfi = bridge.scanStartCount
+        let rawResponse = "{\"type\":\"device_disconnect\"}".withCString { ptr in
+            koe_host_session_dispatch_json(store.handle, ptr, 1_800_000_002)
+        }
+        try #require(rawResponse != nil)
+        koe_host_string_free(rawResponse)
+
+        store.refreshSnapshot(nowEpochSec: 1_800_000_002)
+        #expect(store.snapshot.device.explicitDisconnectCount == 2)
+        #expect(bridge.reconnectState == .suppressedByUser)
+        #expect(clock.activeCount == 0)
+
+        clock.advance(by: 120)
+        bridge.handleHostWake()
+        #expect(bridge.scanStartCount == scansBeforeDirectFfi && !bridge.isScanRequested)
     }
 }

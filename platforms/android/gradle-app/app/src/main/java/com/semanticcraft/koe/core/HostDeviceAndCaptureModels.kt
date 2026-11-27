@@ -128,6 +128,7 @@ data class DeviceSnapshot(
     val liveBytes: Long = 0L,
     val liveRecordId: String? = null,
     val autoConnect: Boolean = true,
+    val explicitDisconnectCount: Long = 0L,
     val teardownStopFramesHex: List<String> = emptyList(),
 ) {
     companion object {

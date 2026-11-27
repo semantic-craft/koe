@@ -120,9 +120,8 @@ extension BluetoothBridge {
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {
         let wasAutoConnectDisabled = lastObservedAutoConnect == false
         lastObservedAutoConnect = device.autoConnect
-        let explicitDisconnectCount = store?.explicitDeviceDisconnectCount ?? lastObservedExplicitDisconnectCount
-        let receivedExplicitDisconnect = explicitDisconnectCount != lastObservedExplicitDisconnectCount
-        lastObservedExplicitDisconnectCount = explicitDisconnectCount
+        let receivedExplicitDisconnect = device.explicitDisconnectCount != lastObservedExplicitDisconnectCount
+        lastObservedExplicitDisconnectCount = device.explicitDisconnectCount
         let hasLocalLink = reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil
 
         if !device.autoConnect { defaultsStore.removeObject(forKey: Self.savedPeripheralKey) }
