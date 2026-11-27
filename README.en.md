@@ -89,7 +89,7 @@ cargo run --package koe-cli -- doctor --bundle diagnostics.json
 cargo run --package koe-cli -- doctor --replay diagnostics.json
 ```
 
-- **16 MCP stdio tools.** Serves targeted projections for full-text search, today brief, record list and details, cited Q&A, task and memory review or completion, note creation, segment annotation, transcript editing, speaker rename and merge, archive and Trash recovery, D3200 status and control, and generation polling. **Permanent purge is excluded by design** so agents cannot trigger irreversible deletion.
+- **17 MCP stdio tools.** Serves targeted projections for full-text search, today brief, record list and paginated record details, cited Q&A, task and memory review or completion, note creation, segment annotation, transcript editing, speaker rename and merge, archive and Trash recovery, minutes vocabulary sync (`manage_vocabulary`), D3200 status and control, and generation polling, with `--bridge-only` zero-lock bridge mode. **Permanent purge is excluded by design** so agents cannot trigger irreversible deletion.
 - **Redacted diagnostics and replay.** All three hosts can export the Rust flight recorder. `koe doctor --bundle [path]` exports the same JSON format and writes to stdout when the path is omitted. `koe doctor --replay <file>` replays the bundle deterministically in a temporary workspace. See the [security policy](SECURITY.md#诊断包与资料包) for export boundaries.
 
 ## Build and install
@@ -132,7 +132,7 @@ Koe combines ideas from open-source voice and wearable projects into an independ
 | --- | --- | --- |
 | **[msime](https://github.com/metasequoiaime/msime)** | Pure-Rust core + thin native Apple host four-layer split | Exposes versioned C ABI v2 with `catch_unwind`, immutable `generation` snapshots, and an owner-private `koe.sock` RPC socket shared by GUI, CLI, and MCP |
 | **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | Reverse-engineered D3200 BLE protocol notes and Dart client | Ports the protocol to `#![forbid(unsafe_code)]` Rust state machines with exact `166 * N` byte slice resume, double-tap flag parsing, and telemetry polling |
-| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Wearable disconnect WAL custody and review confirmation cards | Requires `CustodyReceipt` disk verification before `0x1A/0x10` device deletion, and wires three-state review to 16 MCP tools |
+| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | Wearable disconnect WAL custody and review confirmation cards | Requires `CustodyReceipt` disk verification before `0x1A/0x10` device deletion, and wires three-state review to 17 MCP tools |
 | **[screenpipe](https://github.com/screenpipe/screenpipe)** | Timeline context aggregation and global live caption strip | Drives `LiveCaptionBar` directly from Rust `SpeechSession` snapshots across both D3200 and Mac microphone streams |
 | **[TaoSheng](https://github.com/0xCoach/TaoSheng)** | All-day 5-minute memory segments, multi-mode workspaces, citation relabeling, and optimistic locks | Ships three formal workspaces, non-blocking 5-minute segment pipelines, `RequestKey` guards, and `relabel_citations` |
 | **[Shiyin](https://github.com/juinwei7/Shiyin)** | CoreAudio mic + system audio capture and structured templates | Pairs `-100 dBFS` Barker-13 canary detection with system dialog inspection on a Rust-managed dual-lane sparse timeline |

@@ -325,9 +325,15 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-21T07:09:20Z"
+      },
+      {
+        "number": 834,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-27T15:37:30Z"
       }
     ],
-    "main": "03b58d022a7d962606fb6d592161cebe3a72fc02",
+    "main": "8b5f8d7dcf726f55fda946cc8cf9170be4850a6b",
     "open_pulls": [],
     "pulls": [
       {
@@ -1297,6 +1303,62 @@
         "merged": true,
         "number": 831,
         "state": "closed"
+      },
+      {
+        "base": "03b58d022a7d962606fb6d592161cebe3a72fc02",
+        "head": "136dc17194f5ecce0c4b0b00e41940baeb4d7036",
+        "merge_commit": "e788088c0ab484ff52d723c3bc635b378c800b14",
+        "merged": true,
+        "number": 832,
+        "state": "closed"
+      },
+      {
+        "base": "e788088c0ab484ff52d723c3bc635b378c800b14",
+        "head": "0d2da6137a70604c7a0901a593a5e93b02cabeb2",
+        "merge_commit": "c761df082e7fac5d30d1ef0d5a7d8c36cd0de7ed",
+        "merged": true,
+        "number": 833,
+        "state": "closed"
+      },
+      {
+        "base": "e788088c0ab484ff52d723c3bc635b378c800b14",
+        "head": "cde705d6dfc2f575edd8c4c1038bdc3dab2557d9",
+        "merge_commit": "26284dc60adace97b53520f3cdb7bc0c257623ac",
+        "merged": true,
+        "number": 835,
+        "state": "closed"
+      },
+      {
+        "base": "e788088c0ab484ff52d723c3bc635b378c800b14",
+        "head": "68b9d502b92c9dfcd0f0682b7ce3439315b7557f",
+        "merge_commit": "71098667c0477caa13cc74b2d6105a6d692a211f",
+        "merged": true,
+        "number": 836,
+        "state": "closed"
+      },
+      {
+        "base": "71098667c0477caa13cc74b2d6105a6d692a211f",
+        "head": "f32f43a83984d0df78aae11b6ddd66995bc4a830",
+        "merge_commit": "3c8b0c8eb4fe98c0f4b7cae16c1d9fe034110250",
+        "merged": true,
+        "number": 837,
+        "state": "closed"
+      },
+      {
+        "base": "3c8b0c8eb4fe98c0f4b7cae16c1d9fe034110250",
+        "head": "b24da727c872548e60d29b1e5b4c32b6363ea53d",
+        "merge_commit": "8b5f8d7dcf726f55fda946cc8cf9170be4850a6b",
+        "merged": true,
+        "number": 838,
+        "state": "closed"
+      },
+      {
+        "base": "26284dc60adace97b53520f3cdb7bc0c257623ac",
+        "head": "44e67e1e0b7e0dee5f98d50427ed3dc248333249",
+        "merge_commit": "326f896fc9aae5e53766b7d7db8d658fad226a97",
+        "merged": true,
+        "number": 839,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -1366,7 +1428,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-23T12:13:47.580785Z",
+  "observed_at": "2026-11-27T22:39:58.967694Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1817,7 +1879,7 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "16 工具实时 MCP 本地桥接需求及验收范围。",
+              "note": "实时 MCP 本地桥接需求及验收范围。",
               "ref": 640
             },
             {
@@ -1832,7 +1894,7 @@
             },
             {
               "kind": "file",
-              "note": "在线优先回退离线的 16 工具 MCP stdio 服务与宿主重启自动重连。",
+              "note": "在线优先回退离线与 --bridge-only 模式的 17 工具 MCP stdio 服务与宿主重启自动重连。",
               "ref": "crates/koe-cli/src/mcp.rs"
             },
             {
@@ -1842,10 +1904,10 @@
             }
           ],
           "id": "collar-companion-mcp-bridge",
-          "next": "koe.sock 仅服务本地 CLI 与 16 项 MCP stdio 工具；实体 D3200 真机验收见 #588、#662 与 #731。",
+          "next": "koe.sock 服务本地 CLI 与 17 项 MCP stdio 工具（#837 补齐 --bridge-only 与分段分页，#838 新增 manage_vocabulary）；实体 D3200 真机验收见 #834 与 #757。",
           "status": "done",
-          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 本地 RPC（0700 目录与 0600 套接字、getpeereid 同 UID 校验），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。后续已移除语音输入模式与外部伴侣流接口。",
-          "title": "16 工具实时 MCP 本地桥接"
+          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 本地 RPC（0700 目录与 0600 套接字、getpeereid 同 UID 校验），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部只读及可逆工具（不暴露永久删除），关闭时默认回退离线单写模式；并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。后续已移除语音输入模式与外部伴侣流接口，并于 #837/#838 扩展至 17 项 MCP 工具（新增 --bridge-only、get_record 分段分页与 manage_vocabulary 纪要热词同步）。",
+          "title": "17 工具实时 MCP 本地桥接"
         },
         {
           "evidence": [
@@ -2186,6 +2248,65 @@
           "status": "done",
           "summary": "PR #726（815c8d31，#723）新增 koe_host_session_ingest_pcm 二进制采样 C ABI 快路径与回收站剩余天数 24 小时阶跃水位线，将 HostSessionStore 拆分为按频率隔离的 Equatable 切片并由 verify-ui-principles 守护 4 Hz 叶子栏边界，合并 NativeCapture 批次刷新，在关窗与最小化稳态冻结 UI 切片广播并在恢复时同步追平，同时以 CoreAudio HAL 监听替代 1 Hz 轮询。Release 基准下关窗回放 40 拍耗时中位数由 307.60 ms 降至 0.23 ms（1314.5x），双路采集 20 拍 CPU 由 696.66 ms 降至 131.30 ms（降 81.15%）。",
           "title": "宿主分域观测、二进制 PCM 快路径与离屏关窗重排门控"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash c761df0 已合并：确立 ADR 0004 四系统职责边界、六态生命周期、第一阶段延后硬件自动删档及四项核心工程里程碑。",
+              "ref": 833
+            },
+            {
+              "kind": "pull",
+              "note": "squash 26284dc 已合并：KoeAppleCore 新增 BleReconnectPolicy 退避重连状态机（1/2/5/15/30/60s、10s 扫描窗口）与 NSWorkspace 休眠唤醒监听，保留 iOS 恢复分支。",
+              "ref": 835
+            },
+            {
+              "kind": "pull",
+              "note": "squash 326f896 已合并：在 Rust DeviceRuntime 维护 explicit_disconnect_count 并经 DeviceSnapshot.explicitDisconnectCount 跨端投影，补齐跨进程 koe.sock MCP 主动断开抑制。",
+              "ref": 839
+            },
+            {
+              "kind": "pull",
+              "note": "squash 7109866 已合并：实现本机文件转写单飞准入防 MAX_OUTSTANDING=4 溢出、基于持久化 AnalysisStage 幂等恢复免费本机 Bean 队列，并严格禁止静默重试云端 Interrupted 任务（形式模型 1,547 状态 / 7 变异体全拦）。",
+              "ref": 836
+            },
+            {
+              "kind": "pull",
+              "note": "squash 3c8b0c8 已合并：落地零抢锁 --bridge-only、get_record 分段分页与 <= 1.2 MB 预算裁剪、poll_updates 重启代次归零检测与活跃本机任务暴露、以及 download_all / set_project / if_idle 幂等控制。",
+              "ref": 837
+            },
+            {
+              "kind": "pull",
+              "note": "squash 8b5f8d7 已合并：在 ProviderConfiguration 持久化规范化 200 词 minutes_vocabulary 并注入纪要与实时纪要提示词、纳入 FlightRecorder 脱敏，新增第 17 项 MCP 工具 manage_vocabulary。",
+              "ref": 838
+            },
+            {
+              "kind": "issue",
+              "note": "开放真机验收单：追踪实体 D3200 离身回连、蓝牙开关重置、pmset sleepnow 休眠唤醒与跨进程断开抑制。",
+              "ref": 834
+            },
+            {
+              "kind": "file",
+              "note": "无人值守采集、四系统职责边界、里程碑与落地状态架构决策记录。",
+              "ref": "docs/adr/0004-autonomous-ingest-and-agent-boundary.md"
+            },
+            {
+              "kind": "file",
+              "note": "macOS BLE 退避自动重连状态机与扫描窗口定时管理。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleCore/BluetoothBridge+Reconnect.swift"
+            },
+            {
+              "kind": "file",
+              "note": "17 项 MCP 工具单一声明真相源（含 manage_vocabulary）。",
+              "ref": "crates/koe-runtime/src/mcp_surface/definitions.rs"
+            }
+          ],
+          "id": "autonomous-ingest-and-agent-contract",
+          "next": "按 #834 完成实体 D3200 自动重连、真实 pmset 休眠唤醒与签名版跨进程断开抑制真机验收，随后推进 ADR 0004 第二阶段外置薄调度层接入。",
+          "status": "done",
+          "summary": "ADR 0004（#833，c761df0）第一阶段 Koe 四项核心里程碑及跨进程主动断开对齐已全部通过自动化测试、独立 Pro 盲审与托管 CI 并合并进 main。PR #835（26284dc）落地 macOS BLE 意外断链、蓝牙重置与 NSWorkspace 休眠唤醒退避重连状态机，PR #839（326f896）将 explicitDisconnectCount 上移至 Rust DeviceSnapshot 实现跨进程 koe.sock MCP 主动断开抑制一致；PR #836（7109866）实现本机离线批量转写单飞准入与基于持久化 AnalysisStage 的免费本机队列幂等恢复，严守零云端 Interrupted 静默重扣费；PR #837（3c8b0c8）新增零抢锁 --bridge-only、<= 1.2 MB 预算的 get_record 分段分页、poll_updates 重启代次归零与活跃本机任务暴露，以及幂等 manage_record（set_project / if_idle）与 device_control（download_all）；PR #838（8b5f8d7）持久化 200 词规范化 minutes_vocabulary 注入纪要提示词并纳入 FlightRecorder 脱敏，新增第 17 项 MCP 工具 manage_vocabulary。物理 D3200 自动重连与休眠唤醒实测另归入 #834 独立验收。",
+          "title": "无人值守采集底座、自动重连与 17 工具外部代理契约（ADR 0004 第一阶段）"
         }
       ],
       "title": "当前产品实现"
@@ -2227,7 +2348,7 @@
             },
             {
               "kind": "pull",
-              "note": "16 工具实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。",
+              "note": "实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。",
               "ref": 642
             },
             {
@@ -2315,7 +2436,7 @@
             },
             {
               "kind": "pull",
-              "note": "沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 16 项 MCP 工具；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。",
+              "note": "沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 MCP 工具（初版集合，后于 #838 扩充至 17 项）；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。",
               "ref": 642
             },
             {
@@ -3047,6 +3168,35 @@
           "status": "done",
           "summary": "2026-11-22 已在公开仓库 semantic-craft/koe 发布补丁版 Koe v2.7.1（构建 17，https://github.com/semantic-craft/koe/releases/tag/v2.7.1，tag 指向 3e2d60c），附带 Koe-2.7.1-macos-arm64.zip（8167514 bytes，sha256 5be1ec59b15ddc7b1d693ad9fc288807ee6d0370bfdadf0faf70bb2aa53ed157）、Koe-2.7.1-android-arm64.apk（50471125 bytes，sha256 a5c441e8c1243efeda13971987dfe2337e39bfed80fbc2be9cb9543d139809eb）、Koe-2.7.1-release-receipt.json 与 SHA256SUMS.txt。PR #806（9c75e92）统一 Android 官方自适应与 Material You 单色启动图标、扩展 scripts/generate-app-icons.swift 为三端单一生成入口并在 scripts/test_install_macos.py 增加跨平台图标契约门禁；PR #807（3e2d60c）将三端版本与构建号锁步至 2.7.1（构建 17）并发布 docs/releases/v2.7.1.md。macOS 产物经 xw-notary 公证通过（submission_id b91ecf0b-f0d4-4784-b67a-c599b1f79a96，Accepted，CDHash 5fabe6569d1610eb2fb3c3726e91df4307de66d7，Timestamp Nov 22, 2026 at 10:15:55 AM），解压包通过 spctl --assess、xcrun stapler validate、otool -L（仅系统库）、--verify-self 与 --smoke-test，本机 /Applications/Koe.app 已就地升级至 2.7.1（17）并保留 Keychain 签名要求。Android github 渠道 APK 使用 RSA-4096 APK Signature Scheme v2 签名（cert_sha256 d5a040db0e163e5a8558e6a313e98e98bbba4746d6d0d2efd0060534d1cd86ff，apksigner verify PASS），全部 arm64-v8a .so 均为 ZIP_STORED 且 16 KB 对齐，aapt2 验证包名 com.semanticcraft.koe、versionCode=17、versionName=2.7.1 及自适应图标三层（#ffffd9bb 底色 + 5 密度前景与单色 PNG）；发布构建时 Pixel 11 Pro 未通过 USB 连接（可通过应用内 GitHub Release 检查或 adb install -r 升级）。iOS com.semanticcraft.koe.ios（App Store Connect App ID 6837671016）Build 17（2.7.1）已成功上传至 TestFlight（EXPORT SUCCEEDED，Internal Team 组 hasAccessToAllBuilds=true）。双端物理真机硬件验收仍保持 unverified 并继续追踪在 #775 与 #777。",
           "title": "Koe 2.7.1 公开三端补丁发行包（macOS 公证、Android 官方图标签名 APK、iOS TestFlight Build 17）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "开放 ready-for-human 真机验收单：实体 D3200 离身回连、蓝牙开关重置、pmset sleepnow 休眠唤醒与主动断开/切回手机抑制。",
+              "ref": 834
+            },
+            {
+              "kind": "pull",
+              "note": "squash 26284dc 已合并：虚拟蓝牙适配器与可注入休眠通知测试全部通过，但未在物理硬件上实测。",
+              "ref": 835
+            },
+            {
+              "kind": "pull",
+              "note": "squash 326f896 已合并：真实 koe.sock 跨进程 MCP 主动断开抑制回归通过，但未在签名版 /Applications/Koe.app 与实体 D3200 上实测。",
+              "ref": 839
+            },
+            {
+              "kind": "file",
+              "note": "ADR 0004 明确自动化门禁与实体硬件真机验收分离原则。",
+              "ref": "docs/adr/0004-autonomous-ingest-and-agent-boundary.md"
+            }
+          ],
+          "id": "macos-ble-auto-reconnect-acceptance",
+          "next": "安装合入 #835 与 #839 后的签名版 /Applications/Koe.app，按 #834 搭配实体 D3200 完成离身回连、蓝牙重置、pmset sleepnow 休眠唤醒及跨进程 MCP 主动断开抑制四项真机核验。",
+          "status": "unverified",
+          "summary": "PR #835（26284dc）与 PR #839（326f896）已通过虚拟蓝牙适配器、可注入 NSWorkspace 休眠唤醒通知以及真实 koe.sock 跨进程 MCP device_control(action=\"disconnect\") 自动化回归测试，但实体硬件行为仍未验证（保持 unverified）。待在实体 Mac 与物理 soundcore Work（D3200）上实测离身断链退避回连、系统蓝牙开关重置恢复、真实 macOS pmset 休眠唤醒，以及签名版 /Applications/Koe.app 下跨进程 MCP 主动断开与切回手机后的零抢连抑制。",
+          "title": "macOS 实体 D3200 自动重连、休眠唤醒与跨进程断开抑制真机验收（#834）"
         }
       ],
       "title": "验收与交付"
@@ -3616,6 +3766,11 @@
         {
           "evidence": [
             {
+              "kind": "pull",
+              "note": "squash e788088 已合并主线，同步三端文档真相、新增 CODEOWNERS 与审查标准，并将 check_docs.py 与 6 项单测接入本地门禁及 CI 纯文档分流。",
+              "ref": 832
+            },
+            {
               "kind": "file",
               "note": "四阶段审查流程和六维验收标准。",
               "ref": "docs/agents/code-review-standards.md"
@@ -3627,9 +3782,9 @@
             }
           ],
           "id": "docs-and-review-standards",
-          "next": "由调度宿主审计工作树、提交并审查合入。",
-          "status": "in_progress",
-          "summary": "工作树已更新核心文档、CODEOWNERS 与审查标准，文档链接及退役符号检查接入本地门禁和 CI 的纯文档分流。",
+          "next": "后续文档与契约改动持续通过 scripts/check_docs.py 与代码审查标准门禁校验。",
+          "status": "done",
+          "summary": "PR #832（e788088）已合并主线，同步全部核心文档至三端原生架构，新增 docs/agents/code-review-standards.md、.github/CODEOWNERS 以及 scripts/check_docs.py（含 6 项回归单测），并接入 scripts/verify-local.sh 与 CI 的纯文档分流检查。",
           "title": "三端文档同步与代码审查门禁（PR-12）"
         }
       ],
@@ -3712,7 +3867,8 @@
       752,
       757,
       775,
-      777
+      777,
+      834
     ],
     "pulls": [
       589,
@@ -3835,7 +3991,14 @@
       826,
       828,
       830,
-      831
+      831,
+      832,
+      833,
+      835,
+      836,
+      837,
+      838,
+      839
     ]
   },
   "visibility": "PUBLIC"

@@ -89,7 +89,7 @@ cargo run --package koe-cli -- doctor --bundle diagnostics.json
 cargo run --package koe-cli -- doctor --replay diagnostics.json
 ```
 
-- **16 项 MCP stdio 工具。** 按需投影并提供全文检索、今日简报、记录列表与详情、带来源问答、待办与记忆审核及完成、新建笔记、分段批注、转写修订、说话人改名合并、归档与回收站恢复、D3200 状态控制与代次轮询。**按设计不向 Agent 暴露彻底清除接口**，防止不可逆删库。
+- **17 项 MCP stdio 工具。** 按需投影并提供全文检索、今日简报、记录列表与分段分页详情、带来源问答、待办与记忆审核及完成、新建笔记、分段批注、转写修订、说话人改名合并、归档与回收站恢复、`manage_vocabulary` 纪要热词同步、D3200 状态控制与代次轮询，并支持 `--bridge-only` 零抢锁模式。**按设计不向 Agent 暴露彻底清除接口**，防止不可逆删库。
 - **脱敏诊断回放。** 三端可导出 Rust 飞行记录；`koe doctor --bundle [路径]` 生成同格式 JSON，省略路径时写标准输出。用 `koe doctor --replay <文件>` 在临时工作区确定性回放，核对状态转换与处理结果。数据边界见 [安全策略](SECURITY.md#诊断包与资料包)。
 
 ## 构建与安装
@@ -132,7 +132,7 @@ Koe 在独立实现的 Rust 与原生宿主 代码底座上吸收了多个开源
 | --- | --- | --- |
 | **[msime](https://github.com/metasequoiaime/msime)** | 纯 Rust 内核配全原生 Apple 宿主的四层分离 | 以 C ABI v2、不可变 `generation` 快照与属主私有 `koe.sock` 让桌面端、CLI 与 MCP 共用同一运行时 |
 | **[tacshi/Soundcore](https://github.com/tacshi/Soundcore)** | 安克 D3200 BLE 协议逆向文档与 Dart 实现 | 移植为零 `unsafe` 纯 Rust 状态机，按实测 166 字节记录对齐 `166 * N` 断点续传并解析双击与遥测标志 |
-| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | 穿戴设备断线 WAL 托管与审核确认卡 | 将 `CustodyReceipt` 设为 `0x1A/0x10` 硬件删档硬前置锁，把三态审核接入单写者存储与 16 项 MCP 工具 |
+| **[BasedHardware/omi](https://github.com/BasedHardware/omi)** | 穿戴设备断线 WAL 托管与审核确认卡 | 将 `CustodyReceipt` 设为 `0x1A/0x10` 硬件删档硬前置锁，把三态审核接入单写者存储与 17 项 MCP 工具 |
 | **[screenpipe](https://github.com/screenpipe/screenpipe)** | 时间轴上下文聚合与全局实时字幕条 | 由 Rust `SpeechSession` 快照直接驱动 `LiveCaptionBar`，统一录音豆与 Mac 麦克风实时字幕 |
 | **[TaoSheng（涛声）](https://github.com/0xCoach/TaoSheng)** | 全天分段记忆、多模式工作区、引用重标与乐观锁 | 落地三模式工作区、5 分钟无阻塞分段、`RequestKey` 防过期覆盖与 `relabel_citations` 引用重排 |
 | **[Shiyin（拾音）](https://github.com/juinwei7/Shiyin)** | CoreAudio 麦克风与系统音频采集及结构化纪要 | 结合 `-100 dBFS` Barker-13 探针与系统弹窗检测判定授权，由 Rust 统一对齐双路稀疏时间轴与暂停代次 |

@@ -4,7 +4,7 @@ CLI and MCP stdio let a user or external agent read, search, query, create notes
 
 ## Sub-features
 
-- `mcp-tools-list` completes the JSON-RPC 2.0 handshake and exposes all 16 workspace and device MCP tools.
+- `mcp-tools-list` completes the JSON-RPC 2.0 handshake and exposes all 17 workspace and device MCP tools.
 - `mcp-create-note` persists a titled text note through `tools/call` (`create_note`) and returns the new record identifier.
 - `cli-status-readback` confirms the saved note from a second read-only CLI invocation (`status` and `doctor`).
 - `cli-search-and-ask` returns cited BM25 search hits (`S1`) and local retrieval answers without calling cloud endpoints.
@@ -25,7 +25,7 @@ Preconditions:
 - `TMP_WS` is an empty disposable directory shorter than 94 bytes.
 - Ambient cloud API keys are unset.
 
-- **MCP initialize, tool list, and create note.** Pipe JSON-RPC 2.0 messages into `mcp-stdio`. Run `printf '%s\n%s\n%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"verify-koe","version":"1.0"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_note","arguments":{"title":"Verify Koe Note","text":"Rust owns workspace persistence and cited search."}}}' | ./target/debug/koe --workspace "$TMP_WS" mcp-stdio | tee "$EVIDENCE_DIR/mcp_stdio.jsonl"`. Exit code `0` produces three JSON-RPC replies with `protocolVersion` `"2025-11-25"`, 16 tools in reply `2`, and `"isError":false` with the created record ID in reply `3`.
+- **MCP initialize, tool list, and create note.** Pipe JSON-RPC 2.0 messages into `mcp-stdio`. Run `printf '%s\n%s\n%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"verify-koe","version":"1.0"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_note","arguments":{"title":"Verify Koe Note","text":"Rust owns workspace persistence and cited search."}}}' | ./target/debug/koe --workspace "$TMP_WS" mcp-stdio | tee "$EVIDENCE_DIR/mcp_stdio.jsonl"`. Exit code `0` produces three JSON-RPC replies with `protocolVersion` `"2025-11-25"`, 17 tools in reply `2`, and `"isError":false` with the created record ID in reply `3`.
 - **Readback via status.** Open the same workspace in a fresh process. Run `./target/debug/koe --workspace "$TMP_WS" status | tee "$EVIDENCE_DIR/cli_status.json"`. Exit code `0` prints snapshot `version` `2` containing one record titled `"Verify Koe Note"`.
 - **Readback via doctor.** Inspect workspace and provider diagnostics. Run `./target/debug/koe --workspace "$TMP_WS" doctor | tee "$EVIDENCE_DIR/cli_doctor.json"`. Exit code `0` confirms clean workspace state without ambient cloud credentials.
 - **Readback via search.** Query the created note text. Run `./target/debug/koe --workspace "$TMP_WS" search "workspace persistence" | tee "$EVIDENCE_DIR/cli_search.json"`. Exit code `0` returns a non-empty `sources` array citing `"segmentId":"S1"` on the created record ID.

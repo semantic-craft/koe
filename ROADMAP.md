@@ -16,7 +16,7 @@ macOS、iOS 与 Android 原生宿主已交付，共用 Rust 领域、服务与�
 | 待办与记忆 | 候选审核、编辑、忽略、恢复与待办完成；保留真实来源 |
 | 实时纪要 | 独立页面展示本次采集原文与已有 AI 纪要，全天按已完成分段更新，普通会议停录后整理；停止后保持范围，历史转写不会抢占 |
 | 问答 | 独立主导航，指定记录或全库检索；有配置时调用模型；无配置时明确展示原文检索 |
-| 本地 AI 接口 | macOS 运行中经属主私有 `koe.sock` 提供本地 RPC，CLI/MCP 可回退单写直开；MCP stdio 提供 16 项检索、审核、修订与设备工具；无人值守采集与外部代理边界见 [ADR 0004](docs/adr/0004-autonomous-ingest-and-agent-boundary.md) |
+| 本地 AI 接口 | macOS 运行中经属主私有 `koe.sock` 提供本地 RPC，CLI/MCP 支持默认回退单写或 `--bridge-only` 零抢锁模式；MCP stdio 提供 17 项检索、`get_record` 分段分页、审核、修订、`manage_vocabulary` 纪要热词与设备工具，macOS 断链/唤醒自动重连已落地（真机验收跟踪 [#834](https://github.com/semantic-craft/koe/issues/834) / [#757](https://github.com/semantic-craft/koe/issues/757)）；无人值守采集与外部代理边界见 [ADR 0004](docs/adr/0004-autonomous-ingest-and-agent-boundary.md) |
 | 诊断 | 三端分享或保存脱敏飞行记录，CLI 使用 `koe doctor --bundle` 导出并用 `--replay` 在隔离工作区确定性回放 |
 | 版本与更新 | 侧栏顶部版本胶囊、状态栏/Dock 菜单、关于面板与 CLI（`version` / `doctor`）同源展示版本号与构建号；点击侧栏版本胶囊、应用菜单或状态栏/Dock 菜单支持按需手动连接 GitHub Releases 检查正式版更新、展示发行说明与架构匹配安装包下载入口，后台不自动联网 |
 

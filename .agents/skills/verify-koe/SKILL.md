@@ -1,6 +1,6 @@
 ---
 name: verify-koe
-description: "Verify Koe end to end across its Rust CLI and 16-tool MCP stdio surface, macOS native host self-check binary (--verify-self and --smoke-test), BLE/crypto protocol parity vectors, and exhaustive formal state-space models. Reach for this skill before claiming Koe CLI, MCP, host ABI, persistence, BLE protocol, or state-machine changes work."
+description: "Verify Koe end to end across its Rust CLI and 17-tool MCP stdio surface, macOS native host self-check binary (--verify-self and --smoke-test), BLE/crypto protocol parity vectors, and exhaustive formal state-space models. Reach for this skill before claiming Koe CLI, MCP, host ABI, persistence, BLE protocol, or state-machine changes work."
 ---
 
 # Verify Koe
