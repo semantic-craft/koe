@@ -53,11 +53,14 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "get_record",
-                "description": "读取指定记录的完整转写段落、说话人、纪要、高亮重点与来源证据。",
+                "description": "读取指定记录的元数据、说话人、纪要、高亮重点、来源证据与分页转写段落（超长记录按字节预算自动分页）。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "record_id": { "type": "string" }
+                        "record_id": { "type": "string" },
+                        "include_segments": { "type": "boolean" },
+                        "segment_offset": { "type": "integer", "minimum": 0 },
+                        "segment_limit": { "type": "integer", "minimum": 1 }
                     },
                     "required": ["record_id"],
                     "additionalProperties": false
@@ -184,16 +187,27 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "manage_record",
-                "description": "重命名、归档、取消归档、移入回收站、恢复记录，或触发转写与纪要重算（不含永久清除）。",
+                "description": "重命名、设置项目归属、归档、取消归档、移入回收站、恢复记录，或触发转写与纪要重算（支持 if_idle 幂等保护，不含永久清除）。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "record_id": { "type": "string" },
                         "action": {
                             "type": "string",
-                            "enum": ["rename", "archive", "unarchive", "trash", "restore", "transcribe", "summarize"]
+                            "enum": [
+                                "rename",
+                                "set_project",
+                                "archive",
+                                "unarchive",
+                                "trash",
+                                "restore",
+                                "transcribe",
+                                "summarize"
+                            ]
                         },
-                        "title": { "type": "string" }
+                        "title": { "type": "string" },
+                        "project": { "type": ["string", "null"] },
+                        "if_idle": { "type": "boolean" }
                     },
                     "required": ["record_id", "action"],
                     "additionalProperties": false
@@ -212,7 +226,7 @@ impl KoeRuntime {
             }),
             json!({
                 "name": "device_control",
-                "description": "控制录音豆开始/停止录音、下载指定文件、刷新状态、断开或释放蓝牙控制权，以及切换自动重连。",
+                "description": "控制录音豆开始/停止录音、下载指定或全部离线文件、刷新状态、断开或释放蓝牙控制权，以及切换自动重连。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -222,6 +236,7 @@ impl KoeRuntime {
                                 "start_recording",
                                 "stop_recording",
                                 "download_file",
+                                "download_all",
                                 "disconnect",
                                 "release_ble",
                                 "set_auto_connect",

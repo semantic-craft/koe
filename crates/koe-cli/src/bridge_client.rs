@@ -5,7 +5,7 @@ use std::{
         fs::{FileTypeExt, MetadataExt},
         net::UnixStream,
     },
-    path::Path,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -13,6 +13,78 @@ use koe_runtime::{resolve_bridge_socket_path, McpToolError};
 use serde_json::{json, Value};
 
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const BRIDGE_OFFLINE_ERROR_CODE: i64 = -32001;
+pub(crate) const BRIDGE_OFFLINE_ERROR_MESSAGE: &str =
+    "Koe.app is not running; start Koe.app to access live BLE and workspace";
+
+pub(crate) struct BridgeOnlyClient {
+    workspace: PathBuf,
+    client: Option<BridgeClient>,
+}
+
+impl BridgeOnlyClient {
+    pub(crate) fn new(workspace: PathBuf) -> Self {
+        Self {
+            workspace,
+            client: None,
+        }
+    }
+
+    fn connect(&self) -> Result<BridgeClient, McpToolError> {
+        match BridgeClient::try_connect(&self.workspace) {
+            Ok(Some(connected)) => Ok(connected),
+            Ok(None) => Err(McpToolError {
+                code: BRIDGE_OFFLINE_ERROR_CODE,
+                message: BRIDGE_OFFLINE_ERROR_MESSAGE.into(),
+            }),
+            Err(message) => Err(McpToolError {
+                code: -32603,
+                message,
+            }),
+        }
+    }
+
+    pub(crate) fn call_tool(
+        &mut self,
+        name: &str,
+        args: &Value,
+        retryable_read: bool,
+    ) -> Result<Result<Value, String>, McpToolError> {
+        let mut client = match self.client.take() {
+            Some(existing) if existing.is_connected() => existing,
+            _ => self.connect()?,
+        };
+        match client.mcp_tool_call(name, args) {
+            Ok(res) => {
+                self.client = Some(client);
+                Ok(res)
+            }
+            Err(first_err) if client.is_disconnected() => {
+                if !retryable_read {
+                    return Err(McpToolError {
+                        code: first_err.code,
+                        message: format!(
+                            "{}；写入工具 {name} 未自动重试以避免重复操作",
+                            first_err.message
+                        ),
+                    });
+                }
+                let mut reconnected = self.connect()?;
+                let retry_res = reconnected.mcp_tool_call(name, args);
+                if reconnected.is_connected() {
+                    self.client = Some(reconnected);
+                }
+                retry_res
+            }
+            Err(err) => {
+                if client.is_connected() {
+                    self.client = Some(client);
+                }
+                Err(err)
+            }
+        }
+    }
+}
 
 enum BridgeConnectionState {
     Connected {

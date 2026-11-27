@@ -1,7 +1,8 @@
 use serde_json::{json, Map, Value};
 
 use super::blocking::{
-    ensure_allowed_keys, optional_nullable_string, optional_u64, required_bool, required_str,
+    ensure_allowed_keys, optional_bool, optional_nullable_string, optional_u64, required_bool,
+    required_str,
 };
 use super::{McpToolCallState, McpToolError};
 use crate::command::{AdapterEvent, DispatchMessage, HostIntent};
@@ -177,13 +178,18 @@ impl KoeRuntime {
                 }
             }
             "manage_record" => {
-                ensure_allowed_keys(obj, &["record_id", "action", "title"])?;
+                ensure_allowed_keys(obj, &["record_id", "action", "title", "project", "if_idle"])?;
                 let record_id = required_str(obj, "record_id")?.to_string();
                 let action = required_str(obj, "action")?;
+                let if_idle = optional_bool(obj, "if_idle")?.unwrap_or(false);
                 let command = match action {
                     "rename" => HostIntent::RenameRecord {
                         record_id: record_id.clone(),
                         title: required_str(obj, "title")?.to_string(),
+                    },
+                    "set_project" => HostIntent::SetRecordProject {
+                        record_id: record_id.clone(),
+                        project: optional_nullable_string(obj, "project")?,
                     },
                     "archive" => HostIntent::SetRecordArchived {
                         record_id: record_id.clone(),
@@ -212,6 +218,19 @@ impl KoeRuntime {
                     }
                     _ => return Err(McpToolError::invalid_params("无效的 manage_record action")),
                 };
+                if if_idle {
+                    if let Some(reason) = self.manage_record_if_idle_skip_reason(&record_id, action)
+                    {
+                        return Ok(McpToolCallState::Completed(Ok(json!({
+                            "ok": true,
+                            "skipped": true,
+                            "reason": reason,
+                            "recordId": record_id,
+                            "action": action,
+                            "generation": self.generation
+                        }))));
+                    }
+                }
                 let result = self.run_mcp_intent(command, now).map(|()| {
                     json!({
                         "ok": true,
@@ -237,6 +256,7 @@ impl KoeRuntime {
                             .ok_or_else(|| McpToolError::invalid_params("无效的 file_id"))?;
                         DispatchMessage::Intent(HostIntent::DeviceDownload { file_id })
                     }
+                    "download_all" => DispatchMessage::Intent(HostIntent::DeviceDownloadAll),
                     "disconnect" => DispatchMessage::Adapter(AdapterEvent::DeviceDisconnect),
                     "release_ble" => DispatchMessage::Intent(HostIntent::DeviceRelease),
                     "set_auto_connect" => DispatchMessage::Intent(HostIntent::SetBleAutoConnect {
@@ -268,6 +288,61 @@ impl KoeRuntime {
         self.notice = None;
         let _ = self.enter_runtime_step(now);
         Ok(())
+    }
+
+    fn manage_record_if_idle_skip_reason(
+        &self,
+        record_id: &str,
+        action: &str,
+    ) -> Option<&'static str> {
+        let record = self.workspace().record(record_id).filter(|r| r.is_live())?;
+        match action {
+            "transcribe" => {
+                if matches!(record.analysis, AnalysisState::Pending { .. })
+                    || self
+                        .captures
+                        .sessions
+                        .get(record_id)
+                        .is_some_and(|s| !s.is_terminal())
+                    || self.pending.values().any(|work| {
+                        matches!(work, PendingWork::Transcription(key) if key.record_id == record_id)
+                    })
+                {
+                    return Some("already_processing");
+                }
+                if self.auto_transcribe.contains(record_id) {
+                    return Some("already_queued");
+                }
+                let can_resume_local_partial = self.record_speech_engine(record_id)
+                    != SpeechEngine::Cloud
+                    && has_recoverable_partial_transcription(record);
+                if !record.aggregate.spine.is_empty() && !can_resume_local_partial {
+                    return Some("already_transcribed");
+                }
+                None
+            }
+            "summarize" => {
+                if matches!(record.analysis, AnalysisState::Pending { .. })
+                    || self.pending.values().any(|work| {
+                        matches!(
+                            work,
+                            PendingWork::Summary(key) | PendingWork::LiveSummary { key, .. }
+                                if key.record_id == record_id
+                        )
+                    })
+                {
+                    return Some("already_processing");
+                }
+                if self.auto_summarize.contains(record_id) {
+                    return Some("already_queued");
+                }
+                if record.aggregate.minutes.is_some() && !record.is_minutes_stale() {
+                    return Some("already_summarized");
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     fn run_mcp_intent(&mut self, intent: HostIntent, now: u64) -> Result<(), String> {
@@ -363,5 +438,21 @@ impl KoeRuntime {
                 Err(error)
             }
         }
+    }
+}
+
+fn has_recoverable_partial_transcription(record: &ProductRecord) -> bool {
+    match &record.analysis {
+        AnalysisState::Interrupted { key, stage } | AnalysisState::Failed { key, stage, .. } => {
+            match stage {
+                Some(AnalysisStage::Transcribing) => true,
+                Some(AnalysisStage::Summarizing) => false,
+                None => {
+                    record.completed_request().is_none()
+                        && key.input_revision < record.content_revision
+                }
+            }
+        }
+        AnalysisState::Idle | AnalysisState::Pending { .. } | AnalysisState::Ready { .. } => false,
     }
 }

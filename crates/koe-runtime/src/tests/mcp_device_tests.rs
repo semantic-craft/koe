@@ -1026,3 +1026,977 @@ fn device_refresh_during_catalog_loading_emits_no_empty_ble_frames() {
     );
     assert!(frames.contains(&DeviceCommands::get_device_info()));
 }
+
+#[test]
+fn poll_updates_detects_generation_reset_and_surfaces_active_local_speech_jobs() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    assert_eq!(runtime.generation(), 1);
+
+    let reset_poll = match runtime
+        .call_mcp_tool_step(
+            "poll_updates",
+            &json!({"since_generation": 50, "since_revision": 0}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("poll_updates failed: {other:?}"),
+    };
+    assert_eq!(reset_poll["hasUpdates"], true);
+    assert_eq!(reset_poll["generationReset"], true);
+
+    let current_rev = reset_poll["revision"].as_u64().unwrap();
+    let steady_poll = match runtime
+        .call_mcp_tool_step(
+            "poll_updates",
+            &json!({"since_generation": 1, "since_revision": current_rev}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("steady poll_updates failed: {other:?}"),
+    };
+    assert_eq!(steady_poll["hasUpdates"], false);
+    assert_eq!(steady_poll["generationReset"], false);
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+        NOW,
+    );
+    let _ = runtime.dispatch_json(
+        &json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}).to_string(),
+        NOW,
+    );
+    let rec_id = "bean-local-poll";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                rec_id.into(),
+                "Local Poll".into(),
+                RecordOrigin::Bean,
+                77,
+                NOW,
+                1_000,
+            )
+        })
+        .unwrap();
+    let wav = {
+        let mut bytes = koe_engine::wav::OpusWave::wav_header_with_rate(3_200, 16_000).to_vec();
+        bytes.extend(std::iter::repeat_n(0u8, 3_200));
+        bytes
+    };
+    recording_assets::save_audio(&sandbox.0, rec_id, &wav).unwrap();
+    runtime.auto_transcribe.insert(rec_id.into());
+    runtime.poll_timers(0, NOW);
+    runtime.poll_timers(0, NOW);
+
+    let active_jobs = runtime.active_local_speech_jobs();
+    assert_eq!(active_jobs.len(), 1);
+    let expected_op = active_jobs[0].operation_id;
+
+    let active_poll = match runtime
+        .call_mcp_tool_step("poll_updates", &json!({}), NOW)
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("active poll_updates failed: {other:?}"),
+    };
+    let pending_jobs = active_poll["pendingJobs"].as_array().unwrap();
+    assert!(
+        pending_jobs.iter().any(|job| {
+            job["kind"] == "local_transcription"
+                && job["recordId"] == rec_id
+                && job["engine"] == "apple_speech"
+                && job["operationId"] == expected_op
+        }),
+        "expected local_transcription job in pendingJobs, got {pending_jobs:?}"
+    );
+}
+
+#[test]
+fn manage_record_if_idle_prevents_duplication_and_supports_set_project_and_device_download_all() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let call_ok = |rt: &mut KoeRuntime, name: &str, args: Value, now: u64| -> Value {
+        match rt.call_mcp_tool_step(name, &args, now).unwrap() {
+            McpToolCallState::Completed(Ok(v)) => v,
+            other => panic!("{name} expected Completed(Ok), got {other:?}"),
+        }
+    };
+
+    let created = call_ok(
+        &mut runtime,
+        "create_note",
+        json!({"title": "Ops Sync", "text": "部署完成。\n保留审计日志。"}),
+        NOW,
+    );
+    let record_id = created["id"].as_str().unwrap().to_string();
+    let count_before = runtime.workspace().records().len();
+
+    let skip_transcribe = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(skip_transcribe["ok"], true);
+    assert_eq!(skip_transcribe["skipped"], true);
+    assert_eq!(skip_transcribe["recordId"], record_id);
+    assert_eq!(skip_transcribe["action"], "transcribe");
+    assert!(skip_transcribe["reason"].as_str().is_some_and(|r| !r.is_empty()));
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before,
+        "if_idle transcribe must not create duplicate retry record"
+    );
+
+    runtime
+        .commit(|w| {
+            let key = w.begin_analysis(&record_id, AnalysisStage::Summarizing)?;
+            let minutes = koe_engine::minutes::parse_meeting_minutes_json(
+                r#"{"schemaVersion":2,"title":"Ops Sync","overview":"完成部署","topics":[],"decisions":[{"text":"保留审计日志","sources":["S2"]}],"actions":[],"questions":[],"terms":[],"reviewItems":[]}"#,
+                &w.record(&record_id).unwrap().aggregate.spine,
+            )
+            .unwrap();
+            w.complete_summary(&key, minutes)
+        })
+        .unwrap();
+
+    let skip_summary = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "summarize", "if_idle": true}),
+        NOW + 2,
+    );
+    assert_eq!(skip_summary["ok"], true);
+    assert_eq!(skip_summary["skipped"], true);
+    assert_eq!(skip_summary["action"], "summarize");
+
+    let empty_id = "bean-queued-idle";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                empty_id.into(),
+                "Queued Bean".into(),
+                RecordOrigin::Bean,
+                91,
+                NOW + 3,
+                1_000,
+            )
+        })
+        .unwrap();
+    runtime.auto_transcribe.insert(empty_id.into());
+    let skip_queued = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": empty_id, "action": "transcribe", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_queued["ok"], true);
+    assert_eq!(skip_queued["skipped"], true);
+
+    runtime.auto_summarize.insert(empty_id.into());
+    let skip_queued_sum = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": empty_id, "action": "summarize", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_queued_sum["ok"], true);
+    assert_eq!(skip_queued_sum["skipped"], true);
+
+    let set_proj = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "set_project", "project": "koe-ops"}),
+        NOW + 4,
+    );
+    assert_eq!(set_proj["ok"], true);
+    assert_eq!(set_proj["action"], "set_project");
+    let detail = call_ok(
+        &mut runtime,
+        "get_record",
+        json!({"record_id": record_id, "include_segments": false}),
+        NOW + 4,
+    );
+    assert_eq!(detail["project"], "koe-ops");
+    assert_eq!(detail["segments"], json!([]));
+    assert_eq!(detail["totalSegments"], 2);
+    assert_eq!(detail["segmentOffset"], 0);
+    assert_eq!(detail["segmentsTruncated"], true);
+    assert_eq!(detail["nextSegmentOffset"], 0);
+    assert!(!detail["summary"].as_array().unwrap().is_empty());
+
+    let _ = call_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": record_id, "action": "set_project", "project": null}),
+        NOW + 5,
+    );
+    let cleared = call_ok(
+        &mut runtime,
+        "get_record",
+        json!({"record_id": record_id, "include_segments": false}),
+        NOW + 5,
+    );
+    assert!(cleared["project"].is_null());
+
+    for forbidden in ["purge", "empty_trash"] {
+        let err = runtime
+            .call_mcp_tool_step(
+                "manage_record",
+                &json!({"record_id": record_id, "action": forbidden, "if_idle": true}),
+                NOW + 6,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, -32602);
+    }
+
+    let _ = connect_simulated_bean(&mut runtime, "ble-dl-all", NOW + 7);
+    let _ = runtime.drain_outbound_ble_frames();
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&1u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&8801u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&((NOW + 7) as u32).to_le_bytes());
+    cat_bytes.extend_from_slice(&1_000u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 8);
+    let _ = runtime.drain_outbound_ble_frames();
+    runtime.device.session.transfer.phase = koe_engine::session::TransferPhaseTag::Failed;
+    runtime.device.session.transfer.file_id = 8801;
+
+    let dl_all = call_ok(
+        &mut runtime,
+        "device_control",
+        json!({"action": "download_all"}),
+        NOW + 9,
+    );
+    assert_eq!(dl_all["ok"], true);
+    assert_eq!(dl_all["action"], "download_all");
+    let tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        tx.contains(&DeviceCommands::start_transport_audio_file(8801, 0, 0)),
+        "download_all must dispatch HostIntent::DeviceDownloadAll and emit 1A/07 pull"
+    );
+}
+
+#[test]
+fn get_record_rejects_zero_limit_and_caps_oversized_single_segment() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let giant_text = "中".repeat(550_000);
+    let rec_id = "giant-seg";
+    runtime
+        .commit(|w| {
+            w.insert_record(rec_id.into(), "Giant".into(), RecordOrigin::Note, 0, NOW, 0)?;
+            w.append_transcript(rec_id, &giant_text, 0, 1000, "manual")?;
+            w.append_transcript(rec_id, "second short segment", 1000, 2000, "manual")?;
+            Ok(())
+        })
+        .unwrap();
+
+    let bad_limit = runtime
+        .call_mcp_tool_step(
+            "get_record",
+            &json!({"record_id": rec_id, "segment_limit": 0}),
+            NOW,
+        )
+        .unwrap_err();
+    assert_eq!(bad_limit.code, -32602);
+
+    let first = match runtime
+        .call_mcp_tool_step("get_record", &json!({"record_id": rec_id}), NOW)
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("get_record giant segment failed: {other:?}"),
+    };
+    let encoded_len = serde_json::to_vec(&first).unwrap().len();
+    assert!(
+        encoded_len <= 1_500_000,
+        "capped single-segment response exceeded 1.5MB budget: {encoded_len}"
+    );
+    assert_eq!(first["totalSegments"], 2);
+    assert_eq!(first["segmentOffset"], 0);
+    assert_eq!(first["segmentsTruncated"], true);
+    assert_eq!(first["nextSegmentOffset"], 1);
+    assert_eq!(first["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(first["segments"][0]["id"], "S1");
+
+    let second = match runtime
+        .call_mcp_tool_step(
+            "get_record",
+            &json!({"record_id": rec_id, "segment_offset": 1}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("get_record second page failed: {other:?}"),
+    };
+    assert_eq!(second["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(second["segments"][0]["id"], "S2");
+    assert_eq!(second["segments"][0]["text"], "second short segment");
+    assert_eq!(second["segmentsTruncated"], false);
+    assert!(second["nextSegmentOffset"].is_null());
+}
+
+fn save_silent_pcm_wav(root: &Path, record_id: &str, duration_ms: u32) {
+    let pcm_bytes = duration_ms.saturating_mul(32);
+    let mut wav = koe_engine::wav::OpusWave::wav_header_with_rate(pcm_bytes, 16_000).to_vec();
+    wav.extend(std::iter::repeat_n(0u8, pcm_bytes as usize));
+    recording_assets::save_audio(root, record_id, &wav).unwrap();
+}
+
+fn call_mcp_ok(runtime: &mut KoeRuntime, name: &str, args: Value, now: u64) -> Value {
+    match runtime.call_mcp_tool_step(name, &args, now).unwrap() {
+        McpToolCallState::Completed(Ok(v)) => v,
+        other => panic!("{name} expected Completed(Ok), got {other:?}"),
+    }
+}
+
+fn complete_active_apple_speech_job(runtime: &mut KoeRuntime, text: &str, now: u64) {
+    let op_id = runtime
+        .drain_local_asr_effects()
+        .into_iter()
+        .find_map(|effect| match effect {
+            LocalAsrEffect::Start { operation_id, .. } => Some(operation_id),
+            _ => None,
+        })
+        .expect("expected active AppleSpeech Start effect");
+    let final_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({
+                "type": "local_asr_result",
+                "operationId": op_id,
+                "text": text,
+                "startMs": 0,
+                "endMs": 1_000,
+                "isFinal": true
+            })
+            .to_string(),
+            now,
+        ),
+    )
+    .unwrap();
+    assert!(final_snap["error"].is_null(), "{final_snap}");
+    let done_snap: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "local_asr_finished", "operationId": op_id}).to_string(),
+            now,
+        ),
+    )
+    .unwrap();
+    assert!(done_snap["error"].is_null(), "{done_snap}");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+}
+
+#[test]
+fn manage_record_if_idle_recovers_partial_transcriptions_and_skips_completed_or_summary_states() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+        NOW,
+    );
+    let _ = runtime.dispatch_json(
+        &json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}).to_string(),
+        NOW,
+    );
+
+    let interrupted_id = "bean-interrupted-partial";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                interrupted_id.into(),
+                "Interrupted Partial".into(),
+                RecordOrigin::Bean,
+                101,
+                NOW,
+                3_000,
+            )?;
+            w.bind_speech_engine(interrupted_id, SpeechEngine::AppleSpeech)?;
+            let first = w.begin_analysis(interrupted_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&first, "seg-1", "前半段已保存", 0, 1_000, "apple-speech")?;
+            w.interrupt_pending();
+            let _second = w.begin_analysis(interrupted_id, AnalysisStage::Transcribing)?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, interrupted_id, 3_000);
+    let interrupted_rec = runtime.workspace().record(interrupted_id).unwrap();
+    assert!(matches!(
+        &interrupted_rec.analysis,
+        AnalysisState::Interrupted {
+            key,
+            stage: Some(AnalysisStage::Transcribing),
+        } if key.input_revision == interrupted_rec.content_revision
+    ));
+
+    let count_before = runtime.workspace().records().len();
+    let recover_interrupted = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(recover_interrupted["ok"], true);
+    assert!(
+        recover_interrupted.get("skipped").is_none(),
+        "interrupted partial transcription must not be skipped by if_idle: {recover_interrupted}"
+    );
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before,
+        "in-place partial recovery must not create a duplicate retry record"
+    );
+    assert!(matches!(
+        runtime.workspace().record(interrupted_id).unwrap().analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ));
+    assert_eq!(runtime.active_local_speech_jobs().len(), 1);
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, interrupted_id);
+
+    let skip_while_running = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(skip_while_running["ok"], true);
+    assert_eq!(skip_while_running["skipped"], true);
+    assert_eq!(skip_while_running["reason"], "already_processing");
+
+    complete_active_apple_speech_job(&mut runtime, "后半段补全", NOW + 2);
+    let completed_rec = runtime.workspace().record(interrupted_id).unwrap();
+    assert_eq!(completed_rec.aggregate.spine.len(), 2);
+    assert!(matches!(completed_rec.analysis, AnalysisState::Idle));
+
+    let skip_completed = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_completed["ok"], true);
+    assert_eq!(skip_completed["skipped"], true);
+    assert_eq!(skip_completed["reason"], "already_transcribed");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert_eq!(runtime.workspace().records().len(), count_before);
+
+    let failed_id = "bean-failed-partial";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                failed_id.into(),
+                "Failed Partial".into(),
+                RecordOrigin::Bean,
+                102,
+                NOW + 4,
+                3_000,
+            )?;
+            w.bind_speech_engine(failed_id, SpeechEngine::AppleSpeech)?;
+            let key = w.begin_analysis(failed_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "失败前已保存", 0, 1_000, "apple-speech")?;
+            w.fail_analysis(&key, "本地识别超时")?;
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, failed_id, 3_000);
+    assert!(matches!(
+        runtime.workspace().record(failed_id).unwrap().analysis,
+        AnalysisState::Failed {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+
+    let count_before_failed = runtime.workspace().records().len();
+    let recover_failed = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": failed_id, "action": "transcribe", "if_idle": true}),
+        NOW + 5,
+    );
+    assert_eq!(recover_failed["ok"], true);
+    assert!(
+        recover_failed.get("skipped").is_none(),
+        "failed partial transcription must not be skipped by if_idle: {recover_failed}"
+    );
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_failed,
+        "failed partial recovery must not create a duplicate retry record"
+    );
+    assert!(matches!(
+        runtime.workspace().record(failed_id).unwrap().analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ));
+    assert_eq!(runtime.active_local_speech_jobs().len(), 1);
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, failed_id);
+    complete_active_apple_speech_job(&mut runtime, "失败后补全", NOW + 6);
+    assert_eq!(
+        runtime.workspace().record(failed_id).unwrap().aggregate.spine.len(),
+        2
+    );
+
+    runtime
+        .commit(|w| {
+            let _ = w.begin_analysis(interrupted_id, AnalysisStage::Summarizing)?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    let skip_interrupted_summary = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 7,
+    );
+    assert_eq!(skip_interrupted_summary["ok"], true);
+    assert_eq!(skip_interrupted_summary["skipped"], true);
+    assert_eq!(skip_interrupted_summary["reason"], "already_transcribed");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert_eq!(runtime.workspace().records().len(), count_before_failed);
+
+    runtime
+        .commit(|w| {
+            let key = w.begin_analysis(interrupted_id, AnalysisStage::Summarizing)?;
+            w.fail_analysis(&key, "纪要请求超时")?;
+            Ok(())
+        })
+        .unwrap();
+    let skip_failed_summary = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 8,
+    );
+    assert_eq!(skip_failed_summary["ok"], true);
+    assert_eq!(skip_failed_summary["skipped"], true);
+    assert_eq!(skip_failed_summary["reason"], "already_transcribed");
+    assert!(runtime.active_local_speech_jobs().is_empty());
+    assert_eq!(runtime.workspace().records().len(), count_before_failed);
+}
+
+#[test]
+fn manage_record_if_idle_handles_legacy_stage_none_partial_transcription_and_summary() {
+    use koe_client_services::product_store::{ProductStore, PRODUCT_WORKSPACE_FILE};
+
+    let sandbox = Sandbox::new();
+    let failed_partial_id = "legacy-failed-partial";
+    let interrupted_partial_id = "legacy-interrupted-partial";
+    let summary_id = "legacy-interrupted-summary";
+    {
+        let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+        let _ = runtime.dispatch_json(
+            &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+            NOW,
+        );
+        runtime
+            .commit(|w| {
+                w.insert_record(
+                    failed_partial_id.into(),
+                    "Legacy Failed Partial".into(),
+                    RecordOrigin::Bean,
+                    111,
+                    NOW,
+                    3_000,
+                )?;
+                w.bind_speech_engine(failed_partial_id, SpeechEngine::AppleSpeech)?;
+                let partial_key = w.begin_analysis(failed_partial_id, AnalysisStage::Transcribing)?;
+                w.accept_transcript(&partial_key, "1", "旧版失败部分", 0, 1_000, "apple-speech")?;
+                w.fail_analysis(&partial_key, "旧版失败")?;
+
+                w.insert_record(
+                    interrupted_partial_id.into(),
+                    "Legacy Interrupted Partial".into(),
+                    RecordOrigin::Bean,
+                    112,
+                    NOW + 1,
+                    3_000,
+                )?;
+                w.bind_speech_engine(interrupted_partial_id, SpeechEngine::AppleSpeech)?;
+                let int_key =
+                    w.begin_analysis(interrupted_partial_id, AnalysisStage::Transcribing)?;
+                w.accept_transcript(&int_key, "1", "旧版中断部分", 0, 1_000, "apple-speech")?;
+
+                w.insert_record(
+                    summary_id.into(),
+                    "Legacy Summary".into(),
+                    RecordOrigin::Bean,
+                    113,
+                    NOW + 2,
+                    3_000,
+                )?;
+                w.bind_speech_engine(summary_id, SpeechEngine::AppleSpeech)?;
+                let asr_key = w.begin_analysis(summary_id, AnalysisStage::Transcribing)?;
+                w.accept_transcript(&asr_key, "1", "旧版完整转写", 0, 1_000, "apple-speech")?;
+                w.finish_transcription(&asr_key)?;
+                let _ = w.begin_analysis(summary_id, AnalysisStage::Summarizing)?;
+                Ok(())
+            })
+            .unwrap();
+        save_silent_pcm_wav(&sandbox.0, failed_partial_id, 3_000);
+        save_silent_pcm_wav(&sandbox.0, interrupted_partial_id, 3_000);
+        save_silent_pcm_wav(&sandbox.0, summary_id, 3_000);
+    }
+
+    drop(ProductStore::open(&sandbox.0).unwrap());
+
+    let ws_path = sandbox.0.join(PRODUCT_WORKSPACE_FILE);
+    let mut raw: Value = serde_json::from_slice(&fs::read(&ws_path).unwrap()).unwrap();
+    for rec in raw["records"].as_array_mut().unwrap() {
+        rec["analysis"].as_object_mut().unwrap().remove("stage");
+    }
+    fs::write(&ws_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let mut reopened = KoeRuntime::open(&sandbox.0).unwrap();
+    assert!(matches!(
+        reopened.workspace().record(failed_partial_id).unwrap().analysis,
+        AnalysisState::Failed { stage: None, .. }
+    ));
+    assert!(matches!(
+        reopened
+            .workspace()
+            .record(interrupted_partial_id)
+            .unwrap()
+            .analysis,
+        AnalysisState::Interrupted { stage: None, .. }
+    ));
+    assert!(matches!(
+        reopened.workspace().record(summary_id).unwrap().analysis,
+        AnalysisState::Interrupted { stage: None, .. }
+    ));
+    assert!(!reopened.auto_transcribe.contains(failed_partial_id));
+    assert!(reopened.auto_transcribe.contains(interrupted_partial_id));
+    assert!(!reopened.auto_transcribe.contains(summary_id));
+
+    let count_before = reopened.workspace().records().len();
+    let skip_queued_legacy = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": interrupted_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 3,
+    );
+    assert_eq!(skip_queued_legacy["ok"], true);
+    assert_eq!(skip_queued_legacy["skipped"], true);
+    assert_eq!(skip_queued_legacy["reason"], "already_queued");
+
+    reopened.auto_transcribe.remove(interrupted_partial_id);
+    let _ = reopened.dispatch_json(
+        &json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}).to_string(),
+        NOW + 3,
+    );
+    assert!(reopened.active_local_speech_jobs().is_empty());
+    let recover_legacy_interrupted = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": interrupted_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 4,
+    );
+    assert_eq!(recover_legacy_interrupted["ok"], true);
+    assert!(
+        recover_legacy_interrupted.get("skipped").is_none(),
+        "legacy stage:None interrupted partial must recover under if_idle: {recover_legacy_interrupted}"
+    );
+    assert_eq!(reopened.workspace().records().len(), count_before);
+    assert_eq!(reopened.active_local_speech_jobs().len(), 1);
+    assert_eq!(
+        reopened.active_local_speech_jobs()[0].record_id,
+        interrupted_partial_id
+    );
+    complete_active_apple_speech_job(&mut reopened, "旧版中断后半段", NOW + 5);
+    assert_eq!(
+        reopened
+            .workspace()
+            .record(interrupted_partial_id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        2
+    );
+
+    let recover_legacy_failed = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": failed_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 6,
+    );
+    assert_eq!(recover_legacy_failed["ok"], true);
+    assert!(
+        recover_legacy_failed.get("skipped").is_none(),
+        "legacy stage:None failed partial must recover under if_idle: {recover_legacy_failed}"
+    );
+    assert_eq!(reopened.workspace().records().len(), count_before);
+    assert_eq!(reopened.active_local_speech_jobs().len(), 1);
+    assert_eq!(
+        reopened.active_local_speech_jobs()[0].record_id,
+        failed_partial_id
+    );
+    complete_active_apple_speech_job(&mut reopened, "旧版失败后半段", NOW + 7);
+    assert_eq!(
+        reopened
+            .workspace()
+            .record(failed_partial_id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        2
+    );
+
+    let skip_legacy_summary = call_mcp_ok(
+        &mut reopened,
+        "manage_record",
+        json!({"record_id": summary_id, "action": "transcribe", "if_idle": true}),
+        NOW + 8,
+    );
+    assert_eq!(skip_legacy_summary["ok"], true);
+    assert_eq!(skip_legacy_summary["skipped"], true);
+    assert_eq!(skip_legacy_summary["reason"], "already_transcribed");
+    assert!(reopened.active_local_speech_jobs().is_empty());
+    assert_eq!(reopened.workspace().records().len(), count_before);
+}
+
+#[test]
+fn manage_record_if_idle_skips_cloud_partial_transcriptions_without_creating_retry_copies() {
+    let asr_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    asr_listener.set_nonblocking(true).unwrap();
+    let asr_endpoint = format!("ws://{}/asr", asr_listener.local_addr().unwrap());
+
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    for cmd in [
+        json!({"type": "configure_speech", "engine": "cloud"}),
+        json!({"type": "set_meeting_audio_policy", "policy": "cloud_allowed"}),
+        json!({
+            "type": "configure_provider",
+            "apiKey": "cloud-if-idle-guard-key",
+            "model": "fixture",
+            "asrEndpoint": asr_endpoint
+        }),
+        json!({"type": "local_asr_readiness", "state": "ready", "message": "ready"}),
+    ] {
+        let snap: Value =
+            serde_json::from_str(&runtime.dispatch_json(&cmd.to_string(), NOW)).unwrap();
+        assert!(snap["error"].is_null(), "{cmd} failed: {snap}");
+    }
+
+    let cloud_interrupted_id = "cloud-interrupted-partial";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                cloud_interrupted_id.into(),
+                "Cloud Interrupted Partial".into(),
+                RecordOrigin::Microphone,
+                0,
+                NOW,
+                3_000,
+            )?;
+            w.bind_speech_engine(cloud_interrupted_id, SpeechEngine::Cloud)?;
+            let key = w.begin_analysis(cloud_interrupted_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "云端中断前已保存", 0, 1_000, "cloud-live")?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, cloud_interrupted_id, 3_000);
+    assert!(matches!(
+        runtime.workspace().record(cloud_interrupted_id).unwrap().analysis,
+        AnalysisState::Interrupted {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+
+    let count_before_cloud = runtime.workspace().records().len();
+    let skip_cloud_interrupted = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": cloud_interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 1,
+    );
+    assert_eq!(skip_cloud_interrupted["ok"], true);
+    assert_eq!(
+        skip_cloud_interrupted["skipped"], true,
+        "Cloud-bound interrupted partial must skip under if_idle instead of spawning retry copy (records before={count_before_cloud}, after={}): {skip_cloud_interrupted}",
+        runtime.workspace().records().len()
+    );
+    assert_eq!(skip_cloud_interrupted["reason"], "already_transcribed");
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_cloud,
+        "Cloud-bound interrupted partial must not create -retry- copies"
+    );
+    assert!(runtime.pending.is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let switch_local: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "configure_speech", "engine": "apple_speech"}).to_string(),
+            NOW + 1,
+        ),
+    )
+    .unwrap();
+    assert!(switch_local["error"].is_null(), "{switch_local}");
+    let skip_cloud_bound_under_local_default = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": cloud_interrupted_id, "action": "transcribe", "if_idle": true}),
+        NOW + 2,
+    );
+    assert_eq!(skip_cloud_bound_under_local_default["ok"], true);
+    assert_eq!(skip_cloud_bound_under_local_default["skipped"], true);
+    assert_eq!(
+        skip_cloud_bound_under_local_default["reason"],
+        "already_transcribed"
+    );
+    assert_eq!(runtime.workspace().records().len(), count_before_cloud);
+    assert!(runtime.pending.is_empty());
+
+    let switch_cloud: Value = serde_json::from_str(
+        &runtime.dispatch_json(
+            &json!({"type": "configure_speech", "engine": "cloud"}).to_string(),
+            NOW + 2,
+        ),
+    )
+    .unwrap();
+    assert!(switch_cloud["error"].is_null(), "{switch_cloud}");
+
+    let failed_partial_id = "failed-partial-under-cloud";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                failed_partial_id.into(),
+                "Failed Partial Under Cloud".into(),
+                RecordOrigin::Bean,
+                201,
+                NOW + 3,
+                3_000,
+            )?;
+            w.bind_speech_engine(failed_partial_id, SpeechEngine::AppleSpeech)?;
+            let key = w.begin_analysis(failed_partial_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "失败前已保存", 0, 1_000, "apple-speech")?;
+            w.fail_analysis(&key, "转写中断失败")?;
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, failed_partial_id, 3_000);
+    assert!(matches!(
+        runtime.workspace().record(failed_partial_id).unwrap().analysis,
+        AnalysisState::Failed {
+            stage: Some(AnalysisStage::Transcribing),
+            ..
+        }
+    ));
+
+    let count_before_failed = runtime.workspace().records().len();
+    let skip_failed_under_cloud = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": failed_partial_id, "action": "transcribe", "if_idle": true}),
+        NOW + 4,
+    );
+    assert_eq!(skip_failed_under_cloud["ok"], true);
+    assert_eq!(
+        skip_failed_under_cloud["skipped"], true,
+        "Failed partial under Cloud default must skip under if_idle instead of spawning retry copy (records before={count_before_failed}, after={}): {skip_failed_under_cloud}",
+        runtime.workspace().records().len()
+    );
+    assert_eq!(skip_failed_under_cloud["reason"], "already_transcribed");
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_failed,
+        "Failed partial under Cloud default must not create -retry- copies"
+    );
+    assert!(runtime.pending.is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    let bound_apple_id = "bound-apple-interrupted-under-cloud";
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                bound_apple_id.into(),
+                "Bound Apple Interrupted Under Cloud".into(),
+                RecordOrigin::Bean,
+                202,
+                NOW + 5,
+                3_000,
+            )?;
+            w.bind_speech_engine(bound_apple_id, SpeechEngine::AppleSpeech)?;
+            let key = w.begin_analysis(bound_apple_id, AnalysisStage::Transcribing)?;
+            w.accept_transcript(&key, "seg-1", "本机已保存前半段", 0, 1_000, "apple-speech")?;
+            w.interrupt_pending();
+            Ok(())
+        })
+        .unwrap();
+    save_silent_pcm_wav(&sandbox.0, bound_apple_id, 3_000);
+
+    let count_before_apple = runtime.workspace().records().len();
+    let resume_bound_apple = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": bound_apple_id, "action": "transcribe", "if_idle": true}),
+        NOW + 6,
+    );
+    assert_eq!(resume_bound_apple["ok"], true);
+    assert!(
+        resume_bound_apple.get("skipped").is_none(),
+        "Bound AppleSpeech interrupted partial must resume in place even when default engine is Cloud: {resume_bound_apple}"
+    );
+    assert_eq!(
+        runtime.workspace().records().len(),
+        count_before_apple,
+        "Bound AppleSpeech in-place resume must not create a copy"
+    );
+    assert!(matches!(
+        runtime.workspace().record(bound_apple_id).unwrap().analysis,
+        AnalysisState::Pending {
+            stage: AnalysisStage::Transcribing,
+            ..
+        }
+    ));
+    assert_eq!(runtime.active_local_speech_jobs().len(), 1);
+    assert_eq!(runtime.active_local_speech_jobs()[0].record_id, bound_apple_id);
+    assert_eq!(runtime.active_local_speech_jobs()[0].engine, "apple_speech");
+    assert!(runtime.pending.is_empty());
+    assert_eq!(
+        asr_listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    complete_active_apple_speech_job(&mut runtime, "本机补全后半段", NOW + 7);
+    let completed_apple = runtime.workspace().record(bound_apple_id).unwrap();
+    assert_eq!(completed_apple.aggregate.spine.len(), 2);
+    assert!(matches!(completed_apple.analysis, AnalysisState::Idle));
+
+    let skip_completed_apple = call_mcp_ok(
+        &mut runtime,
+        "manage_record",
+        json!({"record_id": bound_apple_id, "action": "transcribe", "if_idle": true}),
+        NOW + 8,
+    );
+    assert_eq!(skip_completed_apple["ok"], true);
+    assert_eq!(skip_completed_apple["skipped"], true);
+    assert_eq!(skip_completed_apple["reason"], "already_transcribed");
+    assert_eq!(runtime.workspace().records().len(), count_before_apple);
+}
