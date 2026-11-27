@@ -313,7 +313,9 @@ impl KoeRuntime {
                 if self.auto_transcribe.contains(record_id) {
                     return Some("already_queued");
                 }
-                if !record.aggregate.spine.is_empty() {
+                if !record.aggregate.spine.is_empty()
+                    && !has_recoverable_partial_transcription(record)
+                {
                     return Some("already_transcribed");
                 }
                 None
@@ -435,5 +437,21 @@ impl KoeRuntime {
                 Err(error)
             }
         }
+    }
+}
+
+fn has_recoverable_partial_transcription(record: &ProductRecord) -> bool {
+    match &record.analysis {
+        AnalysisState::Interrupted { key, stage } | AnalysisState::Failed { key, stage, .. } => {
+            match stage {
+                Some(AnalysisStage::Transcribing) => true,
+                Some(AnalysisStage::Summarizing) => false,
+                None => {
+                    record.completed_request().is_none()
+                        && key.input_revision < record.content_revision
+                }
+            }
+        }
+        AnalysisState::Idle | AnalysisState::Pending { .. } | AnalysisState::Ready { .. } => false,
     }
 }
